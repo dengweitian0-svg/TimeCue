@@ -20,7 +20,8 @@ jobs:
     name: 拒绝非法 main PR
     if: >-
       github.event.pull_request.head.ref != 'dev' ||
-      github.event.pull_request.head.repo.full_name != github.repository
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      github.event.pull_request.user.login != 'dengweitian0-svg'
     runs-on: ubuntu-latest
 
     steps:
@@ -31,6 +32,7 @@ jobs:
             const { owner, repo } = context.repo;
             const pull_number = context.payload.pull_request.number;
             const head = context.payload.pull_request.head.label;
+            const author = context.payload.pull_request.user.login;
 
             await github.rest.issues.createComment({
               owner,
@@ -39,15 +41,19 @@ jobs:
               body: [
                 '该 PR 已被自动关闭。',
                 '',
-                '`main` 是稳定发布分支，只接受来自本仓库 `dev` 分支的版本发布 PR。',
+                '`main` 是稳定发布分支，只接受符合以下全部条件的版本发布 PR：',
+                '',
+                '- 来源必须是本仓库的 `dev` 分支；',
+                '- PR 提出者必须是当前授权的发布负责人 `dengweitian0-svg`。',
                 '',
                 `当前来源分支：\`${head}\``,
+                `当前 PR 提出者：\`${author}\``,
                 '',
                 '日常开发请将功能分支提交到 `dev`：',
                 '',
                 '`feat/* / fix/* / refactor/* / docs/* / test/* / chore/* → dev`',
                 '',
-                '发布版本时再使用：',
+                '版本发布使用：',
                 '',
                 '`dev → main`'
               ].join('\n')
