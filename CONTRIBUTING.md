@@ -18,6 +18,7 @@ TimeCue 采用 `main + dev` 双主干模式：
 - 不直接在 `main` 上进行日常开发。
 - 普通开发分支不得直接提交 PR 到 `main`。
 - 只有本仓库的 `dev` 分支可以向 `main` 提交版本发布 PR。
+- 版本发布 PR 仅允许由授权发布负责人发起；当前授权人为 `dengweitian0-svg`。
 
 ## 日常开发流程
 
@@ -38,10 +39,14 @@ TimeCue 采用 `main + dev` 双主干模式：
 
 当 `dev` 中的修改已经达到一个可发布版本，并完成必要验证后：
 
-1. 创建 `dev → main` 的 Pull Request。
+1. 由授权发布负责人创建 `dev → main` 的 Pull Request。
 2. 确认版本内容和 CI / 手动验证结果。
 3. 合并到 `main`。
 4. 根据需要创建 Tag 和 GitHub Release。
+
+当前授权发布负责人：
+
+- `dengweitian0-svg`
 
 版本发布链路：
 
@@ -100,6 +105,8 @@ git switch -c feat/12-recurring-reminder
 
 - 来源：`dev`
 - 目标：`main`
+- 提出者：必须属于授权发布负责人名单
+- 当前仅允许：`dengweitian0-svg`
 - 用于发布已经在 `dev` 中集成并验证的版本
 - 不应在发布 PR 中临时加入未经 `dev` 验证的新功能
 
@@ -117,6 +124,6 @@ CI 通过后再合并 PR。
 
 ## main 分支保护
 
-`main` 只接受本仓库 `dev → main` 的版本发布 PR。
+`main` 只接受本仓库 `dev → main` 的版本发布 PR，并且 PR 提出者必须是授权发布负责人。
 
-如果其他分支直接向 `main` 提交 PR，GitHub Actions 会自动留言并关闭该 PR。
+如果来源分支不正确，或 PR 提出者不在授权名单中，GitHub Actions 会自动留言并关闭该 PR。
