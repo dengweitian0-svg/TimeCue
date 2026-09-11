@@ -3,12 +3,11 @@ package bootstrap
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	appLog "github.com/dengweitian0-svg/TimeCue/internal/log"
+	"github.com/dengweitian0-svg/TimeCue/internal/utils"
 )
 
 type Application interface {
@@ -18,26 +17,26 @@ type Application interface {
 func Start(ctx context.Context, app Application) error {
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("load configuration: %w", err)
+		return utils.Wrap(utils.ConfigError, "load configuration", err)
 	}
 	return Run(ctx, cfg, app)
 }
 
 func Run(ctx context.Context, cfg config.Config, app Application) (runErr error) {
 	if app == nil {
-		return errors.New("application must not be nil")
+		return utils.New(utils.StartupError, "run application", "application must not be nil")
 	}
 	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("validate configuration: %w", err)
+		return utils.Wrap(utils.ConfigError, "validate configuration", err)
 	}
 
 	logger, file, err := appLog.New(cfg.Log)
 	if err != nil {
-		return fmt.Errorf("initialize logging: %w", err)
+		return utils.Wrap(utils.StartupError, "initialize logging", err)
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			closeErr = fmt.Errorf("close log file: %w", closeErr)
+			closeErr = utils.Wrap(utils.CleanupError, "close log file", closeErr)
 			if runErr == nil {
 				runErr = closeErr
 			} else {
@@ -53,24 +52,9 @@ func Run(ctx context.Context, cfg config.Config, app Application) (runErr error)
 	if errors.Is(runErr, context.Canceled) {
 		runErr = nil
 	} else if runErr != nil {
+		runErr = utils.Wrap(utils.RuntimeError, "run application", runErr)
 		logger.Error("application failed", "error", runErr)
 	}
 	logger.Info("application stopping")
 	return runErr
-}
-
-func ExitCode(err error) int {
-	if err == nil {
-		return 0
-	}
-	if errors.Is(err, context.Canceled) {
-		return 0
-	}
-	return 1
-}
-
-func ReportError(err error) {
-	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-	}
 }

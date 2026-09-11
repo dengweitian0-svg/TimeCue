@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
+	"github.com/dengweitian0-svg/TimeCue/internal/utils"
 )
 
 type applicationFunc func(context.Context, config.Config, *slog.Logger) error
@@ -65,8 +66,8 @@ func TestRunReturnsApplicationErrorAndLogsIt(t *testing.T) {
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want wrapped application error", err)
 	}
-	if ExitCode(err) != 1 {
-		t.Fatalf("ExitCode() = %d, want 1", ExitCode(err))
+	if utils.ExitCode(err) != 1 {
+		t.Fatalf("ExitCode() = %d, want 1", utils.ExitCode(err))
 	}
 	assertLogMessages(t, filepath.Join(dir, "timecue.log"), []string{
 		"application starting",

@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/bootstrap"
 	appRuntime "github.com/dengweitian0-svg/TimeCue/internal/runtime"
+	"github.com/dengweitian0-svg/TimeCue/internal/utils"
 )
 
 func main() {
@@ -16,7 +18,7 @@ func main() {
 
 	err := bootstrap.Start(ctx, appRuntime.IdleApplication{})
 	if err != nil {
-		bootstrap.ReportError(err)
-		os.Exit(bootstrap.ExitCode(err))
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(utils.ExitCode(err))
 	}
 }
