@@ -29,20 +29,20 @@ func TestExitCode(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
-		want int
+		want ExitCode
 	}{
-		{name: "nil", want: 0},
-		{name: "canceled", err: context.Canceled, want: 0},
-		{name: "config", err: Wrap(ConfigError, "load configuration", errors.New("invalid")), want: 2},
-		{name: "startup", err: Wrap(StartupError, "initialize", errors.New("failed")), want: 1},
-		{name: "runtime", err: Wrap(RuntimeError, "run", errors.New("failed")), want: 1},
-		{name: "unknown", err: errors.New("failed"), want: 1},
+		{name: "nil", want: ExitOK},
+		{name: "canceled", err: context.Canceled, want: ExitOK},
+		{name: "config", err: Wrap(ConfigError, "load configuration", errors.New("invalid")), want: ExitInvalidConfiguration},
+		{name: "startup", err: Wrap(StartupError, "initialize", errors.New("failed")), want: ExitFailed},
+		{name: "runtime", err: Wrap(RuntimeError, "run", errors.New("failed")), want: ExitFailed},
+		{name: "unknown", err: errors.New("failed"), want: ExitFailed},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ExitCode(tt.err); got != tt.want {
-				t.Fatalf("ExitCode() = %d, want %d", got, tt.want)
+			if got := ExitCodeFor(tt.err); got != tt.want {
+				t.Fatalf("ExitCodeFor() = %d, want %d", got, tt.want)
 			}
 		})
 	}

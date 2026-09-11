@@ -66,8 +66,8 @@ func TestRunReturnsApplicationErrorAndLogsIt(t *testing.T) {
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want wrapped application error", err)
 	}
-	if utils.ExitCode(err) != 1 {
-		t.Fatalf("ExitCode() = %d, want 1", utils.ExitCode(err))
+	if utils.ExitCodeFor(err) != utils.ExitFailed {
+		t.Fatalf("ExitCodeFor() = %d, want %d", utils.ExitCodeFor(err), utils.ExitFailed)
 	}
 	assertLogMessages(t, filepath.Join(dir, "timecue.log"), []string{
 		"application starting",

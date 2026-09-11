@@ -16,6 +16,14 @@ const (
 	InternalError Kind = "internal"
 )
 
+type ExitCode uint8
+
+const (
+	ExitOK ExitCode = iota
+	ExitFailed
+	ExitInvalidConfiguration
+)
+
 type Error struct {
 	Kind Kind
 	Op   string
@@ -55,12 +63,12 @@ func KindOf(err error) Kind {
 	return InternalError
 }
 
-func ExitCode(err error) int {
+func ExitCodeFor(err error) ExitCode {
 	if err == nil || errors.Is(err, context.Canceled) {
-		return 0
+		return ExitOK
 	}
 	if KindOf(err) == ConfigError {
-		return 2
+		return ExitInvalidConfiguration
 	}
-	return 1
+	return ExitFailed
 }

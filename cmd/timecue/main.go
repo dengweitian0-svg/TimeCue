@@ -19,6 +19,6 @@ func main() {
 	err := bootstrap.Start(ctx, appRuntime.IdleApplication{})
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(utils.ExitCode(err))
+		os.Exit(int(utils.ExitCodeFor(err)))
 	}
 }
