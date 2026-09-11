@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-//go:embed config.yaml
+//go:embed defaults.yaml
 var embeddedConfig []byte
 
 type Config struct {
