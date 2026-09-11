@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM) // 暂时使用 Ctrl+C 中断程序, 后续增加 UI 后再另外做退出
 	defer stop()
 
 	err := bootstrap.Start(ctx, appRuntime.IdleApplication{})
