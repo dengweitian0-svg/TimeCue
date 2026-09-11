@@ -164,16 +164,11 @@ func (s *Store) ListSchedules(ctx context.Context, request app.ListSchedulesRequ
 
 // scanScheduleRow 将数据库行转换为领域日程。
 func scanScheduleRow(row *sql.Row) (domain.Schedule, error) {
-	return scanScheduleValues(row)
+	return scanScheduleFields(row.Scan)
 }
 
-// scheduleRowScanner 表示单条 SQL 行和结果集当前行共有的扫描能力。
-type scheduleRowScanner interface {
-	Scan(...any) error
-}
-
-// scanScheduleValues 将扫描器当前行转换为领域日程。
-func scanScheduleValues(scanner scheduleRowScanner) (domain.Schedule, error) {
+// scanScheduleFields 将单条 SQL 行转换为领域日程，复用 Row 和 Rows 的同一字段映射。
+func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 	var (
 		schedule          domain.Schedule
 		id                int64
@@ -184,7 +179,7 @@ func scanScheduleValues(scanner scheduleRowScanner) (domain.Schedule, error) {
 		createdText       string
 		updatedText       string
 	)
-	if err := scanner.Scan(
+	if err := scan(
 		&id,
 		&schedule.Title,
 		&cron,
@@ -238,7 +233,7 @@ func scanScheduleRows(rows *sql.Rows) (schedules []domain.Schedule, err error) {
 	for rows.Next() {
 		// 每一行都经过同一转换规则，避免单条读取和分页读取产生不同状态。
 		var values domain.Schedule
-		values, err = scanScheduleValues(rows)
+		values, err = scanScheduleFields(rows.Scan)
 		if err != nil {
 			return nil, err
 		}
