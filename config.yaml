@@ -1,0 +1,7 @@
+app:
+  name: TimeCue
+  version: 0.0.1
+
+log:
+  level: info
+  path: ./log/timecue.log
