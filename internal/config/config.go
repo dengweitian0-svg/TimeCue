@@ -31,6 +31,7 @@ type LogConfig struct {
 	Path  string `mapstructure:"path"`
 }
 
+// Load 加载当前工作目录下的用户配置；文件不存在时回退到内嵌默认配置。
 func Load() (Config, error) {
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -65,6 +66,7 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// setDefaults 为配置文件未覆盖的字段设置稳定默认值。
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("app.name", "TimeCue")
 	v.SetDefault("app.version", "0.0.1")
@@ -72,6 +74,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log.path", "./log/timecue.log")
 }
 
+// Validate 校验启动阶段必须满足的配置约束。
 func (c Config) Validate() error {
 	level := strings.ToLower(strings.TrimSpace(c.Log.Level))
 	switch level {
@@ -90,6 +93,7 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// LogFilePath 将日志路径解析为基于当前工作目录的规范绝对路径。
 func (c Config) LogFilePath() (string, error) {
 	if err := c.Validate(); err != nil {
 		return "", err

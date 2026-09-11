@@ -10,10 +10,12 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/utils"
 )
 
+// Application 表示由 bootstrap 驱动的应用运行单元。
 type Application interface {
 	Run(context.Context, config.Config, *slog.Logger) error
 }
 
+// Start 加载配置并启动应用，是生产入口使用的启动函数。
 func Start(ctx context.Context, app Application) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -22,6 +24,7 @@ func Start(ctx context.Context, app Application) error {
 	return Run(ctx, cfg, app)
 }
 
+// Run 按固定顺序完成配置校验、日志初始化、应用运行和资源清理。
 func Run(ctx context.Context, cfg config.Config, app Application) (runErr error) {
 	if app == nil {
 		return utils.New(utils.StartupError, "run application", "application must not be nil")
@@ -34,6 +37,7 @@ func Run(ctx context.Context, cfg config.Config, app Application) (runErr error)
 	if err != nil {
 		return utils.Wrap(utils.StartupError, "initialize logging", err)
 	}
+	// 日志文件由本函数取得，因此也由本函数负责关闭。
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
 			closeErr = utils.Wrap(utils.CleanupError, "close log file", closeErr)

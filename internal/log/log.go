@@ -10,6 +10,7 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
 )
 
+// New 创建写入指定 .log 文件的 JSONL logger，并返回由调用方负责关闭的文件。
 func New(cfg config.LogConfig) (*slog.Logger, *os.File, error) {
 	fullPath, err := (config.Config{Log: cfg}).LogFilePath()
 	if err != nil {
@@ -34,6 +35,7 @@ func New(cfg config.LogConfig) (*slog.Logger, *os.File, error) {
 	return slog.New(handler), file, nil
 }
 
+// parseLevel 将配置中的日志级别转换为 slog 级别。
 func parseLevel(value string) (slog.Level, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "debug":
