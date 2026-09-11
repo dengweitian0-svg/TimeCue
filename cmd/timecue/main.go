@@ -1,24 +1,22 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/dengweitian0-svg/TimeCue/internal/config"
+	"github.com/dengweitian0-svg/TimeCue/internal/bootstrap"
+	appRuntime "github.com/dengweitian0-svg/TimeCue/internal/runtime"
 )
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	path, err := cfg.LogFilePath()
+	err := bootstrap.Start(ctx, appRuntime.IdleApplication{})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		bootstrap.ReportError(err)
+		os.Exit(bootstrap.ExitCode(err))
 	}
-
-	fmt.Printf("%s %s; log path: %s\n", cfg.App.Name, cfg.App.Version, path)
 }
