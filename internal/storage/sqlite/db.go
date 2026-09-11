@@ -33,13 +33,19 @@ func OpenStore(ctx context.Context, path string, logger *slog.Logger) (*Store, e
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping sqlite database: %w", err)
+		pingErr := fmt.Errorf("ping sqlite database: %w", err)
+		if closeErr := db.Close(); closeErr != nil {
+			return nil, errors.Join(pingErr, fmt.Errorf("close failed sqlite database: %w", closeErr))
+		}
+		return nil, pingErr
 	}
 	// 外键表示关联事实，必须由数据库约束保护而不能依赖调用方自觉维护。
 	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("enable sqlite foreign keys: %w", err)
+		pragmaErr := fmt.Errorf("enable sqlite foreign keys: %w", err)
+		if closeErr := db.Close(); closeErr != nil {
+			return nil, errors.Join(pragmaErr, fmt.Errorf("close failed sqlite database: %w", closeErr))
+		}
+		return nil, pragmaErr
 	}
 	if err := migrate(ctx, db); err != nil {
 		closeErr := db.Close()

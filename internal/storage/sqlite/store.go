@@ -260,11 +260,11 @@ func decodeCursor(cursor string) (domain.ScheduleID, error) {
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
-		return 0, domain.NewValidation("cursor is invalid", "cursor")
+		return 0, &domain.Error{Code: domain.Validation, Message: "cursor is invalid", Fields: []string{"cursor"}, Cause: err}
 	}
 	id, err := strconv.ParseInt(string(decoded), 10, 64)
 	if err != nil || id <= 0 {
-		return 0, domain.NewValidation("cursor is invalid", "cursor")
+		return 0, &domain.Error{Code: domain.Validation, Message: "cursor is invalid", Fields: []string{"cursor"}, Cause: err}
 	}
 	return domain.ScheduleID(id), nil
 }

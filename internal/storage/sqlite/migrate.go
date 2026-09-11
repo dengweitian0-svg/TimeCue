@@ -46,7 +46,11 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		}
 		// 只有 SQL 完整执行后才能提交版本事实。
 		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit migration %d: %w", migration.version, err)
+			commitErr := fmt.Errorf("commit migration %d: %w", migration.version, err)
+			if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				return errors.Join(commitErr, fmt.Errorf("rollback migration %d: %w", migration.version, rollbackErr))
+			}
+			return commitErr
 		}
 		currentVersion = migration.version
 	}
