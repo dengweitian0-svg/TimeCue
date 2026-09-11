@@ -27,6 +27,9 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	if len(migrations) > 0 && currentVersion > migrations[len(migrations)-1].version {
+		return fmt.Errorf("database migration version %d is newer than supported version %d", currentVersion, migrations[len(migrations)-1].version)
+	}
 	for _, migration := range migrations {
 		if migration.version <= currentVersion {
 			continue

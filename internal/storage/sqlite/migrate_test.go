@@ -73,6 +73,20 @@ func TestMigrationVersionIsRecorded(t *testing.T) {
 	}
 }
 
+// TestMigrateRejectsNewerVersion 验证程序不会在未知数据库版本上继续运行。
+func TestMigrateRejectsNewerVersion(t *testing.T) {
+	db := openRawTestDB(t)
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_utc TEXT NOT NULL)`); err != nil {
+		t.Fatalf("create migration table error = %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO schema_migrations(version, applied_at_utc) VALUES (99, 'now')"); err != nil {
+		t.Fatalf("insert migration version error = %v", err)
+	}
+	if err := migrate(context.Background(), db); err == nil {
+		t.Fatal("migrate() error = nil for newer schema version")
+	}
+}
+
 // TestInitialSchemaConstraints 验证日程字段约束和不保存结束时间。
 func TestInitialSchemaConstraints(t *testing.T) {
 	db := openRawTestDB(t)
