@@ -30,3 +30,24 @@ type ScheduleCandidate struct {
 	CreatedAtUTC       time.Time
 	UpdatedAtUTC       time.Time
 }
+
+// ScheduleUpdateCandidate 表示经过应用层校验、等待条件写入的日程补丁。
+// 指针字段表示该字段需要写入；CronPresent 单独表示请求显式携带了 cron，
+// 即使其值为 nil 也不能把它误当成“保持不变”。
+type ScheduleUpdateCandidate struct {
+	Title            *string
+	FirstStartLocal  *time.Time
+	DurationMinutes  *int
+	Cron             *string
+	CronPresent      bool
+	UpdatedAtUTC     time.Time
+	ExpectedRevision int64
+}
+
+// UpdateScheduleCandidate 是更新候选的兼容别名，便于调用方按操作命名使用契约。
+type UpdateScheduleCandidate = ScheduleUpdateCandidate
+
+// IsRecurring 判断日程是否已经携带周期规则。
+func (s Schedule) IsRecurring() bool {
+	return s.Cron != nil
+}
