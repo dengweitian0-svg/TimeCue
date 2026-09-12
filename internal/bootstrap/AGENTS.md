@@ -5,7 +5,7 @@
   - `bootstrap.go`：定义 `Application` 接口，实现 `Start` 和 `Run`。
   - `bootstrap_test.go`：验证启动顺序、错误处理、取消退出和日志结果。
 - `Application.Run` 接收 `context.Context`、已校验的 `config.Config` 和 `*slog.Logger`，返回应用运行错误。
-- `Start` 负责加载配置并将配置加载错误分类后交给 `Run`；`Run` 负责配置校验、日志初始化、应用运行、顶层错误包装和日志文件关闭。
+- `Start` 负责加载配置；配置加载失败时包装为 `ConfigError` 并直接返回，不进入 `Run`，加载成功后才把配置交给 `Run`。`Run` 负责再次校验配置、日志初始化、应用运行、顶层错误包装和日志文件关闭。
 - 只有值恰好等于 `context.Canceled` 才表示正常主动退出；包装错误或组合错误必须保留、包装为运行错误，并在此顶层边界记录一次最终 `ERROR`。
 - 日志文件由 `Run` 创建时取得，必须由 `Run` 负责关闭；关闭失败不得被静默忽略，且应与已有运行错误合并。
 - 生命周期日志只记录已有明确边界的事件：启动和停止使用 `INFO`，运行失败使用 `ERROR`；当前 `Application` 没有独立就绪契约，不记录 `application ready`。
