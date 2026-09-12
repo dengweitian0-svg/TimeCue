@@ -25,6 +25,18 @@ func TestWrapPreservesKindAndCause(t *testing.T) {
 	}
 }
 
+// TestKindOfFallsBackForUnknownKinds 验证未注册的错误分类统一回退为内部错误。
+func TestKindOfFallsBackForUnknownKinds(t *testing.T) {
+	if got := KindOf(errors.New("untyped failure")); got != InternalError {
+		t.Fatalf("KindOf(untyped error) = %q, want %q", got, InternalError)
+	}
+	unknown := &Error{Kind: Kind("unknown"), Err: errors.New("unknown failure")}
+	if got := KindOf(unknown); got != InternalError {
+		t.Fatalf("KindOf(unknown kind) = %q, want %q", got, InternalError)
+	}
+}
+
+// TestExitCode 验证不同错误分类和取消形态对应正确的进程退出码。
 func TestExitCode(t *testing.T) {
 	tests := []struct {
 		name string
@@ -33,6 +45,8 @@ func TestExitCode(t *testing.T) {
 	}{
 		{name: "nil", want: ExitOK},
 		{name: "canceled", err: context.Canceled, want: ExitOK},
+		{name: "wrapped canceled", err: Wrap(RuntimeError, "run", context.Canceled), want: ExitFailed},
+		{name: "joined canceled", err: errors.Join(context.Canceled, errors.New("runtime failure")), want: ExitFailed},
 		{name: "config", err: Wrap(ConfigError, "load configuration", errors.New("invalid")), want: ExitInvalidConfiguration},
 		{name: "startup", err: Wrap(StartupError, "initialize", errors.New("failed")), want: ExitFailed},
 		{name: "runtime", err: Wrap(RuntimeError, "run", errors.New("failed")), want: ExitFailed},
