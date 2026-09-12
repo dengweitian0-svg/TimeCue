@@ -396,8 +396,13 @@ func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 // scanScheduleRows 将查询结果转换为领域日程列表并完整关闭游标。
 func scanScheduleRows(rows *sql.Rows) (schedules []domain.Schedule, err error) {
 	defer func() {
-		if closeErr := rows.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("close schedule rows: %w", closeErr)
+		if closeErr := rows.Close(); closeErr != nil {
+			closeErr = fmt.Errorf("close schedule rows: %w", closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
 		}
 	}()
 	for rows.Next() {

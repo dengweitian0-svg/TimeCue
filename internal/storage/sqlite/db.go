@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -22,10 +23,10 @@ func OpenStore(ctx context.Context, path string, logger *slog.Logger) (*Store, e
 		return nil, errors.New("sqlite database path must not be empty")
 	}
 	if logger == nil {
-		logger = slog.Default()
+		return nil, errors.New("sqlite logger must not be nil")
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
@@ -39,9 +40,17 @@ func OpenStore(ctx context.Context, path string, logger *slog.Logger) (*Store, e
 		}
 		return nil, pingErr
 	}
-	// 外键表示关联事实，必须由数据库约束保护而不能依赖调用方自觉维护。
-	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
-		pragmaErr := fmt.Errorf("enable sqlite foreign keys: %w", err)
+	// 连接级 DSN 参数会在每个物理连接建立时执行；这里再读取一次，确保首个连接确实启用了约束。
+	var foreignKeys int
+	if err := db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+		pragmaErr := fmt.Errorf("verify sqlite foreign keys: %w", err)
+		if closeErr := db.Close(); closeErr != nil {
+			return nil, errors.Join(pragmaErr, fmt.Errorf("close failed sqlite database: %w", closeErr))
+		}
+		return nil, pragmaErr
+	}
+	if foreignKeys != 1 {
+		pragmaErr := fmt.Errorf("verify sqlite foreign keys: want 1, got %d", foreignKeys)
 		if closeErr := db.Close(); closeErr != nil {
 			return nil, errors.Join(pragmaErr, fmt.Errorf("close failed sqlite database: %w", closeErr))
 		}
@@ -57,6 +66,15 @@ func OpenStore(ctx context.Context, path string, logger *slog.Logger) (*Store, e
 
 	logger.Info("sqlite store ready")
 	return &Store{db: db, logger: logger}, nil
+}
+
+// sqliteDSN 为每个 SQLite 物理连接附加外键约束参数，并保留调用方已有查询参数。
+func sqliteDSN(path string) string {
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + "_pragma=foreign_keys(1)"
 }
 
 // Close 关闭 SQLite 数据库连接，资源所有权属于 Store。
