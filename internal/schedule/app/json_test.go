@@ -84,6 +84,17 @@ func TestDecodeUpdateScheduleRejectsInvalidNumbers(t *testing.T) {
 	}
 }
 
+// TestDecodeDeleteScheduleTracksExpectedRevision 验证删除 JSON 保留版本字段存在性。
+func TestDecodeDeleteScheduleTracksExpectedRevision(t *testing.T) {
+	request, err := DecodeDeleteSchedule([]byte(`{"expected_revision":2}`))
+	if err != nil {
+		t.Fatalf("DecodeDeleteSchedule() error = %v", err)
+	}
+	if !request.ExpectedRevisionPresent || request.ExpectedRevision != 2 {
+		t.Fatalf("delete request = %#v", request)
+	}
+}
+
 // TestEncodeListSchedulesOmitsEmptyCursor 验证分页结束时不输出空游标。
 func TestEncodeListSchedulesOmitsEmptyCursor(t *testing.T) {
 	data, err := EncodeListSchedules(ListSchedulesResponse{Items: []ScheduleDTO{{ID: 1, Title: "one"}}})

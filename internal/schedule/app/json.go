@@ -65,6 +65,34 @@ func DecodeUpdateSchedule(data []byte) (UpdateScheduleRequest, error) {
 	return request, nil
 }
 
+// DecodeDeleteSchedule 使用 encoding/json/v2 解码永久删除请求。
+func DecodeDeleteSchedule(data []byte) (DeleteScheduleRequest, error) {
+	var request DeleteScheduleRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		return DeleteScheduleRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "invalid delete schedule JSON",
+			Cause:   err,
+		}
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return DeleteScheduleRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "delete schedule JSON must be an object",
+		}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return DeleteScheduleRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "delete schedule JSON must be an object",
+			Cause:   err,
+		}
+	}
+	_, request.ExpectedRevisionPresent = fields["expected_revision"]
+	return request, nil
+}
+
 // EncodeSchedule 使用 encoding/json/v2 序列化单条日程。
 func EncodeSchedule(schedule ScheduleDTO) ([]byte, error) {
 	return json.Marshal(schedule)

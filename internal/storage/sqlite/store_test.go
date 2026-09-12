@@ -234,6 +234,125 @@ func TestUpdateScheduleRejectsCronConversion(t *testing.T) {
 	}
 }
 
+// TestDeleteScheduleReturnsTitleAndCascades 验证永久删除返回标题并清理关联记录。
+func TestDeleteScheduleReturnsTitleAndCascades(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	if _, err := store.db.Exec(`
+		INSERT INTO occurrence_overrides(schedule_id, occurrence_local, open) VALUES (?, '2026-01-02T10:00:00+08:00', 0);
+		INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (?, '2026-01-02T10:00:00+08:00', '2026-01-02T02:00:00Z', 'sent');`, created.ID, created.ID); err != nil {
+		t.Fatalf("insert related records error = %v", err)
+	}
+	title, err := store.DeleteSchedule(context.Background(), created.ID, created.Revision)
+	if err != nil || title != created.Title {
+		t.Fatalf("DeleteSchedule() = %q, %v", title, err)
+	}
+	for _, table := range []string{"occurrence_overrides", "reminder_attempts"} {
+		var count int
+		if err := store.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
+			t.Fatalf("count %s error = %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s count = %d, want 0", table, count)
+		}
+	}
+	if _, err := store.GetSchedule(context.Background(), created.ID); err == nil {
+		t.Fatal("GetSchedule() after deletion error = nil")
+	}
+}
+
+// TestDeleteScheduleReturnsTitleOnStaleRevision 验证版本冲突保留标题且不删除日程。
+func TestDeleteScheduleReturnsTitleOnStaleRevision(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	title, err := store.DeleteSchedule(context.Background(), created.ID, created.Revision+1)
+	var businessErr *domain.Error
+	if title != created.Title || !errors.As(err, &businessErr) || businessErr.Code != domain.StaleRevision {
+		t.Fatalf("DeleteSchedule() = %q, %#v", title, err)
+	}
+	if _, err := store.GetSchedule(context.Background(), created.ID); err != nil {
+		t.Fatalf("GetSchedule() after stale delete error = %v", err)
+	}
+}
+
+// TestDeleteScheduleRollsBackOnTriggerFailure 验证删除触发器失败时回滚物理删除和级联清理。
+func TestDeleteScheduleRollsBackOnTriggerFailure(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	if _, err := store.db.Exec(`
+		CREATE TRIGGER fail_schedule_delete
+		BEFORE DELETE ON schedules
+		WHEN OLD.title = 'test schedule'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced delete failure');
+		END`); err != nil {
+		t.Fatalf("create trigger error = %v", err)
+	}
+	title, err := store.DeleteSchedule(context.Background(), created.ID, created.Revision)
+	if title != created.Title || err == nil {
+		t.Fatalf("DeleteSchedule() = %q, %v; want title and error", title, err)
+	}
+	got, err := store.GetSchedule(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule() after rollback error = %v", err)
+	}
+	if got.Title != created.Title || got.Revision != created.Revision {
+		t.Fatalf("rolled-back schedule = %#v", got)
+	}
+}
+
+// TestDeleteScheduleReturnsEmptyTitleWhenMissing 验证不存在日程时标题为空并返回 NOT_FOUND。
+func TestDeleteScheduleReturnsEmptyTitleWhenMissing(t *testing.T) {
+	store := openTestStore(t)
+	title, err := store.DeleteSchedule(context.Background(), 999, 1)
+	var businessErr *domain.Error
+	if title != "" || !errors.As(err, &businessErr) || businessErr.Code != domain.NotFound {
+		t.Fatalf("DeleteSchedule() = %q, %#v", title, err)
+	}
+}
+
+// TestDeleteSchedulePersistsAcrossReopen 验证删除提交后重开数据库仍然读不到日程。
+func TestDeleteSchedulePersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "timecue.db")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, err := OpenStore(context.Background(), path, logger)
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	if _, err := store.DeleteSchedule(context.Background(), created.ID, created.Revision); err != nil {
+		t.Fatalf("DeleteSchedule() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("first Store.Close() error = %v", err)
+	}
+	reopened, err := OpenStore(context.Background(), path, logger)
+	if err != nil {
+		t.Fatalf("reopen OpenStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	if _, err := reopened.GetSchedule(context.Background(), created.ID); err == nil {
+		t.Fatal("reopened GetSchedule() error = nil after deletion")
+	} else {
+		var businessErr *domain.Error
+		if !errors.As(err, &businessErr) || businessErr.Code != domain.NotFound {
+			t.Fatalf("reopened error = %#v, want not found", err)
+		}
+	}
+}
+
 // TestSchedulePersistsAcrossReopen 验证关闭并重新打开数据库后仍可读取日程。
 func TestSchedulePersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "timecue.db")

@@ -20,6 +20,11 @@ type ScheduleUpdater interface {
 	UpdateSchedule(context.Context, domain.ScheduleID, domain.ScheduleUpdateCandidate) (domain.Schedule, error)
 }
 
+// ScheduleDeleter 定义带乐观锁版本的日程删除能力。
+type ScheduleDeleter interface {
+	DeleteSchedule(context.Context, domain.ScheduleID, int64) (string, error)
+}
+
 // Clock 定义应用服务读取当前时间环境的能力。
 type Clock interface {
 	Snapshot(context.Context) (domain.TimeSnapshot, error)
@@ -51,6 +56,12 @@ type UpdateScheduleRequest struct {
 	CancelPresent           bool `json:"-"`
 	RestorePresent          bool `json:"-"`
 	ExpectedRevisionPresent bool `json:"-"`
+}
+
+// DeleteScheduleRequest 表示带版本保护的永久删除请求。
+type DeleteScheduleRequest struct {
+	ExpectedRevision        int64 `json:"expected_revision"`
+	ExpectedRevisionPresent bool  `json:"-"`
 }
 
 // ScheduleDTO 表示对外返回的日程视图。

@@ -19,6 +19,11 @@ type fakeStore struct {
 	updateErr    error
 	updateCalls  int
 	updated      domain.ScheduleUpdateCandidate
+	deleteTitle  string
+	deleteErr    error
+	deleteCalls  int
+	deleteID     domain.ScheduleID
+	deleteRev    int64
 	listResult   ListSchedulesResponse
 	listErr      error
 	lastListReq  ListSchedulesRequest
@@ -52,6 +57,14 @@ func (s *fakeStore) UpdateSchedule(_ context.Context, _ domain.ScheduleID, candi
 	s.updateCalls++
 	s.updated = candidate
 	return s.updateResult, s.updateErr
+}
+
+// DeleteSchedule 记录删除请求并返回测试预置的标题和错误。
+func (s *fakeStore) DeleteSchedule(_ context.Context, id domain.ScheduleID, expectedRevision int64) (string, error) {
+	s.deleteCalls++
+	s.deleteID = id
+	s.deleteRev = expectedRevision
+	return s.deleteTitle, s.deleteErr
 }
 
 // ListSchedules 返回测试预置的分页结果并记录请求。
@@ -260,6 +273,30 @@ func TestServiceUpdateScheduleRejectsOutOfRangeWithoutWrite(t *testing.T) {
 	}
 	if store.updateCalls != 0 {
 		t.Fatalf("update calls = %d, want 0", store.updateCalls)
+	}
+}
+
+// TestServiceDeleteScheduleReturnsTitle 验证应用层透传成功标题和版本参数。
+func TestServiceDeleteScheduleReturnsTitle(t *testing.T) {
+	store := &fakeStore{deleteTitle: "to delete"}
+	service := NewService(store, nil)
+	title, err := service.DeleteSchedule(context.Background(), 12, DeleteScheduleRequest{ExpectedRevision: 4})
+	if err != nil || title != "to delete" {
+		t.Fatalf("DeleteSchedule() = %q, %v", title, err)
+	}
+	if store.deleteCalls != 1 || store.deleteID != 12 || store.deleteRev != 4 {
+		t.Fatalf("delete request = calls %d, id %d, revision %d", store.deleteCalls, store.deleteID, store.deleteRev)
+	}
+}
+
+// TestServiceDeleteSchedulePreservesTitleOnFailure 验证删除失败时仍返回存储层已读取的标题。
+func TestServiceDeleteSchedulePreservesTitleOnFailure(t *testing.T) {
+	store := &fakeStore{deleteTitle: "failed delete", deleteErr: domain.NewStaleRevision("schedule revision is stale", "expected_revision")}
+	service := NewService(store, nil)
+	title, err := service.DeleteSchedule(context.Background(), 13, DeleteScheduleRequest{ExpectedRevision: 4})
+	var businessErr *domain.Error
+	if title != "failed delete" || !errors.As(err, &businessErr) || businessErr.Code != domain.StaleRevision {
+		t.Fatalf("DeleteSchedule() = %q, %#v", title, err)
 	}
 }
 

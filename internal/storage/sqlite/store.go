@@ -22,6 +22,7 @@ const scheduleListLimit = 50
 
 var _ app.ScheduleStore = (*Store)(nil)
 var _ app.ScheduleUpdater = (*Store)(nil)
+var _ app.ScheduleDeleter = (*Store)(nil)
 
 // CreateSchedule 在单一事务中写入并读取日程。
 func (s *Store) CreateSchedule(ctx context.Context, candidate domain.ScheduleCandidate) (schedule domain.Schedule, err error) {
@@ -104,7 +105,7 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 	if candidate.ExpectedRevision <= 0 {
 		return domain.Schedule{}, domain.NewValidation("expected revision must be positive", "expected_revision")
 	}
-	if candidate.CronPresent {
+	if candidate.CronPresent || candidate.Cron != nil {
 		return domain.Schedule{}, domain.NewValidation("cron cannot be changed on a single schedule", "cron")
 	}
 	if candidate.Title == nil && candidate.FirstStartLocal == nil && candidate.DurationMinutes == nil {
@@ -192,6 +193,72 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision)
 	}
 	return schedule, nil
+}
+
+// DeleteSchedule 在事务内检查版本并物理删除日程，返回已读取的标题。
+func (s *Store) DeleteSchedule(ctx context.Context, id domain.ScheduleID, expectedRevision int64) (title string, err error) {
+	if s == nil || s.db == nil {
+		return "", errors.New("sqlite store is not open")
+	}
+	if id <= 0 {
+		return "", domain.NewValidation("schedule ID must be positive", "id")
+	}
+	if expectedRevision <= 0 {
+		return "", domain.NewValidation("expected revision must be positive", "expected_revision")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin delete schedule transaction: %w", err)
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		// 读取、删除或提交任一步失败都不能留下部分级联清理结果。
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, fmt.Errorf("rollback delete schedule transaction: %w", rollbackErr))
+		}
+	}()
+
+	var revision int64
+	err = tx.QueryRowContext(ctx, "SELECT title, revision FROM schedules WHERE id = ?", int64(id)).Scan(&title, &revision)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			title = ""
+			err = &domain.Error{Code: domain.NotFound, Message: fmt.Sprintf("schedule %d was not found", id), Cause: err}
+			return title, err
+		}
+		err = fmt.Errorf("select schedule %d for deletion: %w", id, err)
+		return title, err
+	}
+	if revision != expectedRevision {
+		err = domain.NewStaleRevision("schedule revision is stale", "expected_revision")
+		return title, err
+	}
+
+	result, err := tx.ExecContext(ctx, "DELETE FROM schedules WHERE id = ? AND revision = ?", int64(id), expectedRevision)
+	if err != nil {
+		err = fmt.Errorf("delete schedule %d: %w", id, err)
+		return title, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		err = fmt.Errorf("read deleted schedule %d count: %w", id, err)
+		return title, err
+	}
+	if rowsAffected != 1 {
+		err = domain.NewStaleRevision("schedule revision is stale", "expected_revision")
+		return title, err
+	}
+	if err = tx.Commit(); err != nil {
+		err = fmt.Errorf("commit delete schedule transaction: %w", err)
+		return title, err
+	}
+	if s.logger != nil {
+		s.logger.Info("schedule deleted", "schedule_id", id, "revision", expectedRevision)
+	}
+	return title, nil
 }
 
 // GetSchedule 按 ID 读取日程。

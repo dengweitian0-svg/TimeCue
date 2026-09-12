@@ -152,6 +152,29 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	return scheduleDTO(updated), nil
 }
 
+// DeleteSchedule 永久删除日程并保留存储层返回的标题和失败上下文。
+func (s *Service) DeleteSchedule(ctx context.Context, id domain.ScheduleID, request DeleteScheduleRequest) (string, error) {
+	if id <= 0 {
+		return "", domain.NewValidation("schedule ID must be positive", "id")
+	}
+	if request.ExpectedRevision <= 0 {
+		return "", domain.NewValidation("expected revision must be positive", "expected_revision")
+	}
+	if s.store == nil {
+		return "", errors.New("schedule store is not configured")
+	}
+	deleter, ok := s.store.(ScheduleDeleter)
+	if !ok {
+		return "", errors.New("schedule store does not support deletion")
+	}
+	title, err := deleter.DeleteSchedule(ctx, id, request.ExpectedRevision)
+	if err != nil {
+		// 删除失败时不能丢掉存储层已经读取到的标题，调用方可据此显示具体对象。
+		return title, fmt.Errorf("delete schedule %d: %w", id, err)
+	}
+	return title, nil
+}
+
 // GetSchedule 读取单条日程。
 func (s *Service) GetSchedule(ctx context.Context, id domain.ScheduleID) (ScheduleDTO, error) {
 	if s.store == nil {
