@@ -34,6 +34,10 @@ TimeCue 采用 `main + dev` 双主干模式：
 
 `Issue → Branch(from dev) → Commit → PR(to dev) → CI → Merge dev → Close Issue`
 
+## 模块文档同步
+
+- 如果更改了某个模块的内容，必须在对应模块的 `AGENTS.md` 中同步更新本次更改涉及的职责、结构、约束或行为说明；如果对应模块尚无 `AGENTS.md`，必须一并创建。
+
 ## 版本发布流程
 
 当 `dev` 中的修改已经达到一个可发布版本，并完成必要验证后：
