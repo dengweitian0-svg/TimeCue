@@ -62,21 +62,39 @@ func Wrap(kind Kind, op string, err error) error {
 	return &Error{Kind: kind, Op: op, Err: err}
 }
 
-// KindOf 从错误链中提取系统错误分类，无法识别时返回 InternalError。
+// KindOf 从错误链中提取系统错误分类，无法识别或分类值未知时返回 InternalError。
 func KindOf(err error) Kind {
 	if err == nil {
 		return ""
 	}
 	var typedErr *Error
 	if errors.As(err, &typedErr) {
-		return typedErr.Kind
+		if isKnownKind(typedErr.Kind) {
+			return typedErr.Kind
+		}
+		return InternalError
 	}
 	return InternalError
 }
 
+// isKnownKind 判断错误分类是否属于系统支持的稳定集合。
+func isKnownKind(kind Kind) bool {
+	switch kind {
+	case ConfigError, StartupError, RuntimeError, CleanupError, InternalError:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsPureContextCancellation 判断错误是否恰好是主动取消哨兵，而不是包装或组合错误。
+func IsPureContextCancellation(err error) bool {
+	return err == context.Canceled
+}
+
 // ExitCodeFor 将系统错误映射为进程退出状态。
 func ExitCodeFor(err error) ExitCode {
-	if err == nil || errors.Is(err, context.Canceled) {
+	if err == nil || IsPureContextCancellation(err) {
 		return ExitOK
 	}
 	if KindOf(err) == ConfigError {

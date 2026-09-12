@@ -27,6 +27,7 @@ func testConfig(path string) config.Config {
 	}
 }
 
+// TestRunTreatsContextCancellationAsNormalExit 验证纯主动取消返回成功且只记录启动和停止事件。
 func TestRunTreatsContextCancellationAsNormalExit(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -50,11 +51,12 @@ func TestRunTreatsContextCancellationAsNormalExit(t *testing.T) {
 
 	assertLogMessages(t, filepath.Join(dir, "log", "timecue.log"), []string{
 		"application starting",
-		"application ready",
 		"application stopping",
 	})
+	assertLogLevels(t, filepath.Join(dir, "log", "timecue.log"), []string{"INFO", "INFO"})
 }
 
+// TestRunReturnsApplicationErrorAndLogsIt 验证运行错误被包装、记录为 ERROR 并映射为失败退出。
 func TestRunReturnsApplicationErrorAndLogsIt(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -71,10 +73,34 @@ func TestRunReturnsApplicationErrorAndLogsIt(t *testing.T) {
 	}
 	assertLogMessages(t, filepath.Join(dir, "timecue.log"), []string{
 		"application starting",
-		"application ready",
 		"application failed",
 		"application stopping",
 	})
+	assertLogLevels(t, filepath.Join(dir, "timecue.log"), []string{"INFO", "ERROR", "INFO"})
+}
+
+// TestRunTreatsCombinedCancellationAsFailure 验证取消与真实错误组合时不会被误判为正常退出。
+func TestRunTreatsCombinedCancellationAsFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	wantErr := errors.New("runtime failure")
+	combinedErr := errors.Join(context.Canceled, wantErr)
+
+	err := Run(context.Background(), testConfig("timecue.log"), applicationFunc(func(context.Context, config.Config, *slog.Logger) error {
+		return combinedErr
+	}))
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, wantErr) {
+		t.Fatalf("Run() error = %v, want both cancellation and runtime causes", err)
+	}
+	if utils.ExitCodeFor(err) != utils.ExitFailed {
+		t.Fatalf("ExitCodeFor() = %d, want %d", utils.ExitCodeFor(err), utils.ExitFailed)
+	}
+	assertLogMessages(t, filepath.Join(dir, "timecue.log"), []string{
+		"application starting",
+		"application failed",
+		"application stopping",
+	})
+	assertLogLevels(t, filepath.Join(dir, "timecue.log"), []string{"INFO", "ERROR", "INFO"})
 }
 
 func TestRunRejectsNilApplication(t *testing.T) {
@@ -101,7 +127,14 @@ func TestRunRejectsInvalidConfigurationBeforeCreatingLog(t *testing.T) {
 	}
 }
 
-func assertLogMessages(t *testing.T, path string, want []string) {
+// logRecord 保存测试所需的结构化日志字段。
+type logRecord struct {
+	Level   string `json:"level"`
+	Message string `json:"msg"`
+}
+
+// readLogRecords 读取 JSONL 日志并解析消息与级别。
+func readLogRecords(t *testing.T, path string) []logRecord {
 	t.Helper()
 	file, err := os.Open(path)
 	if err != nil {
@@ -110,27 +143,44 @@ func assertLogMessages(t *testing.T, path string, want []string) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	var messages []string
+	var records []logRecord
 	for scanner.Scan() {
-		var record map[string]any
+		var record logRecord
 		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
 			t.Fatalf("invalid log JSON: %v", err)
 		}
-		message, ok := record["msg"].(string)
-		if !ok {
-			t.Fatalf("log record has no string msg: %v", record)
-		}
-		messages = append(messages, message)
+		records = append(records, record)
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan log file: %v", err)
 	}
-	if len(messages) != len(want) {
-		t.Fatalf("messages = %v, want %v", messages, want)
+	return records
+}
+
+// assertLogMessages 验证日志消息按预期顺序写入。
+func assertLogMessages(t *testing.T, path string, want []string) {
+	t.Helper()
+	records := readLogRecords(t, path)
+	if len(records) != len(want) {
+		t.Fatalf("log records = %d, want %d", len(records), len(want))
 	}
 	for i := range want {
-		if messages[i] != want[i] {
-			t.Fatalf("messages[%d] = %q, want %q", i, messages[i], want[i])
+		if records[i].Message != want[i] {
+			t.Fatalf("messages[%d] = %q, want %q", i, records[i].Message, want[i])
+		}
+	}
+}
+
+// assertLogLevels 验证日志级别与生命周期事件严重程度匹配。
+func assertLogLevels(t *testing.T, path string, want []string) {
+	t.Helper()
+	records := readLogRecords(t, path)
+	if len(records) != len(want) {
+		t.Fatalf("log records = %d, want %d", len(records), len(want))
+	}
+	for i := range want {
+		if records[i].Level != want[i] {
+			t.Fatalf("levels[%d] = %q, want %q", i, records[i].Level, want[i])
 		}
 	}
 }

@@ -6,6 +6,6 @@
   - `errors_test.go`：验证错误链保留和退出码映射。
 - 当前错误分类包括 `ConfigError`、`StartupError`、`RuntimeError`、`CleanupError` 和 `InternalError`；新增分类前必须确认现有分类无法表达。
 - `Wrap` 必须保留原始 cause，以支持 `errors.Is` 和 `errors.As`；传入 `nil` 时必须保持 `nil` 语义。
-- `KindOf` 无法识别错误时返回 `InternalError`；`ExitCodeFor` 对 `nil` 和 `context.Canceled` 返回成功码，对配置错误返回配置失败码，其余错误返回通用失败码。
+- `KindOf` 无法识别错误或错误分类不在已知集合时返回 `InternalError`；`ExitCodeFor` 仅对 `nil` 和恰好等于 `context.Canceled` 的错误返回成功码，包装/组合取消错误必须返回失败码；配置错误返回配置失败码，其余错误返回通用失败码。
 - 本目录不得依赖 `bootstrap`、具体日志实现或业务模块；错误上下文应在产生错误的适当层补充，最终日志由系统边界负责。
 - 修改错误分类、错误链行为或退出码映射时必须同步更新测试，并检查启动、运行和清理失败场景。

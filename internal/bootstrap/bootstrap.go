@@ -50,10 +50,9 @@ func Run(ctx context.Context, cfg config.Config, app Application) (runErr error)
 	}()
 
 	logger.Info("application starting", "name", cfg.App.Name, "version", cfg.App.Version)
-	logger.Info("application ready")
 
 	runErr = app.Run(ctx, cfg, logger)
-	if errors.Is(runErr, context.Canceled) {
+	if utils.IsPureContextCancellation(runErr) {
 		runErr = nil
 	} else if runErr != nil {
 		runErr = utils.Wrap(utils.RuntimeError, "run application", runErr)
