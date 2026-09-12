@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/schedule/app"
@@ -20,6 +21,7 @@ const scheduleColumns = `
 const scheduleListLimit = 50
 
 var _ app.ScheduleStore = (*Store)(nil)
+var _ app.ScheduleUpdater = (*Store)(nil)
 
 // CreateSchedule 在单一事务中写入并读取日程。
 func (s *Store) CreateSchedule(ctx context.Context, candidate domain.ScheduleCandidate) (schedule domain.Schedule, err error) {
@@ -87,6 +89,107 @@ func (s *Store) CreateSchedule(ctx context.Context, candidate domain.ScheduleCan
 	}
 	if s.logger != nil {
 		s.logger.Info("schedule created", "schedule_id", schedule.ID)
+	}
+	return schedule, nil
+}
+
+// UpdateSchedule 在事务内重新检查日程并执行版本条件更新。
+func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candidate domain.ScheduleUpdateCandidate) (schedule domain.Schedule, err error) {
+	if s == nil || s.db == nil {
+		return domain.Schedule{}, errors.New("sqlite store is not open")
+	}
+	if id <= 0 {
+		return domain.Schedule{}, domain.NewValidation("schedule ID must be positive", "id")
+	}
+	if candidate.ExpectedRevision <= 0 {
+		return domain.Schedule{}, domain.NewValidation("expected revision must be positive", "expected_revision")
+	}
+	if candidate.CronPresent {
+		return domain.Schedule{}, domain.NewValidation("cron cannot be changed on a single schedule", "cron")
+	}
+	if candidate.Title == nil && candidate.FirstStartLocal == nil && candidate.DurationMinutes == nil {
+		return domain.Schedule{}, domain.NewValidation("schedule update is empty", "title", "start_unix", "end_unix")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Schedule{}, fmt.Errorf("begin update schedule transaction: %w", err)
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		// 读取、条件更新、回读或提交任一步失败都必须撤销本次事务。
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, fmt.Errorf("rollback update schedule transaction: %w", rollbackErr))
+		}
+	}()
+
+	existing, err := scanScheduleRow(tx.QueryRowContext(ctx, "SELECT "+scheduleColumns+" FROM schedules WHERE id = ?", int64(id)))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = &domain.Error{Code: domain.NotFound, Message: fmt.Sprintf("schedule %d was not found", id), Cause: err}
+			return domain.Schedule{}, err
+		}
+		err = fmt.Errorf("select schedule %d for update: %w", id, err)
+		return domain.Schedule{}, err
+	}
+	// 当前实现只允许单次日程进入该分支，避免把周期记录当成单次记录覆盖。
+	if existing.IsRecurring() {
+		err = domain.NewValidation("recurring schedule update is not supported", "cron")
+		return domain.Schedule{}, err
+	}
+	if existing.Revision != candidate.ExpectedRevision {
+		err = domain.NewStaleRevision("schedule revision is stale", "expected_revision")
+		return domain.Schedule{}, err
+	}
+
+	setClauses := make([]string, 0, 5)
+	args := make([]any, 0, 7)
+	if candidate.Title != nil {
+		setClauses = append(setClauses, "title = ?")
+		args = append(args, *candidate.Title)
+	}
+	if candidate.FirstStartLocal != nil {
+		setClauses = append(setClauses, "first_start_local = ?")
+		args = append(args, domain.FormatLocalTime(*candidate.FirstStartLocal))
+	}
+	if candidate.DurationMinutes != nil {
+		if *candidate.DurationMinutes <= 0 {
+			err = domain.NewValidation("duration must be positive", "duration_minutes")
+			return domain.Schedule{}, err
+		}
+		setClauses = append(setClauses, "duration_minutes = ?")
+		args = append(args, *candidate.DurationMinutes)
+	}
+	setClauses = append(setClauses, "updated_at_utc = ?", "revision = revision + 1")
+	args = append(args, formatUTCTime(candidate.UpdatedAtUTC), int64(id), candidate.ExpectedRevision)
+	result, err := tx.ExecContext(ctx, "UPDATE schedules SET "+strings.Join(setClauses, ", ")+" WHERE id = ? AND revision = ?", args...)
+	if err != nil {
+		err = fmt.Errorf("update schedule %d: %w", id, err)
+		return domain.Schedule{}, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		err = fmt.Errorf("read updated schedule %d count: %w", id, err)
+		return domain.Schedule{}, err
+	}
+	if rowsAffected != 1 {
+		err = domain.NewStaleRevision("schedule revision is stale", "expected_revision")
+		return domain.Schedule{}, err
+	}
+
+	schedule, err = scanScheduleRow(tx.QueryRowContext(ctx, "SELECT "+scheduleColumns+" FROM schedules WHERE id = ?", int64(id)))
+	if err != nil {
+		err = fmt.Errorf("select updated schedule %d: %w", id, err)
+		return domain.Schedule{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		err = fmt.Errorf("commit update schedule transaction: %w", err)
+		return domain.Schedule{}, err
+	}
+	if s.logger != nil {
+		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision)
 	}
 	return schedule, nil
 }

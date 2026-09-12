@@ -29,6 +29,42 @@ func DecodeCreateSchedule(data []byte) (CreateScheduleRequest, error) {
 	return request, nil
 }
 
+// DecodeUpdateSchedule 使用 encoding/json/v2 解码更新补丁并记录字段存在性。
+func DecodeUpdateSchedule(data []byte) (UpdateScheduleRequest, error) {
+	var request UpdateScheduleRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		// JSON 格式错误在边界层转换为业务错误，领域层只接收已类型化输入。
+		return UpdateScheduleRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "invalid update schedule JSON",
+			Cause:   err,
+		}
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return UpdateScheduleRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "update schedule JSON must be an object",
+		}
+	}
+
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return UpdateScheduleRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "update schedule JSON must be an object",
+			Cause:   err,
+		}
+	}
+	_, request.TitlePresent = fields["title"]
+	_, request.StartUnixPresent = fields["start_unix"]
+	_, request.EndUnixPresent = fields["end_unix"]
+	_, request.CronPresent = fields["cron"]
+	_, request.CancelPresent = fields["cancel"]
+	_, request.RestorePresent = fields["restore"]
+	_, request.ExpectedRevisionPresent = fields["expected_revision"]
+	return request, nil
+}
+
 // EncodeSchedule 使用 encoding/json/v2 序列化单条日程。
 func EncodeSchedule(schedule ScheduleDTO) ([]byte, error) {
 	return json.Marshal(schedule)

@@ -11,13 +11,17 @@ import (
 
 // fakeStore 用于验证应用服务与存储实现解耦。
 type fakeStore struct {
-	created     domain.Schedule
-	createCalls int
-	getResult   domain.Schedule
-	getErr      error
-	listResult  ListSchedulesResponse
-	listErr     error
-	lastListReq ListSchedulesRequest
+	created      domain.Schedule
+	createCalls  int
+	getResult    domain.Schedule
+	getErr       error
+	updateResult domain.Schedule
+	updateErr    error
+	updateCalls  int
+	updated      domain.ScheduleUpdateCandidate
+	listResult   ListSchedulesResponse
+	listErr      error
+	lastListReq  ListSchedulesRequest
 }
 
 // CreateSchedule 记录候选并返回确定的持久化日程。
@@ -41,6 +45,13 @@ func (s *fakeStore) CreateSchedule(_ context.Context, candidate domain.ScheduleC
 // GetSchedule 返回测试预置的持久化日程。
 func (s *fakeStore) GetSchedule(_ context.Context, _ domain.ScheduleID) (domain.Schedule, error) {
 	return s.getResult, s.getErr
+}
+
+// UpdateSchedule 记录更新候选并返回测试预置的日程。
+func (s *fakeStore) UpdateSchedule(_ context.Context, _ domain.ScheduleID, candidate domain.ScheduleUpdateCandidate) (domain.Schedule, error) {
+	s.updateCalls++
+	s.updated = candidate
+	return s.updateResult, s.updateErr
 }
 
 // ListSchedules 返回测试预置的分页结果并记录请求。
@@ -104,6 +115,151 @@ func TestServiceCreateScheduleRejectsMissingFields(t *testing.T) {
 	}
 	if store.createCalls != 0 {
 		t.Fatalf("store calls = %d, want 0", store.createCalls)
+	}
+}
+
+// TestServiceUpdateScheduleDerivesMissingEnd 验证更新开始时间时按已保存时长补齐结束时间。
+func TestServiceUpdateScheduleDerivesMissingEnd(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, location)
+	existingStart := now.Add(time.Hour)
+	existing := domain.Schedule{
+		ID:              7,
+		Title:           "old",
+		FirstStartLocal: existingStart,
+		DurationMinutes: 60,
+		Revision:        3,
+	}
+	updated := existing
+	updated.Title = "new"
+	updated.FirstStartLocal = now.Add(2 * time.Hour)
+	updated.Revision++
+	newStart := updated.FirstStartLocal.Unix()
+	newTitle := " new "
+	store := &fakeStore{getResult: existing, updateResult: updated}
+	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+
+	got, err := service.UpdateSchedule(context.Background(), existing.ID, UpdateScheduleRequest{
+		Title:            &newTitle,
+		StartUnix:        &newStart,
+		ExpectedRevision: existing.Revision,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSchedule() error = %v", err)
+	}
+	if got.Title != "new" || store.updateCalls != 1 {
+		t.Fatalf("result = %#v, update calls = %d", got, store.updateCalls)
+	}
+	if store.updated.FirstStartLocal == nil || !store.updated.FirstStartLocal.Equal(updated.FirstStartLocal) {
+		t.Fatalf("updated start = %v, want %v", store.updated.FirstStartLocal, updated.FirstStartLocal)
+	}
+	if store.updated.DurationMinutes == nil || *store.updated.DurationMinutes != existing.DurationMinutes {
+		t.Fatalf("updated duration = %v, want %d", store.updated.DurationMinutes, existing.DurationMinutes)
+	}
+	if store.updated.ExpectedRevision != existing.Revision {
+		t.Fatalf("expected revision = %d, want %d", store.updated.ExpectedRevision, existing.Revision)
+	}
+}
+
+// TestServiceUpdateScheduleDerivesMissingStart 验证更新结束时间时按已保存时长补齐开始时间。
+func TestServiceUpdateScheduleDerivesMissingStart(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, location)
+	existing := domain.Schedule{
+		ID:              10,
+		FirstStartLocal: now.Add(time.Hour),
+		DurationMinutes: 60,
+		Revision:        2,
+	}
+	newEnd := now.Add(4 * time.Hour).Unix()
+	store := &fakeStore{getResult: existing, updateResult: existing}
+	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+	if _, err := service.UpdateSchedule(context.Background(), existing.ID, UpdateScheduleRequest{
+		EndUnix:          &newEnd,
+		ExpectedRevision: existing.Revision,
+	}); err != nil {
+		t.Fatalf("UpdateSchedule() error = %v", err)
+	}
+	wantStart := now.Add(3 * time.Hour)
+	if store.updated.FirstStartLocal == nil || !store.updated.FirstStartLocal.Equal(wantStart) {
+		t.Fatalf("updated start = %v, want %v", store.updated.FirstStartLocal, wantStart)
+	}
+	if store.updated.DurationMinutes == nil || *store.updated.DurationMinutes != existing.DurationMinutes {
+		t.Fatalf("updated duration = %v, want %d", store.updated.DurationMinutes, existing.DurationMinutes)
+	}
+}
+
+// TestServiceUpdateScheduleAllowsHistoricalTitleSave 验证历史日程未改端点时仍可重新保存标题。
+func TestServiceUpdateScheduleAllowsHistoricalTitleSave(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, location)
+	existing := domain.Schedule{
+		ID:              8,
+		Title:           "old",
+		FirstStartLocal: time.Date(2020, 1, 1, 10, 0, 0, 0, location),
+		DurationMinutes: 60,
+		Revision:        1,
+	}
+	newTitle := "history"
+	store := &fakeStore{getResult: existing, updateResult: existing}
+	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+	if _, err := service.UpdateSchedule(context.Background(), existing.ID, UpdateScheduleRequest{
+		Title:            &newTitle,
+		ExpectedRevision: existing.Revision,
+	}); err != nil {
+		t.Fatalf("historical UpdateSchedule() error = %v", err)
+	}
+	if store.updated.FirstStartLocal != nil || store.updated.DurationMinutes != nil {
+		t.Fatal("historical title update unexpectedly changed time fields")
+	}
+}
+
+// TestServiceUpdateScheduleRejectsUnsupportedFields 验证单次分支不会吞掉周期、取消和恢复字段。
+func TestServiceUpdateScheduleRejectsUnsupportedFields(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, location)
+	existing := domain.Schedule{ID: 9, FirstStartLocal: now.Add(time.Hour), DurationMinutes: 60, Revision: 1}
+	cron := "0 9 * * *"
+	cancel := false
+	restore := false
+	for name, request := range map[string]UpdateScheduleRequest{
+		"cron":    {Cron: &cron, ExpectedRevision: 1},
+		"cancel":  {Cancel: &cancel, ExpectedRevision: 1},
+		"restore": {Restore: &restore, ExpectedRevision: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeStore{getResult: existing, updateResult: existing}
+			service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+			_, err := service.UpdateSchedule(context.Background(), existing.ID, request)
+			var businessErr *domain.Error
+			if !errors.As(err, &businessErr) || businessErr.Code != domain.Validation {
+				t.Fatalf("error = %#v, want validation", err)
+			}
+			if store.updateCalls != 0 {
+				t.Fatalf("update calls = %d, want 0", store.updateCalls)
+			}
+		})
+	}
+}
+
+// TestServiceUpdateScheduleRejectsOutOfRangeWithoutWrite 验证端点越界时不会调用更新存储。
+func TestServiceUpdateScheduleRejectsOutOfRangeWithoutWrite(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, location)
+	existing := domain.Schedule{ID: 11, FirstStartLocal: now.Add(time.Hour), DurationMinutes: 60, Revision: 1}
+	tooLate := time.Date(2028, 1, 1, 10, 0, 0, 0, location).Unix()
+	store := &fakeStore{getResult: existing, updateResult: existing}
+	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+	_, err := service.UpdateSchedule(context.Background(), existing.ID, UpdateScheduleRequest{
+		StartUnix:        &tooLate,
+		ExpectedRevision: existing.Revision,
+	})
+	var businessErr *domain.Error
+	if !errors.As(err, &businessErr) || businessErr.Code != domain.TimeRangeExceeded {
+		t.Fatalf("error = %#v, want time range error", err)
+	}
+	if store.updateCalls != 0 {
+		t.Fatalf("update calls = %d, want 0", store.updateCalls)
 	}
 }
 
