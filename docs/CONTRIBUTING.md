@@ -28,11 +28,13 @@ TimeCue 采用 `main + dev` 双主干模式：
 5. 创建 Pull Request，目标分支为 `dev`。
 6. 在 PR 中关联 Issue，例如：`Closes #12`。
 7. CI 通过并完成自查后合并到 `dev`。
-8. PR 合并后，由 GitHub 自动关闭关联 Issue。
+8. 目标为 `dev` 的 PR 实际合并后，由仓库的 `close-linked-issues.yml` 根据 PR 描述中的关闭关键词关闭关联 Issue。
 
 最小闭环：
 
-`Issue → Branch(from dev) → Commit → PR(to dev) → CI → Merge dev → Close Issue`
+`Issue → Branch(from dev) → Commit → PR(to dev) → CI → Merge dev → Workflow Close Issue`
+
+关闭 Issue 的自动化只由 PR 合并事件触发，且只处理目标为 `dev` 的已合并 PR；PR 描述需包含 `close`、`fix` 或 `resolve` 的有效变体以及 `#<issue-number>`。普通关闭 PR、目标为 `main` 的 PR 或未包含关闭关键词的 PR 不会触发关闭行为。
 
 ## 模块文档同步
 
@@ -109,7 +111,7 @@ git switch -c feat/12-recurring-reminder
 
 ## CI 规则
 
-向 `dev` 提交 Pull Request 时，会自动执行 Go CI 检查。
+向 `dev` 提交 Pull Request 时，`.github/workflows/ci.yml` 会自动执行 Go CI 检查；当前仓库包含 `go.mod`，因此会执行以下检查：
 
 当前检查包括：
 
@@ -119,8 +121,6 @@ git switch -c feat/12-recurring-reminder
 
 CI 通过后再合并 PR。
 
-## main 分支保护
+## main 分支策略
 
-`main` 只接受本仓库 `dev → main` 的版本发布 PR。
-
-如果其他分支直接向 `main` 提交 PR，GitHub Actions 会自动留言并关闭该 PR。
+`main` 只接受本仓库 `dev → main` 的版本发布 PR，这是仓库的分支策略约束。当前 `.github/workflows` 中没有针对其他来源分支自动留言或关闭 PR 的 workflow；是否阻止不符合策略的 PR 由 GitHub 仓库设置和维护流程负责。
