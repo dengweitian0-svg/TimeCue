@@ -78,9 +78,11 @@
 
 ## 分支与 Pull Request
 
-- `dev` 是默认开发和集成分支；`main` 只用于正式版本发布。
+- `main` 是仓库默认分支和正式发布分支；`dev` 是默认开发和集成分支。
 - 日常开发必须从 `dev` 创建开发分支，普通开发 PR 必须指向 `dev`；只有 `dev` 可以向 `main` 提交版本发布 PR。
-- 一个分支和一个 PR 应只处理一个明确 Issue；PR 应关联 Issue，例如 `Closes #12`。
+- 一个分支和一个 PR 应只处理一个明确 Issue；PR 应在描述中使用 closing keyword 关联 Issue，例如 `Closes #12`。
+- GitHub 原生 closing keywords 只会在 PR 合并到默认分支时自动关闭 Issue；由于 TimeCue 的日常开发 PR 指向 `dev`，仓库使用 `.github/workflows/close-linked-issues.yml` 在 PR 成功合并到 `dev` 后补充关闭同仓库关联 Issue 的行为。
+- 自动关闭 workflow 仅在 PR 实际 merged 时执行，普通关闭 PR 不触发；支持 `close/closes/closed`、`fix/fixes/fixed`、`resolve/resolves/resolved`，大小写不敏感，可带冒号。
 - 发布流程为 `dev → Release PR → main → Tag/Release`；发布 PR 不得临时加入未经 `dev` 验证的新功能。
 - CI 在目标为 `dev` 的 PR 上执行 `gofmt`、`go vet ./...` 和 `go test ./...`；CI 通过并完成自查后再合并。
 
