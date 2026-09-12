@@ -1,0 +1,72 @@
+name: Close Linked Issues
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - dev
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  close-linked-issues:
+    name: Close Linked Issues
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 关闭 PR 关联的 Issue
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const body = context.payload.pull_request.body || "";
+            const pattern = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?[ \t]+#(\d+)\b/gi;
+            const issueNumbers = new Set();
+
+            for (const match of body.matchAll(pattern)) {
+              issueNumbers.add(Number(match[1]));
+            }
+
+            if (issueNumbers.size === 0) {
+              core.info("PR 描述中没有找到可自动关闭的 Issue。");
+              return;
+            }
+
+            for (const issueNumber of issueNumbers) {
+              try {
+                const { data: issue } = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                });
+
+                if (issue.pull_request) {
+                  core.info(`#${issueNumber} 是 Pull Request，跳过。`);
+                  continue;
+                }
+
+                if (issue.state === "closed") {
+                  core.info(`#${issueNumber} 已关闭，跳过。`);
+                  continue;
+                }
+
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  state: "closed",
+                  state_reason: "completed",
+                });
+
+                core.info(`已关闭 Issue #${issueNumber}。`);
+              } catch (error) {
+                if (error.status === 404) {
+                  core.warning(`Issue #${issueNumber} 不存在或当前 workflow 无权访问，已跳过。`);
+                  continue;
+                }
+                throw error;
+              }
+            }
