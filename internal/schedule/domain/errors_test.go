@@ -30,3 +30,15 @@ func TestNewTimeRangeExceededIncludesBounds(t *testing.T) {
 		t.Fatalf("error = %#v", businessErr)
 	}
 }
+
+// TestStaleRevisionErrorUsesBusinessCode 验证版本冲突属于稳定的业务错误分类。
+func TestStaleRevisionErrorUsesBusinessCode(t *testing.T) {
+	err := NewStaleRevision("schedule revision is stale", "expected_revision")
+	var businessErr *Error
+	if !errors.As(err, &businessErr) {
+		t.Fatalf("error = %#v, want domain error", err)
+	}
+	if businessErr.Code != StaleRevision || len(businessErr.Fields) != 1 || businessErr.Fields[0] != "expected_revision" {
+		t.Fatalf("stale revision error = %#v", businessErr)
+	}
+}

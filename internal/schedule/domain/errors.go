@@ -13,6 +13,7 @@ const (
 	Validation        Code = "VALIDATION"
 	TimeRangeExceeded Code = "TIME_RANGE_EXCEEDED"
 	NotFound          Code = "NOT_FOUND"
+	StaleRevision     Code = "STALE_REVISION"
 )
 
 // Error 表示带有机器可读字段和原始原因的业务错误。
@@ -42,6 +43,11 @@ func NewTimeRangeExceeded(fields []string, bounds TimeBounds) error {
 // NewNotFound 创建资源不存在错误。
 func NewNotFound(message string) error {
 	return &Error{Code: NotFound, Message: message}
+}
+
+// NewStaleRevision 创建并发更新使用的版本冲突错误。
+func NewStaleRevision(message string, fields ...string) error {
+	return &Error{Code: StaleRevision, Message: message, Fields: append([]string(nil), fields...)}
 }
 
 // Error 返回包含错误分类、信息和字段的错误文本。

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -74,6 +75,281 @@ func TestCreateAndGetSchedule(t *testing.T) {
 	var businessErr *domain.Error
 	if !errors.As(err, &businessErr) || businessErr.Code != domain.NotFound {
 		t.Fatalf("missing error = %#v, want not found", err)
+	}
+}
+
+// TestUpdateSchedulePreservesIdentityAndIncrementsRevision 验证补丁只修改允许字段并推进版本。
+func TestUpdateSchedulePreservesIdentityAndIncrementsRevision(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	newTitle := "updated schedule"
+	newStart := created.FirstStartLocal.Add(2 * time.Hour)
+	newDuration := 45
+	updated, err := store.UpdateSchedule(context.Background(), created.ID, domain.ScheduleUpdateCandidate{
+		Title:            &newTitle,
+		FirstStartLocal:  &newStart,
+		DurationMinutes:  &newDuration,
+		UpdatedAtUTC:     created.UpdatedAtUTC.Add(time.Minute),
+		ExpectedRevision: created.Revision,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSchedule() error = %v", err)
+	}
+	if updated.ID != created.ID || updated.Title != newTitle || updated.Revision != created.Revision+1 {
+		t.Fatalf("updated schedule = %#v", updated)
+	}
+	if !updated.FirstStartLocal.Equal(newStart) || updated.DurationMinutes != newDuration {
+		t.Fatalf("updated time fields = %v/%d", updated.FirstStartLocal, updated.DurationMinutes)
+	}
+	if updated.Open != created.Open || updated.Cron != nil || !updated.OriginalStartLocal.Equal(created.OriginalStartLocal) ||
+		!updated.CreatedAtUTC.Equal(created.CreatedAtUTC) || !updated.UpdatedAtUTC.Equal(created.UpdatedAtUTC.Add(time.Minute)) {
+		t.Fatalf("immutable or unrelated fields changed: before=%#v after=%#v", created, updated)
+	}
+}
+
+// TestUpdateScheduleRejectsStaleRevisionWithoutWrite 验证旧版本更新返回业务错误且不产生任何写入。
+func TestUpdateScheduleRejectsStaleRevisionWithoutWrite(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	newTitle := "must not win"
+	_, err = store.UpdateSchedule(context.Background(), created.ID, domain.ScheduleUpdateCandidate{
+		Title:            &newTitle,
+		UpdatedAtUTC:     created.UpdatedAtUTC.Add(time.Minute),
+		ExpectedRevision: created.Revision + 1,
+	})
+	var businessErr *domain.Error
+	if !errors.As(err, &businessErr) || businessErr.Code != domain.StaleRevision {
+		t.Fatalf("error = %#v, want stale revision", err)
+	}
+	got, err := store.GetSchedule(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule() error = %v", err)
+	}
+	if got.Title != created.Title || got.Revision != created.Revision || !got.UpdatedAtUTC.Equal(created.UpdatedAtUTC) {
+		t.Fatalf("stale update changed schedule: %#v", got)
+	}
+}
+
+// TestUpdateScheduleCompetesOnRevision 验证并发使用同一版本时只有一个更新成功。
+func TestUpdateScheduleCompetesOnRevision(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	var wait sync.WaitGroup
+	results := make(chan error, 2)
+	for _, title := range []string{"first", "second"} {
+		title := title
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, updateErr := store.UpdateSchedule(context.Background(), created.ID, domain.ScheduleUpdateCandidate{
+				Title:            &title,
+				UpdatedAtUTC:     created.UpdatedAtUTC.Add(time.Minute),
+				ExpectedRevision: created.Revision,
+			})
+			results <- updateErr
+		}()
+	}
+	wait.Wait()
+	close(results)
+	var successes, stale int
+	for updateErr := range results {
+		if updateErr == nil {
+			successes++
+			continue
+		}
+		var businessErr *domain.Error
+		if errors.As(updateErr, &businessErr) && businessErr.Code == domain.StaleRevision {
+			stale++
+		}
+	}
+	if successes != 1 || stale != 1 {
+		t.Fatalf("concurrent results = successes %d, stale %d", successes, stale)
+	}
+	got, err := store.GetSchedule(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule() error = %v", err)
+	}
+	if got.Revision != created.Revision+1 {
+		t.Fatalf("revision = %d, want %d", got.Revision, created.Revision+1)
+	}
+}
+
+// TestUpdateScheduleRollsBackOnFailure 验证更新后的回读失败会撤销事务中的修改。
+func TestUpdateScheduleRollsBackOnFailure(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	if _, err := store.db.Exec(`
+		CREATE TRIGGER remove_schedule_after_update
+		AFTER UPDATE ON schedules
+		BEGIN
+			DELETE FROM schedules WHERE id = NEW.id;
+		END`); err != nil {
+		t.Fatalf("create trigger error = %v", err)
+	}
+	newTitle := "trigger failure"
+	if _, err := store.UpdateSchedule(context.Background(), created.ID, domain.ScheduleUpdateCandidate{
+		Title:            &newTitle,
+		UpdatedAtUTC:     created.UpdatedAtUTC.Add(time.Minute),
+		ExpectedRevision: created.Revision,
+	}); err == nil {
+		t.Fatal("UpdateSchedule() error = nil")
+	}
+	got, err := store.GetSchedule(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule() after rollback error = %v", err)
+	}
+	if got.Title != created.Title || got.Revision != created.Revision {
+		t.Fatalf("rolled-back schedule = %#v", got)
+	}
+}
+
+// TestUpdateScheduleRejectsCronConversion 验证存储层也拦截显式 cron 类型转换。
+func TestUpdateScheduleRejectsCronConversion(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	cron := "0 9 * * *"
+	_, err = store.UpdateSchedule(context.Background(), created.ID, domain.ScheduleUpdateCandidate{
+		Cron:             &cron,
+		CronPresent:      true,
+		ExpectedRevision: created.Revision,
+	})
+	var businessErr *domain.Error
+	if !errors.As(err, &businessErr) || businessErr.Code != domain.Validation {
+		t.Fatalf("error = %#v, want validation", err)
+	}
+}
+
+// TestDeleteScheduleReturnsTitleAndCascades 验证永久删除返回标题并清理关联记录。
+func TestDeleteScheduleReturnsTitleAndCascades(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	if _, err := store.db.Exec(`
+		INSERT INTO occurrence_overrides(schedule_id, occurrence_local, open) VALUES (?, '2026-01-02T10:00:00+08:00', 0);
+		INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (?, '2026-01-02T10:00:00+08:00', '2026-01-02T02:00:00Z', 'sent');`, created.ID, created.ID); err != nil {
+		t.Fatalf("insert related records error = %v", err)
+	}
+	title, err := store.DeleteSchedule(context.Background(), created.ID, created.Revision)
+	if err != nil || title != created.Title {
+		t.Fatalf("DeleteSchedule() = %q, %v", title, err)
+	}
+	for _, table := range []string{"occurrence_overrides", "reminder_attempts"} {
+		var count int
+		if err := store.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
+			t.Fatalf("count %s error = %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s count = %d, want 0", table, count)
+		}
+	}
+	if _, err := store.GetSchedule(context.Background(), created.ID); err == nil {
+		t.Fatal("GetSchedule() after deletion error = nil")
+	}
+}
+
+// TestDeleteScheduleReturnsTitleOnStaleRevision 验证版本冲突保留标题且不删除日程。
+func TestDeleteScheduleReturnsTitleOnStaleRevision(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	title, err := store.DeleteSchedule(context.Background(), created.ID, created.Revision+1)
+	var businessErr *domain.Error
+	if title != created.Title || !errors.As(err, &businessErr) || businessErr.Code != domain.StaleRevision {
+		t.Fatalf("DeleteSchedule() = %q, %#v", title, err)
+	}
+	if _, err := store.GetSchedule(context.Background(), created.ID); err != nil {
+		t.Fatalf("GetSchedule() after stale delete error = %v", err)
+	}
+}
+
+// TestDeleteScheduleRollsBackOnTriggerFailure 验证删除触发器失败时回滚物理删除和级联清理。
+func TestDeleteScheduleRollsBackOnTriggerFailure(t *testing.T) {
+	store := openTestStore(t)
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	if _, err := store.db.Exec(`
+		CREATE TRIGGER fail_schedule_delete
+		BEFORE DELETE ON schedules
+		WHEN OLD.title = 'test schedule'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced delete failure');
+		END`); err != nil {
+		t.Fatalf("create trigger error = %v", err)
+	}
+	title, err := store.DeleteSchedule(context.Background(), created.ID, created.Revision)
+	if title != created.Title || err == nil {
+		t.Fatalf("DeleteSchedule() = %q, %v; want title and error", title, err)
+	}
+	got, err := store.GetSchedule(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule() after rollback error = %v", err)
+	}
+	if got.Title != created.Title || got.Revision != created.Revision {
+		t.Fatalf("rolled-back schedule = %#v", got)
+	}
+}
+
+// TestDeleteScheduleReturnsEmptyTitleWhenMissing 验证不存在日程时标题为空并返回 NOT_FOUND。
+func TestDeleteScheduleReturnsEmptyTitleWhenMissing(t *testing.T) {
+	store := openTestStore(t)
+	title, err := store.DeleteSchedule(context.Background(), 999, 1)
+	var businessErr *domain.Error
+	if title != "" || !errors.As(err, &businessErr) || businessErr.Code != domain.NotFound {
+		t.Fatalf("DeleteSchedule() = %q, %#v", title, err)
+	}
+}
+
+// TestDeleteSchedulePersistsAcrossReopen 验证删除提交后重开数据库仍然读不到日程。
+func TestDeleteSchedulePersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "timecue.db")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, err := OpenStore(context.Background(), path, logger)
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	if _, err := store.DeleteSchedule(context.Background(), created.ID, created.Revision); err != nil {
+		t.Fatalf("DeleteSchedule() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("first Store.Close() error = %v", err)
+	}
+	reopened, err := OpenStore(context.Background(), path, logger)
+	if err != nil {
+		t.Fatalf("reopen OpenStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	if _, err := reopened.GetSchedule(context.Background(), created.ID); err == nil {
+		t.Fatal("reopened GetSchedule() error = nil after deletion")
+	} else {
+		var businessErr *domain.Error
+		if !errors.As(err, &businessErr) || businessErr.Code != domain.NotFound {
+			t.Fatalf("reopened error = %#v, want not found", err)
+		}
 	}
 }
 
