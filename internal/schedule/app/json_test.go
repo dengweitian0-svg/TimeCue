@@ -51,6 +51,50 @@ func TestDecodeCreateScheduleRejectsInvalidNumbers(t *testing.T) {
 	}
 }
 
+// TestDecodeUpdateScheduleTracksFieldPresence 验证更新 JSON 能区分缺失字段和显式携带字段。
+func TestDecodeUpdateScheduleTracksFieldPresence(t *testing.T) {
+	request, err := DecodeUpdateSchedule([]byte(`{"cron":null,"cancel":false,"expected_revision":3}`))
+	if err != nil {
+		t.Fatalf("DecodeUpdateSchedule() error = %v", err)
+	}
+	if !request.CronPresent || request.Cron != nil {
+		t.Fatalf("cron presence/value = %v/%v", request.CronPresent, request.Cron)
+	}
+	if !request.CancelPresent || request.Cancel == nil || *request.Cancel {
+		t.Fatalf("cancel presence/value = %v/%v", request.CancelPresent, request.Cancel)
+	}
+	if !request.ExpectedRevisionPresent || request.ExpectedRevision != 3 {
+		t.Fatalf("expected revision = %d/%v", request.ExpectedRevision, request.ExpectedRevisionPresent)
+	}
+}
+
+// TestDecodeUpdateScheduleRejectsInvalidNumbers 验证更新 JSON 的端点和版本拒绝非整数表示。
+func TestDecodeUpdateScheduleRejectsInvalidNumbers(t *testing.T) {
+	for _, input := range []string{
+		`{"start_unix":1.0,"expected_revision":1}`,
+		`{"end_unix":"60","expected_revision":1}`,
+		`{"expected_revision":1.0}`,
+		`null`,
+	} {
+		_, err := DecodeUpdateSchedule([]byte(input))
+		var businessErr *domain.Error
+		if !errors.As(err, &businessErr) || businessErr.Code != domain.Validation {
+			t.Errorf("DecodeUpdateSchedule(%q) error = %#v, want validation", input, err)
+		}
+	}
+}
+
+// TestDecodeDeleteScheduleTracksExpectedRevision 验证删除 JSON 保留版本字段存在性。
+func TestDecodeDeleteScheduleTracksExpectedRevision(t *testing.T) {
+	request, err := DecodeDeleteSchedule([]byte(`{"expected_revision":2}`))
+	if err != nil {
+		t.Fatalf("DecodeDeleteSchedule() error = %v", err)
+	}
+	if !request.ExpectedRevisionPresent || request.ExpectedRevision != 2 {
+		t.Fatalf("delete request = %#v", request)
+	}
+}
+
 // TestEncodeListSchedulesOmitsEmptyCursor 验证分页结束时不输出空游标。
 func TestEncodeListSchedulesOmitsEmptyCursor(t *testing.T) {
 	data, err := EncodeListSchedules(ListSchedulesResponse{Items: []ScheduleDTO{{ID: 1, Title: "one"}}})

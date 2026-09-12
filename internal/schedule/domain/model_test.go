@@ -23,3 +23,29 @@ func TestScheduleCandidateKeepsOriginalStart(t *testing.T) {
 		t.Fatalf("DurationMinutes = %d, want 60", candidate.DurationMinutes)
 	}
 }
+
+// TestScheduleUpdateCandidateDistinguishesMissingCron 验证 cron 的存在性不由值是否为 nil 决定。
+func TestScheduleUpdateCandidateDistinguishesMissingCron(t *testing.T) {
+	var candidate ScheduleUpdateCandidate
+	if candidate.CronPresent {
+		t.Fatal("zero update candidate unexpectedly carries cron")
+	}
+	candidate.CronPresent = true
+	if candidate.Cron != nil {
+		t.Fatalf("explicit nil cron = %v, want nil value", candidate.Cron)
+	}
+	if !candidate.CronPresent {
+		t.Fatal("explicit cron presence was lost")
+	}
+}
+
+// TestScheduleIsRecurringUsesCronPresence 验证日程类型由周期规则是否存在决定。
+func TestScheduleIsRecurringUsesCronPresence(t *testing.T) {
+	if (Schedule{}).IsRecurring() {
+		t.Fatal("single schedule reported as recurring")
+	}
+	cron := "0 9 * * *"
+	if !(Schedule{Cron: &cron}).IsRecurring() {
+		t.Fatal("recurring schedule reported as single")
+	}
+}
