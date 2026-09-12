@@ -6,7 +6,7 @@
 
 TimeCue 采用 `main + dev` 双主干模式：
 
-- `main`：稳定分支，只用于版本级更新和正式发布，不作为日常开发分支。
+- `main`：稳定分支，只用于版本级更新和正式发布，不作为日常开发分支；同时保持为仓库默认分支。
 - `dev`：日常开发集成分支，功能开发、Bug 修复、重构、文档和测试等工作应基于 `dev` 开始，并最终合并回 `dev`。
 
 推荐关系：
@@ -26,13 +26,38 @@ TimeCue 采用 `main + dev` 双主干模式：
 3. 从 `dev` 创建开发分支。
 4. 完成开发并提交代码。
 5. 创建 Pull Request，目标分支为 `dev`。
-6. 在 PR 中关联 Issue，例如：`Closes #12`。
+6. 在 PR 描述中使用 closing keyword 关联 Issue，例如：`Closes #12`。
 7. CI 通过并完成自查后合并到 `dev`。
-8. PR 合并后，由 GitHub 自动关闭关联 Issue。
+8. PR 成功合并后，由仓库自定义 GitHub Actions 自动关闭关联 Issue。
 
 最小闭环：
 
 `Issue → Branch(from dev) → Commit → PR(to dev) → CI → Merge dev → Close Issue`
+
+### Issue 自动关闭规则
+
+GitHub 原生的 closing keywords 仅在 PR 合并到仓库默认分支时自动关闭 Issue。TimeCue 的默认分支为 `main`，而日常开发 PR 的目标分支为 `dev`，因此不能直接依赖 GitHub 原生机制。
+
+仓库通过 `.github/workflows/close-linked-issues.yml` 补充这一行为：
+
+- 仅监听目标分支为 `dev` 的 PR。
+- 仅在 PR 实际 merged 时执行；普通关闭 PR 不会关闭 Issue。
+- 从 PR 描述中解析 closing keywords，并关闭同仓库对应 Issue。
+- 支持 `close` / `closes` / `closed`、`fix` / `fixes` / `fixed`、`resolve` / `resolves` / `resolved`，大小写不敏感，可带冒号。
+- 已关闭 Issue、无效 Issue 或引用到 Pull Request 编号时会跳过，不影响其他 Issue 处理。
+
+推荐写法：
+
+```markdown
+Closes #12
+```
+
+也可以一次关联多个 Issue：
+
+```markdown
+Closes #12
+Fixes #18
+```
 
 ## 版本发布流程
 
@@ -94,7 +119,7 @@ git switch -c feat/12-recurring-reminder
 - 来源：`feat/*`、`fix/*`、`refactor/*`、`docs/*`、`test/*`、`chore/*`
 - 目标：`dev`
 - 一个 PR 尽量只解决一个明确问题
-- 应关联对应 Issue
+- 应在 PR 描述中使用 closing keyword 关联对应 Issue
 
 ### 版本发布 PR
 
