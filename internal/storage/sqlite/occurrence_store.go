@@ -166,6 +166,7 @@ func (s *Store) UpdateOccurrence(ctx context.Context, id domain.ScheduleID, cand
 		err = fmt.Errorf("commit update occurrence transaction: %w", err)
 		return domain.OccurrenceUpdateResult{}, err
 	}
+	s.bumpGeneration()
 	if s.logger != nil {
 		s.logger.Info("occurrence updated", "schedule_id", id, "original_date", candidate.OriginalDate, "revision", updatedRevision)
 	}
@@ -257,6 +258,7 @@ func (s *Store) CancelOccurrence(ctx context.Context, id domain.ScheduleID, cand
 	if err = tx.Commit(); err != nil {
 		return domain.OccurrenceActionResult{}, fmt.Errorf("commit cancel occurrence transaction: %w", err)
 	}
+	s.bumpGeneration()
 	if s.logger != nil {
 		s.logger.Info("occurrence cancelled", "schedule_id", id, "original_date", candidate.OriginalDate, "revision", updatedRevision)
 	}
@@ -351,6 +353,7 @@ func (s *Store) RestoreOccurrence(ctx context.Context, id domain.ScheduleID, can
 		if err = tx.Commit(); err != nil {
 			return domain.OccurrenceActionResult{}, fmt.Errorf("commit restore occurrence transaction: %w", err)
 		}
+		s.bumpGeneration()
 		if s.logger != nil {
 			s.logger.Info("occurrence restored", "schedule_id", id, "original_date", candidate.OriginalDate, "revision", updatedRevision)
 		}
@@ -363,6 +366,7 @@ func (s *Store) RestoreOccurrence(ctx context.Context, id domain.ScheduleID, can
 	if err = tx.Commit(); err != nil {
 		return domain.OccurrenceActionResult{}, fmt.Errorf("commit restore occurrence transaction: %w", err)
 	}
+	s.bumpGeneration()
 	if s.logger != nil {
 		s.logger.Info("occurrence restored", "schedule_id", id, "original_date", candidate.OriginalDate, "revision", updatedRevision)
 	}

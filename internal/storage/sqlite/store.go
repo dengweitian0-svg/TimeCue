@@ -97,6 +97,7 @@ func (s *Store) CreateSchedule(ctx context.Context, candidate domain.ScheduleCan
 		err = fmt.Errorf("commit create schedule transaction: %w", err)
 		return domain.Schedule{}, err
 	}
+	s.bumpGeneration()
 	if s.logger != nil {
 		s.logger.Info("schedule created", "schedule_id", schedule.ID)
 	}
@@ -217,6 +218,7 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		err = fmt.Errorf("commit update schedule transaction: %w", err)
 		return domain.Schedule{}, err
 	}
+	s.bumpGeneration()
 	if s.logger != nil {
 		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision, "month_end_policy", schedule.MonthEndPolicy)
 	}
@@ -283,6 +285,7 @@ func (s *Store) DeleteSchedule(ctx context.Context, id domain.ScheduleID, expect
 		err = fmt.Errorf("commit delete schedule transaction: %w", err)
 		return title, err
 	}
+	s.bumpGeneration()
 	if s.logger != nil {
 		s.logger.Info("schedule deleted", "schedule_id", id, "revision", expectedRevision)
 	}
