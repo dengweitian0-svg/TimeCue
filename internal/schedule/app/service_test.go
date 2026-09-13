@@ -20,6 +20,8 @@ type fakeStore struct {
 	updateCalls         int
 	updated             domain.ScheduleUpdateCandidate
 	override            domain.OccurrenceOverride
+	overrides           []domain.OccurrenceOverride
+	overrideListErr     error
 	overrideErr         error
 	occurrence          domain.OccurrenceUpdateResult
 	occurrenceErr       error
@@ -73,9 +75,9 @@ func (s *fakeStore) GetOccurrenceOverride(_ context.Context, _ domain.ScheduleID
 	return s.override, s.overrideErr
 }
 
-// ListOccurrenceOverrides 返回测试用例未使用的空例外列表。
+// ListOccurrenceOverrides 返回测试预置的例外列表。
 func (s *fakeStore) ListOccurrenceOverrides(_ context.Context, _ domain.ScheduleID) ([]domain.OccurrenceOverride, error) {
-	return nil, nil
+	return s.overrides, s.overrideListErr
 }
 
 // UpdateOccurrence 记录完整例外候选并返回测试预置结果。

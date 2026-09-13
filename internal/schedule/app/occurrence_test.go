@@ -125,6 +125,24 @@ func TestServiceUpdateOccurrenceRejectsInvalidPatchBeforeWrite(t *testing.T) {
 	}
 }
 
+// TestServiceUpdateScheduleReportsPreservedOverrides 验证整组编辑返回未删除的例外数量。
+func TestServiceUpdateScheduleReportsPreservedOverrides(t *testing.T) {
+	store, clock, schedule := occurrenceServiceFixture()
+	store.overrides = []domain.OccurrenceOverride{{ScheduleID: schedule.ID, OriginalDate: "2026-09-07"}}
+	store.updateResult = schedule
+	cron := "30 11 * * 1"
+	result, err := NewService(store, clock).UpdateSchedule(context.Background(), schedule.ID, UpdateScheduleRequest{Cron: &cron, ExpectedRevision: schedule.Revision})
+	if err != nil {
+		t.Fatalf("UpdateSchedule() error = %v", err)
+	}
+	if result.PreservedOverrideCount != 1 {
+		t.Fatalf("preserved override count = %d, want 1", result.PreservedOverrideCount)
+	}
+	if store.occurrenceCalls != 0 || store.updateCalls != 1 {
+		t.Fatalf("store calls = occurrence %d, schedule %d", store.occurrenceCalls, store.updateCalls)
+	}
+}
+
 // TestDecodeAndEncodeOccurrenceJSON 验证例外请求和实际发生 DTO 的 JSON 字段存在性。
 func TestDecodeAndEncodeOccurrenceJSON(t *testing.T) {
 	request, err := DecodeUpdateOccurrence([]byte(`{"original_date":"2026-09-07","start_unix":0,"title":"changed","notes":"","expected_revision":3}`))

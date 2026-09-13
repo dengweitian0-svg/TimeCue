@@ -104,18 +104,19 @@ type DeleteScheduleRequest struct {
 
 // ScheduleDTO 表示对外返回的日程视图。
 type ScheduleDTO struct {
-	ID              int64     `json:"id"`
-	Title           string    `json:"title"`
-	Notes           string    `json:"notes"`
-	Cron            *string   `json:"cron"`
-	UntilDateLocal  *string   `json:"until_date_local"`
-	MonthEndPolicy  *string   `json:"month_end_policy"`
-	Open            bool      `json:"open"`
-	FirstStartLocal string    `json:"first_start_local"`
-	DurationMinutes int       `json:"duration_minutes"`
-	Revision        int64     `json:"revision"`
-	CreatedAtUTC    time.Time `json:"created_at_utc"`
-	UpdatedAtUTC    time.Time `json:"updated_at_utc"`
+	ID                     int64     `json:"id"`
+	Title                  string    `json:"title"`
+	Notes                  string    `json:"notes"`
+	Cron                   *string   `json:"cron"`
+	UntilDateLocal         *string   `json:"until_date_local"`
+	MonthEndPolicy         *string   `json:"month_end_policy"`
+	Open                   bool      `json:"open"`
+	FirstStartLocal        string    `json:"first_start_local"`
+	DurationMinutes        int       `json:"duration_minutes"`
+	Revision               int64     `json:"revision"`
+	PreservedOverrideCount int       `json:"preserved_override_count"`
+	CreatedAtUTC           time.Time `json:"created_at_utc"`
+	UpdatedAtUTC           time.Time `json:"updated_at_utc"`
 }
 
 // OccurrenceDTO 表示一次发生的实际时间和完整文本快照。

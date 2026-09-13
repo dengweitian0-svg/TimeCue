@@ -147,6 +147,16 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 		// 预读发现旧版本时不调用写端口；事务内仍会复查以防预读后的竞争。
 		return ScheduleDTO{}, domain.NewStaleRevision("schedule revision is stale", "expected_revision")
 	}
+	preservedOverrideCount := 0
+	if existing.IsRecurring() {
+		if occurrenceReader, supportsOccurrences := s.store.(OccurrenceReader); supportsOccurrences {
+			overrides, readErr := occurrenceReader.ListOccurrenceOverrides(ctx, id)
+			if readErr != nil {
+				return ScheduleDTO{}, fmt.Errorf("read occurrence overrides for schedule %d: %w", id, readErr)
+			}
+			preservedOverrideCount = len(overrides)
+		}
+	}
 
 	snapshot, err := s.clock.Snapshot(ctx)
 	if err != nil {
@@ -185,7 +195,9 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("update schedule %d: %w", id, err)
 	}
-	return scheduleDTO(updated), nil
+	result := scheduleDTO(updated)
+	result.PreservedOverrideCount = preservedOverrideCount
+	return result, nil
 }
 
 // DeleteSchedule 永久删除日程并保留存储层返回的标题和失败上下文。
