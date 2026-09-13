@@ -20,7 +20,13 @@ func recurrenceLocation(t *testing.T, name string) *time.Location {
 
 // recurrenceSchedule 构造用于纯计算的重复定义。
 func recurrenceSchedule(cron, until string, first time.Time) Schedule {
-	return Schedule{ID: 7, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: first, DurationMinutes: 90}
+	schedule := Schedule{ID: 7, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: first, DurationMinutes: 90}
+	rule, err := ParseCron(cron)
+	if err != nil {
+		panic(err)
+	}
+	schedule.MonthEndPolicy = monthEndPolicyForRule(rule)
+	return schedule
 }
 
 // TestParseCronStrict 验证仅支持每日和每周的严格五字段规则。
@@ -166,5 +172,117 @@ func TestValidateRecurring(t *testing.T) {
 	s.UntilDateLocal = &badDate
 	if _, _, err := NextStart(s, start, loc); err == nil {
 		t.Fatal("accepted invalid calendar date")
+	}
+}
+
+// TestMonthlyClampOccurrences 验证月末回退、次月恢复、边界查询和区间展开。
+func TestMonthlyClampOccurrences(t *testing.T) {
+	loc := time.UTC
+	first := time.Date(2027, time.January, 31, 9, 0, 0, 0, loc)
+	schedule := recurrenceSchedule("0 9 31 * *", "2027-05-31", first)
+
+	got, err := Expand(schedule, time.Date(2027, 1, 1, 0, 0, 0, 0, loc), time.Date(2027, 6, 1, 0, 0, 0, 0, loc), loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDays := []time.Time{
+		time.Date(2027, 1, 31, 9, 0, 0, 0, loc),
+		time.Date(2027, 2, 28, 9, 0, 0, 0, loc),
+		time.Date(2027, 3, 31, 9, 0, 0, 0, loc),
+		time.Date(2027, 4, 30, 9, 0, 0, 0, loc),
+		time.Date(2027, 5, 31, 9, 0, 0, 0, loc),
+	}
+	if len(got) != len(wantDays) {
+		t.Fatalf("occurrences = %v, want %v", got, wantDays)
+	}
+	for index, occurrence := range got {
+		if !occurrence.StartLocal.Equal(wantDays[index]) || occurrence.EndLocal.Sub(occurrence.StartLocal) != 90*time.Minute {
+			t.Errorf("occurrence %d = %+v, want start %v", index, occurrence, wantDays[index])
+		}
+	}
+
+	for _, tc := range []struct {
+		name  string
+		after time.Time
+		want  time.Time
+	}{
+		{name: "before first", after: first.Add(-time.Minute), want: first},
+		{name: "equal first", after: first, want: time.Date(2027, 2, 28, 9, 0, 0, 0, loc)},
+		{name: "after february", after: time.Date(2027, 2, 28, 10, 0, 0, 0, loc), want: time.Date(2027, 3, 31, 9, 0, 0, 0, loc)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok, err := NextBase(schedule, tc.after, loc)
+			if err != nil || !ok || !got.StartLocal.Equal(tc.want) {
+				t.Fatalf("NextBase = %+v, %v, %v; want %v", got, ok, err, tc.want)
+			}
+		})
+	}
+
+	window, err := Expand(schedule, time.Date(2027, 2, 28, 0, 0, 0, 0, loc), time.Date(2027, 3, 31, 9, 0, 0, 0, loc), loc)
+	if err != nil || len(window) != 1 || !window[0].StartLocal.Equal(time.Date(2027, 2, 28, 9, 0, 0, 0, loc)) {
+		t.Fatalf("exclusive window = %+v, %v", window, err)
+	}
+}
+
+// TestMonthlyLeapYearsAndOriginalDay 验证 29/30/31 日、闰年和远期世纪年份的月末计算。
+func TestMonthlyLeapYearsAndOriginalDay(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cron       string
+		first      time.Time
+		wantSecond time.Time
+	}{
+		{"day 29", "0 9 29 * *", time.Date(2027, 1, 29, 9, 0, 0, 0, time.UTC), time.Date(2027, 2, 28, 9, 0, 0, 0, time.UTC)},
+		{"day 30", "0 9 30 * *", time.Date(2027, 1, 30, 9, 0, 0, 0, time.UTC), time.Date(2027, 2, 28, 9, 0, 0, 0, time.UTC)},
+		{"leap year", "0 9 31 * *", time.Date(2028, 1, 31, 9, 0, 0, 0, time.UTC), time.Date(2028, 2, 29, 9, 0, 0, 0, time.UTC)},
+		{"year 2000", "0 9 31 * *", time.Date(2000, 1, 31, 9, 0, 0, 0, time.UTC), time.Date(2000, 2, 29, 9, 0, 0, 0, time.UTC)},
+		{"year 2100", "0 9 31 * *", time.Date(2100, 1, 31, 9, 0, 0, 0, time.UTC), time.Date(2100, 2, 28, 9, 0, 0, 0, time.UTC)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schedule := recurrenceSchedule(tc.cron, tc.first.AddDate(0, 2, 0).Format(time.DateOnly), tc.first)
+			got, ok, err := NextBase(schedule, tc.first, time.UTC)
+			if err != nil || !ok || !got.StartLocal.Equal(tc.wantSecond) {
+				t.Fatalf("NextBase = %+v, %v, %v; want %v", got, ok, err, tc.wantSecond)
+			}
+		})
+	}
+}
+
+// TestMonthlyPolicyValidation 验证月规则和月末策略必须成对出现。
+func TestMonthlyPolicyValidation(t *testing.T) {
+	first := time.Date(2027, 1, 31, 9, 0, 0, 0, time.UTC)
+	monthly := recurrenceSchedule("0 9 31 * *", "2027-03-31", first)
+	monthly.MonthEndPolicy = nil
+	if _, _, err := NextBase(monthly, first, time.UTC); err == nil {
+		t.Fatal("monthly recurrence without policy was accepted")
+	}
+	daily := recurrenceSchedule("0 9 * * *", "2027-03-31", first)
+	policy := MonthEndPolicyClamp
+	daily.MonthEndPolicy = &policy
+	if _, _, err := NextBase(daily, first, time.UTC); err == nil {
+		t.Fatal("daily recurrence with month-end policy was accepted")
+	}
+}
+
+// TestMonthlyDSTResolution 验证月规则沿用缺失墙钟后移和实际持续时长语义。
+func TestMonthlyDSTResolution(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := time.Date(2026, time.March, 8, 2, 30, 0, 0, loc)
+	schedule := recurrenceSchedule("30 2 8 * *", "2026-04-08", first)
+
+	got, ok, err := NextBase(schedule, first.Add(-time.Hour), loc)
+	if err != nil || !ok || got.StartLocal.Format(time.RFC3339) != "2026-03-08T03:30:00-04:00" {
+		t.Fatalf("missing monthly wall time = %+v, %v, %v", got, ok, err)
+	}
+	if got.EndLocal.Sub(got.StartLocal) != 90*time.Minute {
+		t.Fatalf("monthly duration = %s", got.EndLocal.Sub(got.StartLocal))
+	}
+
+	next, ok, err := NextStart(schedule, got.StartLocal, loc)
+	if err != nil || !ok || next.Format(time.RFC3339) != "2026-04-08T02:30:00-04:00" {
+		t.Fatalf("next monthly occurrence = %v, %v, %v", next, ok, err)
 	}
 }
