@@ -25,12 +25,12 @@ func recurrenceSchedule(cron, until string, first time.Time) Schedule {
 
 // TestParseCronStrict 验证仅支持每日和每周的严格五字段规则。
 func TestParseCronStrict(t *testing.T) {
-	for _, value := range []string{"0 0 * * *", "59 23 * * 0", "30 9 * * 6", "  05\t09 * * *  "} {
+	for _, value := range []string{"0 0 * * *", "59 23 * * 0", "30 9 * * 6", "  05\t09 * * *  ", "0 9 1 * *", "0 9 29 * *", "0 9 30 * *", "0 9 31 * *"} {
 		if _, err := ParseCron(value); err != nil {
 			t.Errorf("%q: %v", value, err)
 		}
 	}
-	for _, value := range []string{"", "0 9 * *", "0 0 9 * * *", "* 9 * * *", "0 * * * *", "60 9 * * *", "0 24 * * *", "0 9 1 * *", "0 9 * 1 *", "0 9 * * 7", "0 9 * * MON", "0 9 * * 1-5", "0 9 * * 1,2", "*/5 9 * * *", "+1 9 * * *", "-1 9 * * *", "1.0 9 * * *", "@daily", "0 9 * * ?"} {
+	for _, value := range []string{"", "0 9 * *", "0 0 9 * * *", "* 9 * * *", "0 * * * *", "60 9 * * *", "0 24 * * *", "0 9 0 * *", "0 9 32 * *", "0 9 1 * 0", "0 9 * 1 *", "0 9 * * 7", "0 9 * * MON", "0 9 * * 1-5", "0 9 * * 1,2", "0 9 1-2 * *", "0 9 1,2 * *", "0 9 */2 * *", "*/5 9 * * *", "+1 9 * * *", "-1 9 * * *", "1.0 9 * * *", "@daily", "0 9 * * ?"} {
 		if _, err := ParseCron(value); err == nil {
 			t.Errorf("accepted %q", value)
 		}

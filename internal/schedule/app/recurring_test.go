@@ -59,12 +59,15 @@ func TestServiceRecurringCreate(t *testing.T) {
 
 // TestServiceRecurringCreateRejectsBeforeWrite 验证非法规则、缺失截止和单次携带重复字段均零写入。
 func TestServiceRecurringCreateRejectsBeforeWrite(t *testing.T) {
-	for _, name := range []string{"bad cron", "missing until", "null cron", "single cutoff", "null cutoff", "cutoff before first"} {
+	for _, name := range []string{"bad cron", "monthly cron", "missing until", "null cron", "single cutoff", "null cutoff", "cutoff before first"} {
 		t.Run(name, func(t *testing.T) {
 			s, clock, request := recurringFixture()
 			switch name {
 			case "bad cron":
 				value := "*/5 * * * *"
+				request.Cron = &value
+			case "monthly cron":
+				value := "0 9 31 * *"
 				request.Cron = &value
 			case "missing until":
 				request.UntilUnix = nil
@@ -115,7 +118,7 @@ func TestServiceRecurringCronOnlyPreservesFields(t *testing.T) {
 
 // TestServiceRecurringUpdateRejectsBeforeWrite 验证非法合并状态、清空字段和旧版本不调用写端口。
 func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
-	for _, name := range []string{"bad cron", "clear cron", "clear until", "old revision", "early cutoff", "start after cutoff", "single cutoff"} {
+	for _, name := range []string{"bad cron", "monthly cron", "monthly to weekly", "clear cron", "clear until", "old revision", "early cutoff", "start after cutoff", "single cutoff"} {
 		t.Run(name, func(t *testing.T) {
 			s, clock, create := recurringFixture()
 			service := NewService(s, clock)
@@ -129,6 +132,11 @@ func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
 			switch name {
 			case "bad cron":
 				cron = "0 9 * * 7"
+			case "monthly cron":
+				cron = "0 9 31 * *"
+			case "monthly to weekly":
+				monthly := "0 9 31 * *"
+				s.getResult.Cron = &monthly
 			case "clear cron":
 				request.Cron = nil
 				request.CronPresent = true

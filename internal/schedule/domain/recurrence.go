@@ -7,11 +7,12 @@ import (
 	"time"
 )
 
-// CronRule 表示严格每日或每周规则；Weekday 为 nil 表示每日。
+// CronRule 表示严格每日、每周或每月规则；日期和星期字段互斥。
 type CronRule struct {
-	Minute  int
-	Hour    int
-	Weekday *time.Weekday
+	Minute     int
+	Hour       int
+	DayOfMonth *int
+	Weekday    *time.Weekday
 }
 
 // Occurrence 是按需计算的发生，不是需要持久化的实例行。
@@ -21,11 +22,11 @@ type Occurrence struct {
 	EndLocal   time.Time
 }
 
-// ParseCron 只接受五字段的每日 M H * * * 和每周 M H * * D，星期日为 0。
+// ParseCron 只接受五字段的每日 M H * * *、每周 M H * * D 和每月 M H D * *，星期日为 0。
 func ParseCron(expression string) (CronRule, error) {
 	fields := strings.Fields(expression)
-	if len(fields) != 5 || fields[2] != "*" || fields[3] != "*" {
-		return CronRule{}, NewValidation("cron must be a daily or weekly five-field rule", "cron")
+	if len(fields) != 5 || fields[3] != "*" {
+		return CronRule{}, NewValidation("cron must be a daily, weekly, or monthly five-field rule", "cron")
 	}
 	minute, err := cronNumber(fields[0], 59)
 	if err != nil {
@@ -36,6 +37,20 @@ func ParseCron(expression string) (CronRule, error) {
 		return CronRule{}, err
 	}
 	rule := CronRule{Minute: minute, Hour: hour}
+	if fields[2] != "*" {
+		if fields[4] != "*" {
+			return CronRule{}, NewValidation("cron cannot specify both day of month and weekday", "cron")
+		}
+		dayOfMonth, err := cronNumber(fields[2], 31)
+		if err != nil || dayOfMonth == 0 {
+			if err != nil {
+				return CronRule{}, err
+			}
+			return CronRule{}, NewValidation("cron day of month is out of range", "cron")
+		}
+		rule.DayOfMonth = &dayOfMonth
+		return rule, nil
+	}
 	if fields[4] != "*" {
 		day, err := cronNumber(fields[4], 6)
 		if err != nil {

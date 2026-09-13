@@ -41,6 +41,9 @@ func (s *Service) CreateSchedule(ctx context.Context, request CreateScheduleRequ
 	if request.Cron != nil && request.UntilUnix == nil {
 		return ScheduleDTO{}, domain.NewValidation("recurring cutoff is required", "until_unix")
 	}
+	if err := rejectMonthlyCron(request.Cron); err != nil {
+		return ScheduleDTO{}, err
+	}
 	if s.clock == nil {
 		return ScheduleDTO{}, errors.New("schedule clock is not configured")
 	}
@@ -137,6 +140,14 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	}
 	if !existing.IsRecurring() && (cronPresent || untilPresent) {
 		return ScheduleDTO{}, domain.NewValidation("single schedule cannot carry recurrence fields", "cron", "until_unix")
+	}
+	if cronPresent {
+		if err := rejectMonthlyCron(request.Cron); err != nil {
+			return ScheduleDTO{}, err
+		}
+		if err := rejectMonthlyCron(existing.Cron); err != nil {
+			return ScheduleDTO{}, err
+		}
 	}
 	if existing.Revision != request.ExpectedRevision {
 		// 预读发现旧版本时不调用写端口；事务内仍会复查以防预读后的竞争。
