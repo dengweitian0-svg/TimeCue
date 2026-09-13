@@ -25,6 +25,17 @@ type ScheduleDeleter interface {
 	DeleteSchedule(context.Context, domain.ScheduleID, int64) (string, error)
 }
 
+// OccurrenceReader 定义应用层读取某日程例外的窄契约。
+type OccurrenceReader interface {
+	GetOccurrenceOverride(context.Context, domain.ScheduleID, string) (domain.OccurrenceOverride, error)
+	ListOccurrenceOverrides(context.Context, domain.ScheduleID) ([]domain.OccurrenceOverride, error)
+}
+
+// OccurrenceUpdater 定义以父日程版本保护例外写入的窄契约。
+type OccurrenceUpdater interface {
+	UpdateOccurrence(context.Context, domain.ScheduleID, domain.OccurrenceOverrideCandidate) (domain.OccurrenceUpdateResult, error)
+}
+
 // Clock 定义应用服务读取当前时间环境的能力。
 type Clock interface {
 	Snapshot(context.Context) (domain.TimeSnapshot, error)

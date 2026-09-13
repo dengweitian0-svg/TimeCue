@@ -99,3 +99,9 @@ type OccurrenceOverrideCandidate struct {
 	ExpectedRevision int64
 	UpdatedAtUTC     time.Time
 }
+
+// OccurrenceUpdateResult 表示例外快照提交后的事实和父日程版本。
+type OccurrenceUpdateResult struct {
+	Override         OccurrenceOverride
+	ScheduleRevision int64
+}
