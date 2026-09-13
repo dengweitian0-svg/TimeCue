@@ -15,7 +15,7 @@ import (
 )
 
 const scheduleColumns = `
-	id, title, cron, open, first_start_local, original_start_local,
+	id, title, notes, cron, open, first_start_local, original_start_local,
 	duration_minutes, revision, created_at_utc, updated_at_utc, until_date_local,
 	month_end_policy`
 
@@ -57,11 +57,12 @@ func (s *Store) CreateSchedule(ctx context.Context, candidate domain.ScheduleCan
 	// 这里只写入日程定义，不预先展开未来发生实例或保存结束时间。
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO schedules(
-			title, cron, open, first_start_local, original_start_local,
+			title, notes, cron, open, first_start_local, original_start_local,
 			duration_minutes, revision, created_at_utc, updated_at_utc, until_date_local,
 			month_end_policy
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		candidate.Title,
+		candidate.Notes,
 		cron,
 		boolToInt(candidate.Open),
 		domain.FormatLocalTime(candidate.FirstStartLocal),
@@ -157,6 +158,10 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 	if candidate.Title != nil {
 		setClauses = append(setClauses, "title = ?")
 		args = append(args, *candidate.Title)
+	}
+	if candidate.Notes != nil {
+		setClauses = append(setClauses, "notes = ?")
+		args = append(args, *candidate.Notes)
 	}
 	if cronPresent {
 		setClauses = append(setClauses, "cron = ?")
@@ -365,6 +370,7 @@ func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 	var (
 		schedule          domain.Schedule
 		id                int64
+		notes             string
 		cron              sql.NullString
 		untilDate         sql.NullString
 		open              int
@@ -377,6 +383,7 @@ func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 	if err := scan(
 		&id,
 		&schedule.Title,
+		&notes,
 		&cron,
 		&open,
 		&firstStartText,
@@ -411,6 +418,7 @@ func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 	}
 
 	schedule.ID = domain.ScheduleID(id)
+	schedule.Notes = notes
 	schedule.Cron = nullStringPointer(cron)
 	schedule.UntilDateLocal = nullStringPointer(untilDate)
 	schedule.MonthEndPolicy = nullStringPointer(monthEndPolicy)
