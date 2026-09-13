@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -69,4 +70,68 @@ func containsJSONField(data []byte, field string) bool {
 	}
 	_, ok := decoded[field]
 	return ok
+}
+
+// TestServiceCancelSchedulePreReadsAndMapsResult 验证整组取消预读版本、只取一次时钟并返回最小 DTO。
+func TestServiceCancelSchedulePreReadsAndMapsResult(t *testing.T) {
+	store, clock, schedule := occurrenceServiceFixture()
+	store.scheduleCancelResult = domain.ScheduleActionResult{
+		Open: false, Revision: schedule.Revision + 1,
+		UpdatedAtUTC: time.Date(2026, 9, 1, 4, 0, 0, 0, time.UTC), Changed: true,
+	}
+	got, err := NewService(store, clock).CancelSchedule(context.Background(), schedule.ID, ScheduleActionRequest{ExpectedRevision: schedule.Revision})
+	if err != nil {
+		t.Fatalf("CancelSchedule() error = %v", err)
+	}
+	if got.ScheduleID != int64(schedule.ID) || got.Open || got.Revision != schedule.Revision+1 || got.UpdatedAtUTC.Location() != time.UTC {
+		t.Fatalf("result = %+v", got)
+	}
+	if store.scheduleCancelCalls != 1 || store.scheduleCancelCandidate.ExpectedRevision != schedule.Revision || clock.calls != 1 {
+		t.Fatalf("calls/candidate/clock = %d/%+v/%d", store.scheduleCancelCalls, store.scheduleCancelCandidate, clock.calls)
+	}
+}
+
+// TestServiceRestoreScheduleRejectsSingle 验证单次日程不能走整组恢复写端口。
+func TestServiceRestoreScheduleRejectsSingle(t *testing.T) {
+	location := time.UTC
+	schedule := domain.Schedule{ID: 3, FirstStartLocal: time.Date(2026, 9, 1, 10, 0, 0, 0, location), DurationMinutes: 60, Revision: 1, Open: false}
+	store := &fakeStore{getResult: schedule}
+	clock := &fakeClock{snapshot: domain.TimeSnapshot{Now: time.Date(2026, 9, 1, 1, 0, 0, 0, location), Location: location}}
+	_, err := NewService(store, clock).RestoreSchedule(context.Background(), schedule.ID, ScheduleActionRequest{ExpectedRevision: 1})
+	var businessErr *domain.Error
+	if !errors.As(err, &businessErr) || businessErr.Code != domain.Validation {
+		t.Fatalf("error = %#v, want validation", err)
+	}
+	if store.scheduleRestoreCalls != 0 || clock.calls != 0 {
+		t.Fatalf("restore calls/clock = %d/%d", store.scheduleRestoreCalls, clock.calls)
+	}
+}
+
+// TestServiceCancelScheduleRejectsStaleWithoutWrite 验证预读发现旧版本时不读取时钟且不调用写端口。
+func TestServiceCancelScheduleRejectsStaleWithoutWrite(t *testing.T) {
+	store, clock, schedule := occurrenceServiceFixture()
+	_, err := NewService(store, clock).CancelSchedule(context.Background(), schedule.ID, ScheduleActionRequest{ExpectedRevision: schedule.Revision + 1})
+	var businessErr *domain.Error
+	if !errors.As(err, &businessErr) || businessErr.Code != domain.StaleRevision {
+		t.Fatalf("error = %#v, want stale revision", err)
+	}
+	if store.scheduleCancelCalls != 0 || clock.calls != 0 {
+		t.Fatalf("cancel calls/clock = %d/%d", store.scheduleCancelCalls, clock.calls)
+	}
+}
+
+// TestServiceRestoreOccurrenceProjectsScheduleOpen 验证父组关闭时例外恢复结果仍回流关闭状态。
+func TestServiceRestoreOccurrenceProjectsScheduleOpen(t *testing.T) {
+	store, clock, schedule := occurrenceServiceFixture()
+	store.overrideErr = nil
+	store.override = domain.OccurrenceOverride{ScheduleID: schedule.ID, OriginalDate: "2026-09-07", Open: false, SnapshotPresent: true, StartLocal: clock.snapshot.Now, DurationMinutes: 60, Title: "moved"}
+	store.restoreResult = domain.OccurrenceActionResult{ScheduleOpen: false, Override: store.override, OverridePresent: true, ScheduleRevision: schedule.Revision + 1, Changed: true}
+	store.restoreResult.Override.Open = true
+	got, err := NewService(store, clock).RestoreOccurrence(context.Background(), schedule.ID, OccurrenceActionRequest{OriginalDate: "2026-09-07", ExpectedRevision: schedule.Revision})
+	if err != nil {
+		t.Fatalf("RestoreOccurrence() error = %v", err)
+	}
+	if got.ScheduleOpen || got.Cancelled {
+		t.Fatalf("result = %+v", got)
+	}
 }

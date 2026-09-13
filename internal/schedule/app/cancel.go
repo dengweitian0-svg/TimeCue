@@ -105,6 +105,7 @@ func occurrenceActionDTO(id domain.ScheduleID, originalDate string, result domai
 	dto := OccurrenceActionDTO{
 		ScheduleID:       int64(id),
 		OriginalDate:     originalDate,
+		ScheduleOpen:     result.ScheduleOpen,
 		ScheduleRevision: result.ScheduleRevision,
 	}
 	if !result.OverridePresent {
