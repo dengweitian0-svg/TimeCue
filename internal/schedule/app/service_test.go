@@ -27,6 +27,10 @@ type fakeStore struct {
 	occurrenceErr       error
 	occurrenceCalls     int
 	occurrenceCandidate domain.OccurrenceOverrideCandidate
+	cancelResult        domain.OccurrenceActionResult
+	cancelErr           error
+	cancelCalls         int
+	cancelCandidate     domain.OccurrenceCancelCandidate
 	deleteTitle         string
 	deleteErr           error
 	deleteCalls         int
@@ -85,6 +89,13 @@ func (s *fakeStore) UpdateOccurrence(_ context.Context, _ domain.ScheduleID, can
 	s.occurrenceCalls++
 	s.occurrenceCandidate = candidate
 	return s.occurrence, s.occurrenceErr
+}
+
+// CancelOccurrence 记录取消候选并返回测试预置结果。
+func (s *fakeStore) CancelOccurrence(_ context.Context, _ domain.ScheduleID, candidate domain.OccurrenceCancelCandidate) (domain.OccurrenceActionResult, error) {
+	s.cancelCalls++
+	s.cancelCandidate = candidate
+	return s.cancelResult, s.cancelErr
 }
 
 // DeleteSchedule 记录删除请求并返回测试预置的标题和错误。
