@@ -167,13 +167,14 @@ func ExpandMergedOccurrences(schedule Schedule, overrides []OccurrenceOverride, 
 // MergedOccurrenceIterator 按实际时间流式合并某个日程的基础发生和例外。
 // 它只保留例外索引和当前候选，不会为多年查询一次性生成全部发生。
 type MergedOccurrenceIterator struct {
-	schedule      Schedule
-	overrides     map[string]OccurrenceOverride
-	from          time.Time
-	to            time.Time
-	location      *time.Location
-	after         time.Time
-	singlePending bool
+	schedule        Schedule
+	overrides       map[string]OccurrenceOverride
+	from            time.Time
+	to              time.Time
+	location        *time.Location
+	after           time.Time
+	singlePending   bool
+	afterOccurrence *Occurrence
 }
 
 // NewMergedOccurrenceIterator 创建查询窗口内的无副作用发生迭代器。
@@ -214,7 +215,7 @@ func (i *MergedOccurrenceIterator) Next() (Occurrence, bool, error) {
 	}
 
 	cursor := i.after
-	override, overrideOK := i.nextOverride(cursor)
+	override, overrideOK := i.nextOverride()
 	for {
 
 		var base Occurrence
@@ -260,20 +261,29 @@ func (i *MergedOccurrenceIterator) Next() (Occurrence, bool, error) {
 			return override, true, nil
 		}
 		i.after = base.StartLocal
+		copy := base
+		i.afterOccurrence = &copy
 		return base, true, nil
 	}
 }
 
 // nextOverride 返回游标之后、查询窗口内最早的有效移动例外。
-func (i *MergedOccurrenceIterator) nextOverride(after time.Time) (Occurrence, bool) {
+func (i *MergedOccurrenceIterator) nextOverride() (Occurrence, bool) {
 	var result Occurrence
 	for _, override := range i.overrides {
-		if !override.Open || !override.SnapshotPresent || !override.StartLocal.After(after) {
+		if !override.Open || !override.SnapshotPresent {
 			continue
 		}
 		candidate := Occurrence{ScheduleID: override.ScheduleID, OriginalDate: override.OriginalDate,
 			StartLocal: override.StartLocal, EndLocal: override.StartLocal.Add(time.Duration(override.DurationMinutes) * time.Minute),
 			Title: override.Title, Notes: override.Notes}
+		if i.afterOccurrence != nil {
+			if !occurrenceLess(*i.afterOccurrence, candidate) {
+				continue
+			}
+		} else if !candidate.StartLocal.After(i.after) {
+			continue
+		}
 		if !Overlaps(candidate.StartLocal, candidate.EndLocal, i.from, i.to) {
 			continue
 		}
