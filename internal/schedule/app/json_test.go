@@ -110,6 +110,26 @@ func TestEncodeListSchedulesOmitsEmptyCursor(t *testing.T) {
 	}
 }
 
+// TestEncodeScheduleIncludesMonthEndPolicy 验证策略在 DTO 中统一输出字符串或 null。
+func TestEncodeScheduleIncludesMonthEndPolicy(t *testing.T) {
+	policy := domain.MonthEndPolicyClamp
+	for _, tc := range []struct {
+		name   string
+		value  *string
+		wanted string
+	}{
+		{name: "clamp", value: &policy, wanted: `"month_end_policy":"clamp"`},
+		{name: "null", value: nil, wanted: `"month_end_policy":null`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := EncodeSchedule(ScheduleDTO{MonthEndPolicy: tc.value})
+			if err != nil || !strings.Contains(string(data), tc.wanted) {
+				t.Fatalf("encoded = %s, error = %v", data, err)
+			}
+		})
+	}
+}
+
 // TestEncodeErrorIncludesBoundsWithoutCause 验证业务错误输出字段和边界但不泄露底层原因。
 func TestEncodeErrorIncludesBoundsWithoutCause(t *testing.T) {
 	location := time.FixedZone("UTC+8", 8*60*60)

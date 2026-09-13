@@ -16,7 +16,8 @@ import (
 
 const scheduleColumns = `
 	id, title, cron, open, first_start_local, original_start_local,
-	duration_minutes, revision, created_at_utc, updated_at_utc, until_date_local`
+	duration_minutes, revision, created_at_utc, updated_at_utc, until_date_local,
+	month_end_policy`
 
 const scheduleListLimit = 50
 
@@ -49,12 +50,17 @@ func (s *Store) CreateSchedule(ctx context.Context, candidate domain.ScheduleCan
 	if candidate.Cron != nil {
 		cron = *candidate.Cron
 	}
+	var monthEndPolicy any
+	if candidate.MonthEndPolicy != nil {
+		monthEndPolicy = *candidate.MonthEndPolicy
+	}
 	// 这里只写入日程定义，不预先展开未来发生实例或保存结束时间。
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO schedules(
 			title, cron, open, first_start_local, original_start_local,
-			duration_minutes, revision, created_at_utc, updated_at_utc, until_date_local
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			duration_minutes, revision, created_at_utc, updated_at_utc, until_date_local,
+			month_end_policy
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		candidate.Title,
 		cron,
 		boolToInt(candidate.Open),
@@ -65,6 +71,7 @@ func (s *Store) CreateSchedule(ctx context.Context, candidate domain.ScheduleCan
 		formatUTCTime(candidate.CreatedAtUTC),
 		formatUTCTime(candidate.UpdatedAtUTC),
 		candidate.UntilDateLocal,
+		monthEndPolicy,
 	)
 	if err != nil {
 		err = fmt.Errorf("insert schedule: %w", err)
@@ -107,7 +114,8 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		return domain.Schedule{}, domain.NewValidation("expected revision must be positive", "expected_revision")
 	}
 	cronPresent := candidate.CronPresent || candidate.Cron != nil
-	if candidate.Title == nil && candidate.FirstStartLocal == nil && candidate.DurationMinutes == nil && !cronPresent && candidate.UntilDateLocal == nil {
+	monthEndPolicyPresent := candidate.MonthEndPolicyPresent || candidate.MonthEndPolicy != nil
+	if candidate.Title == nil && candidate.FirstStartLocal == nil && candidate.DurationMinutes == nil && !cronPresent && candidate.UntilDateLocal == nil && !monthEndPolicyPresent {
 		return domain.Schedule{}, domain.NewValidation("schedule update is empty", "title", "start_unix", "end_unix")
 	}
 
@@ -158,6 +166,14 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		setClauses = append(setClauses, "until_date_local = ?")
 		args = append(args, *candidate.UntilDateLocal)
 	}
+	if monthEndPolicyPresent {
+		setClauses = append(setClauses, "month_end_policy = ?")
+		if candidate.MonthEndPolicy == nil {
+			args = append(args, nil)
+		} else {
+			args = append(args, *candidate.MonthEndPolicy)
+		}
+	}
 	if candidate.FirstStartLocal != nil {
 		setClauses = append(setClauses, "first_start_local = ?")
 		args = append(args, domain.FormatLocalTime(*candidate.FirstStartLocal))
@@ -197,7 +213,7 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		return domain.Schedule{}, err
 	}
 	if s.logger != nil {
-		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision)
+		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision, "month_end_policy", schedule.MonthEndPolicy)
 	}
 	return schedule, nil
 }
@@ -356,6 +372,7 @@ func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 		originalStartText string
 		createdText       string
 		updatedText       string
+		monthEndPolicy    sql.NullString
 	)
 	if err := scan(
 		&id,
@@ -369,6 +386,7 @@ func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 		&createdText,
 		&updatedText,
 		&untilDate,
+		&monthEndPolicy,
 	); err != nil {
 		return domain.Schedule{}, err
 	}
@@ -395,6 +413,7 @@ func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 	schedule.ID = domain.ScheduleID(id)
 	schedule.Cron = nullStringPointer(cron)
 	schedule.UntilDateLocal = nullStringPointer(untilDate)
+	schedule.MonthEndPolicy = nullStringPointer(monthEndPolicy)
 	schedule.Open = open == 1
 	schedule.FirstStartLocal = firstStart
 	schedule.OriginalStartLocal = originalStart
@@ -461,6 +480,7 @@ func scheduleDTO(schedule domain.Schedule) app.ScheduleDTO {
 		Title:           schedule.Title,
 		Cron:            schedule.Cron,
 		UntilDateLocal:  schedule.UntilDateLocal,
+		MonthEndPolicy:  schedule.MonthEndPolicy,
 		Open:            schedule.Open,
 		FirstStartLocal: domain.FormatLocalTime(schedule.FirstStartLocal),
 		DurationMinutes: schedule.DurationMinutes,

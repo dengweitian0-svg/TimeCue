@@ -53,8 +53,8 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations error = %v", err)
 	}
-	if count != 2 {
-		t.Fatalf("migration count = %d, want 2", count)
+	if count != 3 {
+		t.Fatalf("migration count = %d, want 3", count)
 	}
 }
 
@@ -68,8 +68,8 @@ func TestMigrationVersionIsRecorded(t *testing.T) {
 	if err := db.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("read migration version error = %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("version = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("version = %d, want 3", version)
 	}
 }
 
@@ -94,10 +94,11 @@ func TestInitialSchemaConstraints(t *testing.T) {
 		t.Fatalf("migrate() error = %v", err)
 	}
 	for name, statement := range map[string]string{
-		"empty title":   "INSERT INTO schedules(title, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES (' ', 'a', 'a', 1, 'a', 'a')",
-		"closed value":  "INSERT INTO schedules(title, open, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES ('x', 2, 'a', 'a', 1, 'a', 'a')",
-		"zero duration": "INSERT INTO schedules(title, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES ('x', 'a', 'a', 0, 'a', 'a')",
-		"zero revision": "INSERT INTO schedules(title, first_start_local, original_start_local, duration_minutes, revision, created_at_utc, updated_at_utc) VALUES ('x', 'a', 'a', 1, 0, 'a', 'a')",
+		"empty title":              "INSERT INTO schedules(title, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES (' ', 'a', 'a', 1, 'a', 'a')",
+		"closed value":             "INSERT INTO schedules(title, open, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES ('x', 2, 'a', 'a', 1, 'a', 'a')",
+		"zero duration":            "INSERT INTO schedules(title, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES ('x', 'a', 'a', 0, 'a', 'a')",
+		"zero revision":            "INSERT INTO schedules(title, first_start_local, original_start_local, duration_minutes, revision, created_at_utc, updated_at_utc) VALUES ('x', 'a', 'a', 1, 0, 'a', 'a')",
+		"invalid month end policy": "INSERT INTO schedules(title, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc, month_end_policy) VALUES ('x', 'a', 'a', 1, 'a', 'a', 'invalid')",
 	} {
 		if _, err := db.Exec(statement); err == nil {
 			t.Errorf("%s: Exec() error = nil", name)

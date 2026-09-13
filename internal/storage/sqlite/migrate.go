@@ -14,6 +14,9 @@ var initialMigrationSQL string
 //go:embed migrations/002_recurring_cutoff.sql
 var recurringCutoffMigrationSQL string
 
+//go:embed migrations/003_month_end_policy.sql
+var monthEndPolicyMigrationSQL string
+
 // migration 描述一个带版本号的 SQL 迁移。
 type migration struct {
 	version int
@@ -23,6 +26,7 @@ type migration struct {
 var migrations = []migration{
 	{version: 1, sql: initialMigrationSQL},
 	{version: 2, sql: recurringCutoffMigrationSQL},
+	{version: 3, sql: monthEndPolicyMigrationSQL},
 }
 
 // migrate 执行尚未应用的数据库迁移。

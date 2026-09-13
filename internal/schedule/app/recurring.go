@@ -13,8 +13,21 @@ func prepareRecurringUpdate(snapshot domain.TimeSnapshot, existing domain.Schedu
 	}
 	merged := existing
 	if request.Cron != nil {
+		rule, err := domain.ParseCron(*request.Cron)
+		if err != nil {
+			return err
+		}
 		merged.Cron = request.Cron
 		candidate.Cron, candidate.CronPresent = request.Cron, true
+		candidate.MonthEndPolicyPresent = true
+		if rule.DayOfMonth != nil {
+			policy := domain.MonthEndPolicyClamp
+			merged.MonthEndPolicy = &policy
+			candidate.MonthEndPolicy = &policy
+		} else {
+			merged.MonthEndPolicy = nil
+			candidate.MonthEndPolicy = nil
+		}
 	}
 	if request.UntilUnix != nil {
 		date, err := recurringUntilDate(snapshot.Location, *request.UntilUnix)

@@ -162,3 +162,168 @@ func TestRecurringJSONSQLiteEndToEnd(t *testing.T) {
 	}
 	assertNoInstances(t, s)
 }
+
+// TestMonthlyJSONSQLiteLifecycle 验证月规则创建、整组编辑、重开和无副作用计算的一致性。
+func TestMonthlyJSONSQLiteLifecycle(t *testing.T) {
+	ctx := context.Background()
+	loc := time.FixedZone("UTC+8", 8*60*60)
+	first := time.Date(2027, 1, 31, 9, 0, 0, 0, loc)
+	end := first.Add(90 * time.Minute)
+	until := time.Date(2028, 3, 31, 12, 0, 0, 0, loc)
+	clock := &recurringE2EClock{snapshot: domain.TimeSnapshot{Now: first.Add(-time.Hour), Location: loc}}
+	path := filepath.Join(t.TempDir(), "monthly.db")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, err := OpenStore(ctx, path, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	service := app.NewService(store, clock)
+
+	request, err := app.DecodeCreateSchedule([]byte(fmt.Sprintf(`{"title":" monthly ","start_unix":%d,"end_unix":%d,"cron":"0 9 31 * *","until_unix":%d}`, first.Unix(), end.Unix(), until.Unix())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.CreateSchedule(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.MonthEndPolicy == nil || *created.MonthEndPolicy != domain.MonthEndPolicyClamp || created.Title != "monthly" {
+		t.Fatalf("created = %+v", created)
+	}
+
+	id := domain.ScheduleID(created.ID)
+	stored, err := store.GetSchedule(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := stored
+
+	newFirst := time.Date(2027, 1, 31, 10, 0, 0, 0, loc)
+	newEnd := newFirst.Add(2 * time.Hour)
+	editRequest, err := app.DecodeUpdateSchedule([]byte(fmt.Sprintf(`{"title":"edited monthly","start_unix":%d,"end_unix":%d,"cron":"0 10 29 * *","until_unix":%d,"expected_revision":%d}`, newFirst.Unix(), newEnd.Unix(), until.Unix(), stored.Revision)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited, err := service.UpdateSchedule(ctx, id, editRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.Title != "edited monthly" || edited.DurationMinutes != 120 || edited.MonthEndPolicy == nil || *edited.MonthEndPolicy != domain.MonthEndPolicyClamp || edited.Revision != stored.Revision+1 {
+		t.Fatalf("edited = %+v", edited)
+	}
+
+	restoreCron := "0 10 31 * *"
+	restoreRequest, err := app.DecodeUpdateSchedule([]byte(fmt.Sprintf(`{"cron":%q,"expected_revision":%d}`, restoreCron, edited.Revision)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UpdateSchedule(ctx, id, restoreRequest); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = store.GetSchedule(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Cron == nil || *stored.Cron != restoreCron || stored.MonthEndPolicy == nil || *stored.MonthEndPolicy != domain.MonthEndPolicyClamp {
+		t.Fatalf("restored = %+v", stored)
+	}
+	if !stored.OriginalStartLocal.Equal(original.OriginalStartLocal) || !stored.CreatedAtUTC.Equal(original.CreatedAtUTC) || stored.Open != original.Open {
+		t.Fatal("edit changed schedule identity")
+	}
+
+	got, ok, err := domain.NextBase(stored, newFirst.Add(-time.Minute), loc)
+	if err != nil || !ok || !got.StartLocal.Equal(newFirst) {
+		t.Fatalf("NextBase before reopen = %+v, %v, %v", got, ok, err)
+	}
+	baseBefore, baseOK, err := domain.NextBase(stored, newFirst, loc)
+	if err != nil || !baseOK || !baseBefore.StartLocal.Equal(time.Date(2027, 2, 28, 10, 0, 0, 0, loc)) {
+		t.Fatalf("clamped NextBase = %+v, %v, %v", baseBefore, baseOK, err)
+	}
+	startBefore, startOK, err := domain.NextStart(stored, newFirst, loc)
+	if err != nil || !startOK || !startBefore.Equal(baseBefore.StartLocal) {
+		t.Fatalf("NextStart before reopen = %v, %v, %v", startBefore, startOK, err)
+	}
+	expandBefore, err := domain.Expand(stored, time.Date(2027, 1, 1, 0, 0, 0, 0, loc), time.Date(2027, 4, 1, 0, 0, 0, 0, loc), loc)
+	if err != nil || len(expandBefore) != 3 || expandBefore[1].StartLocal.Day() != 28 || expandBefore[2].StartLocal.Day() != 31 {
+		t.Fatalf("Expand before reopen = %+v, %v", expandBefore, err)
+	}
+
+	get, err := service.GetSchedule(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := service.ListSchedules(ctx, app.ListSchedulesRequest{})
+	if err != nil || len(list.Items) != 1 || list.Items[0].MonthEndPolicy == nil || *list.Items[0].MonthEndPolicy != domain.MonthEndPolicyClamp {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	getJSON, err := app.EncodeSchedule(get)
+	if err != nil || !strings.Contains(string(getJSON), `"month_end_policy":"clamp"`) {
+		t.Fatalf("get JSON = %s, %v", getJSON, err)
+	}
+	listJSON, err := app.EncodeListSchedules(list)
+	if err != nil || !strings.Contains(string(listJSON), `"month_end_policy":"clamp"`) {
+		t.Fatalf("list JSON = %s, %v", listJSON, err)
+	}
+
+	stateBeforeFailure := stored
+	for _, payload := range []string{
+		fmt.Sprintf(`{"cron":"bad","expected_revision":%d}`, stored.Revision),
+		fmt.Sprintf(`{"cron":"0 10 * * 1","expected_revision":1}`),
+		fmt.Sprintf(`{"month_end_policy":"clamp","expected_revision":%d}`, stored.Revision),
+	} {
+		patch, err := app.DecodeUpdateSchedule([]byte(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var changesBefore, changesAfter int64
+		if err := store.db.QueryRow("SELECT total_changes()").Scan(&changesBefore); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.UpdateSchedule(ctx, id, patch); err == nil {
+			t.Fatalf("accepted %s", payload)
+		}
+		if err := store.db.QueryRow("SELECT total_changes()").Scan(&changesAfter); err != nil {
+			t.Fatal(err)
+		}
+		if changesAfter != changesBefore {
+			t.Fatalf("rejected request wrote database: %s", payload)
+		}
+		current, err := store.GetSchedule(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertSameSchedule(t, current, stateBeforeFailure)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenStore(ctx, path, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service = app.NewService(store, clock)
+	reopened, err := store.GetSchedule(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSameSchedule(t, reopened, stateBeforeFailure)
+	baseAfter, baseAfterOK, err := domain.NextBase(reopened, newFirst, loc)
+	if err != nil || baseAfterOK != baseOK || !baseAfter.StartLocal.Equal(baseBefore.StartLocal) || !baseAfter.EndLocal.Equal(baseBefore.EndLocal) {
+		t.Fatalf("NextBase after reopen = %+v, %v, %v", baseAfter, baseAfterOK, err)
+	}
+	startAfter, startAfterOK, err := domain.NextStart(reopened, newFirst, loc)
+	if err != nil || startAfterOK != startOK || !startAfter.Equal(startBefore) {
+		t.Fatalf("NextStart after reopen = %v, %v, %v", startAfter, startAfterOK, err)
+	}
+	expandAfter, err := domain.Expand(reopened, time.Date(2027, 1, 1, 0, 0, 0, 0, loc), time.Date(2027, 4, 1, 0, 0, 0, 0, loc), loc)
+	if err != nil || !reflect.DeepEqual(expandAfter, expandBefore) {
+		t.Fatalf("Expand after reopen = %+v, %v; before = %+v", expandAfter, err, expandBefore)
+	}
+	assertNoInstances(t, store)
+}

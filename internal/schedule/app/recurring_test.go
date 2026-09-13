@@ -49,8 +49,26 @@ func TestServiceRecurringCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Cron == nil || *got.Cron != *request.Cron || got.UntilDateLocal == nil || *got.UntilDateLocal != "2026-09-12" || got.Title != "recurring" || got.DurationMinutes != 60 || !got.Open || got.Revision != 1 {
+	if got.Cron == nil || *got.Cron != *request.Cron || got.UntilDateLocal == nil || *got.UntilDateLocal != "2026-09-12" || got.MonthEndPolicy != nil || got.Title != "recurring" || got.DurationMinutes != 60 || !got.Open || got.Revision != 1 {
 		t.Fatalf("created = %+v", got)
+	}
+	if clock.calls != 1 || s.createCalls != 1 {
+		t.Fatalf("calls = %d/%d", clock.calls, s.createCalls)
+	}
+}
+
+// TestServiceMonthlyCreate 验证创建月规则时策略由领域候选自动带出。
+func TestServiceMonthlyCreate(t *testing.T) {
+	s, clock, request := recurringFixture()
+	cron := "0 9 31 * *"
+	request.Cron = &cron
+
+	got, err := NewService(s, clock).CreateSchedule(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MonthEndPolicy == nil || *got.MonthEndPolicy != domain.MonthEndPolicyClamp {
+		t.Fatalf("monthly policy = %#v", got.MonthEndPolicy)
 	}
 	if clock.calls != 1 || s.createCalls != 1 {
 		t.Fatalf("calls = %d/%d", clock.calls, s.createCalls)
@@ -105,11 +123,43 @@ func TestServiceRecurringCronOnlyPreservesFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := s.updated
-	if c.Cron == nil || *c.Cron != cron || !c.CronPresent || c.UntilDateLocal != nil || c.Title != nil || c.FirstStartLocal != nil || c.DurationMinutes != nil || c.ExpectedRevision != 1 || !c.UpdatedAtUTC.Equal(clock.snapshot.Now) {
+	if c.Cron == nil || *c.Cron != cron || !c.CronPresent || !c.MonthEndPolicyPresent || c.MonthEndPolicy != nil || c.UntilDateLocal != nil || c.Title != nil || c.FirstStartLocal != nil || c.DurationMinutes != nil || c.ExpectedRevision != 1 || !c.UpdatedAtUTC.Equal(clock.snapshot.Now) {
 		t.Fatalf("patch = %+v", c)
 	}
 	if clock.calls != 2 || s.updateCalls != 1 {
 		t.Fatalf("calls = %d/%d", clock.calls, s.updateCalls)
+	}
+}
+
+// TestServiceRecurringPolicyChangesWithCron 验证日周月切换时策略与 cron 一起形成完整更新候选。
+func TestServiceRecurringPolicyChangesWithCron(t *testing.T) {
+	s, clock, create := recurringFixture()
+	service := NewService(s, clock)
+	if _, err := service.CreateSchedule(context.Background(), create); err != nil {
+		t.Fatal(err)
+	}
+	s.getResult = s.created
+
+	monthly := "0 9 31 * *"
+	if _, err := service.UpdateSchedule(context.Background(), s.created.ID, UpdateScheduleRequest{Cron: &monthly, ExpectedRevision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if s.updated.Cron == nil || *s.updated.Cron != monthly || !s.updated.CronPresent || !s.updated.MonthEndPolicyPresent || s.updated.MonthEndPolicy == nil || *s.updated.MonthEndPolicy != domain.MonthEndPolicyClamp {
+		t.Fatalf("day to month candidate = %+v", s.updated)
+	}
+
+	monthlySchedule := s.created
+	monthlySchedule.Cron = &monthly
+	policy := domain.MonthEndPolicyClamp
+	monthlySchedule.MonthEndPolicy = &policy
+	monthlySchedule.Revision = 2
+	s.getResult = monthlySchedule
+	daily := "0 9 * * *"
+	if _, err := service.UpdateSchedule(context.Background(), monthlySchedule.ID, UpdateScheduleRequest{Cron: &daily, ExpectedRevision: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if s.updated.Cron == nil || *s.updated.Cron != daily || !s.updated.CronPresent || !s.updated.MonthEndPolicyPresent || s.updated.MonthEndPolicy != nil {
+		t.Fatalf("month to day candidate = %+v", s.updated)
 	}
 }
 

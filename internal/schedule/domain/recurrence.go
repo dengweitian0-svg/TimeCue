@@ -7,11 +7,12 @@ import (
 	"time"
 )
 
-// CronRule 表示严格每日或每周规则；Weekday 为 nil 表示每日。
+// CronRule 表示严格每日、每周或每月规则；日期和星期字段互斥。
 type CronRule struct {
-	Minute  int
-	Hour    int
-	Weekday *time.Weekday
+	Minute     int
+	Hour       int
+	DayOfMonth *int
+	Weekday    *time.Weekday
 }
 
 // Occurrence 是按需计算的发生，不是需要持久化的实例行。
@@ -21,11 +22,11 @@ type Occurrence struct {
 	EndLocal   time.Time
 }
 
-// ParseCron 只接受五字段的每日 M H * * * 和每周 M H * * D，星期日为 0。
+// ParseCron 只接受五字段的每日 M H * * *、每周 M H * * D 和每月 M H D * *，星期日为 0。
 func ParseCron(expression string) (CronRule, error) {
 	fields := strings.Fields(expression)
-	if len(fields) != 5 || fields[2] != "*" || fields[3] != "*" {
-		return CronRule{}, NewValidation("cron must be a daily or weekly five-field rule", "cron")
+	if len(fields) != 5 || fields[3] != "*" {
+		return CronRule{}, NewValidation("cron must be a daily, weekly, or monthly five-field rule", "cron")
 	}
 	minute, err := cronNumber(fields[0], 59)
 	if err != nil {
@@ -36,6 +37,20 @@ func ParseCron(expression string) (CronRule, error) {
 		return CronRule{}, err
 	}
 	rule := CronRule{Minute: minute, Hour: hour}
+	if fields[2] != "*" {
+		if fields[4] != "*" {
+			return CronRule{}, NewValidation("cron cannot specify both day of month and weekday", "cron")
+		}
+		dayOfMonth, err := cronNumber(fields[2], 31)
+		if err != nil || dayOfMonth == 0 {
+			if err != nil {
+				return CronRule{}, err
+			}
+			return CronRule{}, NewValidation("cron day of month is out of range", "cron")
+		}
+		rule.DayOfMonth = &dayOfMonth
+		return rule, nil
+	}
 	if fields[4] != "*" {
 		day, err := cronNumber(fields[4], 6)
 		if err != nil {
@@ -67,7 +82,8 @@ func ValidateRecurring(snapshot TimeSnapshot, startUnix, endUnix int64, cron, un
 	if snapshot.Location == nil {
 		return ScheduleCandidate{}, NewValidation("time location must not be nil", "location")
 	}
-	if _, err := ParseCron(cron); err != nil {
+	rule, err := ParseCron(cron)
+	if err != nil {
 		return ScheduleCandidate{}, err
 	}
 	if startUnix%60 != 0 || endUnix%60 != 0 {
@@ -92,7 +108,7 @@ func ValidateRecurring(snapshot TimeSnapshot, startUnix, endUnix int64, cron, un
 	if untilDateLocal < start.Format(time.DateOnly) {
 		return ScheduleCandidate{}, NewValidation("cutoff date precedes first start date", "until_unix")
 	}
-	return ScheduleCandidate{Cron: &cron, UntilDateLocal: &untilDateLocal, Open: true,
+	return ScheduleCandidate{Cron: &cron, UntilDateLocal: &untilDateLocal, MonthEndPolicy: monthEndPolicyForRule(rule), Open: true,
 		FirstStartLocal: start, OriginalStartLocal: start, DurationMinutes: int(minutes),
 		CreatedAtUTC: snapshot.Now.UTC(), UpdatedAtUTC: snapshot.Now.UTC()}, nil
 }
@@ -107,6 +123,9 @@ func recurrenceInputs(schedule Schedule, location *time.Location) (CronRule, tim
 	}
 	rule, err := ParseCron(*schedule.Cron)
 	if err != nil {
+		return CronRule{}, time.Time{}, time.Time{}, err
+	}
+	if err := validateMonthEndPolicy(rule, schedule.MonthEndPolicy); err != nil {
 		return CronRule{}, time.Time{}, time.Time{}, err
 	}
 	until, err := time.Parse(time.DateOnly, *schedule.UntilDateLocal)
@@ -136,6 +155,9 @@ func NextBase(schedule Schedule, after time.Time, location *time.Location) (Occu
 
 // nextBase 从查询日期附近按自然日推进，不保存游标，支持任意历史重算。
 func nextBase(schedule Schedule, rule CronRule, first, until, after time.Time, location *time.Location) (Occurrence, bool) {
+	if rule.DayOfMonth != nil {
+		return nextMonthlyBase(schedule, rule, first, until, after, location)
+	}
 	date := time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, time.UTC)
 	localAfter := after.In(location)
 	// 回看一天覆盖跨日期跳变后移的候选；仍由实际时间做严格 after 判断。
@@ -156,6 +178,56 @@ func nextBase(schedule Schedule, rule CronRule, first, until, after time.Time, l
 		date = date.AddDate(0, 0, step)
 	}
 	return Occurrence{}, false
+}
+
+// nextMonthlyBase 按月份首日推进月规则，每次重新计算短月中的有效日期。
+func nextMonthlyBase(schedule Schedule, rule CronRule, first, until, after time.Time, location *time.Location) (Occurrence, bool) {
+	firstMonth := time.Date(first.Year(), first.Month(), 1, 0, 0, 0, 0, time.UTC)
+	localAfter := after.In(location)
+	date := time.Date(localAfter.Year(), localAfter.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+	if date.Before(firstMonth) {
+		date = firstMonth
+	}
+	untilMonth := time.Date(until.Year(), until.Month(), 1, 0, 0, 0, 0, time.UTC)
+	for !date.After(untilMonth) {
+		nextMonth := date.AddDate(0, 1, 0)
+		lastDay := nextMonth.AddDate(0, 0, -1).Day()
+		day := *rule.DayOfMonth
+		if day > lastDay {
+			day = lastDay
+		}
+		candidateDate := time.Date(date.Year(), date.Month(), day, 0, 0, 0, 0, time.UTC)
+		start := resolveWallTime(date.Year(), date.Month(), day, rule.Hour, rule.Minute, location)
+		// 先按原始墙钟发生日判断截止，再用实际时间执行包含式首次和严格 after。
+		if !candidateDate.After(until) && !start.Before(first) && start.After(after) {
+			return Occurrence{ScheduleID: schedule.ID, StartLocal: start, EndLocal: start.Add(time.Duration(schedule.DurationMinutes) * time.Minute)}, true
+		}
+		date = nextMonth
+	}
+	return Occurrence{}, false
+}
+
+// monthEndPolicyForRule 为月规则生成领域内部约定的持久化策略。
+func monthEndPolicyForRule(rule CronRule) *string {
+	if rule.DayOfMonth == nil {
+		return nil
+	}
+	policy := MonthEndPolicyClamp
+	return &policy
+}
+
+// validateMonthEndPolicy 校验已保存规则和月末策略的组合一致性。
+func validateMonthEndPolicy(rule CronRule, policy *string) error {
+	if rule.DayOfMonth != nil {
+		if policy == nil || *policy != MonthEndPolicyClamp {
+			return NewValidation("monthly recurrence requires clamp month end policy", "month_end_policy")
+		}
+		return nil
+	}
+	if policy != nil {
+		return NewValidation("month end policy is only valid for monthly recurrence", "month_end_policy")
+	}
+	return nil
 }
 
 // Expand 展开开始时刻落在 [from, to) 的发生；不读取时钟、不修改定义、不写实例。
