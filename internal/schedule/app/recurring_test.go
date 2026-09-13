@@ -49,8 +49,26 @@ func TestServiceRecurringCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Cron == nil || *got.Cron != *request.Cron || got.UntilDateLocal == nil || *got.UntilDateLocal != "2026-09-12" || got.Title != "recurring" || got.DurationMinutes != 60 || !got.Open || got.Revision != 1 {
+	if got.Cron == nil || *got.Cron != *request.Cron || got.UntilDateLocal == nil || *got.UntilDateLocal != "2026-09-12" || got.MonthEndPolicy != nil || got.Title != "recurring" || got.DurationMinutes != 60 || !got.Open || got.Revision != 1 {
 		t.Fatalf("created = %+v", got)
+	}
+	if clock.calls != 1 || s.createCalls != 1 {
+		t.Fatalf("calls = %d/%d", clock.calls, s.createCalls)
+	}
+}
+
+// TestServiceMonthlyCreate 验证创建月规则时策略由领域候选自动带出。
+func TestServiceMonthlyCreate(t *testing.T) {
+	s, clock, request := recurringFixture()
+	cron := "0 9 31 * *"
+	request.Cron = &cron
+
+	got, err := NewService(s, clock).CreateSchedule(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MonthEndPolicy == nil || *got.MonthEndPolicy != domain.MonthEndPolicyClamp {
+		t.Fatalf("monthly policy = %#v", got.MonthEndPolicy)
 	}
 	if clock.calls != 1 || s.createCalls != 1 {
 		t.Fatalf("calls = %d/%d", clock.calls, s.createCalls)
@@ -59,15 +77,12 @@ func TestServiceRecurringCreate(t *testing.T) {
 
 // TestServiceRecurringCreateRejectsBeforeWrite 验证非法规则、缺失截止和单次携带重复字段均零写入。
 func TestServiceRecurringCreateRejectsBeforeWrite(t *testing.T) {
-	for _, name := range []string{"bad cron", "monthly cron", "missing until", "null cron", "single cutoff", "null cutoff", "cutoff before first"} {
+	for _, name := range []string{"bad cron", "missing until", "null cron", "single cutoff", "null cutoff", "cutoff before first"} {
 		t.Run(name, func(t *testing.T) {
 			s, clock, request := recurringFixture()
 			switch name {
 			case "bad cron":
 				value := "*/5 * * * *"
-				request.Cron = &value
-			case "monthly cron":
-				value := "0 9 31 * *"
 				request.Cron = &value
 			case "missing until":
 				request.UntilUnix = nil

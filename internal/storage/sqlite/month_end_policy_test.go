@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dengweitian0-svg/TimeCue/internal/schedule/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/schedule/domain"
 )
 
@@ -22,6 +23,13 @@ func TestMonthEndPolicyRoundTripAndClear(t *testing.T) {
 	}
 	if created.MonthEndPolicy == nil || *created.MonthEndPolicy != domain.MonthEndPolicyClamp {
 		t.Fatalf("created policy = %#v", created.MonthEndPolicy)
+	}
+	listed, err := store.ListSchedules(ctx, app.ListSchedulesRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Items) != 1 || listed.Items[0].MonthEndPolicy == nil || *listed.Items[0].MonthEndPolicy != domain.MonthEndPolicyClamp {
+		t.Fatalf("listed policy = %+v", listed.Items)
 	}
 
 	title := "preserve policy"

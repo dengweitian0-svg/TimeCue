@@ -76,6 +76,7 @@ type ScheduleDTO struct {
 	Title           string    `json:"title"`
 	Cron            *string   `json:"cron"`
 	UntilDateLocal  *string   `json:"until_date_local"`
+	MonthEndPolicy  *string   `json:"month_end_policy"`
 	Open            bool      `json:"open"`
 	FirstStartLocal string    `json:"first_start_local"`
 	DurationMinutes int       `json:"duration_minutes"`

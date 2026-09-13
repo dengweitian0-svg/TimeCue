@@ -18,4 +18,5 @@
 - 更新请求支持重复定义的 cron、标题、首次起止和截止日期同类型编辑；省略字段保持原值，显式 null cron/截止日期返回 VALIDATION，单次携带重复字段仍拒绝。只更换 cron 时不修改其余业务字段，成功后 revision 加一并更新审计时间。
 - 预读发现旧 revision 时返回 STALE_REVISION，不调用更新端口；存储事务仍承担最终并发守卫。非法规则或合并后的日期/端点校验失败均不得写入。
 - `ScheduleDTO.until_date_local` 在单条读取、创建/更新响应和列表中均返回 `YYYY-MM-DD` 或 null；JSON 创建/更新边界都保留 cron 和 until_unix 的存在性。
-- 当前阶段解析器已识别月规则，但创建和显式 cron 更新边界暂拒绝月规则；该阶段性守卫在月规则计算和创建能力提交后分别移除。
+- `ScheduleDTO.month_end_policy` 在单条读取、创建/更新响应和列表中返回 `clamp` 或 null；该字段由后端根据 cron 生成，创建/更新请求不接收该字段。
+- 当前阶段显式 cron 更新仍暂拒绝月规则；该阶段性守卫在整组 recurrence 更新提交后移除。

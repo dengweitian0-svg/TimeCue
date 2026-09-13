@@ -480,6 +480,7 @@ func scheduleDTO(schedule domain.Schedule) app.ScheduleDTO {
 		Title:           schedule.Title,
 		Cron:            schedule.Cron,
 		UntilDateLocal:  schedule.UntilDateLocal,
+		MonthEndPolicy:  schedule.MonthEndPolicy,
 		Open:            schedule.Open,
 		FirstStartLocal: domain.FormatLocalTime(schedule.FirstStartLocal),
 		DurationMinutes: schedule.DurationMinutes,

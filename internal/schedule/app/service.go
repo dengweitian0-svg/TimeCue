@@ -41,9 +41,6 @@ func (s *Service) CreateSchedule(ctx context.Context, request CreateScheduleRequ
 	if request.Cron != nil && request.UntilUnix == nil {
 		return ScheduleDTO{}, domain.NewValidation("recurring cutoff is required", "until_unix")
 	}
-	if err := rejectMonthlyCron(request.Cron); err != nil {
-		return ScheduleDTO{}, err
-	}
 	if s.clock == nil {
 		return ScheduleDTO{}, errors.New("schedule clock is not configured")
 	}
@@ -305,6 +302,7 @@ func scheduleDTO(schedule domain.Schedule) ScheduleDTO {
 		Title:           schedule.Title,
 		Cron:            schedule.Cron,
 		UntilDateLocal:  schedule.UntilDateLocal,
+		MonthEndPolicy:  schedule.MonthEndPolicy,
 		Open:            schedule.Open,
 		FirstStartLocal: domain.FormatLocalTime(schedule.FirstStartLocal),
 		DurationMinutes: schedule.DurationMinutes,
