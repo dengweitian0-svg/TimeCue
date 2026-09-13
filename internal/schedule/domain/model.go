@@ -105,3 +105,28 @@ type OccurrenceUpdateResult struct {
 	Override         OccurrenceOverride
 	ScheduleRevision int64
 }
+
+// OccurrenceCancelCandidate 表示等待原子取消某次发生的操作候选。
+type OccurrenceCancelCandidate struct {
+	OriginalDate     string
+	ExpectedRevision int64
+	UpdatedAtUTC     time.Time
+}
+
+// OccurrenceRestoreCandidate 表示等待原子恢复某次发生的操作候选。
+// RemoveCancellation 仅对没有快照的取消例外生效，表示恢复当前规则后移除该例外。
+type OccurrenceRestoreCandidate struct {
+	OriginalDate       string
+	ExpectedRevision   int64
+	UpdatedAtUTC       time.Time
+	RemoveCancellation bool
+}
+
+// OccurrenceActionResult 表示取消或恢复提交后的例外状态和父日程版本。
+// OverridePresent 为 false 时，表示恢复后已回到当前规则，没有持久化例外。
+type OccurrenceActionResult struct {
+	Override         OccurrenceOverride
+	OverridePresent  bool
+	ScheduleRevision int64
+	Changed          bool
+}

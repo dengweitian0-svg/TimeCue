@@ -2,10 +2,10 @@
 
 - 本目录负责编排日程应用用例，并定义应用层与外部实现之间的窄契约。
 - 当前文件：
-  - `contracts.go`：`ScheduleStore`、独立的日程/例外更新端口、例外读取端口、`ScheduleDeleter`、`Clock`，以及创建、更新、删除、例外更新、列表请求和受控响应 DTO。
+  - `contracts.go`：`ScheduleStore`、独立的日程/例外更新端口、取消/恢复端口、例外读取端口、`ScheduleDeleter`、`Clock`，以及创建、更新、删除、例外操作、列表请求和受控响应 DTO。
   - `service.go`：创建、更新、删除、读取、分页列表和时间边界查询用例。
   - `recurring.go`：重复整组编辑的定义合并和领域校验，保持未触及字段及原始发生身份。
-  - `json.go`：`encoding/json/v2` 的创建、更新、删除请求解码，以及日程、列表、时间边界和错误响应编码边界。
+  - `json.go`：`encoding/json/v2` 的创建、更新、删除、取消/恢复请求解码，以及日程、列表、时间边界、例外操作和错误响应编码边界。
   - `*_test.go`：验证创建、更新、删除和读取用例编排、契约替换、分页默认值和 JSON 行为。
 - `Service.CreateSchedule` 必须先清理标题、检查必填字段和依赖，再只读取一次时间快照，完成领域校验后才调用 `ScheduleStore.CreateSchedule`。
 - `Service.UpdateSchedule` 必须校验标识、期望版本和支持的字段，预读日程以补齐缺失端点并确认类型，再只读取一次时间快照；领域校验完成后才调用独立的 `ScheduleUpdater`。

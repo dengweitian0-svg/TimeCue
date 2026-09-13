@@ -36,6 +36,16 @@ type OccurrenceUpdater interface {
 	UpdateOccurrence(context.Context, domain.ScheduleID, domain.OccurrenceOverrideCandidate) (domain.OccurrenceUpdateResult, error)
 }
 
+// OccurrenceCanceller 定义取消某次发生所需的原子持久化能力。
+type OccurrenceCanceller interface {
+	CancelOccurrence(context.Context, domain.ScheduleID, domain.OccurrenceCancelCandidate) (domain.OccurrenceActionResult, error)
+}
+
+// OccurrenceRestorer 定义恢复某次发生所需的原子持久化能力。
+type OccurrenceRestorer interface {
+	RestoreOccurrence(context.Context, domain.ScheduleID, domain.OccurrenceRestoreCandidate) (domain.OccurrenceActionResult, error)
+}
+
 // Clock 定义应用服务读取当前时间环境的能力。
 type Clock interface {
 	Snapshot(context.Context) (domain.TimeSnapshot, error)
@@ -96,6 +106,15 @@ type UpdateOccurrenceRequest struct {
 	ExpectedRevisionPresent bool `json:"-"`
 }
 
+// OccurrenceActionRequest 表示取消或恢复某个原始日期的操作请求。
+type OccurrenceActionRequest struct {
+	OriginalDate     string `json:"original_date"`
+	ExpectedRevision int64  `json:"expected_revision"`
+
+	OriginalDatePresent     bool `json:"-"`
+	ExpectedRevisionPresent bool `json:"-"`
+}
+
 // DeleteScheduleRequest 表示带版本保护的永久删除请求。
 type DeleteScheduleRequest struct {
 	ExpectedRevision        int64 `json:"expected_revision"`
@@ -128,6 +147,20 @@ type OccurrenceDTO struct {
 	Title            string `json:"title"`
 	Notes            string `json:"notes"`
 	ScheduleRevision int64  `json:"schedule_revision"`
+}
+
+// OccurrenceActionDTO 表示取消或恢复提交后的受控发生状态。
+// 快照字段为空时，表示该状态没有持久化发生快照。
+type OccurrenceActionDTO struct {
+	ScheduleID       int64   `json:"schedule_id"`
+	OriginalDate     string  `json:"original_date"`
+	Cancelled        bool    `json:"cancelled"`
+	SnapshotPresent  bool    `json:"snapshot_present"`
+	StartUnix        *int64  `json:"start_unix,omitzero"`
+	EndUnix          *int64  `json:"end_unix,omitzero"`
+	Title            *string `json:"title,omitzero"`
+	Notes            *string `json:"notes,omitzero"`
+	ScheduleRevision int64   `json:"schedule_revision"`
 }
 
 // ListSchedulesRequest 表示列表分页输入。
