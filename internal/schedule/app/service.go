@@ -23,7 +23,7 @@ func NewService(store ScheduleStore, clock Clock) *Service {
 	return &Service{store: store, clock: clock}
 }
 
-// CreateSchedule 创建并持久化单次日程。
+// CreateSchedule 校验首次发生和可选重复规则，再持久化日程定义。
 func (s *Service) CreateSchedule(ctx context.Context, request CreateScheduleRequest) (ScheduleDTO, error) {
 	title := strings.TrimSpace(request.Title)
 	if title == "" {
@@ -34,6 +34,12 @@ func (s *Service) CreateSchedule(ctx context.Context, request CreateScheduleRequ
 	}
 	if request.EndUnix == nil {
 		return ScheduleDTO{}, domain.NewValidation("end time is required", "end_unix")
+	}
+	if request.Cron == nil && (request.CronPresent || request.UntilUnixPresent || request.UntilUnix != nil) {
+		return ScheduleDTO{}, domain.NewValidation("single schedule cannot carry recurrence fields", "cron", "until_unix")
+	}
+	if request.Cron != nil && request.UntilUnix == nil {
+		return ScheduleDTO{}, domain.NewValidation("recurring cutoff is required", "until_unix")
 	}
 	if s.clock == nil {
 		return ScheduleDTO{}, errors.New("schedule clock is not configured")
@@ -47,7 +53,16 @@ func (s *Service) CreateSchedule(ctx context.Context, request CreateScheduleRequ
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("snapshot current time: %w", err)
 	}
-	candidate, err := domain.ValidateSingleEndpoints(snapshot, *request.StartUnix, *request.EndUnix)
+	var candidate domain.ScheduleCandidate
+	if request.Cron != nil {
+		untilDate, dateErr := recurringUntilDate(snapshot.Location, *request.UntilUnix)
+		if dateErr != nil {
+			return ScheduleDTO{}, dateErr
+		}
+		candidate, err = domain.ValidateRecurring(snapshot, *request.StartUnix, *request.EndUnix, *request.Cron, untilDate)
+	} else {
+		candidate, err = domain.ValidateSingleEndpoints(snapshot, *request.StartUnix, *request.EndUnix)
+	}
 	if err != nil {
 		return ScheduleDTO{}, err
 	}
@@ -69,10 +84,6 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	if request.ExpectedRevision <= 0 {
 		return ScheduleDTO{}, domain.NewValidation("expected revision must be positive", "expected_revision")
 	}
-	if request.CronPresent || request.Cron != nil {
-		// 当前入口只实现单次日程；显式 cron 是类型转换请求，不能静默丢弃。
-		return ScheduleDTO{}, domain.NewValidation("cron cannot be changed on a single schedule", "cron")
-	}
 	if request.CancelPresent || request.Cancel != nil {
 		return ScheduleDTO{}, domain.NewValidation("cancel is not applicable to schedule update", "cancel")
 	}
@@ -83,7 +94,9 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	titlePresent := request.TitlePresent || request.Title != nil
 	startPresent := request.StartUnixPresent || request.StartUnix != nil
 	endPresent := request.EndUnixPresent || request.EndUnix != nil
-	if !titlePresent && !startPresent && !endPresent {
+	cronPresent := request.CronPresent || request.Cron != nil
+	untilPresent := request.UntilUnixPresent || request.UntilUnix != nil
+	if !titlePresent && !startPresent && !endPresent && !cronPresent && !untilPresent {
 		return ScheduleDTO{}, domain.NewValidation("at least one schedule field must be provided", "title", "start_unix", "end_unix")
 	}
 	if titlePresent {
@@ -99,6 +112,12 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	}
 	if endPresent && request.EndUnix == nil {
 		return ScheduleDTO{}, domain.NewValidation("end time must be an integer", "end_unix")
+	}
+	if cronPresent && request.Cron == nil {
+		return ScheduleDTO{}, domain.NewValidation("cron cannot be cleared", "cron")
+	}
+	if untilPresent && request.UntilUnix == nil {
+		return ScheduleDTO{}, domain.NewValidation("cutoff cannot be cleared", "until_unix")
 	}
 	if s.store == nil {
 		return ScheduleDTO{}, errors.New("schedule store is not configured")
@@ -116,8 +135,12 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("read schedule %d for update: %w", id, err)
 	}
-	if existing.IsRecurring() {
-		return ScheduleDTO{}, domain.NewValidation("recurring schedule update is not supported", "cron")
+	if !existing.IsRecurring() && (cronPresent || untilPresent) {
+		return ScheduleDTO{}, domain.NewValidation("single schedule cannot carry recurrence fields", "cron", "until_unix")
+	}
+	if existing.Revision != request.ExpectedRevision {
+		// 预读发现旧版本时不调用写端口；事务内仍会复查以防预读后的竞争。
+		return ScheduleDTO{}, domain.NewStaleRevision("schedule revision is stale", "expected_revision")
 	}
 
 	snapshot, err := s.clock.Snapshot(ctx)
@@ -132,7 +155,11 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 		title := strings.TrimSpace(*request.Title)
 		candidate.Title = &title
 	}
-	if startPresent || endPresent {
+	if existing.IsRecurring() {
+		if err := prepareRecurringUpdate(snapshot, existing, request, &candidate); err != nil {
+			return ScheduleDTO{}, err
+		}
+	} else if startPresent || endPresent {
 		startUnix, endUnix, err := deriveUpdateEndpoints(existing, request.StartUnix, request.EndUnix)
 		if err != nil {
 			return ScheduleDTO{}, err
@@ -266,6 +293,7 @@ func scheduleDTO(schedule domain.Schedule) ScheduleDTO {
 		ID:              int64(schedule.ID),
 		Title:           schedule.Title,
 		Cron:            schedule.Cron,
+		UntilDateLocal:  schedule.UntilDateLocal,
 		Open:            schedule.Open,
 		FirstStartLocal: domain.FormatLocalTime(schedule.FirstStartLocal),
 		DurationMinutes: schedule.DurationMinutes,

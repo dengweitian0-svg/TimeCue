@@ -26,6 +26,12 @@ func DecodeCreateSchedule(data []byte) (CreateScheduleRequest, error) {
 			Message: "create schedule JSON must be an object",
 		}
 	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return CreateScheduleRequest{}, &domain.Error{Code: domain.Validation, Message: "create schedule JSON must be an object", Cause: err}
+	}
+	_, request.CronPresent = fields["cron"]
+	_, request.UntilUnixPresent = fields["until_unix"]
 	return request, nil
 }
 
@@ -60,6 +66,7 @@ func DecodeUpdateSchedule(data []byte) (UpdateScheduleRequest, error) {
 	_, request.EndUnixPresent = fields["end_unix"]
 	_, request.CronPresent = fields["cron"]
 	_, request.CancelPresent = fields["cancel"]
+	_, request.UntilUnixPresent = fields["until_unix"]
 	_, request.RestorePresent = fields["restore"]
 	_, request.ExpectedRevisionPresent = fields["expected_revision"]
 	return request, nil
