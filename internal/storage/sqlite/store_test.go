@@ -78,6 +78,26 @@ func TestCreateAndGetSchedule(t *testing.T) {
 	}
 }
 
+// TestUpdateScheduleNotesOnly 验证普通备注可以作为独立补丁持久化。
+func TestUpdateScheduleNotesOnly(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	created, err := store.CreateSchedule(ctx, createTestSchedule())
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	notes := "updated notes"
+	updated, err := store.UpdateSchedule(ctx, created.ID, domain.ScheduleUpdateCandidate{
+		Notes: &notes, ExpectedRevision: created.Revision, UpdatedAtUTC: created.UpdatedAtUTC.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("UpdateSchedule() error = %v", err)
+	}
+	if updated.Notes != notes || updated.Revision != created.Revision+1 {
+		t.Fatalf("updated schedule = %+v", updated)
+	}
+}
+
 // TestUpdateSchedulePreservesIdentityAndIncrementsRevision 验证补丁只修改允许字段并推进版本。
 func TestUpdateSchedulePreservesIdentityAndIncrementsRevision(t *testing.T) {
 	store := openTestStore(t)

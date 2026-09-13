@@ -57,7 +57,7 @@ type scanRowsErrorRows struct {
 // Columns 返回与日程扫描器相同数量的结果列。
 func (scanRowsErrorRows) Columns() []string {
 	return []string{
-		"id", "title", "cron", "open", "first_start_local",
+		"id", "title", "notes", "cron", "open", "first_start_local",
 		"original_start_local", "duration_minutes", "revision",
 		"created_at_utc", "updated_at_utc", "until_date_local", "month_end_policy",
 	}
@@ -75,7 +75,7 @@ func (r *scanRowsErrorRows) Next(dest []driver.Value) error {
 	}
 	r.returned = true
 	values := []driver.Value{
-		"not-an-integer", "title", nil, int64(1),
+		"not-an-integer", "title", "", nil, int64(1),
 		"2026-01-02T10:00:00+08:00", "2026-01-02T10:00:00+08:00",
 		int64(90), int64(1), "2026-01-01T04:00:00Z", "2026-01-01T04:00:00Z", nil, nil,
 	}
