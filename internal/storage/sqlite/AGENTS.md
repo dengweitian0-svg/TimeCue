@@ -18,6 +18,7 @@
 - 重复规则在日/周/月之间切换时，cron 与 `month_end_policy` 必须由同一事务提交；cron 未修改时策略保持不变，月转日/周必须显式写入 NULL。
 - `UpdateSchedule` 只修改父日程定义，不删除或重建 `occurrence_overrides`；应用层可在同一版本守卫下读取并返回保留数量，合并结果始终按 `(schedule_id, occurrence_local)` 去重。
 - `CancelOccurrence` 在父 revision 守卫下将例外置为 `open=0`；无现有例外时写入空快照，已有完整快照只改变 `open`，重复取消不更新父 revision。
+- `RestoreOccurrence` 在父 revision 守卫下将完整取消快照恢复为 `open=1`，或仅在候选明确要求且例外为空快照时删除取消行；没有实际状态变化时不更新父 revision。
 - `DeleteSchedule` 必须在单一事务中读取标题和版本、执行带版本条件的物理删除并提交；删除依赖外键级联清理关联记录，任一步失败都必须回滚，并在失败时保留已读取的标题。
 - `recurring_e2e_test.go` 使用真实临时 SQLite 和可控时钟验证重复日程 JSON 生命周期、规则编辑、重开后计算一致性，以及计算和失败请求不生成实例记录。
 - `occurrence_e2e_test.go` 使用真实 SQLite 验证例外移动、同刻多身份、跨日跨月、父截止收缩、整组编辑保留、重开一致性和级联删除。
