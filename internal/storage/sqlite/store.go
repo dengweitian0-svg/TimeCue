@@ -116,7 +116,7 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 	}
 	cronPresent := candidate.CronPresent || candidate.Cron != nil
 	monthEndPolicyPresent := candidate.MonthEndPolicyPresent || candidate.MonthEndPolicy != nil
-	if candidate.Title == nil && candidate.FirstStartLocal == nil && candidate.DurationMinutes == nil && !cronPresent && candidate.UntilDateLocal == nil && !monthEndPolicyPresent {
+	if candidate.Title == nil && candidate.Notes == nil && candidate.FirstStartLocal == nil && candidate.DurationMinutes == nil && !cronPresent && candidate.UntilDateLocal == nil && !monthEndPolicyPresent {
 		return domain.Schedule{}, domain.NewValidation("schedule update is empty", "title", "start_unix", "end_unix")
 	}
 
