@@ -70,7 +70,7 @@ func TestRecurringStoreReopenAndUpdate(t *testing.T) {
 	assertSameSchedule(t, got, created)
 	for _, cron := range []string{"30 11 * * 1", "45 12 * * *"} {
 		updatedAt := got.UpdatedAtUTC.Add(time.Minute)
-		updated, err := s.UpdateSchedule(ctx, got.ID, domain.ScheduleUpdateCandidate{Cron: &cron, CronPresent: true, ExpectedRevision: got.Revision, UpdatedAtUTC: updatedAt})
+		updated, err := s.UpdateSchedule(ctx, got.ID, domain.ScheduleUpdateCandidate{Cron: &cron, CronPresent: true, MonthEndPolicyPresent: true, ExpectedRevision: got.Revision, UpdatedAtUTC: updatedAt})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,6 +95,51 @@ func TestRecurringStoreReopenAndUpdate(t *testing.T) {
 		t.Fatalf("list = %+v %v", list, err)
 	}
 	assertNoInstances(t, s)
+}
+
+// TestRecurringStoreMonthlyPolicySwitch 验证月规则与日规则切换时策略在同一更新事实中清理和恢复。
+func TestRecurringStoreMonthlyPolicySwitch(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	monthly := "0 10 31 * *"
+	policy := domain.MonthEndPolicyClamp
+	candidate := recurringCandidate()
+	candidate.Cron = &monthly
+	candidate.MonthEndPolicy = &policy
+	created, err := store.CreateSchedule(ctx, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	daily := "0 10 * * *"
+	updated, err := store.UpdateSchedule(ctx, created.ID, domain.ScheduleUpdateCandidate{
+		Cron:                  &daily,
+		CronPresent:           true,
+		MonthEndPolicyPresent: true,
+		ExpectedRevision:      created.Revision,
+		UpdatedAtUTC:          created.UpdatedAtUTC.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Cron == nil || *updated.Cron != daily || updated.MonthEndPolicy != nil {
+		t.Fatalf("month to day = %+v", updated)
+	}
+
+	updated, err = store.UpdateSchedule(ctx, updated.ID, domain.ScheduleUpdateCandidate{
+		Cron:                  &monthly,
+		CronPresent:           true,
+		MonthEndPolicy:        &policy,
+		MonthEndPolicyPresent: true,
+		ExpectedRevision:      updated.Revision,
+		UpdatedAtUTC:          updated.UpdatedAtUTC.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Cron == nil || *updated.Cron != monthly || updated.MonthEndPolicy == nil || *updated.MonthEndPolicy != domain.MonthEndPolicyClamp {
+		t.Fatalf("day to month = %+v", updated)
+	}
 }
 
 // assertNoInstances 确认定义操作没有生成实例、提醒尝试或派生字段。
@@ -126,8 +171,9 @@ func TestRecurringStoreStaleAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cron, until := "30 9 * * 2", "2026-03-03"
-	patch := domain.ScheduleUpdateCandidate{Cron: &cron, UntilDateLocal: &until, ExpectedRevision: created.Revision + 1, UpdatedAtUTC: created.UpdatedAtUTC.Add(time.Minute)}
+	cron, until := "30 9 31 * *", "2026-03-03"
+	policy := domain.MonthEndPolicyClamp
+	patch := domain.ScheduleUpdateCandidate{Cron: &cron, CronPresent: true, MonthEndPolicy: &policy, MonthEndPolicyPresent: true, UntilDateLocal: &until, ExpectedRevision: created.Revision + 1, UpdatedAtUTC: created.UpdatedAtUTC.Add(time.Minute)}
 	_, err = s.UpdateSchedule(ctx, created.ID, patch)
 	var business *domain.Error
 	if !errors.As(err, &business) || business.Code != domain.StaleRevision {

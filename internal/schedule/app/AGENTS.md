@@ -19,4 +19,4 @@
 - 预读发现旧 revision 时返回 STALE_REVISION，不调用更新端口；存储事务仍承担最终并发守卫。非法规则或合并后的日期/端点校验失败均不得写入。
 - `ScheduleDTO.until_date_local` 在单条读取、创建/更新响应和列表中均返回 `YYYY-MM-DD` 或 null；JSON 创建/更新边界都保留 cron 和 until_unix 的存在性。
 - `ScheduleDTO.month_end_policy` 在单条读取、创建/更新响应和列表中返回 `clamp` 或 null；该字段由后端根据 cron 生成，创建/更新请求不接收该字段。
-- 当前阶段显式 cron 更新仍暂拒绝月规则；该阶段性守卫在整组 recurrence 更新提交后移除。
+- 重复更新先合并完整定义，再依据新 cron 通过领域校验生成或清空 `month_end_policy`；日/周/月之间可互换，cron 未修改时策略保持不变。

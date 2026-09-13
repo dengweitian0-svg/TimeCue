@@ -213,7 +213,7 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		return domain.Schedule{}, err
 	}
 	if s.logger != nil {
-		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision)
+		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision, "month_end_policy", schedule.MonthEndPolicy)
 	}
 	return schedule, nil
 }

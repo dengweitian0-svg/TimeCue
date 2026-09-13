@@ -6,21 +6,6 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/schedule/domain"
 )
 
-// rejectMonthlyCron 在月规则尚未开放的应用阶段拒绝月规则输入。
-func rejectMonthlyCron(cron *string) error {
-	if cron == nil {
-		return nil
-	}
-	rule, err := domain.ParseCron(*cron)
-	if err != nil {
-		return err
-	}
-	if rule.DayOfMonth != nil {
-		return domain.NewValidation("monthly recurrence is not supported", "cron")
-	}
-	return nil
-}
-
 // prepareRecurringUpdate 合并重复定义并校验，只把请求触及的字段放入存储补丁。
 func prepareRecurringUpdate(snapshot domain.TimeSnapshot, existing domain.Schedule, request UpdateScheduleRequest, candidate *domain.ScheduleUpdateCandidate) error {
 	if snapshot.Location == nil {
@@ -28,8 +13,21 @@ func prepareRecurringUpdate(snapshot domain.TimeSnapshot, existing domain.Schedu
 	}
 	merged := existing
 	if request.Cron != nil {
+		rule, err := domain.ParseCron(*request.Cron)
+		if err != nil {
+			return err
+		}
 		merged.Cron = request.Cron
 		candidate.Cron, candidate.CronPresent = request.Cron, true
+		candidate.MonthEndPolicyPresent = true
+		if rule.DayOfMonth != nil {
+			policy := domain.MonthEndPolicyClamp
+			merged.MonthEndPolicy = &policy
+			candidate.MonthEndPolicy = &policy
+		} else {
+			merged.MonthEndPolicy = nil
+			candidate.MonthEndPolicy = nil
+		}
 	}
 	if request.UntilUnix != nil {
 		date, err := recurringUntilDate(snapshot.Location, *request.UntilUnix)

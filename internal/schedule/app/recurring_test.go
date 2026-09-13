@@ -123,7 +123,7 @@ func TestServiceRecurringCronOnlyPreservesFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := s.updated
-	if c.Cron == nil || *c.Cron != cron || !c.CronPresent || c.UntilDateLocal != nil || c.Title != nil || c.FirstStartLocal != nil || c.DurationMinutes != nil || c.ExpectedRevision != 1 || !c.UpdatedAtUTC.Equal(clock.snapshot.Now) {
+	if c.Cron == nil || *c.Cron != cron || !c.CronPresent || !c.MonthEndPolicyPresent || c.MonthEndPolicy != nil || c.UntilDateLocal != nil || c.Title != nil || c.FirstStartLocal != nil || c.DurationMinutes != nil || c.ExpectedRevision != 1 || !c.UpdatedAtUTC.Equal(clock.snapshot.Now) {
 		t.Fatalf("patch = %+v", c)
 	}
 	if clock.calls != 2 || s.updateCalls != 1 {
@@ -131,9 +131,41 @@ func TestServiceRecurringCronOnlyPreservesFields(t *testing.T) {
 	}
 }
 
+// TestServiceRecurringPolicyChangesWithCron 验证日周月切换时策略与 cron 一起形成完整更新候选。
+func TestServiceRecurringPolicyChangesWithCron(t *testing.T) {
+	s, clock, create := recurringFixture()
+	service := NewService(s, clock)
+	if _, err := service.CreateSchedule(context.Background(), create); err != nil {
+		t.Fatal(err)
+	}
+	s.getResult = s.created
+
+	monthly := "0 9 31 * *"
+	if _, err := service.UpdateSchedule(context.Background(), s.created.ID, UpdateScheduleRequest{Cron: &monthly, ExpectedRevision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if s.updated.Cron == nil || *s.updated.Cron != monthly || !s.updated.CronPresent || !s.updated.MonthEndPolicyPresent || s.updated.MonthEndPolicy == nil || *s.updated.MonthEndPolicy != domain.MonthEndPolicyClamp {
+		t.Fatalf("day to month candidate = %+v", s.updated)
+	}
+
+	monthlySchedule := s.created
+	monthlySchedule.Cron = &monthly
+	policy := domain.MonthEndPolicyClamp
+	monthlySchedule.MonthEndPolicy = &policy
+	monthlySchedule.Revision = 2
+	s.getResult = monthlySchedule
+	daily := "0 9 * * *"
+	if _, err := service.UpdateSchedule(context.Background(), monthlySchedule.ID, UpdateScheduleRequest{Cron: &daily, ExpectedRevision: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if s.updated.Cron == nil || *s.updated.Cron != daily || !s.updated.CronPresent || !s.updated.MonthEndPolicyPresent || s.updated.MonthEndPolicy != nil {
+		t.Fatalf("month to day candidate = %+v", s.updated)
+	}
+}
+
 // TestServiceRecurringUpdateRejectsBeforeWrite 验证非法合并状态、清空字段和旧版本不调用写端口。
 func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
-	for _, name := range []string{"bad cron", "monthly cron", "monthly to weekly", "clear cron", "clear until", "old revision", "early cutoff", "start after cutoff", "single cutoff"} {
+	for _, name := range []string{"bad cron", "clear cron", "clear until", "old revision", "early cutoff", "start after cutoff", "single cutoff"} {
 		t.Run(name, func(t *testing.T) {
 			s, clock, create := recurringFixture()
 			service := NewService(s, clock)
@@ -147,11 +179,6 @@ func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
 			switch name {
 			case "bad cron":
 				cron = "0 9 * * 7"
-			case "monthly cron":
-				cron = "0 9 31 * *"
-			case "monthly to weekly":
-				monthly := "0 9 31 * *"
-				s.getResult.Cron = &monthly
 			case "clear cron":
 				request.Cron = nil
 				request.CronPresent = true
