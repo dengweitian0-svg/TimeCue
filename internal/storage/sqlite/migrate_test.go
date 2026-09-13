@@ -53,7 +53,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations error = %v", err)
 	}
-	if count != 4 {
+	if count != 5 {
 		t.Fatalf("migration count = %d, want 4", count)
 	}
 }
@@ -68,8 +68,8 @@ func TestMigrationVersionIsRecorded(t *testing.T) {
 	if err := db.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("read migration version error = %v", err)
 	}
-	if version != 4 {
-		t.Fatalf("version = %d, want 4", version)
+	if version != 5 {
+		t.Fatalf("version = %d, want 5", version)
 	}
 }
 
@@ -181,5 +181,60 @@ func TestFailedMigrationRollsBackSchema(t *testing.T) {
 	}
 	if exists {
 		t.Fatal("failed migration left rollback_probe table")
+	}
+}
+
+// TestScheduleOpenInvariantMigrationRepairsLegacySingle 验证 v5 修复遗留单次状态并保留关联事实。
+func TestScheduleOpenInvariantMigrationRepairsLegacySingle(t *testing.T) {
+	db := openRawTestDB(t)
+	ctx := context.Background()
+	if err := migrate(ctx, db); err != nil {
+		t.Fatalf("migrate() error = %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO schedules(title, cron, open, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES ('legacy', NULL, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 60, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"); err != nil {
+		t.Fatalf("insert legacy schedule error = %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO occurrence_overrides(schedule_id, occurrence_local, open) VALUES (1, '2026-01-02', 0)"); err != nil {
+		t.Fatalf("insert cancellation error = %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (1, '2026-01-02', '2026-01-02T00:00:00Z', 'sent')"); err != nil {
+		t.Fatalf("insert reminder attempt error = %v", err)
+	}
+	if _, err := db.Exec("DELETE FROM schema_migrations WHERE version = 5"); err != nil {
+		t.Fatalf("remove v5 marker error = %v", err)
+	}
+	if err := migrate(ctx, db); err != nil {
+		t.Fatalf("reapply v5 migration error = %v", err)
+	}
+	var open int
+	if err := db.QueryRow("SELECT open FROM schedules WHERE id = 1").Scan(&open); err != nil || open != 1 {
+		t.Fatalf("repaired open = %d, error = %v", open, err)
+	}
+	for _, table := range []string{"occurrence_overrides", "reminder_attempts"} {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM " + table + " WHERE schedule_id = 1").Scan(&count); err != nil || count != 1 {
+			t.Fatalf("%s count = %d, error = %v", table, count, err)
+		}
+	}
+}
+
+// TestScheduleOpenInvariantRejectsClosedSingle 验证触发器阻止单次日程插入和更新为关闭状态。
+func TestScheduleOpenInvariantRejectsClosedSingle(t *testing.T) {
+	db := openRawTestDB(t)
+	if err := migrate(context.Background(), db); err != nil {
+		t.Fatalf("migrate() error = %v", err)
+	}
+	insert := "INSERT INTO schedules(title, cron, open, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES ('single', NULL, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 60, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+	if _, err := db.Exec(insert); err == nil {
+		t.Fatal("closed single insert error = nil")
+	}
+	if _, err := db.Exec("INSERT INTO schedules(title, cron, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES ('single', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 60, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"); err != nil {
+		t.Fatalf("insert valid single error = %v", err)
+	}
+	if _, err := db.Exec("UPDATE schedules SET open = 0 WHERE id = 1"); err == nil {
+		t.Fatal("closed single update error = nil")
+	}
+	if _, err := db.Exec("INSERT INTO schedules(title, cron, open, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES ('recurring', '0 9 * * *', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 60, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"); err != nil {
+		t.Fatalf("closed recurring insert error = %v", err)
 	}
 }
