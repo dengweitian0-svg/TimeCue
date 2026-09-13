@@ -20,7 +20,7 @@ func recurrenceLocation(t *testing.T, name string) *time.Location {
 
 // recurrenceSchedule 构造用于纯计算的重复定义。
 func recurrenceSchedule(cron, until string, first time.Time) Schedule {
-	schedule := Schedule{ID: 7, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: first, DurationMinutes: 90}
+	schedule := Schedule{ID: 7, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: first, DurationMinutes: 90, Open: true}
 	rule, err := ParseCron(cron)
 	if err != nil {
 		panic(err)
@@ -284,5 +284,23 @@ func TestMonthlyDSTResolution(t *testing.T) {
 	next, ok, err := NextStart(schedule, got.StartLocal, loc)
 	if err != nil || !ok || next.Format(time.RFC3339) != "2026-04-08T02:30:00-04:00" {
 		t.Fatalf("next monthly occurrence = %v, %v, %v", next, ok, err)
+	}
+}
+
+// TestClosedRecurringScheduleHasNoOccurrences 验证关闭重复日程在规则校验通过后不产生基础发生。
+func TestClosedRecurringScheduleHasNoOccurrences(t *testing.T) {
+	location := time.UTC
+	first := time.Date(2026, 9, 12, 10, 0, 0, 0, location)
+	schedule := recurrenceSchedule("0 10 * * *", "2026-09-14", first)
+	schedule.Open = false
+	if occurrence, ok, err := NextBase(schedule, first.Add(-time.Hour), location); err != nil || ok || !occurrence.StartLocal.IsZero() {
+		t.Fatalf("NextBase() = %+v, %v, %v", occurrence, ok, err)
+	}
+	if occurrence, ok, err := NextStart(schedule, first.Add(-time.Hour), location); err != nil || ok || !occurrence.IsZero() {
+		t.Fatalf("NextStart() = %v, %v, %v", occurrence, ok, err)
+	}
+	occurrences, err := Expand(schedule, first, first.AddDate(0, 0, 2), location)
+	if err != nil || len(occurrences) != 0 {
+		t.Fatalf("Expand() = %+v, %v", occurrences, err)
 	}
 }

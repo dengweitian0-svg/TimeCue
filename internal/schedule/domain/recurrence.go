@@ -142,6 +142,9 @@ func NextBase(schedule Schedule, after time.Time, location *time.Location) (Occu
 	if err != nil {
 		return Occurrence{}, false, err
 	}
+	if !schedule.Open {
+		return Occurrence{}, false, nil
+	}
 	occurrence, ok := nextBase(schedule, rule, first, until, after, location)
 	return occurrence, ok, nil
 }
@@ -245,6 +248,9 @@ func Expand(schedule Schedule, from, to time.Time, location *time.Location) ([]O
 	}
 	if !to.After(from) {
 		return nil, NewValidation("expansion end must be after start", "from", "to")
+	}
+	if !schedule.Open {
+		return nil, nil
 	}
 	result := make([]Occurrence, 0)
 	after := from.Add(-time.Nanosecond)
