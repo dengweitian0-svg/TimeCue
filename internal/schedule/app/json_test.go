@@ -130,6 +130,27 @@ func TestEncodeScheduleIncludesMonthEndPolicy(t *testing.T) {
 	}
 }
 
+// TestEncodeScheduleIncludesCancelledOccurrences 验证单条日程响应暴露取消例外的受控字段。
+func TestEncodeScheduleIncludesCancelledOccurrences(t *testing.T) {
+	start, end := int64(10), int64(70)
+	title, notes := "moved", "notes"
+	data, err := EncodeSchedule(ScheduleDTO{CancelledOccurrences: []CancelledOccurrenceDTO{{
+		OriginalDate: "2026-09-07", SnapshotPresent: true,
+		StartUnix: &start, EndUnix: &end, Title: &title, Notes: &notes,
+	}}})
+	if err != nil {
+		t.Fatalf("EncodeSchedule() error = %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	items, ok := decoded["cancelled_occurrences"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("cancelled_occurrences = %#v", decoded["cancelled_occurrences"])
+	}
+}
+
 // TestEncodeErrorIncludesBoundsWithoutCause 验证业务错误输出字段和边界但不泄露底层原因。
 func TestEncodeErrorIncludesBoundsWithoutCause(t *testing.T) {
 	location := time.FixedZone("UTC+8", 8*60*60)

@@ -106,6 +106,35 @@ func DecodeUpdateOccurrence(data []byte) (UpdateOccurrenceRequest, error) {
 	return request, nil
 }
 
+// DecodeOccurrenceAction 使用 encoding/json/v2 解码取消或恢复请求。
+func DecodeOccurrenceAction(data []byte) (OccurrenceActionRequest, error) {
+	var request OccurrenceActionRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		return OccurrenceActionRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "invalid occurrence action JSON",
+			Cause:   err,
+		}
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return OccurrenceActionRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "occurrence action JSON must be an object",
+		}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return OccurrenceActionRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "occurrence action JSON must be an object",
+			Cause:   err,
+		}
+	}
+	_, request.OriginalDatePresent = fields["original_date"]
+	_, request.ExpectedRevisionPresent = fields["expected_revision"]
+	return request, nil
+}
+
 // DecodeDeleteSchedule 使用 encoding/json/v2 解码永久删除请求。
 func DecodeDeleteSchedule(data []byte) (DeleteScheduleRequest, error) {
 	var request DeleteScheduleRequest
@@ -142,6 +171,11 @@ func EncodeSchedule(schedule ScheduleDTO) ([]byte, error) {
 // EncodeOccurrence 使用 encoding/json/v2 序列化一次发生。
 func EncodeOccurrence(occurrence OccurrenceDTO) ([]byte, error) {
 	return json.Marshal(occurrence)
+}
+
+// EncodeOccurrenceAction 使用 encoding/json/v2 序列化取消或恢复结果。
+func EncodeOccurrenceAction(result OccurrenceActionDTO) ([]byte, error) {
+	return json.Marshal(result)
 }
 
 // EncodeListSchedules 使用 encoding/json/v2 序列化列表结果。
