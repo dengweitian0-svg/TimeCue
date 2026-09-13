@@ -54,7 +54,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("count migrations error = %v", err)
 	}
 	if count != 5 {
-		t.Fatalf("migration count = %d, want 4", count)
+		t.Fatalf("migration count = %d, want 5", count)
 	}
 }
 
@@ -188,8 +188,19 @@ func TestFailedMigrationRollsBackSchema(t *testing.T) {
 func TestScheduleOpenInvariantMigrationRepairsLegacySingle(t *testing.T) {
 	db := openRawTestDB(t)
 	ctx := context.Background()
-	if err := migrate(ctx, db); err != nil {
-		t.Fatalf("migrate() error = %v", err)
+	// 先构造 v4 数据库，模拟 v5 尚未安装时遗留的非法单次状态。
+	for _, migration := range migrations[:4] {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("begin migration %d error = %v", migration.version, err)
+		}
+		if err := applyMigration(ctx, tx, migration); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply migration %d error = %v", migration.version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit migration %d error = %v", migration.version, err)
+		}
 	}
 	if _, err := db.Exec("INSERT INTO schedules(title, cron, open, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc) VALUES ('legacy', NULL, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 60, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"); err != nil {
 		t.Fatalf("insert legacy schedule error = %v", err)
@@ -200,9 +211,7 @@ func TestScheduleOpenInvariantMigrationRepairsLegacySingle(t *testing.T) {
 	if _, err := db.Exec("INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (1, '2026-01-02', '2026-01-02T00:00:00Z', 'sent')"); err != nil {
 		t.Fatalf("insert reminder attempt error = %v", err)
 	}
-	if _, err := db.Exec("DELETE FROM schema_migrations WHERE version = 5"); err != nil {
-		t.Fatalf("remove v5 marker error = %v", err)
-	}
+
 	if err := migrate(ctx, db); err != nil {
 		t.Fatalf("reapply v5 migration error = %v", err)
 	}

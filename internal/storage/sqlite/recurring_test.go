@@ -224,7 +224,7 @@ func TestMigrateV1ToV2PreservesRows(t *testing.T) {
 	if _, err := db.Exec(initialMigrationSQL); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations VALUES (1, '2026-01-01T00:00:00Z'); INSERT INTO schedules(id,title,open,first_start_local,original_start_local,duration_minutes,revision,created_at_utc,updated_at_utc) VALUES (7,'old',0,'2026-01-02T10:00:00+08:00','2026-01-01T10:00:00+08:00',90,4,'2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations VALUES (1, '2026-01-01T00:00:00Z'); INSERT INTO schedules(id,title,open,first_start_local,original_start_local,duration_minutes,revision,created_at_utc,updated_at_utc) VALUES (7,'old',1,'2026-01-02T10:00:00+08:00','2026-01-01T10:00:00+08:00',90,4,'2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
 	var before string

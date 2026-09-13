@@ -200,7 +200,7 @@ func (s *Store) CancelOccurrence(ctx context.Context, id domain.ScheduleID, cand
 		}
 	}()
 
-	revision, err := readScheduleRevision(tx, id)
+	revision, scheduleOpen, err := readScheduleState(tx, id)
 	if err != nil {
 		return domain.OccurrenceActionResult{}, err
 	}
@@ -213,7 +213,7 @@ func (s *Store) CancelOccurrence(ctx context.Context, id domain.ScheduleID, cand
 		if err = tx.Commit(); err != nil {
 			return domain.OccurrenceActionResult{}, fmt.Errorf("commit idempotent cancel occurrence transaction: %w", err)
 		}
-		return domain.OccurrenceActionResult{Override: override, OverridePresent: true, ScheduleRevision: revision}, nil
+		return domain.OccurrenceActionResult{ScheduleOpen: scheduleOpen, Override: override, OverridePresent: true, ScheduleRevision: revision}, nil
 	}
 	if overrideErr != nil && !errors.Is(overrideErr, sql.ErrNoRows) {
 		return domain.OccurrenceActionResult{}, fmt.Errorf("select occurrence override %d/%s for cancellation: %w", id, candidate.OriginalDate, overrideErr)
@@ -260,7 +260,7 @@ func (s *Store) CancelOccurrence(ctx context.Context, id domain.ScheduleID, cand
 	if s.logger != nil {
 		s.logger.Info("occurrence cancelled", "schedule_id", id, "original_date", candidate.OriginalDate, "revision", updatedRevision)
 	}
-	return domain.OccurrenceActionResult{Override: override, OverridePresent: true, ScheduleRevision: updatedRevision, Changed: true}, nil
+	return domain.OccurrenceActionResult{ScheduleOpen: scheduleOpen, Override: override, OverridePresent: true, ScheduleRevision: updatedRevision, Changed: true}, nil
 }
 
 // RestoreOccurrence 在同一事务中恢复完整快照或移除空取消例外。
@@ -291,7 +291,7 @@ func (s *Store) RestoreOccurrence(ctx context.Context, id domain.ScheduleID, can
 		}
 	}()
 
-	revision, err := readScheduleRevision(tx, id)
+	revision, scheduleOpen, err := readScheduleState(tx, id)
 	if err != nil {
 		return domain.OccurrenceActionResult{}, err
 	}
@@ -304,7 +304,7 @@ func (s *Store) RestoreOccurrence(ctx context.Context, id domain.ScheduleID, can
 		if err = tx.Commit(); err != nil {
 			return domain.OccurrenceActionResult{}, fmt.Errorf("commit idempotent restore occurrence transaction: %w", err)
 		}
-		return domain.OccurrenceActionResult{ScheduleRevision: revision}, nil
+		return domain.OccurrenceActionResult{ScheduleOpen: scheduleOpen, ScheduleRevision: revision}, nil
 	}
 	if overrideErr != nil {
 		return domain.OccurrenceActionResult{}, fmt.Errorf("select occurrence override %d/%s for restoration: %w", id, candidate.OriginalDate, overrideErr)
@@ -313,7 +313,7 @@ func (s *Store) RestoreOccurrence(ctx context.Context, id domain.ScheduleID, can
 		if err = tx.Commit(); err != nil {
 			return domain.OccurrenceActionResult{}, fmt.Errorf("commit idempotent restored occurrence transaction: %w", err)
 		}
-		return domain.OccurrenceActionResult{Override: override, OverridePresent: true, ScheduleRevision: revision}, nil
+		return domain.OccurrenceActionResult{ScheduleOpen: scheduleOpen, Override: override, OverridePresent: true, ScheduleRevision: revision}, nil
 	}
 	if !override.SnapshotPresent && !candidate.RemoveCancellation {
 		return domain.OccurrenceActionResult{}, domain.NewValidation("cancelled occurrence has no restorable snapshot", "original_date")
@@ -354,7 +354,7 @@ func (s *Store) RestoreOccurrence(ctx context.Context, id domain.ScheduleID, can
 		if s.logger != nil {
 			s.logger.Info("occurrence restored", "schedule_id", id, "original_date", candidate.OriginalDate, "revision", updatedRevision)
 		}
-		return domain.OccurrenceActionResult{ScheduleRevision: updatedRevision, Changed: true}, nil
+		return domain.OccurrenceActionResult{ScheduleOpen: scheduleOpen, ScheduleRevision: updatedRevision, Changed: true}, nil
 	}
 	override, err = scanOccurrenceOverrideRow(tx.QueryRowContext(ctx, "SELECT "+occurrenceOverrideColumns+" FROM occurrence_overrides WHERE schedule_id = ? AND occurrence_local = ?", int64(id), candidate.OriginalDate))
 	if err != nil {
@@ -366,19 +366,23 @@ func (s *Store) RestoreOccurrence(ctx context.Context, id domain.ScheduleID, can
 	if s.logger != nil {
 		s.logger.Info("occurrence restored", "schedule_id", id, "original_date", candidate.OriginalDate, "revision", updatedRevision)
 	}
-	return domain.OccurrenceActionResult{Override: override, OverridePresent: true, ScheduleRevision: updatedRevision, Changed: true}, nil
+	return domain.OccurrenceActionResult{ScheduleOpen: scheduleOpen, Override: override, OverridePresent: true, ScheduleRevision: updatedRevision, Changed: true}, nil
 }
 
-// readScheduleRevision 在事务内读取父日程版本并统一转换缺失错误。
-func readScheduleRevision(tx *sql.Tx, id domain.ScheduleID) (int64, error) {
+// readScheduleState 在事务内读取父日程版本和 Open 状态并统一转换缺失错误。
+func readScheduleState(tx *sql.Tx, id domain.ScheduleID) (int64, bool, error) {
 	var revision int64
-	if err := tx.QueryRow("SELECT revision FROM schedules WHERE id = ?", int64(id)).Scan(&revision); err != nil {
+	var open int
+	if err := tx.QueryRow("SELECT revision, open FROM schedules WHERE id = ?", int64(id)).Scan(&revision, &open); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, domain.NewNotFound(fmt.Sprintf("schedule %d was not found", id))
+			return 0, false, domain.NewNotFound(fmt.Sprintf("schedule %d was not found", id))
 		}
-		return 0, fmt.Errorf("select schedule %d revision: %w", id, err)
+		return 0, false, fmt.Errorf("select schedule %d state: %w", id, err)
 	}
-	return revision, nil
+	if open != 0 && open != 1 {
+		return 0, false, fmt.Errorf("invalid schedule open value %d", open)
+	}
+	return revision, open == 1, nil
 }
 
 // scanOccurrenceOverrideRow 将单条例外数据库行转换为领域快照。
