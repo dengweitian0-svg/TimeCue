@@ -30,11 +30,15 @@ type Clock interface {
 	Snapshot(context.Context) (domain.TimeSnapshot, error)
 }
 
-// CreateScheduleRequest 表示创建单次日程的输入。
+// CreateScheduleRequest 表示创建单次或重复日程的输入，端点表示首次发生。
 type CreateScheduleRequest struct {
-	Title     string `json:"title"`
-	StartUnix *int64 `json:"start_unix"`
-	EndUnix   *int64 `json:"end_unix"`
+	Title            string  `json:"title"`
+	StartUnix        *int64  `json:"start_unix"`
+	EndUnix          *int64  `json:"end_unix"`
+	Cron             *string `json:"cron"`
+	UntilUnix        *int64  `json:"until_unix"`
+	CronPresent      bool    `json:"-"`
+	UntilUnixPresent bool    `json:"-"`
 }
 
 // UpdateScheduleRequest 表示日程字段补丁和乐观锁版本。
@@ -45,6 +49,7 @@ type UpdateScheduleRequest struct {
 	StartUnix        *int64  `json:"start_unix"`
 	EndUnix          *int64  `json:"end_unix"`
 	Cron             *string `json:"cron"`
+	UntilUnix        *int64  `json:"until_unix"`
 	Cancel           *bool   `json:"cancel"`
 	Restore          *bool   `json:"restore"`
 	ExpectedRevision int64   `json:"expected_revision"`
@@ -53,6 +58,7 @@ type UpdateScheduleRequest struct {
 	StartUnixPresent        bool `json:"-"`
 	EndUnixPresent          bool `json:"-"`
 	CronPresent             bool `json:"-"`
+	UntilUnixPresent        bool `json:"-"`
 	CancelPresent           bool `json:"-"`
 	RestorePresent          bool `json:"-"`
 	ExpectedRevisionPresent bool `json:"-"`
@@ -69,6 +75,7 @@ type ScheduleDTO struct {
 	ID              int64     `json:"id"`
 	Title           string    `json:"title"`
 	Cron            *string   `json:"cron"`
+	UntilDateLocal  *string   `json:"until_date_local"`
 	Open            bool      `json:"open"`
 	FirstStartLocal string    `json:"first_start_local"`
 	DurationMinutes int       `json:"duration_minutes"`

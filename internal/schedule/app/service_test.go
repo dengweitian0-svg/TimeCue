@@ -36,6 +36,7 @@ func (s *fakeStore) CreateSchedule(_ context.Context, candidate domain.ScheduleC
 		ID:                 1,
 		Title:              candidate.Title,
 		Cron:               candidate.Cron,
+		UntilDateLocal:     candidate.UntilDateLocal,
 		Open:               candidate.Open,
 		FirstStartLocal:    candidate.FirstStartLocal,
 		OriginalStartLocal: candidate.OriginalStartLocal,
