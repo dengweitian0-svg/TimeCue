@@ -53,8 +53,8 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations error = %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("migration count = %d, want 1", count)
+	if count != 2 {
+		t.Fatalf("migration count = %d, want 2", count)
 	}
 }
 
@@ -65,11 +65,11 @@ func TestMigrationVersionIsRecorded(t *testing.T) {
 		t.Fatalf("migrate() error = %v", err)
 	}
 	var version int
-	if err := db.QueryRow("SELECT version FROM schema_migrations").Scan(&version); err != nil {
+	if err := db.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("read migration version error = %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("version = %d, want 1", version)
+	if version != 2 {
+		t.Fatalf("version = %d, want 2", version)
 	}
 }
 

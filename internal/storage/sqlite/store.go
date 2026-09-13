@@ -16,7 +16,7 @@ import (
 
 const scheduleColumns = `
 	id, title, cron, open, first_start_local, original_start_local,
-	duration_minutes, revision, created_at_utc, updated_at_utc`
+	duration_minutes, revision, created_at_utc, updated_at_utc, until_date_local`
 
 const scheduleListLimit = 50
 
@@ -30,7 +30,7 @@ func (s *Store) CreateSchedule(ctx context.Context, candidate domain.ScheduleCan
 		return domain.Schedule{}, errors.New("sqlite store is not open")
 	}
 
-	// 应用层校验已经完成，此处开始把单次日程事实写入 SQLite 事务。
+	// 应用层校验已经完成，此处开始把日程定义写入 SQLite 事务。
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Schedule{}, fmt.Errorf("begin create schedule transaction: %w", err)
@@ -49,12 +49,12 @@ func (s *Store) CreateSchedule(ctx context.Context, candidate domain.ScheduleCan
 	if candidate.Cron != nil {
 		cron = *candidate.Cron
 	}
-	// 这里只写入单次日程定义，不预先展开未来发生实例或保存结束时间。
+	// 这里只写入日程定义，不预先展开未来发生实例或保存结束时间。
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO schedules(
 			title, cron, open, first_start_local, original_start_local,
-			duration_minutes, revision, created_at_utc, updated_at_utc
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			duration_minutes, revision, created_at_utc, updated_at_utc, until_date_local
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		candidate.Title,
 		cron,
 		boolToInt(candidate.Open),
@@ -64,6 +64,7 @@ func (s *Store) CreateSchedule(ctx context.Context, candidate domain.ScheduleCan
 		1,
 		formatUTCTime(candidate.CreatedAtUTC),
 		formatUTCTime(candidate.UpdatedAtUTC),
+		candidate.UntilDateLocal,
 	)
 	if err != nil {
 		err = fmt.Errorf("insert schedule: %w", err)
@@ -105,10 +106,8 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 	if candidate.ExpectedRevision <= 0 {
 		return domain.Schedule{}, domain.NewValidation("expected revision must be positive", "expected_revision")
 	}
-	if candidate.CronPresent || candidate.Cron != nil {
-		return domain.Schedule{}, domain.NewValidation("cron cannot be changed on a single schedule", "cron")
-	}
-	if candidate.Title == nil && candidate.FirstStartLocal == nil && candidate.DurationMinutes == nil {
+	cronPresent := candidate.CronPresent || candidate.Cron != nil
+	if candidate.Title == nil && candidate.FirstStartLocal == nil && candidate.DurationMinutes == nil && !cronPresent && candidate.UntilDateLocal == nil {
 		return domain.Schedule{}, domain.NewValidation("schedule update is empty", "title", "start_unix", "end_unix")
 	}
 
@@ -135,9 +134,9 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		err = fmt.Errorf("select schedule %d for update: %w", id, err)
 		return domain.Schedule{}, err
 	}
-	// 当前实现只允许单次日程进入该分支，避免把周期记录当成单次记录覆盖。
-	if existing.IsRecurring() {
-		err = domain.NewValidation("recurring schedule update is not supported", "cron")
+	// 事务内守住同类型更新边界，防止预读后并发变化导致类型被覆盖。
+	if (!existing.IsRecurring() && (cronPresent || candidate.UntilDateLocal != nil)) || (existing.IsRecurring() && cronPresent && candidate.Cron == nil) {
+		err = domain.NewValidation("schedule type conversion is not supported", "cron", "until_date_local")
 		return domain.Schedule{}, err
 	}
 	if existing.Revision != candidate.ExpectedRevision {
@@ -150,6 +149,14 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 	if candidate.Title != nil {
 		setClauses = append(setClauses, "title = ?")
 		args = append(args, *candidate.Title)
+	}
+	if cronPresent {
+		setClauses = append(setClauses, "cron = ?")
+		args = append(args, *candidate.Cron)
+	}
+	if candidate.UntilDateLocal != nil {
+		setClauses = append(setClauses, "until_date_local = ?")
+		args = append(args, *candidate.UntilDateLocal)
 	}
 	if candidate.FirstStartLocal != nil {
 		setClauses = append(setClauses, "first_start_local = ?")
@@ -343,6 +350,7 @@ func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 		schedule          domain.Schedule
 		id                int64
 		cron              sql.NullString
+		untilDate         sql.NullString
 		open              int
 		firstStartText    string
 		originalStartText string
@@ -360,6 +368,7 @@ func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 		&schedule.Revision,
 		&createdText,
 		&updatedText,
+		&untilDate,
 	); err != nil {
 		return domain.Schedule{}, err
 	}
@@ -385,6 +394,7 @@ func scanScheduleFields(scan func(...any) error) (domain.Schedule, error) {
 
 	schedule.ID = domain.ScheduleID(id)
 	schedule.Cron = nullStringPointer(cron)
+	schedule.UntilDateLocal = nullStringPointer(untilDate)
 	schedule.Open = open == 1
 	schedule.FirstStartLocal = firstStart
 	schedule.OriginalStartLocal = originalStart
