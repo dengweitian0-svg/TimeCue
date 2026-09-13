@@ -122,9 +122,24 @@ type OccurrenceRestoreCandidate struct {
 	RemoveCancellation bool
 }
 
+// ScheduleActionCandidate 表示取消或恢复整组日程所需的版本和审计时间。
+type ScheduleActionCandidate struct {
+	ExpectedRevision int64
+	UpdatedAtUTC     time.Time
+}
+
+// ScheduleActionResult 表示整组状态转换提交后的受控状态和父日程版本。
+type ScheduleActionResult struct {
+	Open         bool
+	Revision     int64
+	UpdatedAtUTC time.Time
+	Changed      bool
+}
+
 // OccurrenceActionResult 表示取消或恢复提交后的例外状态和父日程版本。
 // OverridePresent 为 false 时，表示恢复后已回到当前规则，没有持久化例外。
 type OccurrenceActionResult struct {
+	ScheduleOpen     bool
 	Override         OccurrenceOverride
 	OverridePresent  bool
 	ScheduleRevision int64

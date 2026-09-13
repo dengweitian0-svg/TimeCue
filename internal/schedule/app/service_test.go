@@ -11,38 +11,46 @@ import (
 
 // fakeStore 用于验证应用服务与存储实现解耦。
 type fakeStore struct {
-	created             domain.Schedule
-	createCalls         int
-	getResult           domain.Schedule
-	getErr              error
-	updateResult        domain.Schedule
-	updateErr           error
-	updateCalls         int
-	updated             domain.ScheduleUpdateCandidate
-	override            domain.OccurrenceOverride
-	overrides           []domain.OccurrenceOverride
-	overrideListErr     error
-	overrideErr         error
-	occurrence          domain.OccurrenceUpdateResult
-	occurrenceErr       error
-	occurrenceCalls     int
-	occurrenceCandidate domain.OccurrenceOverrideCandidate
-	cancelResult        domain.OccurrenceActionResult
-	cancelErr           error
-	cancelCalls         int
-	cancelCandidate     domain.OccurrenceCancelCandidate
-	restoreResult       domain.OccurrenceActionResult
-	restoreErr          error
-	restoreCalls        int
-	restoreCandidate    domain.OccurrenceRestoreCandidate
-	deleteTitle         string
-	deleteErr           error
-	deleteCalls         int
-	deleteID            domain.ScheduleID
-	deleteRev           int64
-	listResult          ListSchedulesResponse
-	listErr             error
-	lastListReq         ListSchedulesRequest
+	created                  domain.Schedule
+	createCalls              int
+	getResult                domain.Schedule
+	getErr                   error
+	updateResult             domain.Schedule
+	updateErr                error
+	updateCalls              int
+	updated                  domain.ScheduleUpdateCandidate
+	override                 domain.OccurrenceOverride
+	overrides                []domain.OccurrenceOverride
+	overrideListErr          error
+	overrideErr              error
+	occurrence               domain.OccurrenceUpdateResult
+	occurrenceErr            error
+	occurrenceCalls          int
+	occurrenceCandidate      domain.OccurrenceOverrideCandidate
+	cancelResult             domain.OccurrenceActionResult
+	scheduleCancelResult     domain.ScheduleActionResult
+	scheduleCancelErr        error
+	scheduleCancelCalls      int
+	scheduleCancelCandidate  domain.ScheduleActionCandidate
+	cancelErr                error
+	cancelCalls              int
+	cancelCandidate          domain.OccurrenceCancelCandidate
+	restoreResult            domain.OccurrenceActionResult
+	scheduleRestoreResult    domain.ScheduleActionResult
+	scheduleRestoreErr       error
+	scheduleRestoreCalls     int
+	scheduleRestoreCandidate domain.ScheduleActionCandidate
+	restoreErr               error
+	restoreCalls             int
+	restoreCandidate         domain.OccurrenceRestoreCandidate
+	deleteTitle              string
+	deleteErr                error
+	deleteCalls              int
+	deleteID                 domain.ScheduleID
+	deleteRev                int64
+	listResult               ListSchedulesResponse
+	listErr                  error
+	lastListReq              ListSchedulesRequest
 }
 
 // CreateSchedule 记录候选并返回确定的持久化日程。
@@ -109,6 +117,20 @@ func (s *fakeStore) RestoreOccurrence(_ context.Context, _ domain.ScheduleID, ca
 	return s.restoreResult, s.restoreErr
 }
 
+// CancelSchedule 记录整组取消请求并返回测试预置结果。
+func (s *fakeStore) CancelSchedule(_ context.Context, _ domain.ScheduleID, candidate domain.ScheduleActionCandidate) (domain.ScheduleActionResult, error) {
+	s.scheduleCancelCalls++
+	s.scheduleCancelCandidate = candidate
+	return s.scheduleCancelResult, s.scheduleCancelErr
+}
+
+// RestoreSchedule 记录整组恢复请求并返回测试预置结果。
+func (s *fakeStore) RestoreSchedule(_ context.Context, _ domain.ScheduleID, candidate domain.ScheduleActionCandidate) (domain.ScheduleActionResult, error) {
+	s.scheduleRestoreCalls++
+	s.scheduleRestoreCandidate = candidate
+	return s.scheduleRestoreResult, s.scheduleRestoreErr
+}
+
 // DeleteSchedule 记录删除请求并返回测试预置的标题和错误。
 func (s *fakeStore) DeleteSchedule(_ context.Context, id domain.ScheduleID, expectedRevision int64) (string, error) {
 	s.deleteCalls++
@@ -127,10 +149,12 @@ func (s *fakeStore) ListSchedules(_ context.Context, request ListSchedulesReques
 type fakeClock struct {
 	snapshot domain.TimeSnapshot
 	err      error
+	calls    int
 }
 
 // Snapshot 返回预置的时间快照。
 func (c *fakeClock) Snapshot(_ context.Context) (domain.TimeSnapshot, error) {
+	c.calls++
 	return c.snapshot, c.err
 }
 

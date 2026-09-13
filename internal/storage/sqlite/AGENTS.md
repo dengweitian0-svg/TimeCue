@@ -5,6 +5,7 @@
   - `db.go`：打开、初始化、外键启用、迁移和关闭数据库资源。
   - `migrate.go`：读取迁移版本、原子应用迁移和拒绝不支持的新版本。
   - `store.go`：日程创建、单条读取、ID 游标分页、数据库行转换，以及 `ScheduleUpdater` 和 `ScheduleDeleter` 的更新/删除实现。
+  - `schedule_action_store.go`：整组取消/恢复的原子状态转换、幂等和提交后回读。
   - [`migrations/`](migrations/AGENTS.md)：内嵌的版本化 SQL。
   - `*_test.go`：验证迁移、创建/更新/删除事务、版本冲突、错误链、游标、资源关闭和端口契约。
 - `OpenStore` 必须完成连接检查、每个物理连接的外键约束和迁移后才返回可用 `Store`；外键通过连接级 DSN 参数启用，当前通过单连接配置简化 SQLite 锁行为和显式事务观察。
@@ -12,13 +13,14 @@
 - `CreateSchedule` 必须在单一事务中完成插入、回读和提交，只有提交成功后才能向应用层返回成功；回滚失败必须与原始错误合并保留。
 - `UpdateSchedule` 必须在单一事务中重新读取日程、检查允许的单次/重复边界和期望版本，执行带版本条件的 cron、月末策略及其他字段更新、回读和提交；读取、更新、回读或提交失败都必须回滚，版本冲突必须返回 `STALE_REVISION`。
 - 版本 2 追加可空 `until_date_local`（`YYYY-MM-DD`），版本 3 追加可空 `month_end_policy`（当前允许 `NULL` 或 `clamp`），旧迁移保持不变。创建和统一行扫描保存/读取这些字段；更新候选使用存在性标记支持策略显式清空。未携带字段、原始发生身份、Open 和创建时间必须保留，每次成功更新 revision 加一并更新审计时间。
-- 版本 4 追加非空默认空字符串的 `notes`，并扩展 `occurrence_overrides` 的完整快照列；原有 `occurrence_local` 作为 `original_date` 的物理存储保持不变。
+- 版本 4 追加非空默认空字符串的 `notes`，并扩展 `occurrence_overrides` 的完整快照列；原有 `occurrence_local` 作为 `original_date` 的物理存储保持不变。版本 5 修复遗留单次 `cron IS NULL AND open=0` 为开放，并以触发器阻止未来非法单次状态。
 - 仅持久化定义，不生成实例行，不新增 `frequency`、`next_at` 或结束时间列；日志沿用创建/更新事务提交后的 INFO 里程碑，失败向上返回由系统边界统一记录。
 - `month_end_policy` 通过统一扫描和列表 DTO 映射返回；创建月规则时由领域候选携带 `clamp`，单次/日/周规则返回 null。
 - 重复规则在日/周/月之间切换时，cron 与 `month_end_policy` 必须由同一事务提交；cron 未修改时策略保持不变，月转日/周必须显式写入 NULL。
 - `UpdateSchedule` 只修改父日程定义，不删除或重建 `occurrence_overrides`；应用层可在同一版本守卫下读取并返回保留数量，合并结果始终按 `(schedule_id, occurrence_local)` 去重。
 - `CancelOccurrence` 在父 revision 守卫下将例外置为 `open=0`；无现有例外时写入空快照，已有完整快照只改变 `open`，重复取消不更新父 revision。
-- `RestoreOccurrence` 在父 revision 守卫下将完整取消快照恢复为 `open=1`，或仅在候选明确要求且例外为空快照时删除取消行；没有实际状态变化时不更新父 revision。
+- `RestoreOccurrence` 在父 revision 守卫下将完整取消快照恢复为 `open=1`，或仅在候选明确要求且例外为空快照时删除取消行；没有实际状态变化时不更新父 revision。例外动作结果必须返回事务内父日程 `open` 状态。
+- `CancelSchedule` 和 `RestoreSchedule` 仅接受重复日程；事务内重读定义并校验 revision，相同目标状态只读返回，实际变更只更新 `open`、`revision` 和 `updated_at_utc`，回读并提交成功后才返回。整组动作不得修改例外或提醒事实。
 - `DeleteSchedule` 必须在单一事务中读取标题和版本、执行带版本条件的物理删除并提交；删除依赖外键级联清理关联记录，任一步失败都必须回滚，并在失败时保留已读取的标题。
 - `recurring_e2e_test.go` 使用真实临时 SQLite 和可控时钟验证重复日程 JSON 生命周期、规则编辑、重开后计算一致性，以及计算和失败请求不生成实例记录。
 - `occurrence_e2e_test.go` 使用真实 SQLite 验证例外移动、同刻多身份、跨日跨月、父截止收缩、整组编辑保留、重开一致性和级联删除。

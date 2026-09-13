@@ -43,7 +43,7 @@ func TestNextMergedOccurrenceFindsExceptionAfterCutoff(t *testing.T) {
 	location := time.FixedZone("CST", 8*60*60)
 	cron := "0 10 * * *"
 	until := "2026-09-14"
-	schedule := Schedule{ID: 1, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: time.Date(2026, 9, 7, 10, 0, 0, 0, location), DurationMinutes: 60, Title: "base"}
+	schedule := Schedule{ID: 1, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: time.Date(2026, 9, 7, 10, 0, 0, 0, location), DurationMinutes: 60, Title: "base", Open: true}
 	override := OccurrenceOverride{
 		ScheduleID: 1, OriginalDate: "2026-09-07", StartLocal: time.Date(2026, 9, 20, 10, 0, 0, 0, location), DurationMinutes: 60,
 		Title: "moved", Open: true, SnapshotPresent: true,
@@ -62,7 +62,7 @@ func TestExpandMergedOccurrencesUsesActualInterval(t *testing.T) {
 	location := time.FixedZone("CST", 8*60*60)
 	cron := "0 10 * * *"
 	until := "2026-09-14"
-	schedule := Schedule{ID: 1, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: time.Date(2026, 9, 7, 10, 0, 0, 0, location), DurationMinutes: 60, Title: "base"}
+	schedule := Schedule{ID: 1, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: time.Date(2026, 9, 7, 10, 0, 0, 0, location), DurationMinutes: 60, Title: "base", Open: true}
 	override := OccurrenceOverride{
 		ScheduleID: 1, OriginalDate: "2026-09-07", StartLocal: time.Date(2026, 9, 20, 10, 0, 0, 0, location), DurationMinutes: 60,
 		Title: "moved", Open: true, SnapshotPresent: true,
@@ -92,4 +92,32 @@ func TestMergeOccurrencesKeepsSameTimeDifferentIdentities(t *testing.T) {
 // unixMinute 将本地时间转换为分钟精度的 Unix 秒，供测试构造输入。
 func unixMinute(value time.Time) int64 {
 	return value.Unix()
+}
+
+// TestClosedMergedScheduleSkipsOverrides 验证关闭整组时基础发生和开放例外都不进入有效结果。
+func TestClosedMergedScheduleSkipsOverrides(t *testing.T) {
+	location := time.FixedZone("CST", 8*60*60)
+	cron := "0 10 * * *"
+	until := "2026-09-14"
+	schedule := Schedule{ID: 1, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: time.Date(2026, 9, 7, 10, 0, 0, 0, location), DurationMinutes: 60, Open: false}
+	override := OccurrenceOverride{ScheduleID: 1, OriginalDate: "2026-09-07", StartLocal: time.Date(2026, 9, 20, 10, 0, 0, 0, location), DurationMinutes: 60, Title: "moved", Open: true, SnapshotPresent: true}
+	if occurrence, ok, err := NextMergedOccurrence(schedule, []OccurrenceOverride{override}, time.Date(2026, 9, 15, 0, 0, 0, 0, location), location); err != nil || ok || !occurrence.StartLocal.IsZero() {
+		t.Fatalf("NextMergedOccurrence() = %+v, %v, %v", occurrence, ok, err)
+	}
+	occurrences, err := ExpandMergedOccurrences(schedule, []OccurrenceOverride{override}, time.Date(2026, 9, 7, 0, 0, 0, 0, location), time.Date(2026, 9, 21, 0, 0, 0, 0, location), location)
+	if err != nil || len(occurrences) != 0 {
+		t.Fatalf("ExpandMergedOccurrences() = %+v, %v", occurrences, err)
+	}
+}
+
+// TestOccurrenceOnDateMatchesClosedSchedule 验证关闭组仍可按原始规则身份匹配恢复本次例外。
+func TestOccurrenceOnDateMatchesClosedSchedule(t *testing.T) {
+	location := time.UTC
+	cron := "0 10 * * *"
+	until := "2026-09-14"
+	schedule := Schedule{ID: 1, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: time.Date(2026, 9, 7, 10, 0, 0, 0, location), DurationMinutes: 60, Open: false}
+	occurrence, found, err := OccurrenceOnDate(schedule, "2026-09-08", location)
+	if err != nil || !found || occurrence.OriginalDate != "2026-09-08" {
+		t.Fatalf("OccurrenceOnDate() = %+v, %v, %v", occurrence, found, err)
+	}
 }

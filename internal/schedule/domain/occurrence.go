@@ -90,6 +90,12 @@ func MergeOccurrences(base []Occurrence, overrides []OccurrenceOverride) []Occur
 
 // NextMergedOccurrence 返回严格晚于 after 的最早有效基础或例外发生。
 func NextMergedOccurrence(schedule Schedule, overrides []OccurrenceOverride, after time.Time, location *time.Location) (Occurrence, bool, error) {
+	if _, _, _, err := recurrenceInputs(schedule, location); err != nil {
+		return Occurrence{}, false, err
+	}
+	if !schedule.Open {
+		return Occurrence{}, false, nil
+	}
 	overridden := make(map[string]struct{}, len(overrides))
 	for _, override := range overrides {
 		if override.ScheduleID == schedule.ID {
@@ -141,6 +147,15 @@ func NextMergedOccurrence(schedule Schedule, overrides []OccurrenceOverride, aft
 
 // ExpandMergedOccurrences 展开查询窗口内的基础发生并合入实际时间窗口内的例外。
 func ExpandMergedOccurrences(schedule Schedule, overrides []OccurrenceOverride, from, to time.Time, location *time.Location) ([]Occurrence, error) {
+	if _, _, _, err := recurrenceInputs(schedule, location); err != nil {
+		return nil, err
+	}
+	if !to.After(from) {
+		return nil, NewValidation("expansion end must be after start", "from", "to")
+	}
+	if !schedule.Open {
+		return nil, nil
+	}
 	base, err := Expand(schedule, from, to, location)
 	if err != nil {
 		return nil, err
@@ -174,6 +189,8 @@ func OccurrenceOnDate(schedule Schedule, originalDate string, location *time.Loc
 	}
 	from := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, location)
 	to := from.AddDate(0, 0, 1)
+	// 原始日期身份匹配必须独立于父组 Open 状态，供关闭组恢复本次例外。
+	schedule.Open = true
 	occurrences, err := Expand(schedule, from, to, location)
 	if err != nil {
 		return Occurrence{}, false, err
