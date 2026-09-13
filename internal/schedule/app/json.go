@@ -135,6 +135,34 @@ func DecodeOccurrenceAction(data []byte) (OccurrenceActionRequest, error) {
 	return request, nil
 }
 
+// DecodeScheduleAction 使用 encoding/json/v2 解码整组取消或恢复请求。
+func DecodeScheduleAction(data []byte) (ScheduleActionRequest, error) {
+	var request ScheduleActionRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		return ScheduleActionRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "invalid schedule action JSON",
+			Cause:   err,
+		}
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return ScheduleActionRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "schedule action JSON must be an object",
+		}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return ScheduleActionRequest{}, &domain.Error{
+			Code:    domain.Validation,
+			Message: "schedule action JSON must be an object",
+			Cause:   err,
+		}
+	}
+	_, request.ExpectedRevisionPresent = fields["expected_revision"]
+	return request, nil
+}
+
 // DecodeDeleteSchedule 使用 encoding/json/v2 解码永久删除请求。
 func DecodeDeleteSchedule(data []byte) (DeleteScheduleRequest, error) {
 	var request DeleteScheduleRequest
@@ -171,6 +199,11 @@ func EncodeSchedule(schedule ScheduleDTO) ([]byte, error) {
 // EncodeOccurrence 使用 encoding/json/v2 序列化一次发生。
 func EncodeOccurrence(occurrence OccurrenceDTO) ([]byte, error) {
 	return json.Marshal(occurrence)
+}
+
+// EncodeScheduleAction 使用 encoding/json/v2 序列化整组取消或恢复结果。
+func EncodeScheduleAction(result ScheduleActionDTO) ([]byte, error) {
+	return json.Marshal(result)
 }
 
 // EncodeOccurrenceAction 使用 encoding/json/v2 序列化取消或恢复结果。

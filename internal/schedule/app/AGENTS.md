@@ -1,6 +1,6 @@
 # internal/schedule/app
 
-- 本目录负责编排日程应用用例，并定义应用层与外部实现之间的窄契约。
+- 本目录负责编排日程应用用例，并定义应用层与外部实现之间的窄契约。整组取消/恢复通过 `ScheduleCanceller`、`ScheduleRestorer` 和 `ScheduleActionRequest` 接入；动作 DTO 只暴露 `schedule_id`、`open`、`revision`、`updated_at_utc`。
 - 当前文件：
   - `contracts.go`：`ScheduleStore`、独立的日程/例外更新端口、取消/恢复端口、例外读取端口、`ScheduleDeleter`、`Clock`，以及创建、更新、删除、例外操作、列表请求和受控响应 DTO。
   - `service.go`：创建、更新、删除、读取、分页列表和时间边界查询用例。
@@ -20,7 +20,7 @@
 - 日程的 `notes` 是可为空的普通文本；整组更新显式提供时替换父日程备注，例外更新显式提供时替换当前发生备注。
 - `UpdateOccurrence` 使用 `(schedule_id, original_date)` 读取当前例外或规则基础发生，补齐缺失端点和文本后只向存储提交完整快照；基础规则不匹配且不存在例外时拒绝写入。
 - 例外更新使用父日程 `expected_revision`，存储实现负责在同一事务内写入例外并递增父版本；返回 DTO 只暴露实际起止、原始日期、文本和新版本。
-- `CancelOccurrence` 和 `RestoreOccurrence` 使用同一稳定身份和父 revision；空取消例外只有在当前规则重新产生该身份时才能被恢复删除，完整快照恢复为开放例外。
+- `CancelOccurrence` 和 `RestoreOccurrence` 使用同一稳定身份和父 revision；空取消例外只有在当前规则重新产生该身份时才能被恢复删除，完整快照恢复为开放例外。例外动作结果同时回流父组 `schedule_open`。
 - `UpdateSchedule` 不删除或重建例外记录；重复日程整组编辑前读取当前例外数量，并在成功响应的 `preserved_override_count` 中返回该数量。
 - 预读发现旧 revision 时返回 STALE_REVISION，不调用更新端口；存储事务仍承担最终并发守卫。非法规则或合并后的日期/端点校验失败均不得写入。
 - `ScheduleDTO.until_date_local` 在单条读取、创建/更新响应和列表中均返回 `YYYY-MM-DD` 或 null；JSON 创建/更新边界都保留 cron 和 until_unix 的存在性。

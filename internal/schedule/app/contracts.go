@@ -46,6 +46,16 @@ type OccurrenceRestorer interface {
 	RestoreOccurrence(context.Context, domain.ScheduleID, domain.OccurrenceRestoreCandidate) (domain.OccurrenceActionResult, error)
 }
 
+// ScheduleCanceller 定义取消整组日程所需的原子持久化能力。
+type ScheduleCanceller interface {
+	CancelSchedule(context.Context, domain.ScheduleID, domain.ScheduleActionCandidate) (domain.ScheduleActionResult, error)
+}
+
+// ScheduleRestorer 定义恢复整组日程所需的原子持久化能力。
+type ScheduleRestorer interface {
+	RestoreSchedule(context.Context, domain.ScheduleID, domain.ScheduleActionCandidate) (domain.ScheduleActionResult, error)
+}
+
 // Clock 定义应用服务读取当前时间环境的能力。
 type Clock interface {
 	Snapshot(context.Context) (domain.TimeSnapshot, error)
@@ -104,6 +114,12 @@ type UpdateOccurrenceRequest struct {
 	TitlePresent            bool `json:"-"`
 	NotesPresent            bool `json:"-"`
 	ExpectedRevisionPresent bool `json:"-"`
+}
+
+// ScheduleActionRequest 表示取消或恢复整组日程的乐观锁请求。
+type ScheduleActionRequest struct {
+	ExpectedRevision        int64 `json:"expected_revision"`
+	ExpectedRevisionPresent bool  `json:"-"`
 }
 
 // OccurrenceActionRequest 表示取消或恢复某个原始日期的操作请求。
@@ -167,12 +183,21 @@ type OccurrenceActionDTO struct {
 	ScheduleID       int64   `json:"schedule_id"`
 	OriginalDate     string  `json:"original_date"`
 	Cancelled        bool    `json:"cancelled"`
+	ScheduleOpen     bool    `json:"schedule_open"`
 	SnapshotPresent  bool    `json:"snapshot_present"`
 	StartUnix        *int64  `json:"start_unix,omitzero"`
 	EndUnix          *int64  `json:"end_unix,omitzero"`
 	Title            *string `json:"title,omitzero"`
 	Notes            *string `json:"notes,omitzero"`
 	ScheduleRevision int64   `json:"schedule_revision"`
+}
+
+// ScheduleActionDTO 表示取消或恢复整组日程的受控结果。
+type ScheduleActionDTO struct {
+	ScheduleID   int64     `json:"schedule_id"`
+	Open         bool      `json:"open"`
+	Revision     int64     `json:"revision"`
+	UpdatedAtUTC time.Time `json:"updated_at_utc"`
 }
 
 // ListSchedulesRequest 表示列表分页输入。
