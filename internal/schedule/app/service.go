@@ -233,7 +233,17 @@ func (s *Service) GetSchedule(ctx context.Context, id domain.ScheduleID) (Schedu
 		return ScheduleDTO{}, fmt.Errorf("get schedule %d: %w", id, err)
 	}
 	// DTO 是内部状态到受控对外视图的投影，不暴露原始开始时间等内部字段。
-	return scheduleDTO(schedule), nil
+	result := scheduleDTO(schedule)
+	reader, ok := s.store.(OccurrenceReader)
+	if !ok {
+		return ScheduleDTO{}, errors.New("schedule store does not support occurrence reads")
+	}
+	overrides, err := reader.ListOccurrenceOverrides(ctx, id)
+	if err != nil {
+		return ScheduleDTO{}, fmt.Errorf("read occurrence overrides for schedule %d: %w", id, err)
+	}
+	result.CancelledOccurrences = cancelledOccurrenceDTOs(overrides)
+	return result, nil
 }
 
 // deriveUpdateEndpoints 用保存的时长补齐更新请求缺失的一个时间端点。
@@ -324,4 +334,38 @@ func scheduleDTO(schedule domain.Schedule) ScheduleDTO {
 		CreatedAtUTC:    schedule.CreatedAtUTC,
 		UpdatedAtUTC:    schedule.UpdatedAtUTC,
 	}
+}
+
+// cancelledOccurrenceDTOs 将持久化取消事实投影为稳定顺序的受控列表。
+func cancelledOccurrenceDTOs(overrides []domain.OccurrenceOverride) []CancelledOccurrenceDTO {
+	result := make([]CancelledOccurrenceDTO, 0)
+	for _, override := range overrides {
+		if override.Open {
+			continue
+		}
+		result = append(result, cancelledOccurrenceDTO(override))
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// cancelledOccurrenceDTO 将单个取消例外转换为不暴露内部时间对象的视图。
+func cancelledOccurrenceDTO(override domain.OccurrenceOverride) CancelledOccurrenceDTO {
+	result := CancelledOccurrenceDTO{
+		OriginalDate:    override.OriginalDate,
+		SnapshotPresent: override.SnapshotPresent,
+	}
+	if !override.SnapshotPresent {
+		return result
+	}
+	startUnix := override.StartLocal.Unix()
+	endUnix := override.StartLocal.Add(duration(override.DurationMinutes)).Unix()
+	title, notes := override.Title, override.Notes
+	result.StartUnix = &startUnix
+	result.EndUnix = &endUnix
+	result.Title = &title
+	result.Notes = &notes
+	return result
 }
