@@ -147,35 +147,146 @@ func NextMergedOccurrence(schedule Schedule, overrides []OccurrenceOverride, aft
 
 // ExpandMergedOccurrences 展开查询窗口内的基础发生并合入实际时间窗口内的例外。
 func ExpandMergedOccurrences(schedule Schedule, overrides []OccurrenceOverride, from, to time.Time, location *time.Location) ([]Occurrence, error) {
-	if _, _, _, err := recurrenceInputs(schedule, location); err != nil {
+	iterator, err := NewMergedOccurrenceIterator(schedule, overrides, from, to, location)
+	if err != nil {
 		return nil, err
+	}
+	result := make([]Occurrence, 0)
+	for {
+		occurrence, ok, nextErr := iterator.Next()
+		if nextErr != nil {
+			return nil, nextErr
+		}
+		if !ok {
+			return result, nil
+		}
+		result = append(result, occurrence)
+	}
+}
+
+// MergedOccurrenceIterator 按实际时间流式合并某个日程的基础发生和例外。
+// 它只保留例外索引和当前候选，不会为多年查询一次性生成全部发生。
+type MergedOccurrenceIterator struct {
+	schedule      Schedule
+	overrides     map[string]OccurrenceOverride
+	from          time.Time
+	to            time.Time
+	location      *time.Location
+	after         time.Time
+	singlePending bool
+}
+
+// NewMergedOccurrenceIterator 创建查询窗口内的无副作用发生迭代器。
+func NewMergedOccurrenceIterator(schedule Schedule, overrides []OccurrenceOverride, from, to time.Time, location *time.Location) (*MergedOccurrenceIterator, error) {
+	if location == nil {
+		return nil, NewValidation("time location must not be nil", "location")
 	}
 	if !to.After(from) {
 		return nil, NewValidation("expansion end must be after start", "from", "to")
 	}
-	if !schedule.Open {
-		return nil, nil
+	if schedule.Cron != nil {
+		if _, _, _, err := recurrenceInputs(schedule, location); err != nil {
+			return nil, err
+		}
+	} else if schedule.FirstStartLocal.IsZero() || schedule.DurationMinutes <= 0 {
+		return nil, NewValidation("stored single schedule is invalid", "first_start_local", "duration_minutes")
 	}
-	base, err := Expand(schedule, from, to, location)
-	if err != nil {
-		return nil, err
-	}
-	active := make([]OccurrenceOverride, 0, len(overrides))
+	indexed := make(map[string]OccurrenceOverride, len(overrides))
 	for _, override := range overrides {
-		if override.ScheduleID != schedule.ID || !override.Open || !override.SnapshotPresent {
+		if override.ScheduleID == schedule.ID {
+			indexed[occurrenceKey(override.ScheduleID, override.OriginalDate)] = override
+		}
+	}
+	duration := time.Duration(schedule.DurationMinutes) * time.Minute
+	return &MergedOccurrenceIterator{
+		schedule: schedule, overrides: indexed, from: from, to: to, location: location,
+		after: from.Add(-duration - time.Nanosecond), singlePending: schedule.Cron == nil,
+	}, nil
+}
+
+// Next 返回下一条实际区间相交的发生；结果耗尽时返回 false。
+func (i *MergedOccurrenceIterator) Next() (Occurrence, bool, error) {
+	if i == nil {
+		return Occurrence{}, false, NewValidation("occurrence iterator must not be nil")
+	}
+	if !i.schedule.Open {
+		return Occurrence{}, false, nil
+	}
+
+	cursor := i.after
+	override, overrideOK := i.nextOverride(cursor)
+	for {
+
+		var base Occurrence
+		var baseOK bool
+		var err error
+		if i.singlePending {
+			i.singlePending = false
+			start := i.schedule.FirstStartLocal.In(i.location)
+			base = Occurrence{ScheduleID: i.schedule.ID, OriginalDate: start.Format(time.DateOnly), StartLocal: start,
+				EndLocal: start.Add(time.Duration(i.schedule.DurationMinutes) * time.Minute), Title: i.schedule.Title, Notes: i.schedule.Notes}
+			baseOK = true
+		} else if i.schedule.Cron != nil {
+			base, baseOK, err = NextBase(i.schedule, cursor, i.location)
+			if err != nil {
+				return Occurrence{}, false, err
+			}
+		}
+		if !baseOK {
+			if !overrideOK {
+				return Occurrence{}, false, nil
+			}
+			i.after = override.StartLocal
+			return override, true, nil
+		}
+		if _, replaced := i.overrides[occurrenceKey(base.ScheduleID, base.OriginalDate)]; replaced {
+			cursor = base.StartLocal
 			continue
 		}
-		// 先纳入全部有效例外，确保移动到窗口外的例外仍能替换原位置的基础发生。
-		active = append(active, override)
+		if !Overlaps(base.StartLocal, base.EndLocal, i.from, i.to) {
+			// 基础发生可能从窗口前开始；逐条回看直到找到相交区间或越过窗口。
+			if !base.StartLocal.Before(i.to) {
+				if !overrideOK {
+					return Occurrence{}, false, nil
+				}
+				i.after = override.StartLocal
+				return override, true, nil
+			}
+			cursor = base.StartLocal
+			continue
+		}
+		if overrideOK && occurrenceLess(override, base) {
+			i.after = override.StartLocal
+			return override, true, nil
+		}
+		i.after = base.StartLocal
+		return base, true, nil
 	}
-	merged := MergeOccurrences(base, active)
-	result := make([]Occurrence, 0, len(merged))
-	for _, occurrence := range merged {
-		if occurrence.StartLocal.Before(to) && occurrence.EndLocal.After(from) {
-			result = append(result, occurrence)
+}
+
+// nextOverride 返回游标之后、查询窗口内最早的有效移动例外。
+func (i *MergedOccurrenceIterator) nextOverride(after time.Time) (Occurrence, bool) {
+	var result Occurrence
+	for _, override := range i.overrides {
+		if !override.Open || !override.SnapshotPresent || !override.StartLocal.After(after) {
+			continue
+		}
+		candidate := Occurrence{ScheduleID: override.ScheduleID, OriginalDate: override.OriginalDate,
+			StartLocal: override.StartLocal, EndLocal: override.StartLocal.Add(time.Duration(override.DurationMinutes) * time.Minute),
+			Title: override.Title, Notes: override.Notes}
+		if !Overlaps(candidate.StartLocal, candidate.EndLocal, i.from, i.to) {
+			continue
+		}
+		if result.StartLocal.IsZero() || occurrenceLess(candidate, result) {
+			result = candidate
 		}
 	}
-	return result, nil
+	return result, !result.StartLocal.IsZero()
+}
+
+// Overlaps 判断两个半开时间区间是否有实际交集；边界相接不算相交。
+func Overlaps(start, end, from, to time.Time) bool {
+	return start.Before(to) && end.After(from)
 }
 
 // OccurrenceOnDate 返回规则在指定原始本地日期上的基础发生，用于判断例外是否有合法父身份。

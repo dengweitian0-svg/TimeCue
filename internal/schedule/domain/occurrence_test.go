@@ -121,3 +121,54 @@ func TestOccurrenceOnDateMatchesClosedSchedule(t *testing.T) {
 		t.Fatalf("OccurrenceOnDate() = %+v, %v, %v", occurrence, found, err)
 	}
 }
+
+// TestMergedOccurrenceIteratorIncludesCrossDayBase 验证从窗口前开始但实际跨入窗口的基础发生不会遗漏。
+func TestMergedOccurrenceIteratorIncludesCrossDayBase(t *testing.T) {
+	location := time.FixedZone("CST", 8*60*60)
+	cron := "30 23 * * *"
+	until := "2026-09-03"
+	schedule := Schedule{ID: 3, Cron: &cron, UntilDateLocal: &until,
+		FirstStartLocal: time.Date(2026, 9, 1, 23, 30, 0, 0, location),
+		DurationMinutes: 120, Title: "overnight", Open: true}
+	iterator, err := NewMergedOccurrenceIterator(schedule, nil,
+		time.Date(2026, 9, 2, 0, 30, 0, 0, location),
+		time.Date(2026, 9, 2, 2, 0, 0, 0, location), location)
+	if err != nil {
+		t.Fatalf("NewMergedOccurrenceIterator() error = %v", err)
+	}
+	got, ok, err := iterator.Next()
+	if err != nil || !ok {
+		t.Fatalf("Next() = %+v, %v, %v", got, ok, err)
+	}
+	if got.OriginalDate != "2026-09-01" || got.StartLocal.Hour() != 23 || got.EndLocal.Hour() != 1 {
+		t.Fatalf("cross-day occurrence = %+v", got)
+	}
+	if _, ok, err := iterator.Next(); err != nil || ok {
+		t.Fatalf("second Next() = %v, %v", ok, err)
+	}
+}
+
+// TestMergedOccurrenceIteratorAppliesCancellationAndMove 验证取消先替换基础身份，移动例外再按实际时间参与查询。
+func TestMergedOccurrenceIteratorAppliesCancellationAndMove(t *testing.T) {
+	location := time.UTC
+	cron := "0 10 * * *"
+	until := "2026-09-04"
+	schedule := Schedule{ID: 4, Cron: &cron, UntilDateLocal: &until,
+		FirstStartLocal: time.Date(2026, 9, 1, 10, 0, 0, 0, location),
+		DurationMinutes: 60, Title: "base", Open: true}
+	overrides := []OccurrenceOverride{
+		{ScheduleID: 4, OriginalDate: "2026-09-02", Open: false},
+		{ScheduleID: 4, OriginalDate: "2026-09-03", Open: true, SnapshotPresent: true,
+			StartLocal: time.Date(2026, 9, 1, 12, 0, 0, 0, location), DurationMinutes: 30, Title: "moved"},
+	}
+	occurrences, err := ExpandMergedOccurrences(schedule, overrides,
+		time.Date(2026, 9, 1, 0, 0, 0, 0, location),
+		time.Date(2026, 9, 5, 0, 0, 0, 0, location), location)
+	if err != nil {
+		t.Fatalf("ExpandMergedOccurrences() error = %v", err)
+	}
+	if len(occurrences) != 3 || occurrences[0].OriginalDate != "2026-09-01" ||
+		occurrences[1].OriginalDate != "2026-09-03" || occurrences[2].OriginalDate != "2026-09-04" {
+		t.Fatalf("merged occurrences = %+v", occurrences)
+	}
+}
