@@ -15,13 +15,6 @@ type CronRule struct {
 	Weekday    *time.Weekday
 }
 
-// Occurrence 是按需计算的发生，不是需要持久化的实例行。
-type Occurrence struct {
-	ScheduleID ScheduleID
-	StartLocal time.Time
-	EndLocal   time.Time
-}
-
 // ParseCron 只接受五字段的每日 M H * * *、每周 M H * * D 和每月 M H D * *，星期日为 0。
 func ParseCron(expression string) (CronRule, error) {
 	fields := strings.Fields(expression)
@@ -173,7 +166,14 @@ func nextBase(schedule Schedule, rule CronRule, first, until, after time.Time, l
 	for !date.After(until) {
 		start := resolveWallTime(date.Year(), date.Month(), date.Day(), rule.Hour, rule.Minute, location)
 		if !start.Before(first) && start.After(after) {
-			return Occurrence{ScheduleID: schedule.ID, StartLocal: start, EndLocal: start.Add(time.Duration(schedule.DurationMinutes) * time.Minute)}, true
+			return Occurrence{
+				ScheduleID:   schedule.ID,
+				OriginalDate: date.Format(time.DateOnly),
+				StartLocal:   start,
+				EndLocal:     start.Add(time.Duration(schedule.DurationMinutes) * time.Minute),
+				Title:        schedule.Title,
+				Notes:        schedule.Notes,
+			}, true
 		}
 		date = date.AddDate(0, 0, step)
 	}
@@ -200,7 +200,14 @@ func nextMonthlyBase(schedule Schedule, rule CronRule, first, until, after time.
 		start := resolveWallTime(date.Year(), date.Month(), day, rule.Hour, rule.Minute, location)
 		// 先按原始墙钟发生日判断截止，再用实际时间执行包含式首次和严格 after。
 		if !candidateDate.After(until) && !start.Before(first) && start.After(after) {
-			return Occurrence{ScheduleID: schedule.ID, StartLocal: start, EndLocal: start.Add(time.Duration(schedule.DurationMinutes) * time.Minute)}, true
+			return Occurrence{
+				ScheduleID:   schedule.ID,
+				OriginalDate: candidateDate.Format(time.DateOnly),
+				StartLocal:   start,
+				EndLocal:     start.Add(time.Duration(schedule.DurationMinutes) * time.Minute),
+				Title:        schedule.Title,
+				Notes:        schedule.Notes,
+			}, true
 		}
 		date = nextMonth
 	}

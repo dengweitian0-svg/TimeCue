@@ -12,6 +12,7 @@ type ScheduleID int64
 type Schedule struct {
 	ID                 ScheduleID
 	Title              string
+	Notes              string
 	Cron               *string
 	UntilDateLocal     *string
 	MonthEndPolicy     *string
@@ -27,6 +28,7 @@ type Schedule struct {
 // ScheduleCandidate 表示等待写入存储的日程候选。
 type ScheduleCandidate struct {
 	Title              string
+	Notes              string
 	Cron               *string
 	UntilDateLocal     *string
 	MonthEndPolicy     *string
@@ -44,6 +46,7 @@ type ScheduleCandidate struct {
 // 同理用于区分保留策略和显式清空策略。
 type ScheduleUpdateCandidate struct {
 	Title                 *string
+	Notes                 *string
 	FirstStartLocal       *time.Time
 	DurationMinutes       *int
 	Cron                  *string
@@ -61,4 +64,38 @@ type UpdateScheduleCandidate = ScheduleUpdateCandidate
 // IsRecurring 判断日程是否已经携带周期规则。
 func (s Schedule) IsRecurring() bool {
 	return s.Cron != nil
+}
+
+// Occurrence 表示按需计算或由例外快照生成的一次具体发生。
+type Occurrence struct {
+	ScheduleID   ScheduleID
+	OriginalDate string
+	StartLocal   time.Time
+	EndLocal     time.Time
+	Title        string
+	Notes        string
+}
+
+// OccurrenceOverride 表示某个原始日期对应的完整修改快照。
+// SnapshotPresent 为 false 时保留未来取消语义所需的无快照例外。
+type OccurrenceOverride struct {
+	ScheduleID      ScheduleID
+	OriginalDate    string
+	StartLocal      time.Time
+	DurationMinutes int
+	Title           string
+	Notes           string
+	Open            bool
+	SnapshotPresent bool
+}
+
+// OccurrenceOverrideCandidate 表示已经完成领域校验、等待原子写入的例外快照。
+type OccurrenceOverrideCandidate struct {
+	OriginalDate     string
+	StartLocal       time.Time
+	DurationMinutes  int
+	Title            string
+	Notes            string
+	ExpectedRevision int64
+	UpdatedAtUTC     time.Time
 }
