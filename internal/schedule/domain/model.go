@@ -10,6 +10,7 @@ type Schedule struct {
 	ID                 ScheduleID
 	Title              string
 	Cron               *string
+	UntilDateLocal     *string
 	Open               bool
 	FirstStartLocal    time.Time
 	OriginalStartLocal time.Time
@@ -23,6 +24,7 @@ type Schedule struct {
 type ScheduleCandidate struct {
 	Title              string
 	Cron               *string
+	UntilDateLocal     *string
 	Open               bool
 	FirstStartLocal    time.Time
 	OriginalStartLocal time.Time
@@ -40,6 +42,7 @@ type ScheduleUpdateCandidate struct {
 	DurationMinutes  *int
 	Cron             *string
 	CronPresent      bool
+	UntilDateLocal   *string
 	UpdatedAtUTC     time.Time
 	ExpectedRevision int64
 }
