@@ -163,6 +163,29 @@ func ExpandMergedOccurrences(schedule Schedule, overrides []OccurrenceOverride, 
 	return result, nil
 }
 
+// OccurrenceOnDate 返回规则在指定原始本地日期上的基础发生，用于判断例外是否有合法父身份。
+func OccurrenceOnDate(schedule Schedule, originalDate string, location *time.Location) (Occurrence, bool, error) {
+	date, err := parseOccurrenceDate(originalDate)
+	if err != nil {
+		return Occurrence{}, false, err
+	}
+	if location == nil {
+		return Occurrence{}, false, NewValidation("time location must not be nil", "location")
+	}
+	from := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, location)
+	to := from.AddDate(0, 0, 1)
+	occurrences, err := Expand(schedule, from, to, location)
+	if err != nil {
+		return Occurrence{}, false, err
+	}
+	for _, occurrence := range occurrences {
+		if occurrence.OriginalDate == originalDate {
+			return occurrence, true, nil
+		}
+	}
+	return Occurrence{}, false, nil
+}
+
 // parseOccurrenceDate 解析并规范化例外使用的本地日期身份。
 func parseOccurrenceDate(value string) (time.Time, error) {
 	parsed, err := time.Parse(time.DateOnly, value)

@@ -11,22 +11,28 @@ import (
 
 // fakeStore 用于验证应用服务与存储实现解耦。
 type fakeStore struct {
-	created      domain.Schedule
-	createCalls  int
-	getResult    domain.Schedule
-	getErr       error
-	updateResult domain.Schedule
-	updateErr    error
-	updateCalls  int
-	updated      domain.ScheduleUpdateCandidate
-	deleteTitle  string
-	deleteErr    error
-	deleteCalls  int
-	deleteID     domain.ScheduleID
-	deleteRev    int64
-	listResult   ListSchedulesResponse
-	listErr      error
-	lastListReq  ListSchedulesRequest
+	created             domain.Schedule
+	createCalls         int
+	getResult           domain.Schedule
+	getErr              error
+	updateResult        domain.Schedule
+	updateErr           error
+	updateCalls         int
+	updated             domain.ScheduleUpdateCandidate
+	override            domain.OccurrenceOverride
+	overrideErr         error
+	occurrence          domain.OccurrenceUpdateResult
+	occurrenceErr       error
+	occurrenceCalls     int
+	occurrenceCandidate domain.OccurrenceOverrideCandidate
+	deleteTitle         string
+	deleteErr           error
+	deleteCalls         int
+	deleteID            domain.ScheduleID
+	deleteRev           int64
+	listResult          ListSchedulesResponse
+	listErr             error
+	lastListReq         ListSchedulesRequest
 }
 
 // CreateSchedule 记录候选并返回确定的持久化日程。
@@ -35,6 +41,7 @@ func (s *fakeStore) CreateSchedule(_ context.Context, candidate domain.ScheduleC
 	s.created = domain.Schedule{
 		ID:                 1,
 		Title:              candidate.Title,
+		Notes:              candidate.Notes,
 		Cron:               candidate.Cron,
 		UntilDateLocal:     candidate.UntilDateLocal,
 		MonthEndPolicy:     candidate.MonthEndPolicy,
@@ -59,6 +66,23 @@ func (s *fakeStore) UpdateSchedule(_ context.Context, _ domain.ScheduleID, candi
 	s.updateCalls++
 	s.updated = candidate
 	return s.updateResult, s.updateErr
+}
+
+// GetOccurrenceOverride 返回测试预置的例外或未找到错误。
+func (s *fakeStore) GetOccurrenceOverride(_ context.Context, _ domain.ScheduleID, _ string) (domain.OccurrenceOverride, error) {
+	return s.override, s.overrideErr
+}
+
+// ListOccurrenceOverrides 返回测试用例未使用的空例外列表。
+func (s *fakeStore) ListOccurrenceOverrides(_ context.Context, _ domain.ScheduleID) ([]domain.OccurrenceOverride, error) {
+	return nil, nil
+}
+
+// UpdateOccurrence 记录完整例外候选并返回测试预置结果。
+func (s *fakeStore) UpdateOccurrence(_ context.Context, _ domain.ScheduleID, candidate domain.OccurrenceOverrideCandidate) (domain.OccurrenceUpdateResult, error) {
+	s.occurrenceCalls++
+	s.occurrenceCandidate = candidate
+	return s.occurrence, s.occurrenceErr
 }
 
 // DeleteSchedule 记录删除请求并返回测试预置的标题和错误。

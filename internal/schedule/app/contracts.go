@@ -44,6 +44,7 @@ type Clock interface {
 // CreateScheduleRequest 表示创建单次或重复日程的输入，端点表示首次发生。
 type CreateScheduleRequest struct {
 	Title            string  `json:"title"`
+	Notes            string  `json:"notes"`
 	StartUnix        *int64  `json:"start_unix"`
 	EndUnix          *int64  `json:"end_unix"`
 	Cron             *string `json:"cron"`
@@ -57,6 +58,7 @@ type CreateScheduleRequest struct {
 // 与“未修改”混为一谈；当前单次更新分支会拒绝 cron、cancel 和 restore。
 type UpdateScheduleRequest struct {
 	Title            *string `json:"title"`
+	Notes            *string `json:"notes"`
 	StartUnix        *int64  `json:"start_unix"`
 	EndUnix          *int64  `json:"end_unix"`
 	Cron             *string `json:"cron"`
@@ -66,12 +68,31 @@ type UpdateScheduleRequest struct {
 	ExpectedRevision int64   `json:"expected_revision"`
 
 	TitlePresent            bool `json:"-"`
+	NotesPresent            bool `json:"-"`
 	StartUnixPresent        bool `json:"-"`
 	EndUnixPresent          bool `json:"-"`
 	CronPresent             bool `json:"-"`
 	UntilUnixPresent        bool `json:"-"`
 	CancelPresent           bool `json:"-"`
 	RestorePresent          bool `json:"-"`
+	ExpectedRevisionPresent bool `json:"-"`
+}
+
+// UpdateOccurrenceRequest 表示某个原始日期的例外补丁和父日程版本。
+// 缺失字段从当前有效发生继承，写入端口始终接收完整快照。
+type UpdateOccurrenceRequest struct {
+	OriginalDate     string  `json:"original_date"`
+	StartUnix        *int64  `json:"start_unix"`
+	EndUnix          *int64  `json:"end_unix"`
+	Title            *string `json:"title"`
+	Notes            *string `json:"notes"`
+	ExpectedRevision int64   `json:"expected_revision"`
+
+	OriginalDatePresent     bool `json:"-"`
+	StartUnixPresent        bool `json:"-"`
+	EndUnixPresent          bool `json:"-"`
+	TitlePresent            bool `json:"-"`
+	NotesPresent            bool `json:"-"`
 	ExpectedRevisionPresent bool `json:"-"`
 }
 
@@ -85,6 +106,7 @@ type DeleteScheduleRequest struct {
 type ScheduleDTO struct {
 	ID              int64     `json:"id"`
 	Title           string    `json:"title"`
+	Notes           string    `json:"notes"`
 	Cron            *string   `json:"cron"`
 	UntilDateLocal  *string   `json:"until_date_local"`
 	MonthEndPolicy  *string   `json:"month_end_policy"`
@@ -94,6 +116,17 @@ type ScheduleDTO struct {
 	Revision        int64     `json:"revision"`
 	CreatedAtUTC    time.Time `json:"created_at_utc"`
 	UpdatedAtUTC    time.Time `json:"updated_at_utc"`
+}
+
+// OccurrenceDTO 表示一次发生的实际时间和完整文本快照。
+type OccurrenceDTO struct {
+	ScheduleID       int64  `json:"schedule_id"`
+	OriginalDate     string `json:"original_date"`
+	StartUnix        int64  `json:"start_unix"`
+	EndUnix          int64  `json:"end_unix"`
+	Title            string `json:"title"`
+	Notes            string `json:"notes"`
+	ScheduleRevision int64  `json:"schedule_revision"`
 }
 
 // ListSchedulesRequest 表示列表分页输入。

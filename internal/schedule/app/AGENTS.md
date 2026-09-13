@@ -2,7 +2,7 @@
 
 - 本目录负责编排日程应用用例，并定义应用层与外部实现之间的窄契约。
 - 当前文件：
-  - `contracts.go`：`ScheduleStore`、独立的 `ScheduleUpdater`、`ScheduleDeleter`、`Clock` 端口，以及创建、更新、删除、列表请求和受控响应 DTO。
+  - `contracts.go`：`ScheduleStore`、独立的日程/例外更新端口、例外读取端口、`ScheduleDeleter`、`Clock`，以及创建、更新、删除、例外更新、列表请求和受控响应 DTO。
   - `service.go`：创建、更新、删除、读取、分页列表和时间边界查询用例。
   - `recurring.go`：重复整组编辑的定义合并和领域校验，保持未触及字段及原始发生身份。
   - `json.go`：`encoding/json/v2` 的创建、更新、删除请求解码，以及日程、列表、时间边界和错误响应编码边界。
@@ -16,6 +16,9 @@
 - 本目录不得直接调用 `time.Now`、SQL、文件系统或具体日志实现；新增外部能力应先扩展窄接口并保持生产实现可替换。
 - 创建请求沿用 `start_unix/end_unix` 表示首次实际起止；省略 cron 创建单次，非空 cron 创建重复且必须提供 `until_unix`。该截止瞬间按一次快照的显式时区转换为包含式本地日期，不要求分钟精度。
 - 更新请求支持重复定义的 cron、标题、首次起止和截止日期同类型编辑；省略字段保持原值，显式 null cron/截止日期返回 VALIDATION，单次携带重复字段仍拒绝。只更换 cron 时不修改其余业务字段，成功后 revision 加一并更新审计时间。
+- 日程的 `notes` 是可为空的普通文本；整组更新显式提供时替换父日程备注，例外更新显式提供时替换当前发生备注。
+- `UpdateOccurrence` 使用 `(schedule_id, original_date)` 读取当前例外或规则基础发生，补齐缺失端点和文本后只向存储提交完整快照；基础规则不匹配且不存在例外时拒绝写入。
+- 例外更新使用父日程 `expected_revision`，存储实现负责在同一事务内写入例外并递增父版本；返回 DTO 只暴露实际起止、原始日期、文本和新版本。
 - 预读发现旧 revision 时返回 STALE_REVISION，不调用更新端口；存储事务仍承担最终并发守卫。非法规则或合并后的日期/端点校验失败均不得写入。
 - `ScheduleDTO.until_date_local` 在单条读取、创建/更新响应和列表中均返回 `YYYY-MM-DD` 或 null；JSON 创建/更新边界都保留 cron 和 until_unix 的存在性。
 - `ScheduleDTO.month_end_policy` 在单条读取、创建/更新响应和列表中返回 `clamp` 或 null；该字段由后端根据 cron 生成，创建/更新请求不接收该字段。

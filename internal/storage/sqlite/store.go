@@ -486,6 +486,7 @@ func scheduleDTO(schedule domain.Schedule) app.ScheduleDTO {
 	return app.ScheduleDTO{
 		ID:              int64(schedule.ID),
 		Title:           schedule.Title,
+		Notes:           schedule.Notes,
 		Cron:            schedule.Cron,
 		UntilDateLocal:  schedule.UntilDateLocal,
 		MonthEndPolicy:  schedule.MonthEndPolicy,
