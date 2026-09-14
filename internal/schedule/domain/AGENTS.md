@@ -23,7 +23,7 @@
 - `ValidateRecurring(snapshot, startUnix, endUnix, cron, untilDateLocal)` 使用首次实际起止差计算持续分钟数；首次时间是包含式下界，不要求与 cron 匹配。重复定义允许历史首次时间，不应用单次日程的滚动日期范围；截止日期必填、不得早于首次本地日期，保存为 `UntilDateLocal` 的 `YYYY-MM-DD` 文本。应用边界负责将 until_unix 转为此日期，领域不把日期还原为可能因 DST 缺失的午夜瞬间。
 - 月规则候选自动携带 `MonthEndPolicyClamp`；已保存月规则必须携带该策略，日/周规则必须保持策略为 nil。月规则按月份首日推进，每月重新将 cron 日期夹取到当月天数，原始日期只从 cron 解析。
 - `NextBase(schedule, after, location)` 返回 `(Occurrence, bool, error)`；`NextStart` 只投影其开始时间。`after` 严格排除，首次和截止日期包含；规则校验通过后，`Open=false` 的重复日程不产生发生。`Expand(schedule, from, to, location)` 按开始时刻展开 `[from, to)`，关闭组返回空结果。
-- 发生身份使用规则计划日的 `OriginalDate`；例外按 `(schedule_id, original_date)` 替换基础发生，并以实际开始/结束参与查询和排序。例外可独立于父规则截止日期继续发生；关闭组在扫描例外前短路。`OccurrenceOnDate` 保留不依赖 `Open` 的原始日期身份匹配能力，供恢复本次例外使用。
+- 发生身份使用规则计划日的 `OriginalDate`；单次日程改用 `OriginalStartLocal` 的本地日期锚点，改期只改变实际开始时间，不改变身份。例外按 `(schedule_id, original_date)` 替换基础发生，并以实际开始/结束参与查询和排序。例外可独立于父规则截止日期继续发生；关闭组在扫描例外前短路。单次模式只应用锚点身份的例外，避免历史例外产生额外有效发生。`OccurrenceOnDate` 保留不依赖 `Open` 的原始日期身份匹配能力，供恢复本次例外使用。
 - 取消/恢复操作候选必须携带原始日期、期望父 revision 和 UTC 审计时间；恢复候选只有在无快照取消例外且当前规则重新产生该身份时才能请求移除例外。
 - 发生计算把首次墙钟日期/时间放到显式时区解释，使用自然日/星期推进；DST 缺失按偏移跳变幅度后移，重复时刻取较早时刻。结束时间按实际持续分钟数相加，`Occurrence` 不持久化。
 

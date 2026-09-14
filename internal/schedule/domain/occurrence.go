@@ -97,10 +97,14 @@ func NextMergedOccurrence(schedule Schedule, overrides []OccurrenceOverride, aft
 		return Occurrence{}, false, nil
 	}
 	if schedule.Cron == nil {
+		originalDate, err := singleOccurrenceDate(schedule, location)
+		if err != nil {
+			return Occurrence{}, false, err
+		}
 		if schedule.FirstStartLocal.IsZero() || schedule.DurationMinutes <= 0 {
 			return Occurrence{}, false, NewValidation("stored single schedule is invalid", "first_start_local", "duration_minutes")
 		}
-		base := Occurrence{ScheduleID: schedule.ID, OriginalDate: schedule.FirstStartLocal.In(location).Format(time.DateOnly),
+		base := Occurrence{ScheduleID: schedule.ID, OriginalDate: originalDate,
 			StartLocal: schedule.FirstStartLocal.In(location), EndLocal: schedule.FirstStartLocal.In(location).Add(time.Duration(schedule.DurationMinutes) * time.Minute),
 			Title: schedule.Title, Notes: schedule.Notes}
 		for _, override := range overrides {
@@ -250,11 +254,15 @@ func OccurrenceForIdentity(schedule Schedule, overrides []OccurrenceOverride, id
 		}, true, nil
 	}
 	if schedule.Cron == nil {
+		originalDate, err := singleOccurrenceDate(schedule, location)
+		if err != nil {
+			return Occurrence{}, false, err
+		}
 		if schedule.FirstStartLocal.IsZero() || schedule.DurationMinutes <= 0 {
 			return Occurrence{}, false, NewValidation("stored single schedule is invalid", "first_start_local", "duration_minutes")
 		}
 		start := schedule.FirstStartLocal.In(location)
-		if start.Format(time.DateOnly) != identity.OriginalDate {
+		if originalDate != identity.OriginalDate {
 			return Occurrence{}, false, nil
 		}
 		return Occurrence{ScheduleID: schedule.ID, OriginalDate: identity.OriginalDate, StartLocal: start,
@@ -327,15 +335,26 @@ func NewMergedOccurrenceIterator(schedule Schedule, overrides []OccurrenceOverri
 	} else if schedule.FirstStartLocal.IsZero() || schedule.DurationMinutes <= 0 {
 		return nil, NewValidation("stored single schedule is invalid", "first_start_local", "duration_minutes")
 	}
+	singleOriginalDate := ""
+	if schedule.Cron == nil {
+		var err error
+		singleOriginalDate, err = singleOccurrenceDate(schedule, location)
+		if err != nil {
+			return nil, err
+		}
+	}
 	indexed := make(map[string]OccurrenceOverride, len(overrides))
 	for _, override := range overrides {
-		if override.ScheduleID == schedule.ID {
+		if override.ScheduleID == schedule.ID && (schedule.Cron != nil || override.OriginalDate == singleOriginalDate) {
 			indexed[occurrenceKey(override.ScheduleID, override.OriginalDate)] = override
 		}
 	}
 	lookbackMinutes := schedule.DurationMinutes
 	for _, override := range overrides {
 		if override.ScheduleID == schedule.ID && override.DurationMinutes > lookbackMinutes {
+			if schedule.Cron == nil && override.OriginalDate != singleOriginalDate {
+				continue
+			}
 			lookbackMinutes = override.DurationMinutes
 		}
 	}
@@ -365,7 +384,7 @@ func (i *MergedOccurrenceIterator) Next() (Occurrence, bool, error) {
 		if i.singlePending {
 			i.singlePending = false
 			start := i.schedule.FirstStartLocal.In(i.location)
-			base = Occurrence{ScheduleID: i.schedule.ID, OriginalDate: start.Format(time.DateOnly), StartLocal: start,
+			base = Occurrence{ScheduleID: i.schedule.ID, OriginalDate: singleOccurrenceDateUnchecked(i.schedule, i.location), StartLocal: start,
 				EndLocal: start.Add(time.Duration(i.schedule.DurationMinutes) * time.Minute), Title: i.schedule.Title, Notes: i.schedule.Notes}
 			baseOK = true
 		} else if i.schedule.Cron != nil {
@@ -439,6 +458,32 @@ func (i *MergedOccurrenceIterator) nextOverride() (Occurrence, bool) {
 		}
 	}
 	return result, !result.StartLocal.IsZero()
+}
+
+// singleOccurrenceDate 返回单次日程的稳定原始日期身份。
+func singleOccurrenceDate(schedule Schedule, location *time.Location) (string, error) {
+	if location == nil {
+		return "", NewValidation("time location must not be nil", "location")
+	}
+	anchor := schedule.OriginalStartLocal
+	if anchor.IsZero() {
+		// 旧的内存构造或迁移前快照可能没有单独锚点，暂以首次开始兼容；
+		// 已持久化的新数据始终由 OriginalStartLocal 提供稳定身份。
+		anchor = schedule.FirstStartLocal
+	}
+	if anchor.IsZero() {
+		return "", NewValidation("stored single schedule is invalid", "original_start_local")
+	}
+	return anchor.In(location).Format(time.DateOnly), nil
+}
+
+// singleOccurrenceDateUnchecked 返回已在迭代器构造阶段校验过的单次身份日期。
+func singleOccurrenceDateUnchecked(schedule Schedule, location *time.Location) string {
+	anchor := schedule.OriginalStartLocal
+	if anchor.IsZero() {
+		anchor = schedule.FirstStartLocal
+	}
+	return anchor.In(location).Format(time.DateOnly)
 }
 
 // Overlaps 判断两个半开时间区间是否有实际交集；边界相接不算相交。
