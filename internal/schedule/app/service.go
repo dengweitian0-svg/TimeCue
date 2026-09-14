@@ -40,6 +40,18 @@ func (s *Service) Coordinator() *MutationCoordinator {
 	return s.coordinator
 }
 
+// withMutation 在共享协调器中执行一次正式业务写入，停止阶段会在进入存储前拒绝操作。
+func (s *Service) withMutation(operation func() error) error {
+	if s == nil || s.coordinator == nil {
+		return nil
+	}
+	if err := s.coordinator.BeginMutation(); err != nil {
+		return err
+	}
+	defer s.coordinator.EndMutation()
+	return operation()
+}
+
 // CreateSchedule 校验首次发生和可选重复规则，再持久化日程定义。
 func (s *Service) CreateSchedule(ctx context.Context, request CreateScheduleRequest) (ScheduleDTO, error) {
 	if s.store == nil {
@@ -59,10 +71,12 @@ func (s *Service) CreateSchedule(ctx context.Context, request CreateScheduleRequ
 	}
 
 	// 领域校验是进入存储副作用前的最后守卫，非法请求不能调用写方法。
-	s.coordinator.Lock()
-	s.coordinator.Invalidate()
-	schedule, err := s.store.CreateSchedule(ctx, candidate)
-	s.coordinator.Unlock()
+	var schedule domain.Schedule
+	err = s.withMutation(func() error {
+		var writeErr error
+		schedule, writeErr = s.store.CreateSchedule(ctx, candidate)
+		return writeErr
+	})
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("create schedule: %w", err)
 	}
@@ -157,10 +171,12 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 		return ScheduleDTO{}, err
 	}
 
-	s.coordinator.Lock()
-	s.coordinator.Invalidate()
-	updated, err := updater.UpdateSchedule(ctx, id, candidate)
-	s.coordinator.Unlock()
+	var updated domain.Schedule
+	err = s.withMutation(func() error {
+		var writeErr error
+		updated, writeErr = updater.UpdateSchedule(ctx, id, candidate)
+		return writeErr
+	})
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("update schedule %d: %w", id, err)
 	}
@@ -311,10 +327,12 @@ func (s *Service) DeleteSchedule(ctx context.Context, id domain.ScheduleID, requ
 	if !ok {
 		return "", errors.New("schedule store does not support deletion")
 	}
-	s.coordinator.Lock()
-	s.coordinator.Invalidate()
-	title, err := deleter.DeleteSchedule(ctx, id, request.ExpectedRevision)
-	s.coordinator.Unlock()
+	var title string
+	err := s.withMutation(func() error {
+		var deleteErr error
+		title, deleteErr = deleter.DeleteSchedule(ctx, id, request.ExpectedRevision)
+		return deleteErr
+	})
 	if err != nil {
 		// 删除失败时不能丢掉存储层已经读取到的标题，调用方可据此显示具体对象。
 		return title, fmt.Errorf("delete schedule %d: %w", id, err)

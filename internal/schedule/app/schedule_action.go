@@ -39,13 +39,15 @@ func (s *Service) CancelSchedule(ctx context.Context, id domain.ScheduleID, requ
 	if err != nil {
 		return ScheduleActionDTO{}, fmt.Errorf("snapshot current time: %w", err)
 	}
-	s.coordinator.Lock()
-	s.coordinator.Invalidate()
-	result, err := canceller.CancelSchedule(ctx, id, domain.ScheduleActionCandidate{
-		ExpectedRevision: request.ExpectedRevision,
-		UpdatedAtUTC:     snapshot.Now.UTC(),
+	var result domain.ScheduleActionResult
+	err = s.withMutation(func() error {
+		var writeErr error
+		result, writeErr = canceller.CancelSchedule(ctx, id, domain.ScheduleActionCandidate{
+			ExpectedRevision: request.ExpectedRevision,
+			UpdatedAtUTC:     snapshot.Now.UTC(),
+		})
+		return writeErr
 	})
-	s.coordinator.Unlock()
 	if err != nil {
 		return ScheduleActionDTO{}, fmt.Errorf("cancel schedule %d: %w", id, err)
 	}
@@ -83,13 +85,15 @@ func (s *Service) RestoreSchedule(ctx context.Context, id domain.ScheduleID, req
 	if err != nil {
 		return ScheduleActionDTO{}, fmt.Errorf("snapshot current time: %w", err)
 	}
-	s.coordinator.Lock()
-	s.coordinator.Invalidate()
-	result, err := restorer.RestoreSchedule(ctx, id, domain.ScheduleActionCandidate{
-		ExpectedRevision: request.ExpectedRevision,
-		UpdatedAtUTC:     snapshot.Now.UTC(),
+	var result domain.ScheduleActionResult
+	err = s.withMutation(func() error {
+		var writeErr error
+		result, writeErr = restorer.RestoreSchedule(ctx, id, domain.ScheduleActionCandidate{
+			ExpectedRevision: request.ExpectedRevision,
+			UpdatedAtUTC:     snapshot.Now.UTC(),
+		})
+		return writeErr
 	})
-	s.coordinator.Unlock()
 	if err != nil {
 		return ScheduleActionDTO{}, fmt.Errorf("restore schedule %d: %w", id, err)
 	}
