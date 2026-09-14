@@ -116,8 +116,10 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		return domain.Schedule{}, domain.NewValidation("expected revision must be positive", "expected_revision")
 	}
 	cronPresent := candidate.CronPresent || candidate.Cron != nil
+	untilPresent := candidate.UntilDateLocalPresent || candidate.UntilDateLocal != nil
 	monthEndPolicyPresent := candidate.MonthEndPolicyPresent || candidate.MonthEndPolicy != nil
-	if candidate.Title == nil && candidate.Notes == nil && candidate.FirstStartLocal == nil && candidate.DurationMinutes == nil && !cronPresent && candidate.UntilDateLocal == nil && !monthEndPolicyPresent {
+	openPresent := candidate.OpenPresent || candidate.Open != nil
+	if candidate.Title == nil && candidate.Notes == nil && candidate.FirstStartLocal == nil && candidate.OriginalStartLocal == nil && candidate.DurationMinutes == nil && !cronPresent && !untilPresent && !monthEndPolicyPresent && !openPresent {
 		return domain.Schedule{}, domain.NewValidation("schedule update is empty", "title", "start_unix", "end_unix")
 	}
 
@@ -144,9 +146,45 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		err = fmt.Errorf("select schedule %d for update: %w", id, err)
 		return domain.Schedule{}, err
 	}
-	// 事务内守住同类型更新边界，防止预读后并发变化导致类型被覆盖。
-	if (!existing.IsRecurring() && (cronPresent || candidate.UntilDateLocal != nil)) || (existing.IsRecurring() && cronPresent && candidate.Cron == nil) {
-		err = domain.NewValidation("schedule type conversion is not supported", "cron", "until_date_local")
+	// 事务内重新判断目标类型，防止预读后并发变化导致类型或截止字段被错误覆盖。
+	targetRecurring := existing.IsRecurring()
+	if cronPresent {
+		targetRecurring = candidate.Cron != nil
+	}
+	if !existing.IsRecurring() && (!targetRecurring && untilPresent || targetRecurring && (!untilPresent || candidate.UntilDateLocal == nil)) {
+		err = domain.NewValidation("single to recurring conversion requires cron and until date", "cron", "until_date_local")
+		return domain.Schedule{}, err
+	}
+	if !existing.IsRecurring() && cronPresent && candidate.Cron == nil {
+		err = domain.NewValidation("single schedule cron cannot be cleared", "cron")
+		return domain.Schedule{}, err
+	}
+	if existing.IsRecurring() && !targetRecurring && candidate.UntilDateLocal != nil {
+		err = domain.NewValidation("single conversion cannot carry a cutoff", "until_date_local")
+		return domain.Schedule{}, err
+	}
+	if existing.IsRecurring() && targetRecurring && untilPresent && candidate.UntilDateLocal == nil {
+		err = domain.NewValidation("recurring cutoff cannot be cleared", "until_date_local")
+		return domain.Schedule{}, err
+	}
+	if existing.IsRecurring() && !targetRecurring {
+		// 类型落到单次后这些重复字段不再适用，即使调用方省略显式清空标记也不能残留。
+		candidate.UntilDateLocal = nil
+		candidate.UntilDateLocalPresent = true
+		candidate.MonthEndPolicy = nil
+		candidate.MonthEndPolicyPresent = true
+		if candidate.Open == nil {
+			open := true
+			candidate.Open = &open
+			candidate.OpenPresent = true
+		}
+	}
+	if !existing.IsRecurring() && !cronPresent && untilPresent {
+		err = domain.NewValidation("single schedule cannot carry recurrence fields", "cron", "until_date_local")
+		return domain.Schedule{}, err
+	}
+	if candidate.Open != nil && !*candidate.Open {
+		err = domain.NewValidation("single schedule must remain open", "open")
 		return domain.Schedule{}, err
 	}
 	if existing.Revision != candidate.ExpectedRevision {
@@ -154,8 +192,8 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		return domain.Schedule{}, err
 	}
 
-	setClauses := make([]string, 0, 5)
-	args := make([]any, 0, 7)
+	setClauses := make([]string, 0, 10)
+	args := make([]any, 0, 12)
 	if candidate.Title != nil {
 		setClauses = append(setClauses, "title = ?")
 		args = append(args, *candidate.Title)
@@ -166,11 +204,19 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 	}
 	if cronPresent {
 		setClauses = append(setClauses, "cron = ?")
-		args = append(args, *candidate.Cron)
+		if candidate.Cron == nil {
+			args = append(args, nil)
+		} else {
+			args = append(args, *candidate.Cron)
+		}
 	}
-	if candidate.UntilDateLocal != nil {
+	if untilPresent {
 		setClauses = append(setClauses, "until_date_local = ?")
-		args = append(args, *candidate.UntilDateLocal)
+		if candidate.UntilDateLocal == nil {
+			args = append(args, nil)
+		} else {
+			args = append(args, *candidate.UntilDateLocal)
+		}
 	}
 	if monthEndPolicyPresent {
 		setClauses = append(setClauses, "month_end_policy = ?")
@@ -191,6 +237,29 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		}
 		setClauses = append(setClauses, "duration_minutes = ?")
 		args = append(args, *candidate.DurationMinutes)
+	}
+	if candidate.OriginalStartLocal != nil {
+		setClauses = append(setClauses, "original_start_local = ?")
+		args = append(args, domain.FormatLocalTime(*candidate.OriginalStartLocal))
+	}
+	if openPresent {
+		setClauses = append(setClauses, "open = ?")
+		if candidate.Open == nil {
+			err = domain.NewValidation("open must be a boolean", "open")
+			return domain.Schedule{}, err
+		}
+		args = append(args, boolToInt(*candidate.Open))
+	}
+	if !targetRecurring {
+		// 数据库触发器也保护该不变量；这里提前返回机器可读错误，避免泄露驱动错误。
+		open := existing.Open
+		if candidate.Open != nil {
+			open = *candidate.Open
+		}
+		if !open {
+			err = domain.NewValidation("single schedule must remain open", "open")
+			return domain.Schedule{}, err
+		}
 	}
 	setClauses = append(setClauses, "updated_at_utc = ?", "revision = revision + 1")
 	args = append(args, formatUTCTime(candidate.UpdatedAtUTC), int64(id), candidate.ExpectedRevision)
@@ -220,9 +289,19 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 	}
 	s.bumpGeneration()
 	if s.logger != nil {
-		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision, "month_end_policy", schedule.MonthEndPolicy)
+		beforeType := scheduleType(existing)
+		afterType := scheduleType(schedule)
+		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision, "month_end_policy", schedule.MonthEndPolicy, "schedule_type_before", beforeType, "schedule_type_after", afterType, "type_conversion", beforeType != afterType)
 	}
 	return schedule, nil
+}
+
+// scheduleType 为更新日志提供稳定、非敏感的日程类型上下文。
+func scheduleType(schedule domain.Schedule) string {
+	if schedule.IsRecurring() {
+		return "recurring"
+	}
+	return "single"
 }
 
 // DeleteSchedule 在事务内检查版本并物理删除日程，返回已读取的标题。

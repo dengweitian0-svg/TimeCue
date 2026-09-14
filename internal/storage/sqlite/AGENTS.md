@@ -12,13 +12,13 @@
 - 已有数据库会先在独立探测连接中读取迁移版本并关闭连接；只有需要迁移时才在关闭状态下以 `<database>.YYYYMMDDTHHMMSS.nnnnnnnnnZ.bak` 形式独占创建备份。备份必须完整复制、刷新并关闭，失败时不进入迁移；迁移失败保留数据库和备份供手工恢复。
 - 迁移的 SQL 执行和版本记录必须在同一事务中提交；任何失败都必须回滚；数据库版本高于本程序支持范围时必须拒绝启动，不能降级运行。
 - `CreateSchedule` 必须在单一事务中完成插入、回读和提交，只有提交成功后才能向应用层返回成功；回滚失败必须与原始错误合并保留。
-- `UpdateSchedule` 必须在单一事务中重新读取日程、检查允许的单次/重复边界和期望版本，执行带版本条件的 cron、月末策略及其他字段更新、回读和提交；读取、更新、回读或提交失败都必须回滚，版本冲突必须返回 `STALE_REVISION`。
+- `UpdateSchedule` 必须在单一事务中重新读取日程、检查允许的单次/重复边界和期望版本，执行带版本条件的 cron、截止日期、月末策略、单次开始/持续时间/身份锚点及开放状态更新、回读和提交；跨类型转换不得删除例外或提醒尝试记录。读取、更新、回读或提交失败都必须回滚，版本冲突必须返回 `STALE_REVISION`。
 - 版本 2 追加可空 `until_date_local`（`YYYY-MM-DD`），版本 3 追加可空 `month_end_policy`（当前允许 `NULL` 或 `clamp`），旧迁移保持不变。创建和统一行扫描保存/读取这些字段；更新候选使用存在性标记支持策略显式清空。未携带字段、原始发生身份、Open 和创建时间必须保留，每次成功更新 revision 加一并更新审计时间。
 - 版本 4 追加非空默认空字符串的 `notes`，并扩展 `occurrence_overrides` 的完整快照列；原有 `occurrence_local` 作为 `original_date` 的物理存储保持不变。版本 5 修复遗留单次 `cron IS NULL AND open=0` 为开放，并以触发器阻止未来非法单次状态。
 - 仅持久化定义，不生成实例行，不新增 `frequency`、`next_at` 或结束时间列；日志沿用创建/更新事务提交后的 INFO 里程碑，失败向上返回由系统边界统一记录。
 - `month_end_policy` 通过统一扫描和列表 DTO 映射返回；创建月规则时由领域候选携带 `clamp`，单次/日/周规则返回 null。
 - 重复规则在日/周/月之间切换时，cron 与 `month_end_policy` 必须由同一事务提交；cron 未修改时策略保持不变，月转日/周必须显式写入 NULL。
-- `UpdateSchedule` 只修改父日程定义，不删除或重建 `occurrence_overrides`；应用层可在同一版本守卫下读取并返回保留数量，合并结果始终按 `(schedule_id, occurrence_local)` 去重。
+- `UpdateSchedule` 只修改父日程定义，不删除或重建 `occurrence_overrides` 或 `reminder_attempts`；应用层可在同一版本守卫下读取并返回保留数量，合并结果始终按 `(schedule_id, occurrence_local)` 去重。重复转单次时允许同事务恢复 `open`，并清空不适用的 cron、截止日期和月末策略；单次转重复必须保持单次开放不变量。
 - `CancelOccurrence` 在父 revision 守卫下将例外置为 `open=0`；无现有例外时写入空快照，已有完整快照只改变 `open`，重复取消不更新父 revision。
 - `RestoreOccurrence` 在父 revision 守卫下将完整取消快照恢复为 `open=1`，或仅在候选明确要求且例外为空快照时删除取消行；没有实际状态变化时不更新父 revision。例外动作结果必须返回事务内父日程 `open` 状态。
 - `CancelSchedule` 和 `RestoreSchedule` 仅接受重复日程；事务内重读定义并校验 revision，相同目标状态只读返回，实际变更只更新 `open`、`revision` 和 `updated_at_utc`，回读并提交成功后才返回。整组动作不得修改例外或提醒事实。
