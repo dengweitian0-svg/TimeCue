@@ -4,4 +4,7 @@ app:
 
 log:
   level: info
-  path: ./log/timecue.log
+  path: .\logs\timecue.log
+
+backup:
+  dir: .\backups

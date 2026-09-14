@@ -35,6 +35,30 @@ func New(cfg config.LogConfig) (*slog.Logger, *os.File, error) {
 	return slog.New(handler), file, nil
 }
 
+// NewAt 在调用方已经解析出的实际路径创建 JSONL logger。
+func NewAt(path, levelValue string) (*slog.Logger, *os.File, error) {
+	if err := (config.LogConfig{Level: levelValue, Path: path}).Validate(); err != nil {
+		return nil, nil, fmt.Errorf("validate log configuration: %w", err)
+	}
+
+	level, err := parseLevel(levelValue)
+	if err != nil {
+		return nil, nil, err
+	}
+	path = filepath.Clean(path)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, nil, fmt.Errorf("create log directory %q: %w", filepath.Dir(path), err)
+	}
+
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open log file %q: %w", path, err)
+	}
+
+	handler := slog.NewJSONHandler(file, &slog.HandlerOptions{Level: level})
+	return slog.New(handler), file, nil
+}
+
 // parseLevel 将配置中的日志级别转换为 slog 级别。
 func parseLevel(value string) (slog.Level, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
