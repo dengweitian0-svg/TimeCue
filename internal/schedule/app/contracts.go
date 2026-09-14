@@ -116,9 +116,9 @@ type ReminderLogger interface {
 
 // SchedulerStatus 是调度器运行状态的受控视图。
 type SchedulerStatus struct {
-	Available bool
-	LastError string
-	Epoch     uint64
+	Available bool   `json:"available"`
+	LastError string `json:"last_error"`
+	Epoch     uint64 `json:"epoch"`
 }
 
 // CreateScheduleRequest 表示创建单次或重复日程的输入，端点表示首次发生。

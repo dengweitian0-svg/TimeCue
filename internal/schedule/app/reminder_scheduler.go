@@ -78,7 +78,7 @@ func NewReminderScheduler(store ReminderSourceStore, attempts ReminderAttemptSto
 
 // GetRuntimeStatus 返回当前可用性、最近错误和失效 epoch。
 func (s *ReminderScheduler) GetRuntimeStatus() SchedulerStatus {
-	if s == nil {
+	if s == nil || s.coordinator == nil {
 		return SchedulerStatus{}
 	}
 	s.mu.RLock()
@@ -90,6 +90,9 @@ func (s *ReminderScheduler) GetRuntimeStatus() SchedulerStatus {
 
 // Run 启动唯一调度循环；取消 ctx 后返回，不创建每条日程独立 goroutine。
 func (s *ReminderScheduler) Run(ctx context.Context) error {
+	if s == nil {
+		return errors.New("reminder scheduler is nil")
+	}
 	if err := s.validate(); err != nil {
 		s.markUnavailable(err)
 		return err
@@ -250,6 +253,9 @@ func (s *ReminderScheduler) nextCandidate() (reminderCandidateBatch, bool) {
 func (s *ReminderScheduler) processDue(ctx context.Context, candidate reminderCandidateBatch) error {
 	s.coordinator.Lock()
 	defer s.coordinator.unlock()
+	if len(candidate.batch.Occurrences) == 0 {
+		return nil
+	}
 	if candidate.epoch != s.coordinator.epoch {
 		// 变更信号与计时器同时就绪时，先移除旧条目；唤醒信号随后会触发事实重建。
 		s.removeCandidate(candidate.batch.Occurrences[0].ScheduleID)
@@ -259,7 +265,7 @@ func (s *ReminderScheduler) processDue(ctx context.Context, candidate reminderCa
 	if err != nil {
 		return fmt.Errorf("snapshot due reminder time: %w", err)
 	}
-	if len(candidate.batch.Occurrences) == 0 || candidate.batch.Occurrences[0].StartLocal.After(snapshot.Now) {
+	if candidate.batch.Occurrences[0].StartLocal.After(snapshot.Now) {
 		return nil
 	}
 	source, err := s.store.GetOccurrenceSource(ctx, candidate.batch.Occurrences[0].ScheduleID)
@@ -306,6 +312,10 @@ func (s *ReminderScheduler) processDue(ctx context.Context, candidate reminderCa
 			skipped++
 			continue
 		}
+		latestSnapshot, snapshotErr := s.clock.Snapshot(ctx)
+		if snapshotErr != nil {
+			return fmt.Errorf("snapshot reminder notification time: %w", snapshotErr)
+		}
 		latest, latestErr := s.store.GetOccurrenceSource(ctx, occurrence.ScheduleID)
 		if latestErr != nil {
 			if isReminderNotFound(latestErr) {
@@ -317,11 +327,11 @@ func (s *ReminderScheduler) processDue(ctx context.Context, candidate reminderCa
 			}
 			return fmt.Errorf("recheck reminder source: %w", latestErr)
 		}
-		current, valid, checkErr = domain.OccurrenceForIdentity(latest.Schedule, latest.Overrides, occurrence.Identity(), snapshot.Location)
+		current, valid, checkErr = domain.OccurrenceForIdentity(latest.Schedule, latest.Overrides, occurrence.Identity(), latestSnapshot.Location)
 		if checkErr != nil {
 			return fmt.Errorf("recheck reminder occurrence %d/%s: %w", occurrence.ScheduleID, occurrence.OriginalDate, checkErr)
 		}
-		if latest.Schedule.Revision != candidate.revision || !latest.Schedule.Open || !valid || !sameOccurrenceTime(current, occurrence) || snapshot.Now.Sub(current.StartLocal) > reminderDeliveryWindow {
+		if latest.Schedule.Revision != candidate.revision || !latest.Schedule.Open || !valid || !sameOccurrenceTime(current, occurrence) || latestSnapshot.Now.Sub(current.StartLocal) > reminderDeliveryWindow {
 			if writeErr := s.writeReminderStatus(ctx, occurrence.Identity(), ReminderAttemptSkipped); writeErr != nil {
 				return writeErr
 			}
@@ -399,14 +409,15 @@ func (s *ReminderScheduler) removeCandidate(id domain.ScheduleID) {
 
 // markUnavailable 记录最终错误并使调度器进入等待唤醒状态，避免失败忙循环。
 func (s *ReminderScheduler) markUnavailable(err error) {
-	if err == nil {
+	if s == nil || s.coordinator == nil || err == nil {
 		return
 	}
+	epoch := s.coordinator.Epoch()
 	s.mu.Lock()
 	s.status.Available = false
 	s.status.LastError = err.Error()
+	s.status.Epoch = epoch
 	s.mu.Unlock()
-	s.status.Epoch = s.coordinator.Epoch()
 	s.logger.Error("reminder scheduler unavailable", "error", err)
 }
 
