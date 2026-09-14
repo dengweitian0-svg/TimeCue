@@ -200,6 +200,51 @@ type ScheduleActionDTO struct {
 	UpdatedAtUTC time.Time `json:"updated_at_utc"`
 }
 
+// OccurrenceQueryStore 定义查询发生所需的 generation 和分批源读取能力。
+type OccurrenceQueryStore interface {
+	QueryGeneration(context.Context) (uint64, error)
+	ListOccurrenceSources(context.Context, ListOccurrenceSourcesRequest) (ListOccurrenceSourcesResponse, error)
+}
+
+// ListOccurrenceSourcesRequest 表示按日程 ID 游标读取查询源的内部请求。
+type ListOccurrenceSourcesRequest struct {
+	AfterScheduleID domain.ScheduleID
+	Limit           int
+}
+
+// ListOccurrenceSourcesResponse 表示一批日程定义及其例外快照。
+type ListOccurrenceSourcesResponse struct {
+	Items      []OccurrenceSourceDTO
+	NextCursor domain.ScheduleID
+}
+
+// OccurrenceSourceDTO 是应用层查询源的受控快照，不包含数据库连接或实例状态。
+type OccurrenceSourceDTO struct {
+	Schedule  domain.Schedule
+	Overrides []domain.OccurrenceOverride
+}
+
+// OccurrenceSource 是查询源 DTO 的兼容别名。
+type OccurrenceSource = OccurrenceSourceDTO
+
+// ListOccurrencesRequest 表示整数秒半开时间区间和发生游标。
+type ListOccurrencesRequest struct {
+	FromUnix int64  `json:"from_unix"`
+	ToUnix   int64  `json:"to_unix"`
+	Limit    int    `json:"limit"`
+	Cursor   string `json:"cursor,omitzero"`
+
+	FromUnixPresent bool `json:"-"`
+	ToUnixPresent   bool `json:"-"`
+	LimitPresent    bool `json:"-"`
+}
+
+// ListOccurrencesResponse 表示稳定排序的发生分页结果。
+type ListOccurrencesResponse struct {
+	Items      []OccurrenceDTO `json:"items"`
+	NextCursor string          `json:"next_cursor,omitzero"`
+}
+
 // ListSchedulesRequest 表示列表分页输入。
 type ListSchedulesRequest struct {
 	Limit  int    `json:"limit"`

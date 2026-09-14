@@ -87,6 +87,7 @@ func (s *Store) changeScheduleOpen(ctx context.Context, id domain.ScheduleID, ca
 	if err = tx.Commit(); err != nil {
 		return domain.ScheduleActionResult{}, fmt.Errorf("commit schedule %s transaction: %w", operation, err)
 	}
+	s.bumpGeneration()
 	if s.logger != nil {
 		s.logger.Info("schedule state changed", "schedule_id", id, "operation", operation, "open", schedule.Open, "revision", schedule.Revision)
 	}

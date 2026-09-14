@@ -191,6 +191,28 @@ func DecodeDeleteSchedule(data []byte) (DeleteScheduleRequest, error) {
 	return request, nil
 }
 
+// DecodeListOccurrences 使用 encoding/json/v2 解码发生查询请求并记录字段存在性。
+func DecodeListOccurrences(data []byte) (ListOccurrencesRequest, error) {
+	var request ListOccurrencesRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		return ListOccurrencesRequest{}, &domain.Error{Code: domain.Validation, Message: "invalid list occurrences JSON", Cause: err}
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return ListOccurrencesRequest{}, &domain.Error{Code: domain.Validation, Message: "list occurrences JSON must be an object"}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return ListOccurrencesRequest{}, &domain.Error{Code: domain.Validation, Message: "list occurrences JSON must be an object", Cause: err}
+	}
+	_, request.FromUnixPresent = fields["from_unix"]
+	_, request.ToUnixPresent = fields["to_unix"]
+	_, request.LimitPresent = fields["limit"]
+	if !request.FromUnixPresent || !request.ToUnixPresent {
+		return ListOccurrencesRequest{}, domain.NewValidation("from_unix and to_unix are required", "from_unix", "to_unix")
+	}
+	return request, nil
+}
+
 // EncodeSchedule 使用 encoding/json/v2 序列化单条日程。
 func EncodeSchedule(schedule ScheduleDTO) ([]byte, error) {
 	return json.Marshal(schedule)
@@ -208,6 +230,11 @@ func EncodeScheduleAction(result ScheduleActionDTO) ([]byte, error) {
 
 // EncodeOccurrenceAction 使用 encoding/json/v2 序列化取消或恢复结果。
 func EncodeOccurrenceAction(result OccurrenceActionDTO) ([]byte, error) {
+	return json.Marshal(result)
+}
+
+// EncodeListOccurrences 使用 encoding/json/v2 序列化发生列表结果。
+func EncodeListOccurrences(result ListOccurrencesResponse) ([]byte, error) {
 	return json.Marshal(result)
 }
 

@@ -2,19 +2,24 @@ package sqlite
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 // Store 保存 SQLite 数据库连接和存储资源。
 type Store struct {
-	db     *sql.DB
-	logger *slog.Logger
+	db         *sql.DB
+	logger     *slog.Logger
+	generation atomic.Uint64
 }
 
 // OpenStore 打开 SQLite 数据库并完成初始迁移。
@@ -64,8 +69,10 @@ func OpenStore(ctx context.Context, path string, logger *slog.Logger) (*Store, e
 		return nil, fmt.Errorf("migrate sqlite database: %w", err)
 	}
 
+	store := &Store{db: db, logger: logger}
+	store.generation.Store(initialGeneration())
 	logger.Info("sqlite store ready")
-	return &Store{db: db, logger: logger}, nil
+	return store, nil
 }
 
 // sqliteDSN 为每个 SQLite 物理连接附加外键约束参数，并保留调用方已有查询参数。
@@ -89,4 +96,16 @@ func (s *Store) Close() error {
 		s.logger.Info("sqlite store closed")
 	}
 	return nil
+}
+
+// initialGeneration 返回本次进程唯一的内存 generation，重启后不会复用旧游标版本。
+func initialGeneration() uint64 {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err == nil {
+		value := binary.LittleEndian.Uint64(raw[:])
+		if value != 0 {
+			return value
+		}
+	}
+	return uint64(time.Now().UnixNano()) | 1
 }

@@ -26,3 +26,5 @@
 - `ScheduleDTO.until_date_local` 在单条读取、创建/更新响应和列表中均返回 `YYYY-MM-DD` 或 null；JSON 创建/更新边界都保留 cron 和 until_unix 的存在性。
 - `ScheduleDTO.month_end_policy` 在单条读取、创建/更新响应和列表中返回 `clamp` 或 null；该字段由后端根据 cron 生成，创建/更新请求不接收该字段。
 - 重复更新先合并完整定义，再依据新 cron 通过领域校验生成或清空 `month_end_policy`；日/周/月之间可互换，cron 未修改时策略保持不变。
+
+- ListOccurrences 只读取一次 Clock.Snapshot，校验 [from_unix,to_unix) 与查询上界，并通过 generation 绑定的游标分页；查询不得调用实例或提醒写入能力。

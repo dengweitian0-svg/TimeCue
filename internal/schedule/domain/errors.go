@@ -14,6 +14,7 @@ const (
 	TimeRangeExceeded Code = "TIME_RANGE_EXCEEDED"
 	NotFound          Code = "NOT_FOUND"
 	StaleRevision     Code = "STALE_REVISION"
+	StaleCursor       Code = "STALE_CURSOR"
 )
 
 // Error 表示带有机器可读字段和原始原因的业务错误。
@@ -43,6 +44,11 @@ func NewTimeRangeExceeded(fields []string, bounds TimeBounds) error {
 // NewNotFound 创建资源不存在错误。
 func NewNotFound(message string) error {
 	return &Error{Code: NotFound, Message: message}
+}
+
+// NewStaleCursor 创建要求从第一页刷新的查询游标错误。
+func NewStaleCursor(message string, fields ...string) error {
+	return &Error{Code: StaleCursor, Message: message, Fields: append([]string(nil), fields...)}
 }
 
 // NewStaleRevision 创建并发更新使用的版本冲突错误。
