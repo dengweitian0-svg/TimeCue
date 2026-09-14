@@ -15,6 +15,7 @@ const (
 	NotFound          Code = "NOT_FOUND"
 	StaleRevision     Code = "STALE_REVISION"
 	StaleCursor       Code = "STALE_CURSOR"
+	RuntimeStopping   Code = "RUNTIME_STOPPING"
 )
 
 // Error 表示带有机器可读字段和原始原因的业务错误。
@@ -54,6 +55,11 @@ func NewStaleCursor(message string, fields ...string) error {
 // NewStaleRevision 创建并发更新使用的版本冲突错误。
 func NewStaleRevision(message string, fields ...string) error {
 	return &Error{Code: StaleRevision, Message: message, Fields: append([]string(nil), fields...)}
+}
+
+// NewRuntimeStopping 创建运行时进入停止阶段后拒绝业务写入的错误。
+func NewRuntimeStopping() error {
+	return &Error{Code: RuntimeStopping, Message: "runtime is stopping"}
 }
 
 // Error 返回包含错误分类、信息和字段的错误文本。
