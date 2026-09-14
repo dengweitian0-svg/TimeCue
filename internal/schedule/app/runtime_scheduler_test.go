@@ -79,6 +79,50 @@ func TestReminderSchedulerRejectsEnvironmentAnomalyBeforeSubmit(t *testing.T) {
 	}
 }
 
+type runtimeSequenceClock struct {
+	snapshots []domain.TimeSnapshot
+	index     int
+}
+
+// Snapshot 按预设顺序返回环境事实，用于构造发送前复核期间的异常交错。
+func (c *runtimeSequenceClock) Snapshot(context.Context) (domain.TimeSnapshot, error) {
+	snapshot := c.snapshots[c.index]
+	if c.index < len(c.snapshots)-1 {
+		c.index++
+	}
+	return snapshot, nil
+}
+
+// TestReminderSchedulerRechecksEnvironmentBeforeNotification 验证发送前的第二次快照也能阻止误发。
+func TestReminderSchedulerRechecksEnvironmentBeforeNotification(t *testing.T) {
+	location := time.FixedZone("CST", 8*60*60)
+	start := time.Date(2026, 1, 1, 9, 0, 0, 0, location)
+	beforeStart := domain.TimeSnapshot{Now: start.Add(-time.Minute), Location: location}
+	ordinary := domain.TimeSnapshot{Now: start, Location: location}
+	anomalous := ordinary
+	anomalous.WallClockJump = 30 * time.Minute
+	sources := &schedulerTestSources{items: []OccurrenceSourceDTO{{
+		Schedule: domain.Schedule{ID: 4, Open: true, FirstStartLocal: start, OriginalStartLocal: start, DurationMinutes: 10},
+	}}}
+	clock := &runtimeSequenceClock{snapshots: []domain.TimeSnapshot{beforeStart, ordinary, anomalous}}
+	attempts := &schedulerTestAttempts{claimed: map[domain.OccurrenceIdentity]bool{}, outcomes: map[domain.OccurrenceIdentity]ReminderAttemptStatus{}}
+	notifier := &schedulerTestNotifier{}
+	scheduler := NewReminderScheduler(sources, attempts, notifier, clock, nil, nil, NewMutationCoordinator())
+	if err := scheduler.refresh(context.Background()); err != nil {
+		t.Fatalf("refresh error = %v", err)
+	}
+	candidate, ok := scheduler.nextCandidate()
+	if !ok {
+		t.Fatal("candidate missing")
+	}
+	if err := scheduler.processDue(context.Background(), candidate); err != nil {
+		t.Fatalf("processDue() error = %v", err)
+	}
+	if len(notifier.items) != 0 || attempts.outcomes[candidate.batch.Occurrences[0].Identity()] != ReminderAttemptSkipped {
+		t.Fatalf("notification/outcome = %+v/%+v", notifier.items, attempts.outcomes)
+	}
+}
+
 type runtimeBlockingNotifier struct {
 	started chan struct{}
 }

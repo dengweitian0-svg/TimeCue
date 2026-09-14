@@ -405,6 +405,15 @@ func (s *ReminderScheduler) processDue(ctx context.Context, candidate reminderCa
 		if snapshotErr != nil {
 			return fmt.Errorf("snapshot reminder notification time: %w", snapshotErr)
 		}
+		if latestSnapshot.HasEnvironmentChange() {
+			// 初次到期检查后仍可能收到延迟到达的电源/时钟事实；
+			// 通知提交前再次拒绝，避免在环境已经改变时误发旧候选。
+			if writeErr := s.writeReminderStatus(ctx, occurrence.Identity(), ReminderAttemptSkipped); writeErr != nil {
+				return writeErr
+			}
+			skipped++
+			continue
+		}
 		latest, latestErr := s.store.GetOccurrenceSource(ctx, occurrence.ScheduleID)
 		if latestErr != nil {
 			if isReminderNotFound(latestErr) {
