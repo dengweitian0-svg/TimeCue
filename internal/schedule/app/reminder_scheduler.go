@@ -31,6 +31,10 @@ type ReminderScheduler struct {
 	mu         sync.RWMutex
 	status     SchedulerStatus
 	candidates map[domain.ScheduleID]reminderCandidateBatch
+
+	notificationMu     sync.Mutex
+	notificationCancel context.CancelFunc
+	notificationKilled bool
 }
 
 // reminderCandidateBatch 保存候选发生、其日程 revision 和读取时的调度 epoch。
@@ -89,6 +93,44 @@ func (s *ReminderScheduler) GetRuntimeStatus() SchedulerStatus {
 	return status
 }
 
+// ApplyRuntimeEvent 应用生命周期或时间环境事件，并按当前环境重建提醒候选。
+// 事件先取消在途通知，再等待协调器完成状态转换；这样停止/休眠不会被阻塞
+// 在通知适配器的同步提交上，旧 epoch 也无法在事件之后继续派发。
+func (s *ReminderScheduler) ApplyRuntimeEvent(ctx context.Context, event RuntimeEvent) error {
+	if s == nil || s.coordinator == nil {
+		return errors.New("reminder scheduler is nil")
+	}
+	switch event.Type {
+	case RuntimeEventSuspend, RuntimeEventResume, RuntimeEventClockChanged, RuntimeEventStop:
+	default:
+		return domain.NewValidation("runtime event type is invalid", "event")
+	}
+	// 先取消同步通知提交，再等待协调器锁；否则到期回调持锁等待
+	// 通知适配器返回时，停止事件无法取得锁来取消该请求。
+	s.cancelNotification()
+	if err := s.coordinator.ApplyRuntimeEvent(event); err != nil {
+		return err
+	}
+
+	state := s.coordinator.State()
+	if state != RuntimeStateRunning {
+		s.clearCandidates()
+		return nil
+	}
+
+	if event.Type != RuntimeEventResume && event.Type != RuntimeEventClockChanged {
+		return nil
+	}
+	if event.Snapshot.Now.IsZero() || event.Snapshot.Location == nil {
+		return s.refresh(ctx)
+	}
+	if err := s.refreshAt(ctx, event.Snapshot); err != nil {
+		s.markUnavailable(err)
+		return err
+	}
+	return nil
+}
+
 // Run 启动唯一调度循环；取消 ctx 后返回，不创建每条日程独立 goroutine。
 func (s *ReminderScheduler) Run(ctx context.Context) error {
 	if s == nil {
@@ -110,12 +152,24 @@ func (s *ReminderScheduler) Run(ctx context.Context) error {
 			}
 			return err
 		}
+		if s.coordinator.State() != RuntimeStateRunning {
+			if timer != nil {
+				timer.Stop()
+				timer = nil
+			}
+			if err := waitForReminderWake(ctx, s.coordinator.Wake()); err != nil {
+				return err
+			}
+			continue
+		}
 		if !s.GetRuntimeStatus().Available {
 			if err := waitForReminderWake(ctx, s.coordinator.Wake()); err != nil {
 				return err
 			}
-			if err := s.refresh(ctx); err != nil {
-				s.markUnavailable(err)
+			if s.coordinator.State() == RuntimeStateRunning {
+				if err := s.refresh(ctx); err != nil {
+					s.markUnavailable(err)
+				}
 			}
 			continue
 		}
@@ -156,8 +210,13 @@ func (s *ReminderScheduler) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-s.coordinator.Wake():
 			timer.Stop()
-			if err := s.refresh(ctx); err != nil {
-				s.markUnavailable(err)
+			timer = nil
+			if s.coordinator.State() == RuntimeStateRunning {
+				if err := s.refresh(ctx); err != nil {
+					s.markUnavailable(err)
+				}
+			} else {
+				s.clearCandidates()
 			}
 		case <-timer.C():
 			if err := s.processDue(ctx, candidate); err != nil {
@@ -192,6 +251,22 @@ func (s *ReminderScheduler) refresh(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("snapshot reminder refresh time: %w", err)
 	}
+	return s.refreshLocked(ctx, snapshot)
+}
+
+// refreshAt 使用生命周期事件携带的最新环境快照重建候选。
+func (s *ReminderScheduler) refreshAt(ctx context.Context, snapshot domain.TimeSnapshot) error {
+	s.coordinator.Lock()
+	defer s.coordinator.unlock()
+	return s.refreshLocked(ctx, snapshot)
+}
+
+// refreshLocked 在已持有协调锁时读取已提交事实并替换全部候选。
+func (s *ReminderScheduler) refreshLocked(ctx context.Context, snapshot domain.TimeSnapshot) error {
+	if s.coordinator.state != RuntimeStateRunning {
+		s.clearCandidatesLocked()
+		return nil
+	}
 	sources, err := s.readSources(ctx)
 	if err != nil {
 		return err
@@ -211,6 +286,7 @@ func (s *ReminderScheduler) refresh(ctx context.Context) error {
 	s.status.Available = true
 	s.status.LastError = ""
 	s.status.Epoch = s.coordinator.epoch
+	s.status.State = s.coordinator.state
 	s.mu.Unlock()
 	return nil
 }
@@ -252,9 +328,15 @@ func (s *ReminderScheduler) nextCandidate() (reminderCandidateBatch, bool) {
 
 // processDue 在统一协调顺序中完成资格校验、占用、通知和结果回写。
 func (s *ReminderScheduler) processDue(ctx context.Context, candidate reminderCandidateBatch) error {
+	notificationCtx, unregister := s.registerNotification(ctx)
+	defer unregister()
 	s.coordinator.Lock()
 	defer s.coordinator.unlock()
 	if len(candidate.batch.Occurrences) == 0 {
+		return nil
+	}
+	if s.coordinator.state != RuntimeStateRunning {
+		s.removeCandidate(candidate.batch.Occurrences[0].ScheduleID)
 		return nil
 	}
 	if candidate.epoch != s.coordinator.epoch {
@@ -265,6 +347,12 @@ func (s *ReminderScheduler) processDue(ctx context.Context, candidate reminderCa
 	snapshot, err := s.clock.Snapshot(ctx)
 	if err != nil {
 		return fmt.Errorf("snapshot due reminder time: %w", err)
+	}
+	if snapshot.HasEnvironmentChange() {
+		// 到期回调不能仅依赖事件顺序判断休眠或墙钟异常；当前快照明确
+		// 标记异常时，拒绝整批发送并从异常快照之后重新建立候选。
+		s.clearCandidatesLocked()
+		return s.refreshLocked(ctx, snapshot)
 	}
 	if candidate.batch.Occurrences[0].StartLocal.After(snapshot.Now) {
 		return nil
@@ -341,12 +429,20 @@ func (s *ReminderScheduler) processDue(ctx context.Context, candidate reminderCa
 		}
 
 		notification := ReminderNotification{Identity: current.Identity(), StartLocal: current.StartLocal, EndLocal: current.EndLocal, Title: current.Title, Notes: current.Notes}
-		if notifyErr := s.notifier.Submit(ctx, notification); notifyErr != nil {
-			if writeErr := s.writeReminderStatus(ctx, occurrence.Identity(), ReminderAttemptFailed); writeErr != nil {
+		if notifyErr := s.notifier.Submit(notificationCtx, notification); notifyErr != nil {
+			resultStatus := ReminderAttemptFailed
+			if s.wasNotificationKilled() || s.coordinator.state != RuntimeStateRunning {
+				resultStatus = ReminderAttemptSkipped
+			}
+			if writeErr := s.writeReminderStatus(ctx, occurrence.Identity(), resultStatus); writeErr != nil {
 				return writeErr
 			}
-			s.logger.Warn("reminder notification failed", "schedule_id", occurrence.ScheduleID, "original_date", occurrence.OriginalDate, "error", notifyErr)
-			failed++
+			if resultStatus == ReminderAttemptSkipped {
+				skipped++
+			} else {
+				s.logger.Warn("reminder notification failed", "schedule_id", occurrence.ScheduleID, "original_date", occurrence.OriginalDate, "error", notifyErr)
+				failed++
+			}
 			continue
 		}
 		if writeErr := s.writeReminderStatus(ctx, occurrence.Identity(), ReminderAttemptSubmitted); writeErr != nil {
@@ -401,6 +497,59 @@ func (s *ReminderScheduler) setCandidate(schedule domain.Schedule, batch domain.
 	}
 }
 
+// clearCandidates 清空所有日程候选并关闭提醒派发资格。
+func (s *ReminderScheduler) clearCandidates() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.clearCandidatesLocked()
+	s.mu.Unlock()
+}
+
+// clearCandidatesLocked 清空候选；调用方必须持有 s.mu。
+func (s *ReminderScheduler) clearCandidatesLocked() {
+	s.candidates = make(map[domain.ScheduleID]reminderCandidateBatch)
+	s.status.Available = false
+	s.status.LastError = ""
+	s.status.State = s.coordinator.state
+	s.status.Epoch = s.coordinator.epoch
+}
+
+// registerNotification 为一次到期处理登记可被运行时事件取消的通知上下文。
+func (s *ReminderScheduler) registerNotification(parent context.Context) (context.Context, func()) {
+	notificationCtx, cancel := context.WithCancel(parent)
+	s.notificationMu.Lock()
+	s.notificationCancel = cancel
+	s.notificationKilled = false
+	s.notificationMu.Unlock()
+	return notificationCtx, func() {
+		cancel()
+		s.notificationMu.Lock()
+		if s.notificationCancel != nil {
+			s.notificationCancel = nil
+		}
+		s.notificationMu.Unlock()
+	}
+}
+
+// cancelNotification 取消当前通知提交并记录其属于运行时事件的中断。
+func (s *ReminderScheduler) cancelNotification() {
+	s.notificationMu.Lock()
+	defer s.notificationMu.Unlock()
+	if s.notificationCancel != nil {
+		s.notificationKilled = true
+		s.notificationCancel()
+	}
+}
+
+// wasNotificationKilled 判断最近一次通知失败是否由运行时事件主动取消。
+func (s *ReminderScheduler) wasNotificationKilled() bool {
+	s.notificationMu.Lock()
+	defer s.notificationMu.Unlock()
+	return s.notificationKilled
+}
+
 // removeCandidate 移除已经永久删除的日程候选。
 func (s *ReminderScheduler) removeCandidate(id domain.ScheduleID) {
 	s.mu.Lock()
@@ -418,6 +567,7 @@ func (s *ReminderScheduler) markUnavailable(err error) {
 	s.status.Available = false
 	s.status.LastError = err.Error()
 	s.status.Epoch = epoch
+	s.status.State = s.coordinator.State()
 	s.mu.Unlock()
 	s.logger.Error("reminder scheduler unavailable", "error", err)
 }
