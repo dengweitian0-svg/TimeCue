@@ -53,8 +53,8 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations error = %v", err)
 	}
-	if count != 5 {
-		t.Fatalf("migration count = %d, want 5", count)
+	if count != 6 {
+		t.Fatalf("migration count = %d, want 6", count)
 	}
 }
 
@@ -68,8 +68,8 @@ func TestMigrationVersionIsRecorded(t *testing.T) {
 	if err := db.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("read migration version error = %v", err)
 	}
-	if version != 5 {
-		t.Fatalf("version = %d, want 5", version)
+	if version != 6 {
+		t.Fatalf("version = %d, want 6", version)
 	}
 }
 
@@ -138,7 +138,7 @@ func TestForeignKeysCascade(t *testing.T) {
 	if _, err := db.Exec("INSERT INTO occurrence_overrides(schedule_id, occurrence_local, open) VALUES (1, 'a', 0)"); err != nil {
 		t.Fatalf("insert override error = %v", err)
 	}
-	if _, err := db.Exec("INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (1, 'a', 'a', 'sent')"); err != nil {
+	if _, err := db.Exec("INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (1, 'a', 'a', 'submitted')"); err != nil {
 		t.Fatalf("insert attempt error = %v", err)
 	}
 	if _, err := db.Exec("DELETE FROM schedules WHERE id = 1"); err != nil {
@@ -208,7 +208,7 @@ func TestScheduleOpenInvariantMigrationRepairsLegacySingle(t *testing.T) {
 	if _, err := db.Exec("INSERT INTO occurrence_overrides(schedule_id, occurrence_local, open) VALUES (1, '2026-01-02', 0)"); err != nil {
 		t.Fatalf("insert cancellation error = %v", err)
 	}
-	if _, err := db.Exec("INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (1, '2026-01-02', '2026-01-02T00:00:00Z', 'sent')"); err != nil {
+	if _, err := db.Exec("INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (1, '2026-01-02', '2026-01-02T00:00:00Z', 'submitted')"); err != nil {
 		t.Fatalf("insert reminder attempt error = %v", err)
 	}
 

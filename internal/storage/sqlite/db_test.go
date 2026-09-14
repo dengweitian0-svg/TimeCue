@@ -44,7 +44,7 @@ func TestOpenStoreKeepsForeignKeysAfterConnectionRecreation(t *testing.T) {
 	if _, err := store.db.Exec("INSERT INTO occurrence_overrides(schedule_id, occurrence_local, open) VALUES (?, '2026-01-02T10:00:00+08:00', 0)", created.ID); err != nil {
 		t.Fatalf("insert override error = %v", err)
 	}
-	if _, err := store.db.Exec("INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (?, '2026-01-02T10:00:00+08:00', '2026-01-02T02:00:00Z', 'sent')", created.ID); err != nil {
+	if _, err := store.db.Exec("INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (?, '2026-01-02T10:00:00+08:00', '2026-01-02T02:00:00Z', 'submitted')", created.ID); err != nil {
 		t.Fatalf("insert reminder attempt error = %v", err)
 	}
 

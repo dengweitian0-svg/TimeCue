@@ -8,6 +8,7 @@
   - `recurrence.go`：严格每日/每周/月 cron、重复候选校验和无副作用基础发生计算；月规则暂由应用边界守卫。
   - `occurrence.go`：某次安排的完整快照校验、基础发生与例外合并以及按实际时间选择下一次发生。
   - `conflict.go`：冲突检查状态、目标与冲突模型，无副作用的下一次批次选择和半开区间冲突计算。
+  - `model.go`、`occurrence.go`：提醒稳定身份、最早同刻候选批次和严格推进辅助。
   - `*_test.go`：验证领域模型、边界、闰日和错误行为。
 - `CalculateTimeBounds` 必须基于当前时间对应的本地日期计算边界；单次日程从本地当天开始，结束边界为一年后，查询边界再覆盖结束边界所在的完整本地日期。
 - `ValidateSingleEndpoints` 必须在生成候选前验证时区、分钟精度、端点先后和允许范围；生成的单次候选必须保持 `Cron == nil`、`Open == true`，审计时间使用 UTC。
@@ -28,3 +29,4 @@
 
 - MergedOccurrenceIterator 以半开区间按需产生基础发生和例外合并结果；发生是否命中查询由实际起止区间判断，排序身份必须保留 schedule_id 与 original_date。
 - `SelectNextTargetBatch` 返回所有开放日程中严格晚于 after 的最早一批发生，同刻的全部身份同属一批；`DetectOccurrenceConflicts` 使用 `a.start < b.end && b.start < a.end` 比较目标批次和窗口内全部有效发生，检索下界按最长持续时间回看以覆盖跨天实例，只排除目标身份本身而不排除同组其他发生。冲突结果的排序键和同组标识必须稳定，领域不读取时钟、不写库。
+- `NextReminderCandidateBatch` 必须以稳定身份保留同刻发生；推进只能使用批次实际开始时间的严格 after，不得因取消、过期或提醒尝试伪造发生事实。

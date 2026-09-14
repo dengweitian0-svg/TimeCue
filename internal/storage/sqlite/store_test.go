@@ -263,7 +263,7 @@ func TestDeleteScheduleReturnsTitleAndCascades(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`
 		INSERT INTO occurrence_overrides(schedule_id, occurrence_local, open) VALUES (?, '2026-01-02T10:00:00+08:00', 0);
-		INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (?, '2026-01-02T10:00:00+08:00', '2026-01-02T02:00:00Z', 'sent');`, created.ID, created.ID); err != nil {
+		INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (?, '2026-01-02T10:00:00+08:00', '2026-01-02T02:00:00Z', 'submitted');`, created.ID, created.ID); err != nil {
 		t.Fatalf("insert related records error = %v", err)
 	}
 	title, err := store.DeleteSchedule(context.Background(), created.ID, created.Revision)

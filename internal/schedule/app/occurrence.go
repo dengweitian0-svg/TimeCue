@@ -32,7 +32,10 @@ func (s *Service) UpdateOccurrence(ctx context.Context, id domain.ScheduleID, re
 		return OccurrenceDTO{}, err
 	}
 
+	s.coordinator.Lock()
+	s.coordinator.Invalidate()
 	result, err := updater.UpdateOccurrence(ctx, id, resolved.Candidate)
+	s.coordinator.Unlock()
 	if err != nil {
 		return OccurrenceDTO{}, fmt.Errorf("update occurrence %d/%s: %w", id, request.OriginalDate, err)
 	}

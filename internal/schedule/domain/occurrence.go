@@ -90,11 +90,35 @@ func MergeOccurrences(base []Occurrence, overrides []OccurrenceOverride) []Occur
 
 // NextMergedOccurrence 返回严格晚于 after 的最早有效基础或例外发生。
 func NextMergedOccurrence(schedule Schedule, overrides []OccurrenceOverride, after time.Time, location *time.Location) (Occurrence, bool, error) {
-	if _, _, _, err := recurrenceInputs(schedule, location); err != nil {
-		return Occurrence{}, false, err
+	if location == nil {
+		return Occurrence{}, false, NewValidation("time location must not be nil", "location")
 	}
 	if !schedule.Open {
 		return Occurrence{}, false, nil
+	}
+	if schedule.Cron == nil {
+		if schedule.FirstStartLocal.IsZero() || schedule.DurationMinutes <= 0 {
+			return Occurrence{}, false, NewValidation("stored single schedule is invalid", "first_start_local", "duration_minutes")
+		}
+		base := Occurrence{ScheduleID: schedule.ID, OriginalDate: schedule.FirstStartLocal.In(location).Format(time.DateOnly),
+			StartLocal: schedule.FirstStartLocal.In(location), EndLocal: schedule.FirstStartLocal.In(location).Add(time.Duration(schedule.DurationMinutes) * time.Minute),
+			Title: schedule.Title, Notes: schedule.Notes}
+		for _, override := range overrides {
+			if override.ScheduleID != schedule.ID || override.OriginalDate != base.OriginalDate {
+				continue
+			}
+			if !override.Open || !override.SnapshotPresent {
+				return Occurrence{}, false, nil
+			}
+			base = Occurrence{ScheduleID: schedule.ID, OriginalDate: override.OriginalDate,
+				StartLocal: override.StartLocal, EndLocal: override.StartLocal.Add(time.Duration(override.DurationMinutes) * time.Minute),
+				Title: override.Title, Notes: override.Notes}
+			break
+		}
+		return base, base.StartLocal.After(after), nil
+	}
+	if _, _, _, err := recurrenceInputs(schedule, location); err != nil {
+		return Occurrence{}, false, err
 	}
 	overridden := make(map[string]struct{}, len(overrides))
 	for _, override := range overrides {
@@ -143,6 +167,117 @@ func NextMergedOccurrence(schedule Schedule, overrides []OccurrenceOverride, aft
 		return baseOccurrence, true, nil
 	}
 	return overrideOccurrence, true, nil
+}
+
+// NextReminderCandidateBatch 返回严格晚于 after 的最早同刻发生批次。
+// 批次内每个稳定身份都保留，调用方可在消费后以批次最后的开始时间继续推进。
+func NextReminderCandidateBatch(schedule Schedule, overrides []OccurrenceOverride, after time.Time, location *time.Location) (ReminderCandidateBatch, bool, error) {
+	first, ok, err := NextMergedOccurrence(schedule, overrides, after, location)
+	if err != nil || !ok {
+		return ReminderCandidateBatch{}, ok, err
+	}
+
+	batch := ReminderCandidateBatch{Occurrences: []Occurrence{first}}
+	seen := map[OccurrenceIdentity]struct{}{first.Identity(): {}}
+	// NextMergedOccurrence 按“严格晚于时刻”推进；这里额外检查基础发生和移动例外，
+	// 才能保留同一日程内被例外移动到同一时刻的不同稳定身份。
+	if schedule.Cron != nil {
+		base, baseOK, baseErr := NextBase(schedule, first.StartLocal.Add(-time.Nanosecond), location)
+		if baseErr != nil {
+			return ReminderCandidateBatch{}, false, baseErr
+		}
+		if baseOK && base.StartLocal.Unix() == first.StartLocal.Unix() {
+			replaced := false
+			for _, override := range overrides {
+				if override.ScheduleID == base.ScheduleID && override.OriginalDate == base.OriginalDate {
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				if _, exists := seen[base.Identity()]; !exists {
+					batch.Occurrences = append(batch.Occurrences, base)
+					seen[base.Identity()] = struct{}{}
+				}
+			}
+		}
+	}
+	for _, override := range overrides {
+		if override.ScheduleID != schedule.ID || !override.Open || !override.SnapshotPresent || !override.StartLocal.After(after) || override.StartLocal.Unix() != first.StartLocal.Unix() {
+			continue
+		}
+		candidate := Occurrence{ScheduleID: override.ScheduleID, OriginalDate: override.OriginalDate,
+			StartLocal: override.StartLocal, EndLocal: override.StartLocal.Add(time.Duration(override.DurationMinutes) * time.Minute),
+			Title: override.Title, Notes: override.Notes}
+		if _, exists := seen[candidate.Identity()]; !exists {
+			batch.Occurrences = append(batch.Occurrences, candidate)
+			seen[candidate.Identity()] = struct{}{}
+		}
+	}
+	sort.Slice(batch.Occurrences, func(i, j int) bool { return occurrenceLess(batch.Occurrences[i], batch.Occurrences[j]) })
+	return batch, true, nil
+}
+
+// NextReminderBatch 是按日程计算最早提醒批次的简短别名。
+func NextReminderBatch(schedule Schedule, overrides []OccurrenceOverride, after time.Time, location *time.Location) (ReminderBatch, bool, error) {
+	return NextReminderCandidateBatch(schedule, overrides, after, location)
+}
+
+// OccurrenceForIdentity 返回当前事实中指定稳定身份对应的有效发生。
+// 基础发生由规则计算，例外按同一身份替换；取消或不存在的身份均返回 false。
+func OccurrenceForIdentity(schedule Schedule, overrides []OccurrenceOverride, identity OccurrenceIdentity, location *time.Location) (Occurrence, bool, error) {
+	if identity.ScheduleID != schedule.ID {
+		return Occurrence{}, false, nil
+	}
+	if location == nil {
+		return Occurrence{}, false, NewValidation("time location must not be nil", "location")
+	}
+	if !schedule.Open {
+		return Occurrence{}, false, nil
+	}
+	for _, override := range overrides {
+		if override.ScheduleID != identity.ScheduleID || override.OriginalDate != identity.OriginalDate {
+			continue
+		}
+		if !override.Open || !override.SnapshotPresent {
+			return Occurrence{}, false, nil
+		}
+		return Occurrence{
+			ScheduleID: identity.ScheduleID, OriginalDate: identity.OriginalDate,
+			StartLocal: override.StartLocal,
+			EndLocal:   override.StartLocal.Add(time.Duration(override.DurationMinutes) * time.Minute),
+			Title:      override.Title, Notes: override.Notes,
+		}, true, nil
+	}
+	if schedule.Cron == nil {
+		if schedule.FirstStartLocal.IsZero() || schedule.DurationMinutes <= 0 {
+			return Occurrence{}, false, NewValidation("stored single schedule is invalid", "first_start_local", "duration_minutes")
+		}
+		start := schedule.FirstStartLocal.In(location)
+		if start.Format(time.DateOnly) != identity.OriginalDate {
+			return Occurrence{}, false, nil
+		}
+		return Occurrence{ScheduleID: schedule.ID, OriginalDate: identity.OriginalDate, StartLocal: start,
+			EndLocal: start.Add(time.Duration(schedule.DurationMinutes) * time.Minute), Title: schedule.Title, Notes: schedule.Notes}, true, nil
+	}
+	base, ok, err := OccurrenceOnDate(schedule, identity.OriginalDate, location)
+	if err != nil || !ok || !schedule.Open {
+		return Occurrence{}, false, err
+	}
+	return base, true, nil
+}
+
+// AdvanceReminderCandidateBatch 严格推进到批次之后的下一个日程候选批次。
+func AdvanceReminderCandidateBatch(schedule Schedule, overrides []OccurrenceOverride, batch ReminderCandidateBatch, location *time.Location) (ReminderCandidateBatch, bool, error) {
+	if len(batch.Occurrences) == 0 {
+		return ReminderCandidateBatch{}, false, NewValidation("reminder candidate batch must not be empty")
+	}
+	return NextReminderCandidateBatch(schedule, overrides, batch.Occurrences[len(batch.Occurrences)-1].StartLocal, location)
+}
+
+// AdvanceReminderBatch 是严格推进提醒候选批次的简短别名。
+func AdvanceReminderBatch(schedule Schedule, overrides []OccurrenceOverride, batch ReminderBatch, location *time.Location) (ReminderBatch, bool, error) {
+	return AdvanceReminderCandidateBatch(schedule, overrides, batch, location)
 }
 
 // ExpandMergedOccurrences 展开查询窗口内的基础发生并合入实际时间窗口内的例外。
