@@ -83,16 +83,16 @@ func SelectNextTargetBatch(sources ConflictSources, after time.Time, location *t
 	if len(candidates) == 0 {
 		return nil, nil
 	}
-	earliest := candidates[0]
+	// 实际时间按整秒比较，避免同一瞬间的不同单调钟表示被拆成两个批次。
+	batchUnix := candidates[0].StartLocal.Unix()
 	for _, candidate := range candidates[1:] {
-		if occurrenceLess(candidate, earliest) {
-			earliest = candidate
+		if candidate.StartLocal.Unix() < batchUnix {
+			batchUnix = candidate.StartLocal.Unix()
 		}
 	}
-	// 同刻的每个身份都是独立目标，批次不会因为身份不同而拆分。
 	batch := make([]Occurrence, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate.StartLocal.Equal(earliest.StartLocal) {
+		if candidate.StartLocal.Unix() == batchUnix {
 			batch = append(batch, candidate)
 		}
 	}
