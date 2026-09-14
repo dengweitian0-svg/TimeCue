@@ -76,6 +76,28 @@ type Occurrence struct {
 	Notes        string
 }
 
+// OccurrenceIdentity 表示一次发生的稳定身份；它不随实际开始时间或显示文本变化。
+type OccurrenceIdentity struct {
+	ScheduleID   ScheduleID
+	OriginalDate string
+}
+
+// ReminderIdentity 是提醒端口使用的稳定发生身份别名。
+type ReminderIdentity = OccurrenceIdentity
+
+// Identity 返回发生对应的稳定身份。
+func (o Occurrence) Identity() OccurrenceIdentity {
+	return OccurrenceIdentity{ScheduleID: o.ScheduleID, OriginalDate: o.OriginalDate}
+}
+
+// ReminderCandidateBatch 表示一个日程最早的同刻提醒候选批次。
+type ReminderCandidateBatch struct {
+	Occurrences []Occurrence
+}
+
+// ReminderBatch 是候选批次的兼容别名。
+type ReminderBatch = ReminderCandidateBatch
+
 // OccurrenceOverride 表示某个原始日期对应的完整修改快照。
 // SnapshotPresent 为 false 时保留未来取消语义所需的无快照例外。
 type OccurrenceOverride struct {
