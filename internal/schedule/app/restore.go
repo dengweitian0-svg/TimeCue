@@ -74,5 +74,5 @@ func (s *Service) RestoreOccurrence(ctx context.Context, id domain.ScheduleID, r
 	if restoreErr != nil {
 		return OccurrenceActionDTO{}, fmt.Errorf("restore occurrence %d/%s: %w", id, request.OriginalDate, restoreErr)
 	}
-	return occurrenceActionDTO(id, request.OriginalDate, result), nil
+	return s.occurrenceActionDTOs(ctx, snapshot, id, request.OriginalDate, true, result)
 }

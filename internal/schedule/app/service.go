@@ -25,105 +25,79 @@ func NewService(store ScheduleStore, clock Clock) *Service {
 
 // CreateSchedule 校验首次发生和可选重复规则，再持久化日程定义。
 func (s *Service) CreateSchedule(ctx context.Context, request CreateScheduleRequest) (ScheduleDTO, error) {
-	title := strings.TrimSpace(request.Title)
-	if title == "" {
-		return ScheduleDTO{}, domain.NewValidation("title must not be empty", "title")
-	}
-	if request.StartUnix == nil {
-		return ScheduleDTO{}, domain.NewValidation("start time is required", "start_unix")
-	}
-	if request.EndUnix == nil {
-		return ScheduleDTO{}, domain.NewValidation("end time is required", "end_unix")
-	}
-	if request.Cron == nil && (request.CronPresent || request.UntilUnixPresent || request.UntilUnix != nil) {
-		return ScheduleDTO{}, domain.NewValidation("single schedule cannot carry recurrence fields", "cron", "until_unix")
-	}
-	if request.Cron != nil && request.UntilUnix == nil {
-		return ScheduleDTO{}, domain.NewValidation("recurring cutoff is required", "until_unix")
+	if s.store == nil {
+		return ScheduleDTO{}, errors.New("schedule store is not configured")
 	}
 	if s.clock == nil {
 		return ScheduleDTO{}, errors.New("schedule clock is not configured")
 	}
-	if s.store == nil {
-		return ScheduleDTO{}, errors.New("schedule store is not configured")
-	}
-
 	// 每个请求只读取一次时间环境，确保边界计算和审计时间来自同一个快照。
 	snapshot, err := s.clock.Snapshot(ctx)
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("snapshot current time: %w", err)
 	}
-	var candidate domain.ScheduleCandidate
-	if request.Cron != nil {
-		untilDate, dateErr := recurringUntilDate(snapshot.Location, *request.UntilUnix)
-		if dateErr != nil {
-			return ScheduleDTO{}, dateErr
-		}
-		candidate, err = domain.ValidateRecurring(snapshot, *request.StartUnix, *request.EndUnix, *request.Cron, untilDate)
-	} else {
-		candidate, err = domain.ValidateSingleEndpoints(snapshot, *request.StartUnix, *request.EndUnix)
-	}
+	candidate, err := prepareCreateCandidate(snapshot, request)
 	if err != nil {
 		return ScheduleDTO{}, err
 	}
-	candidate.Title = title
-	candidate.Notes = request.Notes
 
 	// 领域校验是进入存储副作用前的最后守卫，非法请求不能调用写方法。
 	schedule, err := s.store.CreateSchedule(ctx, candidate)
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("create schedule: %w", err)
 	}
-	return scheduleDTO(schedule), nil
+	result := scheduleDTO(schedule)
+	operation := changeOperation{operation: ChangeOperationCreate, scheduleID: schedule.ID}
+	conflict, err := s.committedConflict(ctx, snapshot, operation)
+	if err != nil {
+		return ScheduleDTO{}, err
+	}
+	result.Conflict = conflict
+	return result, nil
+}
+
+// prepareCreateCandidate 校验创建请求并在无副作用的前提下生成日程候选。
+// 创建用例和只读预览共用同一入口，避免预览放宽或偏离正式校验。
+func prepareCreateCandidate(snapshot domain.TimeSnapshot, request CreateScheduleRequest) (domain.ScheduleCandidate, error) {
+	title := strings.TrimSpace(request.Title)
+	if title == "" {
+		return domain.ScheduleCandidate{}, domain.NewValidation("title must not be empty", "title")
+	}
+	if request.StartUnix == nil {
+		return domain.ScheduleCandidate{}, domain.NewValidation("start time is required", "start_unix")
+	}
+	if request.EndUnix == nil {
+		return domain.ScheduleCandidate{}, domain.NewValidation("end time is required", "end_unix")
+	}
+	if request.Cron == nil && (request.CronPresent || request.UntilUnixPresent || request.UntilUnix != nil) {
+		return domain.ScheduleCandidate{}, domain.NewValidation("single schedule cannot carry recurrence fields", "cron", "until_unix")
+	}
+	if request.Cron != nil && request.UntilUnix == nil {
+		return domain.ScheduleCandidate{}, domain.NewValidation("recurring cutoff is required", "until_unix")
+	}
+	var (
+		candidate domain.ScheduleCandidate
+		err       error
+	)
+	if request.Cron != nil {
+		untilDate, dateErr := recurringUntilDate(snapshot.Location, *request.UntilUnix)
+		if dateErr != nil {
+			return domain.ScheduleCandidate{}, dateErr
+		}
+		candidate, err = domain.ValidateRecurring(snapshot, *request.StartUnix, *request.EndUnix, *request.Cron, untilDate)
+	} else {
+		candidate, err = domain.ValidateSingleEndpoints(snapshot, *request.StartUnix, *request.EndUnix)
+	}
+	if err != nil {
+		return domain.ScheduleCandidate{}, err
+	}
+	candidate.Title = title
+	candidate.Notes = request.Notes
+	return candidate, nil
 }
 
 // UpdateSchedule 对日程应用字段补丁并使用版本号保护并发更新。
 func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, request UpdateScheduleRequest) (ScheduleDTO, error) {
-	if id <= 0 {
-		return ScheduleDTO{}, domain.NewValidation("schedule ID must be positive", "id")
-	}
-	if request.ExpectedRevision <= 0 {
-		return ScheduleDTO{}, domain.NewValidation("expected revision must be positive", "expected_revision")
-	}
-	if request.CancelPresent || request.Cancel != nil {
-		return ScheduleDTO{}, domain.NewValidation("cancel is not applicable to schedule update", "cancel")
-	}
-	if request.RestorePresent || request.Restore != nil {
-		return ScheduleDTO{}, domain.NewValidation("restore is not applicable to schedule update", "restore")
-	}
-
-	titlePresent := request.TitlePresent || request.Title != nil
-	notesPresent := request.NotesPresent || request.Notes != nil
-	startPresent := request.StartUnixPresent || request.StartUnix != nil
-	endPresent := request.EndUnixPresent || request.EndUnix != nil
-	cronPresent := request.CronPresent || request.Cron != nil
-	untilPresent := request.UntilUnixPresent || request.UntilUnix != nil
-	if !titlePresent && !notesPresent && !startPresent && !endPresent && !cronPresent && !untilPresent {
-		return ScheduleDTO{}, domain.NewValidation("at least one schedule field must be provided", "title", "notes", "start_unix", "end_unix")
-	}
-	if titlePresent {
-		if request.Title == nil {
-			return ScheduleDTO{}, domain.NewValidation("title must be a string", "title")
-		}
-		if strings.TrimSpace(*request.Title) == "" {
-			return ScheduleDTO{}, domain.NewValidation("title must not be empty", "title")
-		}
-	}
-	if notesPresent && request.Notes == nil {
-		return ScheduleDTO{}, domain.NewValidation("notes must be a string", "notes")
-	}
-	if startPresent && request.StartUnix == nil {
-		return ScheduleDTO{}, domain.NewValidation("start time must be an integer", "start_unix")
-	}
-	if endPresent && request.EndUnix == nil {
-		return ScheduleDTO{}, domain.NewValidation("end time must be an integer", "end_unix")
-	}
-	if cronPresent && request.Cron == nil {
-		return ScheduleDTO{}, domain.NewValidation("cron cannot be cleared", "cron")
-	}
-	if untilPresent && request.UntilUnix == nil {
-		return ScheduleDTO{}, domain.NewValidation("cutoff cannot be cleared", "until_unix")
-	}
 	if s.store == nil {
 		return ScheduleDTO{}, errors.New("schedule store is not configured")
 	}
@@ -140,12 +114,8 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("read schedule %d for update: %w", id, err)
 	}
-	if !existing.IsRecurring() && (cronPresent || untilPresent) {
-		return ScheduleDTO{}, domain.NewValidation("single schedule cannot carry recurrence fields", "cron", "until_unix")
-	}
-	if existing.Revision != request.ExpectedRevision {
-		// 预读发现旧版本时不调用写端口；事务内仍会复查以防预读后的竞争。
-		return ScheduleDTO{}, domain.NewStaleRevision("schedule revision is stale", "expected_revision")
+	if err := validateScheduleUpdateTarget(existing, request); err != nil {
+		return ScheduleDTO{}, err
 	}
 	preservedOverrideCount := 0
 	if existing.IsRecurring() {
@@ -162,33 +132,9 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("snapshot current time: %w", err)
 	}
-	candidate := domain.ScheduleUpdateCandidate{
-		ExpectedRevision: request.ExpectedRevision,
-		UpdatedAtUTC:     snapshot.Now.UTC(),
-	}
-	if titlePresent {
-		title := strings.TrimSpace(*request.Title)
-		candidate.Title = &title
-	}
-	if notesPresent {
-		notes := *request.Notes
-		candidate.Notes = &notes
-	}
-	if existing.IsRecurring() {
-		if err := prepareRecurringUpdate(snapshot, existing, request, &candidate); err != nil {
-			return ScheduleDTO{}, err
-		}
-	} else if startPresent || endPresent {
-		startUnix, endUnix, err := deriveUpdateEndpoints(existing, request.StartUnix, request.EndUnix)
-		if err != nil {
-			return ScheduleDTO{}, err
-		}
-		validated, err := domain.ValidateSingleEndpoints(snapshot, startUnix, endUnix)
-		if err != nil {
-			return ScheduleDTO{}, err
-		}
-		candidate.FirstStartLocal = &validated.FirstStartLocal
-		candidate.DurationMinutes = &validated.DurationMinutes
+	candidate, _, err := prepareScheduleUpdate(snapshot, existing, request)
+	if err != nil {
+		return ScheduleDTO{}, err
 	}
 
 	updated, err := updater.UpdateSchedule(ctx, id, candidate)
@@ -197,7 +143,134 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	}
 	result := scheduleDTO(updated)
 	result.PreservedOverrideCount = preservedOverrideCount
+	// 最终冲突必须基于提交后重新读取的事实和 generation，而不是预读或预览结果。
+	operation := changeOperation{operation: ChangeOperationUpdateSchedule, scheduleID: id}
+	conflict, err := s.committedConflict(ctx, snapshot, operation)
+	if err != nil {
+		return ScheduleDTO{}, err
+	}
+	result.Conflict = conflict
 	return result, nil
+}
+
+// validateScheduleUpdateTarget 在读取时间快照前拒绝旧版本和类型不匹配的整组编辑。
+func validateScheduleUpdateTarget(existing domain.Schedule, request UpdateScheduleRequest) error {
+	if request.ExpectedRevision <= 0 {
+		return domain.NewValidation("expected revision must be positive", "expected_revision")
+	}
+	if existing.Revision != request.ExpectedRevision {
+		// 预读发现旧版本时不读取时间也不生成补丁；事务内仍会复查以防预读后的竞争。
+		return domain.NewStaleRevision("schedule revision is stale", "expected_revision")
+	}
+	if !existing.IsRecurring() && (request.CronPresent || request.Cron != nil || request.UntilUnixPresent || request.UntilUnix != nil) {
+		return domain.NewValidation("single schedule cannot carry recurrence fields", "cron", "until_unix")
+	}
+	return nil
+}
+
+// prepareScheduleUpdate 校验整组编辑并用一次快照生成存储补丁和变更后的定义。
+// 正式更新和只读预览共用同一入口，确保预览不会绕过任何业务校验。
+func prepareScheduleUpdate(snapshot domain.TimeSnapshot, existing domain.Schedule, request UpdateScheduleRequest) (domain.ScheduleUpdateCandidate, domain.Schedule, error) {
+	if err := validateScheduleUpdateTarget(existing, request); err != nil {
+		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
+	}
+	if request.CancelPresent || request.Cancel != nil {
+		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("cancel is not applicable to schedule update", "cancel")
+	}
+	if request.RestorePresent || request.Restore != nil {
+		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("restore is not applicable to schedule update", "restore")
+	}
+
+	titlePresent := request.TitlePresent || request.Title != nil
+	notesPresent := request.NotesPresent || request.Notes != nil
+	startPresent := request.StartUnixPresent || request.StartUnix != nil
+	endPresent := request.EndUnixPresent || request.EndUnix != nil
+	cronPresent := request.CronPresent || request.Cron != nil
+	untilPresent := request.UntilUnixPresent || request.UntilUnix != nil
+	if !titlePresent && !notesPresent && !startPresent && !endPresent && !cronPresent && !untilPresent {
+		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("at least one schedule field must be provided", "title", "notes", "start_unix", "end_unix")
+	}
+	if titlePresent {
+		if request.Title == nil {
+			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("title must be a string", "title")
+		}
+		if strings.TrimSpace(*request.Title) == "" {
+			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("title must not be empty", "title")
+		}
+	}
+	if notesPresent && request.Notes == nil {
+		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("notes must be a string", "notes")
+	}
+	if startPresent && request.StartUnix == nil {
+		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("start time must be an integer", "start_unix")
+	}
+	if endPresent && request.EndUnix == nil {
+		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("end time must be an integer", "end_unix")
+	}
+	if cronPresent && request.Cron == nil {
+		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("cron cannot be cleared", "cron")
+	}
+	if untilPresent && request.UntilUnix == nil {
+		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("cutoff cannot be cleared", "until_unix")
+	}
+
+	candidate := domain.ScheduleUpdateCandidate{
+		ExpectedRevision: request.ExpectedRevision,
+		UpdatedAtUTC:     snapshot.Now.UTC(),
+	}
+	// 变更后的定义用于预览冲突：它必须应用与存储补丁相同的字段，并递增版本。
+	post := existing
+	post.Revision = existing.Revision + 1
+	post.UpdatedAtUTC = snapshot.Now.UTC()
+	if titlePresent {
+		title := strings.TrimSpace(*request.Title)
+		candidate.Title = &title
+		post.Title = title
+	}
+	if notesPresent {
+		notes := *request.Notes
+		candidate.Notes = &notes
+		post.Notes = notes
+	}
+	if existing.IsRecurring() {
+		if err := prepareRecurringUpdate(snapshot, existing, request, &candidate); err != nil {
+			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
+		}
+		applyRecurringPostChange(candidate, &post)
+	} else if startPresent || endPresent {
+		startUnix, endUnix, err := deriveUpdateEndpoints(existing, request.StartUnix, request.EndUnix)
+		if err != nil {
+			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
+		}
+		validated, err := domain.ValidateSingleEndpoints(snapshot, startUnix, endUnix)
+		if err != nil {
+			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
+		}
+		candidate.FirstStartLocal = &validated.FirstStartLocal
+		candidate.DurationMinutes = &validated.DurationMinutes
+		post.FirstStartLocal = validated.FirstStartLocal
+		post.DurationMinutes = validated.DurationMinutes
+	}
+	return candidate, post, nil
+}
+
+// applyRecurringPostChange 把重复编辑补丁投影到变更后的定义，供只读预览计算使用。
+func applyRecurringPostChange(candidate domain.ScheduleUpdateCandidate, post *domain.Schedule) {
+	if candidate.CronPresent || candidate.Cron != nil {
+		post.Cron = candidate.Cron
+	}
+	if candidate.MonthEndPolicyPresent || candidate.MonthEndPolicy != nil {
+		post.MonthEndPolicy = candidate.MonthEndPolicy
+	}
+	if candidate.UntilDateLocal != nil {
+		post.UntilDateLocal = candidate.UntilDateLocal
+	}
+	if candidate.FirstStartLocal != nil {
+		post.FirstStartLocal = *candidate.FirstStartLocal
+	}
+	if candidate.DurationMinutes != nil {
+		post.DurationMinutes = *candidate.DurationMinutes
+	}
 }
 
 // DeleteSchedule 永久删除日程并保留存储层返回的标题和失败上下文。

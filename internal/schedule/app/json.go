@@ -213,6 +213,31 @@ func DecodeListOccurrences(data []byte) (ListOccurrencesRequest, error) {
 	return request, nil
 }
 
+// DecodePreviewChange 使用 encoding/json/v2 解码只读变更预览并记录顶层字段存在性。
+func DecodePreviewChange(data []byte) (PreviewChangeRequest, error) {
+	var request PreviewChangeRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		return PreviewChangeRequest{}, &domain.Error{Code: domain.Validation, Message: "invalid preview change JSON", Cause: err}
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return PreviewChangeRequest{}, &domain.Error{Code: domain.Validation, Message: "preview change JSON must be an object"}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return PreviewChangeRequest{}, &domain.Error{Code: domain.Validation, Message: "preview change JSON must be an object", Cause: err}
+	}
+	_, request.OperationPresent = fields["operation"]
+	_, request.ScheduleIDPresent = fields["schedule_id"]
+	_, request.OriginalDatePresent = fields["original_date"]
+	_, request.ExpectedRevisionPresent = fields["expected_revision"]
+	return request, nil
+}
+
+// EncodeChangePreview 使用 encoding/json/v2 序列化只读冲突预览结果。
+func EncodeChangePreview(result ChangePreviewDTO) ([]byte, error) {
+	return json.Marshal(result)
+}
+
 // EncodeSchedule 使用 encoding/json/v2 序列化单条日程。
 func EncodeSchedule(schedule ScheduleDTO) ([]byte, error) {
 	return json.Marshal(schedule)

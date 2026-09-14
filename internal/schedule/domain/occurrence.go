@@ -350,10 +350,11 @@ func occurrenceKey(id ScheduleID, originalDate string) string {
 	return strconv.FormatInt(int64(id), 10) + "\x00" + originalDate
 }
 
-// occurrenceLess 比较实际开始时间并在同刻时使用稳定身份排序。
+// occurrenceLess 比较实际开始时间并在同一秒内使用稳定身份排序。
+// 实际时间按整秒比较，避免同一瞬间的两种时间表示被当成不同时刻。
 func occurrenceLess(left, right Occurrence) bool {
-	if left.StartLocal.Equal(right.StartLocal) {
-		return occurrenceKey(left.ScheduleID, left.OriginalDate) < occurrenceKey(right.ScheduleID, right.OriginalDate)
+	if left.StartLocal.Unix() != right.StartLocal.Unix() {
+		return left.StartLocal.Unix() < right.StartLocal.Unix()
 	}
-	return left.StartLocal.Before(right.StartLocal)
+	return occurrenceKey(left.ScheduleID, left.OriginalDate) < occurrenceKey(right.ScheduleID, right.OriginalDate)
 }
