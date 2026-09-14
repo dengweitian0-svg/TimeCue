@@ -172,3 +172,26 @@ func TestMergedOccurrenceIteratorAppliesCancellationAndMove(t *testing.T) {
 		t.Fatalf("merged occurrences = %+v", occurrences)
 	}
 }
+
+// TestMergedOccurrenceIteratorIncludesLongMovedOverride 验证长于父日程的移动例外跨过查询下界时仍被返回。
+func TestMergedOccurrenceIteratorIncludesLongMovedOverride(t *testing.T) {
+	location := time.UTC
+	cron := "0 10 * * *"
+	until := "2026-09-03"
+	schedule := Schedule{ID: 5, Cron: &cron, UntilDateLocal: &until,
+		FirstStartLocal: time.Date(2026, 9, 1, 10, 0, 0, 0, location),
+		DurationMinutes: 30, Title: "base", Open: true}
+	override := OccurrenceOverride{ScheduleID: 5, OriginalDate: "2026-09-02",
+		StartLocal: time.Date(2026, 9, 2, 9, 0, 0, 0, location), DurationMinutes: 120,
+		Title: "long moved", Open: true, SnapshotPresent: true}
+	iterator, err := NewMergedOccurrenceIterator(schedule, []OccurrenceOverride{override},
+		time.Date(2026, 9, 2, 10, 0, 0, 0, location),
+		time.Date(2026, 9, 2, 10, 30, 0, 0, location), location)
+	if err != nil {
+		t.Fatalf("NewMergedOccurrenceIterator() error = %v", err)
+	}
+	got, ok, err := iterator.Next()
+	if err != nil || !ok || got.OriginalDate != "2026-09-02" || !got.StartLocal.Equal(override.StartLocal) {
+		t.Fatalf("Next() = %+v, %v, %v", got, ok, err)
+	}
+}

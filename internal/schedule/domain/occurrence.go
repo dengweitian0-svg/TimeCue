@@ -198,7 +198,13 @@ func NewMergedOccurrenceIterator(schedule Schedule, overrides []OccurrenceOverri
 			indexed[occurrenceKey(override.ScheduleID, override.OriginalDate)] = override
 		}
 	}
-	duration := time.Duration(schedule.DurationMinutes) * time.Minute
+	lookbackMinutes := schedule.DurationMinutes
+	for _, override := range overrides {
+		if override.ScheduleID == schedule.ID && override.DurationMinutes > lookbackMinutes {
+			lookbackMinutes = override.DurationMinutes
+		}
+	}
+	duration := time.Duration(lookbackMinutes) * time.Minute
 	return &MergedOccurrenceIterator{
 		schedule: schedule, overrides: indexed, from: from, to: to, location: location,
 		after: from.Add(-duration - time.Nanosecond), singlePending: schedule.Cron == nil,
