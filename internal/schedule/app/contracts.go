@@ -61,6 +61,66 @@ type Clock interface {
 	Snapshot(context.Context) (domain.TimeSnapshot, error)
 }
 
+// ReminderAttemptStatus 表示一次提醒尝试的有限状态集合。
+type ReminderAttemptStatus string
+
+const (
+	ReminderAttemptClaimed   ReminderAttemptStatus = "claimed"
+	ReminderAttemptSubmitted ReminderAttemptStatus = "submitted"
+	ReminderAttemptFailed    ReminderAttemptStatus = "failed"
+	ReminderAttemptSkipped   ReminderAttemptStatus = "skipped"
+)
+
+// ReminderNotification 是提交给通知适配器的稳定提醒内容。
+type ReminderNotification struct {
+	Identity   domain.OccurrenceIdentity
+	StartLocal time.Time
+	EndLocal   time.Time
+	Title      string
+	Notes      string
+}
+
+// ReminderNotifier 定义同步提交一条提醒通知的窄端口。
+type ReminderNotifier interface {
+	Submit(context.Context, ReminderNotification) error
+}
+
+// ReminderAttemptStore 定义一次性提醒占用及结果回写的持久化端口。
+type ReminderAttemptStore interface {
+	ClaimReminderAttempt(context.Context, domain.OccurrenceIdentity, time.Time) (bool, error)
+	SetReminderAttemptStatus(context.Context, domain.OccurrenceIdentity, ReminderAttemptStatus) error
+}
+
+// OccurrenceSourceReader 定义发送前一致读取单个日程及其例外快照的端口。
+type OccurrenceSourceReader interface {
+	GetOccurrenceSource(context.Context, domain.ScheduleID) (OccurrenceSourceDTO, error)
+}
+
+// Timer 表示调度器持有的唯一最近到期计时器。
+type Timer interface {
+	C() <-chan time.Time
+	Stop() bool
+	Reset(time.Duration) bool
+}
+
+// TimerFactory 创建一个指定时长的计时器，便于测试控制时间推进。
+type TimerFactory func(time.Duration) Timer
+
+// ReminderLogger 是调度器所需的最小结构化日志能力。
+type ReminderLogger interface {
+	Debug(string, ...any)
+	Info(string, ...any)
+	Warn(string, ...any)
+	Error(string, ...any)
+}
+
+// SchedulerStatus 是调度器运行状态的受控视图。
+type SchedulerStatus struct {
+	Available bool
+	LastError string
+	Epoch     uint64
+}
+
 // CreateScheduleRequest 表示创建单次或重复日程的输入，端点表示首次发生。
 type CreateScheduleRequest struct {
 	Title            string  `json:"title"`

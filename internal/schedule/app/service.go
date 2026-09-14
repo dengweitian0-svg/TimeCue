@@ -14,13 +14,30 @@ const defaultScheduleListLimit = 50
 
 // Service 编排日程应用用例。
 type Service struct {
-	store ScheduleStore
-	clock Clock
+	store       ScheduleStore
+	clock       Clock
+	coordinator *MutationCoordinator
 }
 
 // NewService 创建日程应用服务。
 func NewService(store ScheduleStore, clock Clock) *Service {
-	return &Service{store: store, clock: clock}
+	return NewServiceWithCoordinator(store, clock, NewMutationCoordinator())
+}
+
+// NewServiceWithCoordinator 创建使用指定变更协调器的日程应用服务。
+func NewServiceWithCoordinator(store ScheduleStore, clock Clock, coordinator *MutationCoordinator) *Service {
+	if coordinator == nil {
+		coordinator = NewMutationCoordinator()
+	}
+	return &Service{store: store, clock: clock, coordinator: coordinator}
+}
+
+// Coordinator 返回服务和提醒调度器共享的变更协调器。
+func (s *Service) Coordinator() *MutationCoordinator {
+	if s == nil {
+		return nil
+	}
+	return s.coordinator
 }
 
 // CreateSchedule 校验首次发生和可选重复规则，再持久化日程定义。
@@ -42,7 +59,10 @@ func (s *Service) CreateSchedule(ctx context.Context, request CreateScheduleRequ
 	}
 
 	// 领域校验是进入存储副作用前的最后守卫，非法请求不能调用写方法。
+	s.coordinator.Lock()
+	s.coordinator.Invalidate()
 	schedule, err := s.store.CreateSchedule(ctx, candidate)
+	s.coordinator.Unlock()
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("create schedule: %w", err)
 	}
@@ -137,7 +157,10 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 		return ScheduleDTO{}, err
 	}
 
+	s.coordinator.Lock()
+	s.coordinator.Invalidate()
 	updated, err := updater.UpdateSchedule(ctx, id, candidate)
+	s.coordinator.Unlock()
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("update schedule %d: %w", id, err)
 	}
@@ -288,7 +311,10 @@ func (s *Service) DeleteSchedule(ctx context.Context, id domain.ScheduleID, requ
 	if !ok {
 		return "", errors.New("schedule store does not support deletion")
 	}
+	s.coordinator.Lock()
+	s.coordinator.Invalidate()
 	title, err := deleter.DeleteSchedule(ctx, id, request.ExpectedRevision)
+	s.coordinator.Unlock()
 	if err != nil {
 		// 删除失败时不能丢掉存储层已经读取到的标题，调用方可据此显示具体对象。
 		return title, fmt.Errorf("delete schedule %d: %w", id, err)

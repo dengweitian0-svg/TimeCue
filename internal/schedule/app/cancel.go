@@ -58,7 +58,10 @@ func (s *Service) CancelOccurrence(ctx context.Context, id domain.ScheduleID, re
 			ExpectedRevision: request.ExpectedRevision,
 			UpdatedAtUTC:     snapshot.Now.UTC(),
 		}
+		s.coordinator.Lock()
+		s.coordinator.Invalidate()
 		result, cancelErr := canceller.CancelOccurrence(ctx, id, candidate)
+		s.coordinator.Unlock()
 		if cancelErr != nil {
 			return OccurrenceActionDTO{}, fmt.Errorf("cancel occurrence %d/%s: %w", id, request.OriginalDate, cancelErr)
 		}
@@ -76,7 +79,10 @@ func (s *Service) CancelOccurrence(ctx context.Context, id domain.ScheduleID, re
 		ExpectedRevision: request.ExpectedRevision,
 		UpdatedAtUTC:     snapshot.Now.UTC(),
 	}
+	s.coordinator.Lock()
+	s.coordinator.Invalidate()
 	result, cancelErr := canceller.CancelOccurrence(ctx, id, candidate)
+	s.coordinator.Unlock()
 	if cancelErr != nil {
 		return OccurrenceActionDTO{}, fmt.Errorf("cancel occurrence %d/%s: %w", id, request.OriginalDate, cancelErr)
 	}

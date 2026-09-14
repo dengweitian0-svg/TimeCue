@@ -7,6 +7,7 @@
   - `recurring.go`：重复整组编辑的定义合并和领域校验，保持未触及字段及原始发生身份。
   - `json.go`：`encoding/json/v2` 的创建、更新、删除、取消/恢复和变更预览请求解码，以及日程、列表、时间边界、例外操作、预览和错误响应编码边界。
   - `preview.go`：只读变更预览的操作校验、变更后投影、目标批次选择和冲突投影。
+  - `coordinator.go`、`reminder_scheduler.go`：日程变更协调 epoch、唯一最近计时器、提醒占用/通知/结果回写和运行状态。
   - `*_test.go`：验证创建、更新、删除和读取用例编排、契约替换、分页默认值和 JSON 行为。
 - `Service.CreateSchedule` 必须先清理标题、检查必填字段和依赖，再只读取一次时间快照，完成领域校验后才调用 `ScheduleStore.CreateSchedule`。
 - `Service.UpdateSchedule` 必须校验标识、期望版本和支持的字段，预读日程以补齐缺失端点并确认类型，再只读取一次时间快照；领域校验完成后才调用独立的 `ScheduleUpdater`。
@@ -30,6 +31,8 @@
 
 - ListOccurrences 只读取一次 Clock.Snapshot，校验 [from_unix,to_unix) 与查询上界，并通过 generation 绑定的游标分页；查询不得调用实例或提醒写入能力。
 - `PreviewChangeRequest` 用 `operation` 区分布局：新建、整组编辑和整组恢复使用顶层 `schedule_id/expected_revision`，单次操作额外携带 `original_date`；编辑载荷复用正式请求字段，缺失、非法或多余载荷都返回 VALIDATION。
+- 提醒调度只能维护一个全局最近计时器和每个日程一个最早批次；发送前后必须校验 revision、epoch、开放状态、稳定身份、实际到期时间和 5 秒有效窗口。claim 后通知提交前的失败只能回写 `skipped`，通知失败回写 `failed`，结果回写失败必须暂停调度并通过状态查询暴露。
+- 日程创建、编辑、删除、例外更新/取消/恢复及整组取消/恢复的正式写入必须先经共享 `MutationCoordinator` 失效旧候选；失败和成功提交均唤醒调度器重新读取事实。
 - `ConflictCheckDTO` 必须同时表达明确状态、是否真的检查过、原因和命中的冲突身份；创建、整组编辑、整组恢复和单次编辑/恢复的响应通过可空 `conflict` 返回基于已提交事实计算的结果，未执行检查时不得把空冲突当成“整个系列永远无冲突”。
 - `Service.PreviewChange` 必须只读：复用创建、整组编辑和单次编辑的正式校验入口，只调用 `GetSchedule`、`GetOccurrenceOverride` 和 `ListOccurrenceSources`，不得调用任何写端口；预览通过 `HasMore` 说明是否只检查了最近批次。
 - 预览目标批次只从本次操作的日程出发：整组操作检查该日程变更后的下一次发生，单次操作只检查指定身份；冲突比较必须覆盖全部日程定义，检索下界回看最长持续时间以覆盖跨天实例。单次目标已在过去、父组关闭或变更后不再产生发生时必须返回未检查状态和原因，不能改查其他发生。

@@ -70,7 +70,10 @@ func (s *Service) RestoreOccurrence(ctx context.Context, id domain.ScheduleID, r
 		UpdatedAtUTC:       snapshot.Now.UTC(),
 		RemoveCancellation: removeCancellation,
 	}
+	s.coordinator.Lock()
+	s.coordinator.Invalidate()
 	result, restoreErr := restorer.RestoreOccurrence(ctx, id, candidate)
+	s.coordinator.Unlock()
 	if restoreErr != nil {
 		return OccurrenceActionDTO{}, fmt.Errorf("restore occurrence %d/%s: %w", id, request.OriginalDate, restoreErr)
 	}
