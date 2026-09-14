@@ -22,7 +22,7 @@ func TestIssueFiveOccurrenceLifecycle(t *testing.T) {
 	}}
 	path := filepath.Join(t.TempDir(), "occurrences.db")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store, err := OpenStore(ctx, path, logger)
+	store, err := OpenStore(ctx, path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestIssueFiveOccurrenceLifecycle(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	store, err = OpenStore(ctx, path, logger)
+	store, err = OpenStore(ctx, path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatal(err)
 	}

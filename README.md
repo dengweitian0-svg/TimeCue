@@ -1,3 +1,50 @@
 # TimeCue
 
 TimeCue 是一个 Windows 桌面应用，用于提醒用户处理日程。
+
+## 数据路径
+
+发布程序按 `timecue.exe` 的实际位置解析配置和相对路径：
+
+- `config.yaml`：`timecue.exe` 所在目录；不存在时使用程序内嵌默认值。
+- 日志：默认 `.\logs\timecue.log`，也可以在 `config.yaml` 的 `log.path` 中指定绝对路径。
+- 迁移备份：默认 `.\backups`，也可以在 `config.yaml` 的 `backup.dir` 中指定绝对路径。
+- 数据库：固定为 `%LOCALAPPDATA%\TimeCue\timecue.db`，不能通过配置、`data_dir` 或其他数据库路径设置改址。
+
+相对日志和备份路径始终相对 `timecue.exe` 所在目录，而不是当前工作目录。发布程序从快捷方式、脚本或其他工作目录启动时仍使用同一组路径。
+
+`go run` 会使用 Go 工具链生成的临时可执行文件，因此 `config.yaml`、相对日志和备份目录也会相对该临时可执行文件解析；临时构建目录可能随运行而变化。开发时如需稳定的日志或备份位置，请使用发布后的可执行文件，或在配置中指定绝对路径。数据库仍固定使用 `%LOCALAPPDATA%\TimeCue\timecue.db`。
+
+默认配置示例：
+
+```yaml
+app:
+  name: TimeCue
+  version: 0.0.1
+
+log:
+  level: info
+  path: .\logs\timecue.log
+
+backup:
+  dir: .\backups
+```
+
+## 迁移备份与恢复
+
+已有数据库只有在检测到需要迁移时才会备份。备份在数据库连接关闭后创建，采用独占文件名、完整复制、刷新和关闭流程，命名格式为：
+
+```text
+<数据库文件名>.<UTC 时间戳>.bak
+```
+
+例如：`timecue.db.20260914T120000.123456789Z.bak`。新数据库和已经是最新版本的数据库不会创建迁移备份。备份失败不会执行迁移；迁移失败会保留当前数据库和备份，并将错误返回给启动边界。
+
+手工恢复步骤：
+
+1. 退出 TimeCue，确认没有进程继续打开数据库。
+2. 在 `.\backups`（或 `backup.dir` 指定的目录）选择需要恢复的 `.bak` 文件，并先将当前 `timecue.db` 复制到其他安全位置。
+3. 将选中的备份复制为 `%LOCALAPPDATA%\TimeCue\timecue.db`，覆盖前确认目标路径正确。
+4. 重新启动 TimeCue，让程序重新探测并按正常迁移流程打开恢复后的数据库。
+
+备份或迁移失败不会自动回退到旧目录，也不会自动搬迁、合并或切换数据库。应用启动后数据库位置固定；在线切库、自动恢复和旧 `data_dir` 兼容不属于本期行为。

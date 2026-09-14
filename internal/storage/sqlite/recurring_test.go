@@ -40,7 +40,7 @@ func TestRecurringStoreReopenAndUpdate(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "recurring.db")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s, err := OpenStore(ctx, path, logger)
+	s, err := OpenStore(ctx, path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestRecurringStoreReopenAndUpdate(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s, err = OpenStore(ctx, path, logger)
+	s, err = OpenStore(ctx, path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatal(err)
 	}
