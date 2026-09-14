@@ -18,11 +18,11 @@ func TestLoadUsesEmbeddedDefaults(t *testing.T) {
 	if cfg.Log.Level != "info" {
 		t.Fatalf("Log.Level = %q, want info", cfg.Log.Level)
 	}
-	if cfg.Log.Path != ".\\logs\\timecue.log" {
-		t.Fatalf("Log.Path = %q, want .\\logs\\timecue.log", cfg.Log.Path)
+	if cfg.Log.Path != "./logs/timecue.log" {
+		t.Fatalf("Log.Path = %q, want ./logs/timecue.log", cfg.Log.Path)
 	}
-	if cfg.Backup.Dir != ".\\backups" {
-		t.Fatalf("Backup.Dir = %q, want .\\backups", cfg.Backup.Dir)
+	if cfg.Backup.Dir != "./backups" {
+		t.Fatalf("Backup.Dir = %q, want ./backups", cfg.Backup.Dir)
 	}
 	if cfg.ResolvedPaths.DatabasePath != filepath.Join(os.Getenv("LOCALAPPDATA"), "TimeCue", "timecue.db") {
 		t.Fatalf("DatabasePath = %q, want fixed LOCALAPPDATA path", cfg.ResolvedPaths.DatabasePath)

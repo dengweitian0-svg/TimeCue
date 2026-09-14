@@ -108,8 +108,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("app.name", "TimeCue")
 	v.SetDefault("app.version", "0.0.1")
 	v.SetDefault("log.level", "info")
-	v.SetDefault("log.path", ".\\logs\\timecue.log")
-	v.SetDefault("backup.dir", ".\\backups")
+	// 使用 YAML/Unix 分隔符保存跨平台配置，解析后由 filepath 转换为宿主平台路径。
+	v.SetDefault("log.path", "./logs/timecue.log")
+	v.SetDefault("backup.dir", "./backups")
 }
 
 // rejectLegacyPathSettings 拒绝会破坏固定数据库位置契约的旧配置键。
