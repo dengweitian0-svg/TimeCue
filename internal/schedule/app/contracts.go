@@ -226,6 +226,7 @@ type CancelledOccurrenceDTO struct {
 }
 
 // OccurrenceDTO 表示一次发生的实际时间和完整文本快照。
+// overlaps 表示查询范围内该实际区间与另一个身份发生相交，跨分页结果也会被正确标记。
 // 提交成功后的响应通过 conflict 返回基于已提交事实计算的最终冲突结果。
 type OccurrenceDTO struct {
 	ScheduleID       int64             `json:"schedule_id"`
@@ -235,6 +236,7 @@ type OccurrenceDTO struct {
 	Title            string            `json:"title"`
 	Notes            string            `json:"notes"`
 	ScheduleRevision int64             `json:"schedule_revision"`
+	Overlaps         bool              `json:"overlaps"`
 	Conflict         *ConflictCheckDTO `json:"conflict,omitzero"`
 }
 

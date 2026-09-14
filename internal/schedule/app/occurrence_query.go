@@ -119,7 +119,8 @@ func (s *Service) ListOccurrences(ctx context.Context, request ListOccurrencesRe
 			if iteratorErr != nil {
 				return ListOccurrencesResponse{}, fmt.Errorf("prepare occurrences for schedule %d: %w", source.Schedule.ID, iteratorErr)
 			}
-			occurrence, occurrenceOK, nextErr := nextOccurrenceAfterCursor(iterator, cursor, hasCursor)
+			// 游标只约束返回页，不裁剪扫线输入；页前发生仍可能与本页发生重叠。
+			occurrence, occurrenceOK, nextErr := iterator.Next()
 			if nextErr != nil {
 				return ListOccurrencesResponse{}, fmt.Errorf("expand occurrences for schedule %d: %w", source.Schedule.ID, nextErr)
 			}
@@ -136,22 +137,35 @@ func (s *Service) ListOccurrences(ctx context.Context, request ListOccurrencesRe
 		sourceCursor = sources.NextCursor
 	}
 
-	response := ListOccurrencesResponse{Items: make([]OccurrenceDTO, 0, limit)}
-	for len(response.Items) < limit && entries.Len() > 0 {
+	// 页前数据也参与扫线，但只把游标之后的前 limit 条作为返回候选。
+	sweep := newOccurrenceSweep(func() (sweepResult, bool, error) {
+		if entries.Len() == 0 {
+			return sweepResult{}, false, nil
+		}
 		item := heap.Pop(&entries).(occurrenceHeapItem)
-		response.Items = append(response.Items, occurrenceDTOFromOccurrence(item.occurrence, item.revision))
 		next, nextOK, nextErr := item.iterator.Next()
 		if nextErr != nil {
-			return ListOccurrencesResponse{}, fmt.Errorf("advance occurrences for schedule %d: %w", item.occurrence.ScheduleID, nextErr)
+			return sweepResult{}, false, fmt.Errorf("advance occurrences for schedule %d: %w", item.occurrence.ScheduleID, nextErr)
 		}
 		if nextOK {
 			heap.Push(&entries, occurrenceHeapItem{iterator: item.iterator, occurrence: next, revision: item.revision})
 		}
+		return sweepResult{occurrence: item.occurrence, revision: item.revision}, true, nil
+	})
+	candidates, marks, hasMore, err := sweep.collect(limit, func(item sweepResult) bool {
+		return !hasCursor || occurrenceSortKeyLessCursor(cursor, item.occurrence)
+	})
+	if err != nil {
+		return ListOccurrencesResponse{}, err
+	}
+	response := ListOccurrencesResponse{Items: make([]OccurrenceDTO, 0, len(candidates))}
+	for _, item := range candidates {
+		response.Items = append(response.Items, occurrenceDTOFromOccurrence(item.occurrence, item.revision, marks[sweepResultKey(item)]))
 	}
 	if err := ensureOccurrenceGeneration(ctx, queryStore, generation); err != nil {
 		return ListOccurrencesResponse{}, err
 	}
-	if len(response.Items) == limit && len(entries) > 0 {
+	if len(response.Items) == limit && hasMore {
 		last := response.Items[len(response.Items)-1]
 		response.NextCursor = encodeOccurrenceCursor(occurrenceCursor{
 			Version: 1, FromUnix: request.FromUnix, ToUnix: request.ToUnix, Limit: limit,
@@ -159,16 +173,6 @@ func (s *Service) ListOccurrences(ctx context.Context, request ListOccurrencesRe
 		})
 	}
 	return response, nil
-}
-
-// nextOccurrenceAfterCursor 跳过游标及其之前的发生，返回第一条后续候选。
-func nextOccurrenceAfterCursor(iterator *domain.MergedOccurrenceIterator, cursor occurrenceCursor, hasCursor bool) (domain.Occurrence, bool, error) {
-	for {
-		occurrence, ok, err := iterator.Next()
-		if err != nil || !ok || !hasCursor || occurrenceSortKeyLessCursor(cursor, occurrence) {
-			return occurrence, ok, err
-		}
-	}
 }
 
 // occurrenceSortKeyLess 比较发生的稳定排序键。
@@ -194,9 +198,10 @@ func occurrenceSortKeyLessCursor(cursor occurrenceCursor, occurrence domain.Occu
 }
 
 // occurrenceDTOFromOccurrence 将领域发生映射为受控查询视图。
-func occurrenceDTOFromOccurrence(occurrence domain.Occurrence, revision int64) OccurrenceDTO {
+func occurrenceDTOFromOccurrence(occurrence domain.Occurrence, revision int64, overlaps bool) OccurrenceDTO {
 	return OccurrenceDTO{ScheduleID: int64(occurrence.ScheduleID), OriginalDate: occurrence.OriginalDate,
-		StartUnix: occurrence.StartLocal.Unix(), EndUnix: occurrence.EndLocal.Unix(), Title: occurrence.Title, Notes: occurrence.Notes, ScheduleRevision: revision}
+		StartUnix: occurrence.StartLocal.Unix(), EndUnix: occurrence.EndLocal.Unix(), Title: occurrence.Title,
+		Notes: occurrence.Notes, ScheduleRevision: revision, Overlaps: overlaps}
 }
 
 // ensureOccurrenceGeneration 在每个源批次和最终返回前守住一致快照。
