@@ -137,7 +137,65 @@ type DeleteScheduleRequest struct {
 	ExpectedRevisionPresent bool  `json:"-"`
 }
 
+// PreviewChangeRequest 表示一次只读变更预览，操作类型决定需要携带的字段。
+// 编辑载荷复用正式写入请求的字段，保证预览和提交使用同一套业务校验。
+type PreviewChangeRequest struct {
+	Operation        string                   `json:"operation"`
+	ScheduleID       int64                    `json:"schedule_id"`
+	OriginalDate     string                   `json:"original_date"`
+	ExpectedRevision int64                    `json:"expected_revision"`
+	Create           *CreateScheduleRequest   `json:"create,omitzero"`
+	ScheduleUpdate   *UpdateScheduleRequest   `json:"schedule_update,omitzero"`
+	OccurrenceUpdate *UpdateOccurrenceRequest `json:"occurrence_update,omitzero"`
+	OccurrenceAction *OccurrenceActionRequest `json:"occurrence_action,omitzero"`
+	ScheduleAction   *ScheduleActionRequest   `json:"schedule_action,omitzero"`
+
+	OperationPresent        bool `json:"-"`
+	ScheduleIDPresent       bool `json:"-"`
+	OriginalDatePresent     bool `json:"-"`
+	ExpectedRevisionPresent bool `json:"-"`
+}
+
+// ChangePreviewDTO 表示变更前预览出的下一次冲突范围，它是只读投影而不是已提交事实。
+type ChangePreviewDTO struct {
+	Operation string           `json:"operation"`
+	Conflict  ConflictCheckDTO `json:"conflict"`
+	Checked   bool             `json:"checked"`
+	HasMore   bool             `json:"has_more"`
+}
+
+// ConflictCheckDTO 表示一次冲突检查的受控视图，包含明确状态和实际命中。
+// 未检查时 reason 说明原因，调用方不能把它当作“整个系列永远无冲突”。
+type ConflictCheckDTO struct {
+	Status           string                 `json:"status"`
+	Checked          bool                   `json:"checked"`
+	Reason           string                 `json:"reason,omitzero"`
+	Target           *OccurrenceIdentityDTO `json:"target,omitzero"`
+	BatchUnix        int64                  `json:"batch_unix,omitzero"`
+	OccurrenceCount  int                    `json:"occurrence_count"`
+	SameScheduleOnly bool                   `json:"same_schedule_only"`
+	Conflicts        []ConflictDTO          `json:"conflicts"`
+}
+
+// ConflictDTO 表示目标与其他身份发生之间的一次重叠。
+type ConflictDTO struct {
+	Target      OccurrenceIdentityDTO `json:"target"`
+	Other       OccurrenceIdentityDTO `json:"other"`
+	SameGroup   bool                  `json:"same_group"`
+	OverlapUnix int64                 `json:"overlap_unix"`
+}
+
+// OccurrenceIdentityDTO 表示不暴露内部对象的稳定发生身份和实际时间。
+type OccurrenceIdentityDTO struct {
+	ScheduleID   int64  `json:"schedule_id"`
+	OriginalDate string `json:"original_date"`
+	Title        string `json:"title"`
+	StartUnix    int64  `json:"start_unix"`
+	EndUnix      int64  `json:"end_unix"`
+}
+
 // ScheduleDTO 表示对外返回的日程视图。
+// 提交成功后的响应通过 conflict 返回基于已提交事实计算的最终冲突结果。
 type ScheduleDTO struct {
 	ID                     int64                    `json:"id"`
 	Title                  string                   `json:"title"`
@@ -151,6 +209,7 @@ type ScheduleDTO struct {
 	Revision               int64                    `json:"revision"`
 	PreservedOverrideCount int                      `json:"preserved_override_count"`
 	CancelledOccurrences   []CancelledOccurrenceDTO `json:"cancelled_occurrences,omitzero"`
+	Conflict               *ConflictCheckDTO        `json:"conflict,omitzero"`
 	CreatedAtUTC           time.Time                `json:"created_at_utc"`
 	UpdatedAtUTC           time.Time                `json:"updated_at_utc"`
 }
@@ -180,25 +239,36 @@ type OccurrenceDTO struct {
 // OccurrenceActionDTO 表示取消或恢复提交后的受控发生状态。
 // 快照字段为空时，表示该状态没有持久化发生快照。
 type OccurrenceActionDTO struct {
-	ScheduleID       int64   `json:"schedule_id"`
-	OriginalDate     string  `json:"original_date"`
-	Cancelled        bool    `json:"cancelled"`
-	ScheduleOpen     bool    `json:"schedule_open"`
-	SnapshotPresent  bool    `json:"snapshot_present"`
-	StartUnix        *int64  `json:"start_unix,omitzero"`
-	EndUnix          *int64  `json:"end_unix,omitzero"`
-	Title            *string `json:"title,omitzero"`
-	Notes            *string `json:"notes,omitzero"`
-	ScheduleRevision int64   `json:"schedule_revision"`
+	ScheduleID       int64             `json:"schedule_id"`
+	OriginalDate     string            `json:"original_date"`
+	Cancelled        bool              `json:"cancelled"`
+	ScheduleOpen     bool              `json:"schedule_open"`
+	SnapshotPresent  bool              `json:"snapshot_present"`
+	StartUnix        *int64            `json:"start_unix,omitzero"`
+	EndUnix          *int64            `json:"end_unix,omitzero"`
+	Title            *string           `json:"title,omitzero"`
+	Notes            *string           `json:"notes,omitzero"`
+	ScheduleRevision int64             `json:"schedule_revision"`
+	Conflict         *ConflictCheckDTO `json:"conflict,omitzero"`
 }
 
 // ScheduleActionDTO 表示取消或恢复整组日程的受控结果。
 type ScheduleActionDTO struct {
-	ScheduleID   int64     `json:"schedule_id"`
-	Open         bool      `json:"open"`
-	Revision     int64     `json:"revision"`
-	UpdatedAtUTC time.Time `json:"updated_at_utc"`
+	ScheduleID   int64             `json:"schedule_id"`
+	Open         bool              `json:"open"`
+	Revision     int64             `json:"revision"`
+	Conflict     *ConflictCheckDTO `json:"conflict,omitzero"`
+	UpdatedAtUTC time.Time         `json:"updated_at_utc"`
 }
+
+// 变更操作类型常量限制预览入口只接受本切片支持的只读操作。
+const (
+	ChangeOperationCreate            = "create"
+	ChangeOperationUpdateSchedule    = "update_schedule"
+	ChangeOperationRestoreSchedule   = "restore_schedule"
+	ChangeOperationUpdateOccurrence  = "update_occurrence"
+	ChangeOperationRestoreOccurrence = "restore_occurrence"
+)
 
 // OccurrenceQueryStore 定义查询发生所需的 generation 和分批源读取能力。
 type OccurrenceQueryStore interface {
