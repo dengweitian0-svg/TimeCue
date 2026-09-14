@@ -31,3 +31,5 @@
 
 - generation.go 为进程内日程事实版本提供查询和递增能力；成功提交的定义、例外和整组状态变化递增，幂等和回滚不递增，重启使用新的初始值。
 - occurrence_query_store.go 按日程 ID 游标批量读取定义及例外快照，复用统一扫描逻辑，不生成或持久化发生实例。
+- reminder_attempt_store.go 以稳定发生身份原子 claim 和终态回写提醒尝试。
+- 版本 6 为 reminder_attempts 增加 (schedule_id, occurrence_local) 唯一身份和 claimed → submitted|failed|skipped 状态守卫；claim 与结果回写均为独立事务，回写失败不得覆盖或删除 claimed。

@@ -110,7 +110,7 @@ func TestScheduleActionsPreserveOccurrenceFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec("INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (?, ?, ?, ?)", schedule.ID, "2026-01-05", "2026-01-05T02:00:00Z", "sent"); err != nil {
+	if _, err := store.db.Exec("INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (?, ?, ?, ?)", schedule.ID, "2026-01-05", "2026-01-05T02:00:00Z", "submitted"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CancelSchedule(ctx, schedule.ID, domain.ScheduleActionCandidate{ExpectedRevision: schedule.Revision, UpdatedAtUTC: schedule.UpdatedAtUTC.Add(time.Minute)}); err != nil {
