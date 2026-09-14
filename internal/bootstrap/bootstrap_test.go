@@ -14,16 +14,27 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/utils"
 )
 
-type applicationFunc func(context.Context, config.Config, *slog.Logger) error
+type applicationFunc func(context.Context, config.Config, *slog.Logger, Store) error
 
-func (f applicationFunc) Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
-	return f(ctx, cfg, logger)
+func (f applicationFunc) Run(ctx context.Context, cfg config.Config, logger *slog.Logger, store Store) error {
+	return f(ctx, cfg, logger, store)
 }
 
 func testConfig(path string) config.Config {
+	baseDir, _ := os.Getwd()
+	logPath := path
+	if !filepath.IsAbs(logPath) {
+		logPath = filepath.Join(baseDir, logPath)
+	}
 	return config.Config{
-		App: config.AppConfig{Name: "TimeCue", Version: "0.0.1"},
-		Log: config.LogConfig{Level: "info", Path: path},
+		App:    config.AppConfig{Name: "TimeCue", Version: "0.0.1"},
+		Log:    config.LogConfig{Level: "info", Path: path},
+		Backup: config.BackupConfig{Dir: filepath.Join(baseDir, "backups")},
+		ResolvedPaths: config.ResolvedPaths{
+			DatabasePath: filepath.Join(baseDir, "data", "timecue.db"),
+			LogPath:      logPath,
+			BackupDir:    filepath.Join(baseDir, "backups"),
+		},
 	}
 }
 
@@ -36,11 +47,11 @@ func TestRunTreatsContextCancellationAsNormalExit(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		result <- Run(ctx, testConfig("log/timecue.log"), applicationFunc(func(ctx context.Context, _ config.Config, _ *slog.Logger) error {
+		result <- Run(ctx, testConfig("log/timecue.log"), applicationFunc(func(ctx context.Context, _ config.Config, _ *slog.Logger, _ Store) error {
 			close(started)
 			<-ctx.Done()
 			return ctx.Err()
-		}))
+		}), AlwaysQualified{})
 	}()
 
 	<-started
@@ -50,10 +61,12 @@ func TestRunTreatsContextCancellationAsNormalExit(t *testing.T) {
 	}
 
 	assertLogMessages(t, filepath.Join(dir, "log", "timecue.log"), []string{
+		"sqlite store ready",
 		"application starting",
 		"application stopping",
+		"sqlite store closed",
 	})
-	assertLogLevels(t, filepath.Join(dir, "log", "timecue.log"), []string{"INFO", "INFO"})
+	assertLogLevels(t, filepath.Join(dir, "log", "timecue.log"), []string{"INFO", "INFO", "INFO", "INFO"})
 }
 
 // TestRunReturnsApplicationErrorAndLogsIt 验证运行错误被包装、记录为 ERROR 并映射为失败退出。
@@ -62,9 +75,9 @@ func TestRunReturnsApplicationErrorAndLogsIt(t *testing.T) {
 	t.Chdir(dir)
 	wantErr := errors.New("application failed")
 
-	err := Run(context.Background(), testConfig("timecue.log"), applicationFunc(func(context.Context, config.Config, *slog.Logger) error {
+	err := Run(context.Background(), testConfig("timecue.log"), applicationFunc(func(context.Context, config.Config, *slog.Logger, Store) error {
 		return wantErr
-	}))
+	}), AlwaysQualified{})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want wrapped application error", err)
 	}
@@ -72,11 +85,13 @@ func TestRunReturnsApplicationErrorAndLogsIt(t *testing.T) {
 		t.Fatalf("ExitCodeFor() = %d, want %d", utils.ExitCodeFor(err), utils.ExitFailed)
 	}
 	assertLogMessages(t, filepath.Join(dir, "timecue.log"), []string{
+		"sqlite store ready",
 		"application starting",
 		"application failed",
 		"application stopping",
+		"sqlite store closed",
 	})
-	assertLogLevels(t, filepath.Join(dir, "timecue.log"), []string{"INFO", "ERROR", "INFO"})
+	assertLogLevels(t, filepath.Join(dir, "timecue.log"), []string{"INFO", "INFO", "ERROR", "INFO", "INFO"})
 }
 
 // TestRunTreatsCombinedCancellationAsFailure 验证取消与真实错误组合时不会被误判为正常退出。
@@ -86,9 +101,9 @@ func TestRunTreatsCombinedCancellationAsFailure(t *testing.T) {
 	wantErr := errors.New("runtime failure")
 	combinedErr := errors.Join(context.Canceled, wantErr)
 
-	err := Run(context.Background(), testConfig("timecue.log"), applicationFunc(func(context.Context, config.Config, *slog.Logger) error {
+	err := Run(context.Background(), testConfig("timecue.log"), applicationFunc(func(context.Context, config.Config, *slog.Logger, Store) error {
 		return combinedErr
-	}))
+	}), AlwaysQualified{})
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want both cancellation and runtime causes", err)
 	}
@@ -96,15 +111,17 @@ func TestRunTreatsCombinedCancellationAsFailure(t *testing.T) {
 		t.Fatalf("ExitCodeFor() = %d, want %d", utils.ExitCodeFor(err), utils.ExitFailed)
 	}
 	assertLogMessages(t, filepath.Join(dir, "timecue.log"), []string{
+		"sqlite store ready",
 		"application starting",
 		"application failed",
 		"application stopping",
+		"sqlite store closed",
 	})
-	assertLogLevels(t, filepath.Join(dir, "timecue.log"), []string{"INFO", "ERROR", "INFO"})
+	assertLogLevels(t, filepath.Join(dir, "timecue.log"), []string{"INFO", "INFO", "ERROR", "INFO", "INFO"})
 }
 
 func TestRunRejectsNilApplication(t *testing.T) {
-	err := Run(context.Background(), testConfig("timecue.log"), nil)
+	err := Run(context.Background(), testConfig("timecue.log"), nil, AlwaysQualified{})
 	if err == nil {
 		t.Fatal("Run() error = nil, want error")
 	}
@@ -115,10 +132,10 @@ func TestRunRejectsInvalidConfigurationBeforeCreatingLog(t *testing.T) {
 	t.Chdir(dir)
 	cfg := testConfig("timecue.txt")
 
-	err := Run(context.Background(), cfg, applicationFunc(func(context.Context, config.Config, *slog.Logger) error {
+	err := Run(context.Background(), cfg, applicationFunc(func(context.Context, config.Config, *slog.Logger, Store) error {
 		t.Fatal("application was called for invalid configuration")
 		return nil
-	}))
+	}), AlwaysQualified{})
 	if err == nil {
 		t.Fatal("Run() error = nil, want error")
 	}
