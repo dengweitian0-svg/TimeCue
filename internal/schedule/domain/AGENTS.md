@@ -30,3 +30,6 @@
 - MergedOccurrenceIterator 以半开区间按需产生基础发生和例外合并结果；发生是否命中查询由实际起止区间判断，排序身份必须保留 schedule_id 与 original_date。
 - `SelectNextTargetBatch` 返回所有开放日程中严格晚于 after 的最早一批发生，同刻的全部身份同属一批；`DetectOccurrenceConflicts` 使用 `a.start < b.end && b.start < a.end` 比较目标批次和窗口内全部有效发生，检索下界按最长持续时间回看以覆盖跨天实例，只排除目标身份本身而不排除同组其他发生。冲突结果的排序键和同组标识必须稳定，领域不读取时钟、不写库。
 - `NextReminderCandidateBatch` 必须以稳定身份保留同刻发生；推进只能使用批次实际开始时间的严格 after，不得因取消、过期或提醒尝试伪造发生事实。
+
+- `TimeSnapshot` 是领域计算接收环境事实的唯一入口：除当前 `Now` 和 `Location` 外，可携带休眠持续时间、墙钟跳变量和时区变化标记。`HasEnvironmentChange` 只判断事实是否存在，不尝试从领域内部推断操作系统休眠或时钟变化。
+- 环境异常事实属于一次受控输入，不是发生或提醒事实；应用层在发送前发现该输入时必须拒绝当前派发并按新的快照重建候选。领域计算本身不得读取系统时钟、订阅生命周期事件或维护运行时 epoch。

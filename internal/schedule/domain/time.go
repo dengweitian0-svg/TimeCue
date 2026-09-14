@@ -9,8 +9,16 @@ const localTimeLayout = time.RFC3339Nano
 
 // TimeSnapshot 保存一次请求使用的当前时间和时区。
 type TimeSnapshot struct {
-	Now      time.Time
-	Location *time.Location
+	Now             time.Time
+	Location        *time.Location
+	SleepDuration   time.Duration
+	WallClockJump   time.Duration
+	TimeZoneChanged bool
+}
+
+// HasEnvironmentChange 判断快照是否携带需要拒绝当前提醒并重建候选的环境事实。
+func (s TimeSnapshot) HasEnvironmentChange() bool {
+	return s.SleepDuration > 0 || s.WallClockJump != 0 || s.TimeZoneChanged
 }
 
 // TimeBounds 描述单次保存和未来查询的时间边界。

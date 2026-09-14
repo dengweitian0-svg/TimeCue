@@ -114,11 +114,37 @@ type ReminderLogger interface {
 	Error(string, ...any)
 }
 
+// RuntimeState 表示提醒运行单元当前所处的生命周期状态。
+type RuntimeState string
+
+const (
+	RuntimeStateRunning   RuntimeState = "running"
+	RuntimeStateSuspended RuntimeState = "suspended"
+	RuntimeStateStopping  RuntimeState = "stopping"
+)
+
+// RuntimeEventType 表示会使提醒候选失效或需要重建的运行时事件类型。
+type RuntimeEventType string
+
+const (
+	RuntimeEventSuspend      RuntimeEventType = "suspend"
+	RuntimeEventResume       RuntimeEventType = "resume"
+	RuntimeEventClockChanged RuntimeEventType = "clock_changed"
+	RuntimeEventStop         RuntimeEventType = "stop"
+)
+
+// RuntimeEvent 携带生命周期事件及当时观测到的环境事实。
+type RuntimeEvent struct {
+	Type     RuntimeEventType
+	Snapshot domain.TimeSnapshot
+}
+
 // SchedulerStatus 是调度器运行状态的受控视图。
 type SchedulerStatus struct {
-	Available bool   `json:"available"`
-	LastError string `json:"last_error"`
-	Epoch     uint64 `json:"epoch"`
+	Available bool         `json:"available"`
+	LastError string       `json:"last_error"`
+	Epoch     uint64       `json:"epoch"`
+	State     RuntimeState `json:"state"`
 }
 
 // CreateScheduleRequest 表示创建单次或重复日程的输入，端点表示首次发生。
