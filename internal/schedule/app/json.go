@@ -213,7 +213,7 @@ func DecodeListOccurrences(data []byte) (ListOccurrencesRequest, error) {
 	return request, nil
 }
 
-// DecodePreviewChange 使用 encoding/json/v2 解码只读变更预览并记录顶层字段存在性。
+// DecodePreviewChange 使用 encoding/json/v2 解码只读变更预览并记录顶层及嵌套补丁的字段存在性。
 func DecodePreviewChange(data []byte) (PreviewChangeRequest, error) {
 	var request PreviewChangeRequest
 	if err := json.Unmarshal(data, &request); err != nil {
@@ -230,6 +230,18 @@ func DecodePreviewChange(data []byte) (PreviewChangeRequest, error) {
 	_, request.ScheduleIDPresent = fields["schedule_id"]
 	_, request.OriginalDatePresent = fields["original_date"]
 	_, request.ExpectedRevisionPresent = fields["expected_revision"]
+	if request.ScheduleUpdate != nil {
+		if raw, ok := fields["schedule_update"].(map[string]any); ok {
+			_, request.ScheduleUpdate.TitlePresent = raw["title"]
+			_, request.ScheduleUpdate.NotesPresent = raw["notes"]
+			_, request.ScheduleUpdate.StartUnixPresent = raw["start_unix"]
+			_, request.ScheduleUpdate.EndUnixPresent = raw["end_unix"]
+			_, request.ScheduleUpdate.CronPresent = raw["cron"]
+			_, request.ScheduleUpdate.UntilUnixPresent = raw["until_unix"]
+			_, request.ScheduleUpdate.CancelPresent = raw["cancel"]
+			_, request.ScheduleUpdate.RestorePresent = raw["restore"]
+		}
+	}
 	return request, nil
 }
 

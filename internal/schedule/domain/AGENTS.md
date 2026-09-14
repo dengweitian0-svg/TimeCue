@@ -12,7 +12,7 @@
   - `*_test.go`：验证领域模型、边界、闰日和错误行为。
 - `CalculateTimeBounds` 必须基于当前时间对应的本地日期计算边界；单次日程从本地当天开始，结束边界为一年后，查询边界再覆盖结束边界所在的完整本地日期。
 - `ValidateSingleEndpoints` 必须在生成候选前验证时区、分钟精度、端点先后和允许范围；生成的单次候选必须保持 `Cron == nil`、`Open == true`，审计时间使用 UTC。
-- `ScheduleUpdateCandidate` 只表达允许更新的字段、显式 `Cron` 存在性、期望版本和 UTC 审计时间；可更新字段的指针为 nil 表示保持原值，而显式字段存在性不能被值的零值替代。
+- `ScheduleUpdateCandidate` 只表达允许更新的字段、显式 `Cron`/截止日期/开放状态存在性、单次身份锚点、期望版本和 UTC 审计时间；可更新字段的指针为 nil 表示保持原值，而显式字段存在性不能被值的零值替代。
 - `MonthEndPolicy` 是可空的持久化策略字段；更新候选必须用 `MonthEndPolicyPresent` 区分保留策略和显式写入 `NULL`。
 - 重复创建候选和日程定义包含 `UntilDateLocal`；更新候选的该指针非 nil 才修改截止日期，本 Issue 不支持清空。应用层复用 `ValidateRecurring` 校验变更的首次端点，并通过 `NextBase` 校验合并后的定义，原始发生身份不进入更新候选。
 - `StaleRevision` 表示乐观并发控制中的版本冲突，必须保留机器可读分类和字段信息，不能降级为普通校验或存储错误。

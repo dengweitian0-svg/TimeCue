@@ -225,6 +225,31 @@ func TestPreviewChangeUpdateMovesIntoConflict(t *testing.T) {
 	}
 }
 
+// TestPreviewChangeRecurringToSingleUsesConversionSelection 验证预览复用重复转单次的候选选择且不写入事实。
+func TestPreviewChangeRecurringToSingleUsesConversionSelection(t *testing.T) {
+	location := time.UTC
+	now := time.Date(2026, 1, 1, 8, 0, 0, 0, location)
+	store := newPreviewStore(location)
+	closed := previewScheduleDTO(5, "paused", "0 9 * * *", "2026-01-03", time.Date(2026, 1, 1, 9, 0, 0, 0, location), 30, 2)
+	closed.Schedule.Open = false
+	store.sources = append(store.sources, closed)
+	store.syncSources()
+	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+
+	result, err := service.PreviewChange(context.Background(), previewRequest(t,
+		`{"operation":"update_schedule","schedule_id":5,"expected_revision":2,"schedule_update":{"cron":null}}`))
+	if err != nil {
+		t.Fatalf("PreviewChange() error = %v", err)
+	}
+	if result.Operation != ChangeOperationUpdateSchedule || !result.Checked || result.Conflict.Target == nil ||
+		result.Conflict.Target.ScheduleID != 5 || result.Conflict.BatchUnix != time.Date(2026, 1, 1, 9, 0, 0, 0, location).Unix() {
+		t.Fatalf("conversion preview = %+v", result)
+	}
+	if store.written() != 0 {
+		t.Fatalf("preview wrote through ports: %+v", store)
+	}
+}
+
 // TestPreviewChangeRestoreScheduleReopensGroup 验证整组恢复预览按重新开放的定义计算。
 func TestPreviewChangeRestoreScheduleReopensGroup(t *testing.T) {
 	location := time.UTC
