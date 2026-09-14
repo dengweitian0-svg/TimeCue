@@ -320,6 +320,115 @@ func requireOccurrenceOnDate(schedule domain.Schedule, originalDate string, loca
 	return occurrence, nil
 }
 
+// committedConflict 在业务写入成功提交后重新读取已提交事实，并计算返回给调用方的最终冲突。
+// 预览、预读和候选都不能作为最终结果来源；读取失败必须向上返回，不能退化成“无冲突”。
+func (s *Service) committedConflict(ctx context.Context, snapshot domain.TimeSnapshot, operation changeOperation) (*ConflictCheckDTO, error) {
+	queryStore, ok := s.store.(OccurrenceQueryStore)
+	if !ok {
+		// 存储不支持发生查询时跳过冲突结果，但不影响已经提交成功的业务事实。
+		return nil, nil
+	}
+	if snapshot.Location == nil {
+		return nil, domain.NewValidation("time location must not be nil", "location")
+	}
+	committed, err := s.store.GetSchedule(ctx, operation.scheduleID)
+	if err != nil {
+		return nil, fmt.Errorf("read committed schedule %d for conflict: %w", operation.scheduleID, err)
+	}
+	if !committed.Open {
+		// 关闭组不产生任何发生，恢复前的快照不能表示整个系列永远无冲突。
+		dto := conflictCheckDTO(domain.ConflictCheck{Status: domain.ConflictClosedGroup}, domain.Occurrence{})
+		return &dto, nil
+	}
+	sources, err := s.loadConflictSources(ctx, queryStore, changeOperation{})
+	if err != nil {
+		return nil, err
+	}
+	target, found, err := committedConflictTarget(sources, operation, snapshot, snapshot.Location)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		// 写入成功后仍然没有可检查的发生时，必须报告本次未检查。
+		status := domain.ConflictNoTarget
+		if !operation.singleStart.IsZero() && !operation.singleStart.After(snapshot.Now) {
+			status = domain.ConflictPastTarget
+		}
+		dto := conflictCheckDTO(domain.ConflictCheck{Status: status}, domain.Occurrence{})
+		return &dto, nil
+	}
+	check, err := s.detectCommittedConflicts(ctx, sources, target, snapshot.Location)
+	if err != nil {
+		return nil, err
+	}
+	dto := conflictCheckDTO(check, target)
+	return &dto, nil
+}
+
+// detectCommittedConflicts 按已提交目标的实际时刻比较全部日程定义，并校验查询快照未变化。
+func (s *Service) detectCommittedConflicts(ctx context.Context, sources domain.ConflictSources, target domain.Occurrence, location *time.Location) (domain.ConflictCheck, error) {
+	queryStore, ok := s.store.(OccurrenceQueryStore)
+	if !ok {
+		return domain.ConflictCheck{}, errors.New("schedule store does not support occurrence queries")
+	}
+	generation, err := queryStore.QueryGeneration(ctx)
+	if err != nil {
+		return domain.ConflictCheck{}, fmt.Errorf("read occurrence query generation for conflict: %w", err)
+	}
+	start, end := conflictTargetWindow([]domain.Occurrence{target})
+	check, err := domain.DetectOccurrenceConflicts(sources, []domain.Occurrence{target}, start, end, sourceLookback(sources), location)
+	if err != nil {
+		return domain.ConflictCheck{}, fmt.Errorf("detect committed occurrence conflicts: %w", err)
+	}
+	// 读取过程中事实发生变化时必须报错，避免返回与已提交 generation 不一致的结果。
+	if err := ensureOccurrenceGeneration(ctx, queryStore, generation); err != nil {
+		return domain.ConflictCheck{}, err
+	}
+	return check, nil
+}
+
+// committedConflictTarget 从提交后的事实中确定本次操作实际检查的发生。
+func committedConflictTarget(sources domain.ConflictSources, operation changeOperation, snapshot domain.TimeSnapshot, location *time.Location) (domain.Occurrence, bool, error) {
+	for _, source := range sources.Items {
+		if source.Schedule.ID != operation.scheduleID {
+			continue
+		}
+		if operation.originalDate == "" {
+			// 整组操作检查提交后该日程严格晚于当前时刻的最早发生。
+			targets, err := domain.SelectNextTargetBatch(domain.ConflictSources{Items: []domain.ConflictSource{source}}, snapshot.Now.Add(-time.Second), location)
+			if err != nil {
+				return domain.Occurrence{}, false, fmt.Errorf("select committed target batch: %w", err)
+			}
+			if len(targets) == 0 {
+				return domain.Occurrence{}, false, nil
+			}
+			return targets[0], true, nil
+		}
+		// 单次操作只检查提交后的指定身份，不自动改查其他发生。
+		for _, override := range source.Overrides {
+			if override.OriginalDate != operation.originalDate || !override.Open || !override.SnapshotPresent {
+				continue
+			}
+			return domain.Occurrence{
+				ScheduleID:   source.Schedule.ID,
+				OriginalDate: override.OriginalDate,
+				StartLocal:   override.StartLocal,
+				EndLocal:     override.StartLocal.Add(time.Duration(override.DurationMinutes) * time.Minute),
+				Title:        override.Title,
+				Notes:        override.Notes,
+			}, true, nil
+		}
+		occurrence, found, err := domain.OccurrenceOnDate(source.Schedule, operation.originalDate, location)
+		if err != nil {
+			return domain.Occurrence{}, false, err
+		}
+		if found {
+			return occurrence, true, nil
+		}
+	}
+	return domain.Occurrence{}, false, nil
+}
+
 // detectChangeConflicts 基于变更后的投影选择目标批次并计算最终冲突。
 // 它只读取查询源快照，不做任何写入，也不使用公开查询的未来上界。
 func (s *Service) detectChangeConflicts(ctx context.Context, snapshot domain.TimeSnapshot, operation changeOperation) (conflictDetection, error) {

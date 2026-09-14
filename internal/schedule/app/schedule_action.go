@@ -87,7 +87,15 @@ func (s *Service) RestoreSchedule(ctx context.Context, id domain.ScheduleID, req
 	if err != nil {
 		return ScheduleActionDTO{}, fmt.Errorf("restore schedule %d: %w", id, err)
 	}
-	return scheduleActionDTO(id, result), nil
+	// 整组恢复后按重新开放的定义重新读取提交事实并计算最终冲突。
+	operation := changeOperation{operation: ChangeOperationRestoreSchedule, scheduleID: id}
+	conflict, err := s.committedConflict(ctx, snapshot, operation)
+	if err != nil {
+		return ScheduleActionDTO{}, err
+	}
+	dto := scheduleActionDTO(id, result)
+	dto.Conflict = conflict
+	return dto, nil
 }
 
 // validateScheduleActionRequest 校验整组操作共用的标识和版本字段。

@@ -226,14 +226,16 @@ type CancelledOccurrenceDTO struct {
 }
 
 // OccurrenceDTO 表示一次发生的实际时间和完整文本快照。
+// 提交成功后的响应通过 conflict 返回基于已提交事实计算的最终冲突结果。
 type OccurrenceDTO struct {
-	ScheduleID       int64  `json:"schedule_id"`
-	OriginalDate     string `json:"original_date"`
-	StartUnix        int64  `json:"start_unix"`
-	EndUnix          int64  `json:"end_unix"`
-	Title            string `json:"title"`
-	Notes            string `json:"notes"`
-	ScheduleRevision int64  `json:"schedule_revision"`
+	ScheduleID       int64             `json:"schedule_id"`
+	OriginalDate     string            `json:"original_date"`
+	StartUnix        int64             `json:"start_unix"`
+	EndUnix          int64             `json:"end_unix"`
+	Title            string            `json:"title"`
+	Notes            string            `json:"notes"`
+	ScheduleRevision int64             `json:"schedule_revision"`
+	Conflict         *ConflictCheckDTO `json:"conflict,omitzero"`
 }
 
 // OccurrenceActionDTO 表示取消或恢复提交后的受控发生状态。

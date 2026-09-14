@@ -36,7 +36,17 @@ func (s *Service) UpdateOccurrence(ctx context.Context, id domain.ScheduleID, re
 	if err != nil {
 		return OccurrenceDTO{}, fmt.Errorf("update occurrence %d/%s: %w", id, request.OriginalDate, err)
 	}
-	return occurrenceDTO(result), nil
+	updated := occurrenceDTO(result)
+	// 最终冲突基于提交后的快照计算，预览之后的事实变化以已提交状态为准。
+	operation := changeOperation{
+		operation: ChangeOperationUpdateOccurrence, scheduleID: id, originalDate: request.OriginalDate,
+	}
+	conflict, err := s.committedConflict(ctx, snapshot, operation)
+	if err != nil {
+		return OccurrenceDTO{}, err
+	}
+	updated.Conflict = conflict
+	return updated, nil
 }
 
 // occurrenceUpdateResolution 保存一次单次编辑校验后的完整候选、当前发生和变更后的发生。

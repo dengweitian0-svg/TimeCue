@@ -86,6 +86,24 @@ func (s *Service) CancelOccurrence(ctx context.Context, id domain.ScheduleID, re
 	return occurrenceActionDTO(id, request.OriginalDate, result), nil
 }
 
+// occurrenceActionDTOs 把取消或恢复结果投影为 DTO，并按需附加已提交的最终冲突状态。
+// 取消不产生发生，因此只有恢复需要重新读取提交后的事实计算冲突。
+func (s *Service) occurrenceActionDTOs(ctx context.Context, snapshot domain.TimeSnapshot, id domain.ScheduleID, originalDate string, restore bool, result domain.OccurrenceActionResult) (OccurrenceActionDTO, error) {
+	dto := occurrenceActionDTO(id, originalDate, result)
+	if !restore {
+		return dto, nil
+	}
+	operation := changeOperation{
+		operation: ChangeOperationRestoreOccurrence, scheduleID: id, originalDate: originalDate,
+	}
+	conflict, err := s.committedConflict(ctx, snapshot, operation)
+	if err != nil {
+		return OccurrenceActionDTO{}, err
+	}
+	dto.Conflict = conflict
+	return dto, nil
+}
+
 // validateOccurrenceActionRequest 校验取消/恢复共用的标识和版本字段。
 func validateOccurrenceActionRequest(id domain.ScheduleID, request OccurrenceActionRequest) error {
 	if id <= 0 {

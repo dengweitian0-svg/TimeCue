@@ -46,7 +46,14 @@ func (s *Service) CreateSchedule(ctx context.Context, request CreateScheduleRequ
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("create schedule: %w", err)
 	}
-	return scheduleDTO(schedule), nil
+	result := scheduleDTO(schedule)
+	operation := changeOperation{operation: ChangeOperationCreate, scheduleID: schedule.ID}
+	conflict, err := s.committedConflict(ctx, snapshot, operation)
+	if err != nil {
+		return ScheduleDTO{}, err
+	}
+	result.Conflict = conflict
+	return result, nil
 }
 
 // prepareCreateCandidate 校验创建请求并在无副作用的前提下生成日程候选。
@@ -136,6 +143,13 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	}
 	result := scheduleDTO(updated)
 	result.PreservedOverrideCount = preservedOverrideCount
+	// 最终冲突必须基于提交后重新读取的事实和 generation，而不是预读或预览结果。
+	operation := changeOperation{operation: ChangeOperationUpdateSchedule, scheduleID: id}
+	conflict, err := s.committedConflict(ctx, snapshot, operation)
+	if err != nil {
+		return ScheduleDTO{}, err
+	}
+	result.Conflict = conflict
 	return result, nil
 }
 
