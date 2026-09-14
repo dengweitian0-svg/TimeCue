@@ -19,7 +19,7 @@ import (
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "timecue.db")
-	store, err := OpenStore(context.Background(), path, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	store, err := OpenStore(context.Background(), path, testBackupDir(path), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("OpenStore() error = %v", err)
 	}
@@ -344,7 +344,7 @@ func TestDeleteScheduleReturnsEmptyTitleWhenMissing(t *testing.T) {
 func TestDeleteSchedulePersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "timecue.db")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store, err := OpenStore(context.Background(), path, logger)
+	store, err := OpenStore(context.Background(), path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatalf("OpenStore() error = %v", err)
 	}
@@ -358,7 +358,7 @@ func TestDeleteSchedulePersistsAcrossReopen(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("first Store.Close() error = %v", err)
 	}
-	reopened, err := OpenStore(context.Background(), path, logger)
+	reopened, err := OpenStore(context.Background(), path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatalf("reopen OpenStore() error = %v", err)
 	}
@@ -377,7 +377,7 @@ func TestDeleteSchedulePersistsAcrossReopen(t *testing.T) {
 func TestSchedulePersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "timecue.db")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store, err := OpenStore(context.Background(), path, logger)
+	store, err := OpenStore(context.Background(), path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatalf("OpenStore() error = %v", err)
 	}
@@ -389,7 +389,7 @@ func TestSchedulePersistsAcrossReopen(t *testing.T) {
 		t.Fatalf("first Store.Close() error = %v", err)
 	}
 
-	reopened, err := OpenStore(context.Background(), path, logger)
+	reopened, err := OpenStore(context.Background(), path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatalf("reopen OpenStore() error = %v", err)
 	}

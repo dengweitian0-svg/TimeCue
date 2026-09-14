@@ -12,10 +12,15 @@ import (
 	"testing"
 )
 
+// testBackupDir 返回 SQLite 测试默认使用的独立备份目录。
+func testBackupDir(databasePath string) string {
+	return filepath.Join(filepath.Dir(databasePath), "backups")
+}
+
 // TestOpenStoreRejectsNilLogger 验证存储层不会用默认 logger 绕过统一日志配置。
 func TestOpenStoreRejectsNilLogger(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "timecue.db")
-	if _, err := OpenStore(context.Background(), path, nil); err == nil {
+	if _, err := OpenStore(context.Background(), path, testBackupDir(path), nil); err == nil {
 		t.Fatal("OpenStore() error = nil for nil logger")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -27,7 +32,7 @@ func TestOpenStoreRejectsNilLogger(t *testing.T) {
 func TestOpenStoreKeepsForeignKeysAfterConnectionRecreation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "timecue.db")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store, err := OpenStore(context.Background(), path, logger)
+	store, err := OpenStore(context.Background(), path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatalf("OpenStore() error = %v", err)
 	}

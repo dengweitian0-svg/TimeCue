@@ -36,7 +36,7 @@ func TestRecurringJSONSQLiteEndToEnd(t *testing.T) {
 	clock := &recurringE2EClock{snapshot: domain.TimeSnapshot{Now: start.Add(-time.Hour), Location: loc}}
 	path := filepath.Join(t.TempDir(), "e2e.db")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s, err := OpenStore(ctx, path, logger)
+	s, err := OpenStore(ctx, path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestRecurringJSONSQLiteEndToEnd(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s, err = OpenStore(ctx, path, logger)
+	s, err = OpenStore(ctx, path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestMonthlyJSONSQLiteLifecycle(t *testing.T) {
 	clock := &recurringE2EClock{snapshot: domain.TimeSnapshot{Now: first.Add(-time.Hour), Location: loc}}
 	path := filepath.Join(t.TempDir(), "monthly.db")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store, err := OpenStore(ctx, path, logger)
+	store, err := OpenStore(ctx, path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestMonthlyJSONSQLiteLifecycle(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	store, err = OpenStore(ctx, path, logger)
+	store, err = OpenStore(ctx, path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatal(err)
 	}

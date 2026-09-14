@@ -23,7 +23,7 @@ func TestIssueNineConflictLifecycle(t *testing.T) {
 	}}
 	path := filepath.Join(t.TempDir(), "issue9.db")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store, err := OpenStore(ctx, path, logger)
+	store, err := OpenStore(ctx, path, testBackupDir(path), logger)
 	if err != nil {
 		t.Fatal(err)
 	}
