@@ -244,6 +244,8 @@ func (i *MergedOccurrenceIterator) Next() (Occurrence, bool, error) {
 				return Occurrence{}, false, nil
 			}
 			i.after = override.StartLocal
+			copy := override
+			i.afterOccurrence = &copy
 			return override, true, nil
 		}
 		if _, replaced := i.overrides[occurrenceKey(base.ScheduleID, base.OriginalDate)]; replaced {
@@ -257,6 +259,8 @@ func (i *MergedOccurrenceIterator) Next() (Occurrence, bool, error) {
 					return Occurrence{}, false, nil
 				}
 				i.after = override.StartLocal
+				copy := override
+				i.afterOccurrence = &copy
 				return override, true, nil
 			}
 			cursor = base.StartLocal
@@ -264,6 +268,8 @@ func (i *MergedOccurrenceIterator) Next() (Occurrence, bool, error) {
 		}
 		if overrideOK && occurrenceLess(override, base) {
 			i.after = override.StartLocal
+			copy := override
+			i.afterOccurrence = &copy
 			return override, true, nil
 		}
 		i.after = base.StartLocal
