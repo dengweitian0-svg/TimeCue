@@ -18,6 +18,7 @@ func TestQueryGenerationTracksCommittedChanges(t *testing.T) {
 		t.Fatalf("initial generation = %d, %v", before, err)
 	}
 	candidate := recurringCandidate()
+	candidate.Open = true
 	schedule, err := store.CreateSchedule(ctx, candidate)
 	if err != nil {
 		t.Fatalf("CreateSchedule() error = %v", err)
