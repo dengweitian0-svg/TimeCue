@@ -71,7 +71,7 @@ func NewReminderScheduler(store ReminderSourceStore, attempts ReminderAttemptSto
 	return &ReminderScheduler{
 		store: store, attempts: attempts, notifier: notifier, clock: clock,
 		timerFactory: timerFactory, logger: logger, coordinator: coordinator,
-		status:     SchedulerStatus{Available: true, Epoch: coordinator.Epoch()},
+		status:     SchedulerStatus{Available: true, Epoch: coordinator.Epoch(), State: coordinator.State()},
 		candidates: make(map[domain.ScheduleID]reminderCandidateBatch),
 	}
 }
@@ -85,6 +85,7 @@ func (s *ReminderScheduler) GetRuntimeStatus() SchedulerStatus {
 	status := s.status
 	s.mu.RUnlock()
 	status.Epoch = s.coordinator.Epoch()
+	status.State = s.coordinator.State()
 	return status
 }
 
