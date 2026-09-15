@@ -3,6 +3,7 @@ import { Background, Button, Feedback, Mascot } from './components';
 import { PrototypeError, type DirectoryKind, type Settings } from './contracts';
 import { Controller, type AppState } from './controller';
 import { themes, themeStyle, type Theme } from './themes';
+import { ScheduleDialogs, Schedules } from './Schedules';
 
 /** 组合产品窗口与模拟桌面，所有业务操作委托给应用控制器。 */
 export function App({ controller }: { controller: Controller }) {
@@ -19,15 +20,17 @@ export function App({ controller }: { controller: Controller }) {
       <div className="shell">
         <aside className="sidebar"><div className="brand"><Mascot size={52} />TimeCue</div>
           <button className="nav" aria-current={state.page === 'reminders' ? 'page' : undefined} onClick={() => controller.setPage('reminders')}>待处理提醒</button>
+          <button className="nav" aria-current={state.page === 'schedules' ? 'page' : undefined} disabled={state.scheduleBusy} onClick={() => controller.setPage('schedules')}>我的日程</button>
           <button className="nav" aria-current={state.page === 'settings' ? 'page' : undefined} onClick={() => controller.setPage('settings')}>设置</button>
           <div className="companion"><strong>慢慢来，</strong><p>每件小事都值得<br />被好好记住。</p></div><div className="running">● &nbsp;后台提醒运行中</div><small>TimeCue · 今天也从容</small>
         </aside>
         <main className="content">
           {state.error && <div className="global-error"><Feedback kind="error">{state.error}</Feedback></div>}
-          {state.page === 'settings' ? <SettingsPage controller={controller} settings={settings} /> : <Reminders controller={controller} state={state} />}
+          {state.page === 'settings' ? <SettingsPage controller={controller} settings={settings} /> : state.page === 'schedules' ? <Schedules controller={controller} state={state} /> : <Reminders controller={controller} state={state} />}
         </main>
       </div>
     </div>
+    <ScheduleDialogs controller={controller} state={state} />
   </Background>;
 }
 

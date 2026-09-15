@@ -69,6 +69,7 @@ export function validateSchedule(request: CreateScheduleRequest, now: Date): Omi
   }
   if (end <= start) fields.end = '结束时间必须晚于开始时间。';
   if (Object.keys(fields).length) throw new ScheduleError('VALIDATION', '请检查标出的字段。', fields);
+  if (request.cron !== undefined && typeof request.cron !== 'string') throw new ScheduleError('VALIDATION', '重复规则格式不正确。', { type: '单次日程应省略重复规则。' });
   const type = request.cron === undefined ? 'single' : cronType(request.cron);
   let untilDateLocal: string | null = null;
   if (type === 'single') {
@@ -78,6 +79,8 @@ export function validateSchedule(request: CreateScheduleRequest, now: Date): Omi
     if (end < new Date(bounds.min) || end > new Date(bounds.endMaxInclusive)) fields.end = '超过时间限制，请按最新范围调整结束时间。';
     if (Object.keys(fields).length) throw new ScheduleError('TIME_RANGE_EXCEEDED', '超过时间限制', fields, bounds);
   } else {
+    // 对齐 Go time.Duration 可承载的重复时长，避免接受真实后端无法保存的定义。
+    if ((request.end_unix - request.start_unix) / 60 > Number((2n ** 63n - 1n) / 60000000000n)) throw new ScheduleError('VALIDATION', '重复日程持续时间过长。', { end: '请缩短日程持续时间。' });
     const until = new Date(Number(request.until_unix) * 1000);
     if (!Number.isSafeInteger(request.until_unix) || !Number.isFinite(until.getTime()) || until.getFullYear() < 1 || until.getFullYear() > 9999) throw new ScheduleError('VALIDATION', '请选择重复截止日期。', { until: '请选择真实的重复截止日期。' });
     untilDateLocal = localMinute(until).slice(0, 10);

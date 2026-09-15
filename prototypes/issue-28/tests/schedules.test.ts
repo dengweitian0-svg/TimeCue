@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { MockAdapter, seed, STORAGE_KEY, type StorageLike } from '../src/adapter';
 import { draftRequest, emptyDraft, parseLocal, timeBounds, validateSchedule } from '../src/schedule-model';
-import type { ScheduleType } from '../src/contracts';
+import type { Schedule, ScheduleType } from '../src/contracts';
+import { Controller } from '../src/controller';
 
 /** 每个测试拥有独立持久化快照，便于检查失败前后的完整事实。 */
 function storage(): StorageLike { const data = new Map<string, string>(); return { getItem: key => data.get(key) ?? null, setItem: (key, value) => { data.set(key, value); } }; }
@@ -92,5 +93,37 @@ describe('页面提示与适配器最终校验', () => {
     expect(validateSchedule(recurring, now())).toMatchObject({ untilDateLocal: '2030-01-31', cron: '0 19 31 * *', monthEndPolicy: 'clamp' });
     expect(() => validateSchedule({ ...recurring, until_unix: new Date('2030-01-30T12:00').getTime() / 1000 }, now())).toThrow('不能早于');
     expect(() => validateSchedule({ ...recurring, cron: '*/5 19 * * *' }, now())).toThrow('不受支持');
+  });
+});
+
+describe('日程控制器的正式转换与迟到结果', () => {
+  /** 通过用户输入操作准备创建，验证控制器也不旁路写存储。 */
+  function fill(app: Controller): void { app.beginSchedule(); app.editSchedule({ title: '读书', start: '2027-01-31T19:00', end: '2027-01-31T19:30', type: 'monthly', until: '2027-03-31' }); }
+  it('并发保存只写一次，失败和取消确认均保留输入', async () => {
+    const adapter = new MockAdapter(storage(), 1, now); const app = new Controller(adapter); fill(app);
+    app.setPage('settings'); expect(app.snapshot()).toMatchObject({ page: 'schedules', discardTo: 'settings' }); app.keepDraft();
+    adapter.inject('schedule-create'); await app.saveSchedule(); expect(app.snapshot().scheduleDraft?.title).toBe('读书');
+    await Promise.all([app.saveSchedule(), app.saveSchedule()]); expect(await adapter.listSchedules()).toHaveLength(1); expect(app.snapshot().scheduleDraft).toBeNull(); app.dispose();
+  });
+  it('慢列表不能覆盖已经提交的新日程', async () => {
+    const adapter = new MockAdapter(storage(), 1, now); const app = new Controller(adapter);
+    let resolve!: (rows: Schedule[]) => void; const delayed = new Promise<Schedule[]>(done => { resolve = done; });
+    adapter.listSchedules = () => delayed; const reading = app.refreshSchedules(); fill(app); await app.saveSchedule();
+    resolve([]); await reading; await Promise.resolve(); expect(app.snapshot().schedules).toHaveLength(1); expect(app.snapshot().schedulesLoading).toBe(false); app.dispose();
+  });
+  it('旧版本恢复保留最新对象以便再次确认，不能直接重复删除', async () => {
+    const adapter = new MockAdapter(storage(), 1, now); const app = new Controller(adapter); fill(app); await app.saveSchedule();
+    app.askDelete(app.snapshot().schedules[0]); adapter.inject('schedule-stale'); await app.deleteSchedule();
+    expect(app.snapshot().deleting?.revision).toBe(1); await app.deleteSchedule(); expect(await adapter.listSchedules()).toHaveLength(1);
+    await app.recoverDelete(); expect(app.snapshot().deleting?.revision).toBe(2); expect(app.snapshot().scheduleError).toBeNull();
+    await app.deleteSchedule(); expect(app.snapshot().schedules).toEqual([]); app.dispose();
+  });
+  it('重置取消进行中的创建，旧失败不污染新场景', async () => {
+    const adapter = new MockAdapter(storage(), 5, now); const app = new Controller(adapter); fill(app); const saving = app.saveSchedule(); adapter.reset(); await saving;
+    expect(app.snapshot()).toMatchObject({ scheduleDraft: null, scheduleBusy: false, scheduleError: null, schedules: [] }); app.dispose();
+  });
+  it('非法重复请求不能因绕过页面而写入', () => {
+    expect(() => validateSchedule({ ...request(), cron: null } as never, now())).toThrow('格式不正确');
+    expect(() => validateSchedule({ ...request('daily'), end_unix: new Date('2400-01-01T00:00').getTime() / 1000 }, now())).toThrow('持续时间过长');
   });
 });
