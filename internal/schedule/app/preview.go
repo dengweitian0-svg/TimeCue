@@ -170,7 +170,14 @@ func (s *Service) resolvePreviewScheduleUpdate(ctx context.Context, snapshot dom
 	if err != nil {
 		return changeOperation{}, err
 	}
-	candidate, post, err := prepareScheduleUpdate(snapshot, existing, payload)
+	var overrides []domain.OccurrenceOverride
+	if isRecurringToSingle(existing, payload) {
+		overrides, err = s.previewScheduleOverrides(ctx, id)
+		if err != nil {
+			return changeOperation{}, err
+		}
+	}
+	candidate, post, err := prepareScheduleUpdate(snapshot, existing, payload, overrides)
 	if err != nil {
 		return changeOperation{}, err
 	}
@@ -178,6 +185,36 @@ func (s *Service) resolvePreviewScheduleUpdate(ctx context.Context, snapshot dom
 		operation: ChangeOperationUpdateSchedule, scheduleID: id,
 		post: post, overlay: true, closed: !post.Open, candidateSchedule: &candidate,
 	}, nil
+}
+
+// previewScheduleOverrides 通过查询源读取类型转换所需的例外快照，不触碰任何写端口。
+func (s *Service) previewScheduleOverrides(ctx context.Context, id domain.ScheduleID) ([]domain.OccurrenceOverride, error) {
+	queryStore, ok := s.store.(OccurrenceQueryStore)
+	if !ok {
+		return nil, errors.New("schedule store does not support occurrence queries for type conversion")
+	}
+	var cursor domain.ScheduleID
+	for {
+		batch, err := queryStore.ListOccurrenceSources(ctx, ListOccurrenceSourcesRequest{
+			AfterScheduleID: cursor, Limit: occurrenceSourceBatchLimit,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list occurrence sources for schedule %d: %w", id, err)
+		}
+		for _, source := range batch.Items {
+			if source.Schedule.ID == id {
+				return source.Overrides, nil
+			}
+		}
+		if batch.NextCursor == 0 {
+			break
+		}
+		if batch.NextCursor <= cursor {
+			return nil, errors.New("occurrence source cursor did not advance")
+		}
+		cursor = batch.NextCursor
+	}
+	return nil, domain.NewNotFound("schedule was not found")
 }
 
 // resolvePreviewScheduleRestore 校验整组恢复，并把变更后的定义投影为重新开放。

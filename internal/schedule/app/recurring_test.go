@@ -165,7 +165,7 @@ func TestServiceRecurringPolicyChangesWithCron(t *testing.T) {
 
 // TestServiceRecurringUpdateRejectsBeforeWrite 验证非法合并状态、清空字段和旧版本不调用写端口。
 func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
-	for _, name := range []string{"bad cron", "clear cron", "clear until", "old revision", "early cutoff", "start after cutoff", "single cutoff"} {
+	for _, name := range []string{"bad cron", "clear until", "old revision", "early cutoff", "start after cutoff", "single cutoff"} {
 		t.Run(name, func(t *testing.T) {
 			s, clock, create := recurringFixture()
 			service := NewService(s, clock)
@@ -179,9 +179,6 @@ func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
 			switch name {
 			case "bad cron":
 				cron = "0 9 * * 7"
-			case "clear cron":
-				request.Cron = nil
-				request.CronPresent = true
 			case "clear until":
 				request.UntilUnixPresent = true
 			case "old revision":
@@ -207,6 +204,92 @@ func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
 				t.Fatal("stale request read clock")
 			}
 		})
+	}
+}
+
+// TestServiceRecurringToSingleSelectsNearestValidOccurrence 验证重复转单次选择最近有效发生并恢复暂停组。
+func TestServiceRecurringToSingleSelectsNearestValidOccurrence(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, location)
+	cron := "0 9 * * *"
+	until := "2026-09-16"
+	existing := domain.Schedule{ID: 20, Cron: &cron, UntilDateLocal: &until, Open: false,
+		FirstStartLocal: time.Date(2026, 9, 10, 9, 0, 0, 0, location), DurationMinutes: 60, Revision: 4}
+	move := domain.OccurrenceOverride{ScheduleID: existing.ID, OriginalDate: "2026-09-13",
+		StartLocal: time.Date(2026, 9, 13, 11, 0, 0, 0, location), DurationMinutes: 60,
+		Title: "moved", Open: true, SnapshotPresent: true}
+	store := &fakeStore{getResult: existing, updateResult: existing, overrides: []domain.OccurrenceOverride{move}}
+	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+	_, err := service.UpdateSchedule(context.Background(), existing.ID, UpdateScheduleRequest{
+		CronPresent: true, ExpectedRevision: existing.Revision,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSchedule() error = %v", err)
+	}
+	candidate := store.updated
+	if store.updateCalls != 1 || !candidate.CronPresent || candidate.Cron != nil || candidate.UntilDateLocal != nil || !candidate.UntilDateLocalPresent {
+		t.Fatalf("conversion candidate = %+v, calls = %d", candidate, store.updateCalls)
+	}
+	if candidate.Open == nil || !*candidate.Open || candidate.OriginalStartLocal == nil ||
+		candidate.OriginalStartLocal.Format(time.DateOnly) != move.OriginalDate || candidate.FirstStartLocal == nil ||
+		!candidate.FirstStartLocal.Equal(move.StartLocal) || candidate.DurationMinutes == nil || *candidate.DurationMinutes != move.DurationMinutes {
+		t.Fatalf("single target candidate = %+v", candidate)
+	}
+}
+
+// TestServiceRecurringToSingleWithoutCandidateDoesNotWrite 验证没有未来有效发生时转换在写入前失败。
+func TestServiceRecurringToSingleWithoutCandidateDoesNotWrite(t *testing.T) {
+	location := time.UTC
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, location)
+	cron := "0 9 * * *"
+	until := "2026-09-12"
+	existing := domain.Schedule{ID: 21, Cron: &cron, UntilDateLocal: &until, Open: true,
+		FirstStartLocal: time.Date(2026, 9, 10, 9, 0, 0, 0, location), DurationMinutes: 60, Revision: 1}
+	store := &fakeStore{getResult: existing, updateResult: existing}
+	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+	_, err := service.UpdateSchedule(context.Background(), existing.ID, UpdateScheduleRequest{CronPresent: true, ExpectedRevision: 1})
+	assertRecurringCode(t, err, domain.Validation)
+	if store.updateCalls != 0 {
+		t.Fatalf("update calls = %d, want 0", store.updateCalls)
+	}
+}
+
+// TestServiceSingleToRecurringRequiresCutoff 验证单次转重复必须同时提供 cron 和截止日期。
+func TestServiceSingleToRecurringRequiresCutoff(t *testing.T) {
+	location := time.UTC
+	now := time.Date(2026, 9, 12, 8, 0, 0, 0, location)
+	start := now.Add(time.Hour)
+	existing := domain.Schedule{ID: 22, Open: true, FirstStartLocal: start, OriginalStartLocal: start, DurationMinutes: 60, Revision: 1}
+	cron := "0 9 * * *"
+	store := &fakeStore{getResult: existing, updateResult: existing}
+	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+	_, err := service.UpdateSchedule(context.Background(), existing.ID, UpdateScheduleRequest{Cron: &cron, ExpectedRevision: 1})
+	assertRecurringCode(t, err, domain.Validation)
+	if store.updateCalls != 0 {
+		t.Fatalf("missing cutoff reached store: calls = %d", store.updateCalls)
+	}
+}
+
+// TestServiceSingleToRecurringCarriesRequiredDefinition 验证单次转重复在同一更新入口生成完整重复定义候选。
+func TestServiceSingleToRecurringCarriesRequiredDefinition(t *testing.T) {
+	location := time.UTC
+	now := time.Date(2026, 9, 12, 8, 0, 0, 0, location)
+	start := now.Add(time.Hour)
+	existing := domain.Schedule{ID: 23, Open: true, FirstStartLocal: start, OriginalStartLocal: start, DurationMinutes: 60, Revision: 2}
+	cron := "0 9 * * *"
+	until := now.AddDate(0, 0, 7).Unix()
+	store := &fakeStore{getResult: existing, updateResult: existing}
+	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+	_, err := service.UpdateSchedule(context.Background(), existing.ID, UpdateScheduleRequest{
+		Cron: &cron, UntilUnix: &until, ExpectedRevision: existing.Revision,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSchedule() error = %v", err)
+	}
+	candidate := store.updated
+	if store.updateCalls != 1 || candidate.Cron == nil || *candidate.Cron != cron || !candidate.CronPresent ||
+		candidate.UntilDateLocal == nil || !candidate.UntilDateLocalPresent || candidate.Open == nil || !*candidate.Open {
+		t.Fatalf("recurring conversion candidate = %+v", candidate)
 	}
 }
 

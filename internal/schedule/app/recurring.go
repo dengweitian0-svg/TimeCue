@@ -35,6 +35,7 @@ func prepareRecurringUpdate(snapshot domain.TimeSnapshot, existing domain.Schedu
 			return err
 		}
 		merged.UntilDateLocal, candidate.UntilDateLocal = &date, &date
+		candidate.UntilDateLocalPresent = true
 	}
 	if merged.UntilDateLocal == nil {
 		return domain.NewValidation("recurring cutoff is required", "until_unix")

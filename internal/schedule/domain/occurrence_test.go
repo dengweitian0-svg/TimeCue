@@ -122,6 +122,52 @@ func TestOccurrenceOnDateMatchesClosedSchedule(t *testing.T) {
 	}
 }
 
+// TestSingleOccurrenceUsesOriginalStartIdentity 验证单次改期后身份仍由原始日期锚点决定。
+func TestSingleOccurrenceUsesOriginalStartIdentity(t *testing.T) {
+	location := time.FixedZone("CST", 8*60*60)
+	schedule := Schedule{
+		ID: 7, Open: true,
+		FirstStartLocal:    time.Date(2026, 9, 20, 10, 0, 0, 0, location),
+		OriginalStartLocal: time.Date(2026, 9, 7, 10, 0, 0, 0, location),
+		DurationMinutes:    60,
+	}
+	override := OccurrenceOverride{
+		ScheduleID: 7, OriginalDate: "2026-09-07", Open: true, SnapshotPresent: true,
+		StartLocal: time.Date(2026, 9, 20, 10, 0, 0, 0, location), DurationMinutes: 60,
+	}
+
+	occurrence, ok, err := NextMergedOccurrence(schedule, []OccurrenceOverride{override}, time.Date(2026, 9, 1, 0, 0, 0, 0, location), location)
+	if err != nil || !ok || occurrence.OriginalDate != "2026-09-07" || !occurrence.StartLocal.Equal(override.StartLocal) {
+		t.Fatalf("NextMergedOccurrence() = %+v, %v, %v", occurrence, ok, err)
+	}
+	if _, ok, err := OccurrenceForIdentity(schedule, nil, OccurrenceIdentity{ScheduleID: 7, OriginalDate: "2026-09-20"}, location); err != nil || ok {
+		t.Fatalf("OccurrenceForIdentity(moved date) = %v, %v", ok, err)
+	}
+	if _, ok, err := OccurrenceForIdentity(schedule, nil, OccurrenceIdentity{ScheduleID: 7, OriginalDate: "2026-09-07"}, location); err != nil || !ok {
+		t.Fatalf("OccurrenceForIdentity(anchor date) = %v, %v", ok, err)
+	}
+}
+
+// TestSingleOccurrenceIgnoresUnrelatedOverride 验证单次日程不会把历史其他身份例外扩展成第二次发生。
+func TestSingleOccurrenceIgnoresUnrelatedOverride(t *testing.T) {
+	location := time.UTC
+	schedule := Schedule{
+		ID: 8, Open: true,
+		FirstStartLocal:    time.Date(2026, 9, 20, 10, 0, 0, 0, location),
+		OriginalStartLocal: time.Date(2026, 9, 7, 10, 0, 0, 0, location),
+		DurationMinutes:    60,
+	}
+	overrides := []OccurrenceOverride{
+		{ScheduleID: 8, OriginalDate: "2026-09-01", Open: true, SnapshotPresent: true,
+			StartLocal: time.Date(2026, 9, 21, 10, 0, 0, 0, location), DurationMinutes: 60},
+	}
+	occurrences, err := ExpandMergedOccurrences(schedule, overrides,
+		time.Date(2026, 9, 1, 0, 0, 0, 0, location), time.Date(2026, 9, 30, 0, 0, 0, 0, location), location)
+	if err != nil || len(occurrences) != 1 || occurrences[0].OriginalDate != "2026-09-07" {
+		t.Fatalf("ExpandMergedOccurrences() = %+v, %v", occurrences, err)
+	}
+}
+
 // TestMergedOccurrenceIteratorIncludesCrossDayBase 验证从窗口前开始但实际跨入窗口的基础发生不会遗漏。
 func TestMergedOccurrenceIteratorIncludesCrossDayBase(t *testing.T) {
 	location := time.FixedZone("CST", 8*60*60)

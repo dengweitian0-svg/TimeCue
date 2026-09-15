@@ -161,7 +161,7 @@ type CreateScheduleRequest struct {
 
 // UpdateScheduleRequest 表示日程字段补丁和乐观锁版本。
 // Present 字段用于保留 JSON 中显式携带 null 或 false 的存在性，避免把它们
-// 与“未修改”混为一谈；当前单次更新分支会拒绝 cron、cancel 和 restore。
+// 与“未修改”混为一谈；cron、截止日期和开放状态的显式字段也支持类型转换。
 type UpdateScheduleRequest struct {
 	Title            *string `json:"title"`
 	Notes            *string `json:"notes"`

@@ -68,6 +68,17 @@ func TestDecodeUpdateScheduleTracksFieldPresence(t *testing.T) {
 	}
 }
 
+// TestDecodePreviewChangeTracksNestedCronPresence 验证预览载荷中的显式 null cron 不会丢失类型转换语义。
+func TestDecodePreviewChangeTracksNestedCronPresence(t *testing.T) {
+	request, err := DecodePreviewChange([]byte(`{"operation":"update_schedule","schedule_update":{"cron":null}}`))
+	if err != nil {
+		t.Fatalf("DecodePreviewChange() error = %v", err)
+	}
+	if request.ScheduleUpdate == nil || !request.ScheduleUpdate.CronPresent || request.ScheduleUpdate.Cron != nil {
+		t.Fatalf("nested cron presence/value = %#v", request.ScheduleUpdate)
+	}
+}
+
 // TestDecodeUpdateScheduleRejectsInvalidNumbers 验证更新 JSON 的端点和版本拒绝非整数表示。
 func TestDecodeUpdateScheduleRejectsInvalidNumbers(t *testing.T) {
 	for _, input := range []string{

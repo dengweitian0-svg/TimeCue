@@ -48,12 +48,16 @@ type ScheduleUpdateCandidate struct {
 	Title                 *string
 	Notes                 *string
 	FirstStartLocal       *time.Time
+	OriginalStartLocal    *time.Time
 	DurationMinutes       *int
 	Cron                  *string
 	CronPresent           bool
 	UntilDateLocal        *string
+	UntilDateLocalPresent bool
 	MonthEndPolicy        *string
 	MonthEndPolicyPresent bool
+	Open                  *bool
+	OpenPresent           bool
 	UpdatedAtUTC          time.Time
 	ExpectedRevision      int64
 }
