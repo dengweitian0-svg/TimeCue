@@ -40,7 +40,7 @@ export const themes = {
     "accent": "#356B95",
     "hover": "#265274",
     "text": "#2C3C4B",
-    "muted": "#5C6F80",
+    "muted": "#566979",
     "border": "#CBDAE8",
     "success": "#30674D",
     "successBg": "#E1F1E9",

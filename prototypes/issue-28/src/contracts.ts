@@ -41,5 +41,6 @@ export interface Ports extends SettingsPort, MessagesPort, WindowPort, Activatio
 
 /** 原型边界错误携带可呈现信息与平台返回的实际生效路径。 */
 export class PrototypeError extends Error {
+  /** 保存面向用户的说明和可选实际路径。 */
   constructor(message: string, public readonly effectivePath?: string) { super(message); this.name = 'PrototypeError'; }
 }

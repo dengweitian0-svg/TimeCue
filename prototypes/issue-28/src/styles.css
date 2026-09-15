@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap');
+@import '@fontsource/noto-sans-sc/chinese-simplified-400.css';
+@import '@fontsource/noto-sans-sc/chinese-simplified-500.css';
+@import '@fontsource/noto-sans-sc/chinese-simplified-700.css';
+@import '@fontsource/noto-sans-sc/latin-400.css';
+@import '@fontsource/noto-sans-sc/latin-500.css';
+@import '@fontsource/noto-sans-sc/latin-700.css';
 
 :root { font-family: 'Noto Sans SC', 'Microsoft YaHei', system-ui, sans-serif; color: #45342d; font-synthesis: none; --space-4: 4px; --space-8: 8px; --space-12: 12px; --space-16: 16px; --space-24: 24px; --space-32: 32px; --space-48: 48px; --radius-12: 12px; --radius-20: 20px; --radius-28: 28px; --onAccent: #fff; }
 * { box-sizing: border-box; }
@@ -88,7 +93,7 @@ h1 { font-size: 30px; font-weight: 700; line-height: 1.6; }
 .empty-state { min-height: 480px; background: var(--surface); border: 1px solid var(--border); border-radius: 28px; padding: 48px; display: flex; align-items: center; justify-content: center; flex-direction: column; text-align: center; gap: 16px; }
 .empty-state h2 { font-size: 28px; }
 .empty-state p { max-width: 600px; line-height: 1.8; color: var(--muted); }
-.desktop { min-height: 100vh; padding: 32px; background: #e6edf6; color: #243447; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; display: flex; flex-direction: column; gap: 16px; }
+.desktop { --error: #a33438; --errorBg: #fbe7e6; --muted: #5b6e80; --soft: #e6edf6; min-height: 100vh; padding: 32px; background: #e6edf6; color: #243447; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; display: flex; flex-direction: column; gap: 16px; }
 .desktop .button { --surface:#fafbfd; --text:#243447; --border:#cbd5df; --soft:#e6edf6; --accent:#326c9d; --hover:#24517a; border-radius: 6px; }
 .desktop-header { font-size: 13px; color: #5b6e80; }
 .system-notifications { display: flex; flex-wrap: wrap; gap: 16px; }
