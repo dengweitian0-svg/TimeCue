@@ -1,6 +1,6 @@
 # cmd/timecue
 
-- 本目录是 TimeCue 的唯一进程入口，当前包含 `main.go`。
+- 本目录是 TimeCue 的唯一进程入口，当前包含 `main.go` 和 `main_test.go`。
 - `main` 的职责是：
   - 创建响应 `os.Interrupt` 和 `SIGTERM` 的 `context`；
   - 组装 `bootstrap.Application` 实现和独占启动资格实现并调用 `bootstrap.Start`；
@@ -9,3 +9,4 @@
 - 不得在 `main` 中实现业务逻辑、重复记录最终错误或绕过 `bootstrap` 直接启动应用。
 - 当前使用 `bootstrap.AlwaysQualified` 作为尚未接入 Windows 单实例锁的宿主资格实现；真实单实例锁属于后续平台集成，必须通过 `ExclusiveStartup` 接入。
 - 修改入口行为时必须同步检查信号取消、正常退出、错误输出和退出码映射。
+- `reportError(io.Writer, error)` 是入口错误输出和退出码映射的最小可测试边界；入口测试必须覆盖 nil、配置错误、普通运行错误、纯取消和取消与真实错误组合。
