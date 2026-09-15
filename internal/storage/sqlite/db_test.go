@@ -84,3 +84,25 @@ func TestOpenStoreKeepsForeignKeysAfterConnectionRecreation(t *testing.T) {
 		}
 	}
 }
+
+// TestStoreOperationsFailAfterClose 验证 Store 关闭后不会继续提供数据库操作。
+func TestStoreOperationsFailAfterClose(t *testing.T) {
+	store := openTestStore(t)
+	if err := store.Close(); err != nil {
+		t.Fatalf("Store.Close() error = %v", err)
+	}
+	if _, err := store.GetSchedule(context.Background(), 1); err == nil {
+		t.Fatal("GetSchedule() error = nil after Store.Close()")
+	}
+}
+
+// TestStoreCloseAcceptsNilAndEmptyStores 验证 nil Store 和未初始化 Store 的关闭边界幂等且安全。
+func TestStoreCloseAcceptsNilAndEmptyStores(t *testing.T) {
+	var nilStore *Store
+	if err := nilStore.Close(); err != nil {
+		t.Fatalf("nil Store.Close() error = %v", err)
+	}
+	if err := (&Store{}).Close(); err != nil {
+		t.Fatalf("empty Store.Close() error = %v", err)
+	}
+}
