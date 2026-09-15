@@ -1,15 +1,16 @@
-import { PrototypeError, type AdapterEvent, type Detail, type DirectoryKind, type Ports, type Reminder, type RuntimeState, type Settings } from './contracts';
+import { PrototypeError, ScheduleError, type CreateScheduleRequest, type Schedule, type ScheduleBounds, type AdapterEvent, type Detail, type DirectoryKind, type Ports, type Reminder, type RuntimeState, type Settings } from './contracts';
 import { themes } from './themes';
+import { cronType, parseLocal, timeBounds, validateSchedule } from './schedule-model';
 
 export const STORAGE_KEY = 'timecue:issue-28:v1';
-export type Fault = 'none' | 'list' | 'confirm' | 'preferences' | 'logs-validation' | 'logs-switch' | 'backups-validation' | 'backups-switch' | 'cleanup' | 'cancel';
-interface Stored { generation: number; settings: Settings; messages: Reminder[]; runtime: RuntimeState; fault: Fault }
+export type Fault = 'none' | 'list' | 'confirm' | 'preferences' | 'logs-validation' | 'logs-switch' | 'backups-validation' | 'backups-switch' | 'cleanup' | 'cancel' | 'schedule-create' | 'schedule-delete' | 'schedule-stale' | 'schedule-missing';
+interface Stored { generation: number; settings: Settings; messages: Reminder[]; schedules: Schedule[]; runtime: RuntimeState; fault: Fault }
 export interface StorageLike { getItem(key: string): string | null; setItem(key: string, value: string): void }
 
 /** 提供稳定的中文演示数据，避免真实时间改变验收路径。 */
 export function seed(): Stored {
   return {
-    generation: 0, fault: 'none',
+    generation: 0, fault: 'none', schedules: [],
     settings: { theme: 'peach', background: { kind: 'solid' }, closeBehavior: 'tray', logs: 'D:\\TimeCue 数据\\日志', backups: 'D:\\TimeCue 数据\\备份' },
     messages: [
       { id: 'water', title: '喝杯水，休息一下', body: '专注了这么久，辛苦啦。\n喝一杯温水，看看窗外，让眼睛也放个小假。', at: '2026-09-15T14:30:00', confirmed: false },
@@ -28,7 +29,7 @@ export class MockAdapter implements Ports {
   private stopping: Promise<void> | null = null;
   private memory = seed();
   /** 注入存储和可控延迟，供演示与测试替换。 */
-  constructor(private storage: StorageLike, private delay = 400) {}
+  constructor(private storage: StorageLike, private delay = 400, private now: () => Date = () => new Date()) {}
 
   /** 校验存储结构，损坏数据明确报错且不覆盖用户已有值。 */
   private read(): Stored {
@@ -36,13 +37,17 @@ export class MockAdapter implements Ports {
       const raw = this.storage.getItem(STORAGE_KEY);
       if (!raw) return structuredClone(this.memory);
       const value = JSON.parse(raw) as Stored;
+      // 兼容创建功能上线前的快照；缺失定义集合迁移为空，绝不把已投递消息转换成日程。
+      if (value.schedules === undefined) value.schedules = [];
       if (!value.settings || !Object.hasOwn(themes, value.settings.theme) || !['tray', 'exit'].includes(value.settings.closeBehavior)
         || typeof value.settings.logs !== 'string' || typeof value.settings.backups !== 'string'
         || !value.settings.background || value.settings.background.kind !== 'solid'
         || !Array.isArray(value.messages) || value.messages.some(m => typeof m.id !== 'string' || typeof m.title !== 'string' || typeof m.body !== 'string' || typeof m.at !== 'string' || typeof m.confirmed !== 'boolean')
         || !value.runtime || !['running', 'stopping', 'stopped', 'cleanup-failed'].includes(value.runtime.lifecycle)
         || !['visible', 'hidden', 'minimized'].includes(value.runtime.visibility) || !Array.isArray(value.runtime.notifications)
-        || typeof value.runtime.ready !== 'boolean' || !Number.isFinite(value.generation)) throw new Error('invalid snapshot');
+        || typeof value.runtime.ready !== 'boolean' || !Number.isFinite(value.generation)
+        || !Array.isArray(value.schedules) || value.schedules.some(s => !validStoredSchedule(s))
+        || new Set(value.schedules.map(s => s.id)).size !== value.schedules.length) throw new Error('invalid snapshot');
       return value;
     } catch { throw new PrototypeError('本地演示数据无法读取，请在演示控制台重置场景。'); }
   }
@@ -78,6 +83,41 @@ export class MockAdapter implements Ports {
   externalChanged(): void { this.emit('external'); }
   /** 读取已生效设置。 */
   async readSettings(): Promise<Settings> { return structuredClone(this.read().settings); }
+  /** 读取定义列表，与已投递消息集合保持独立。 */
+  async listSchedules(): Promise<Schedule[]> { return structuredClone(this.read().schedules); }
+  /** 删除确认必须读取具体对象，缺失时不伪造成功或正文。 */
+  async getSchedule(id: string): Promise<Schedule> {
+    const item = this.read().schedules.find(s => s.id === id);
+    if (!item) throw new ScheduleError('NOT_FOUND', '这条日程已不存在，请刷新列表。');
+    return structuredClone(item);
+  }
+  /** 返回适配器时间快照决定的当前边界，页面不自行推算一年秒数。 */
+  async scheduleBounds(): Promise<ScheduleBounds> { return timeBounds(this.now()); }
+  /** 最终校验成功后一次写入定义，创建不会增加待处理消息或系统通知。 */
+  async createSchedule(request: CreateScheduleRequest): Promise<Schedule> {
+    await this.pause();
+    const candidate = validateSchedule(request, this.now());
+    if (this.consume('schedule-create')) throw new ScheduleError('STORAGE', '保存失败，填写内容已保留。请重试。');
+    const value = this.read();
+    if (value.runtime.lifecycle !== 'running') throw new ScheduleError('STORAGE', '应用正在退出，日程未保存。');
+    const schedule: Schedule = { ...candidate, id: crypto.randomUUID(), revision: 1 };
+    value.schedules.unshift(schedule); this.write(value, 'external'); return structuredClone(schedule);
+  }
+  /** 根据确认时的版本永久删除整条定义，只有写入成功才发布结果。 */
+  async deleteSchedule(id: string, expectedRevision: number): Promise<void> {
+    await this.pause();
+    if (this.consume('schedule-stale')) {
+      const changed = this.read(); const item = changed.schedules.find(s => s.id === id);
+      if (item) { item.revision++; item.title += '（已更新）'; this.write(changed, 'external'); }
+    }
+    if (this.consume('schedule-missing')) { const changed = this.read(); changed.schedules = changed.schedules.filter(s => s.id !== id); this.write(changed, 'external'); }
+    const value = this.read(); const item = value.schedules.find(s => s.id === id);
+    if (!item) throw new ScheduleError('NOT_FOUND', '这条日程已不存在，请刷新列表。');
+    if (item.revision !== expectedRevision) throw new ScheduleError('STALE_REVISION', '此日程已被更新，请先查看最新内容，再决定是否删除。');
+    if (value.runtime.lifecycle !== 'running') throw new ScheduleError('STORAGE', '应用正在退出，日程未删除。');
+    if (this.consume('schedule-delete')) throw new ScheduleError('STORAGE', '删除失败，日程仍保留。请重试。');
+    value.schedules = value.schedules.filter(s => s.id !== id); this.write(value, 'external');
+  }
   /** 保存主题和关闭偏好，失败不改变生效值。 */
   async savePreferences(patch: Pick<Settings, 'theme' | 'closeBehavior'>): Promise<Settings> {
     await this.pause();
@@ -171,4 +211,15 @@ export class MockAdapter implements Ports {
   longTitle(): void { const value = this.read(); const message = value.messages.find(m => m.id === 'water'); if (message) message.title = '一条很长的中文提醒标题，包含工作回顾与重要事项说明，检查换行是否完整保留'; this.write(value, 'external'); }
   /** 重置只覆盖原型命名空间，并使尚未完成的旧操作失效。 */
   reset(): void { let generation = Date.now(); try { generation = Math.max(generation, this.read().generation + 1); } catch { /* 损坏数据通过显式场景重置恢复。 */ } const v = seed(); v.generation = generation; this.write(v, 'reset'); }
+}
+
+/** 验证已保存定义的结构，不对历史日程重新应用创建日期范围。 */
+function validStoredSchedule(s: Schedule): boolean {
+  if (!s || typeof s.id !== 'string' || !s.id || typeof s.title !== 'string' || !s.title.trim() || typeof s.notes !== 'string'
+    || typeof s.firstStartLocal !== 'string' || !parseLocal(s.firstStartLocal) || !Number.isSafeInteger(s.durationMinutes) || s.durationMinutes <= 0
+    || !Number.isSafeInteger(s.revision) || s.revision < 1 || (s.cron !== null && typeof s.cron !== 'string')) return false;
+  const type = cronType(s.cron);
+  return type === 'single' ? s.untilDateLocal === null && s.monthEndPolicy === null
+    : typeof s.untilDateLocal === 'string' && !!parseLocal(s.untilDateLocal, true) && s.untilDateLocal >= s.firstStartLocal.slice(0, 10)
+      && s.monthEndPolicy === (type === 'monthly' ? 'clamp' : null);
 }
