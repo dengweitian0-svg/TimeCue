@@ -73,6 +73,16 @@ func TestMigrationVersionIsRecorded(t *testing.T) {
 	}
 }
 
+// TestMigrationsUseContinuousVersions 验证已发布迁移版本从 1 开始连续递增。
+func TestMigrationsUseContinuousVersions(t *testing.T) {
+	for index, migration := range migrations {
+		want := index + 1
+		if migration.version != want {
+			t.Fatalf("migration[%d].version = %d, want %d", index, migration.version, want)
+		}
+	}
+}
+
 // TestMigrateRejectsNewerVersion 验证程序不会在未知数据库版本上继续运行。
 func TestMigrateRejectsNewerVersion(t *testing.T) {
 	db := openRawTestDB(t)

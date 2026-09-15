@@ -78,3 +78,54 @@ func TestValidateSingleEndpointsUsesUTCForCreationTimes(t *testing.T) {
 		t.Fatalf("audit locations = %v, %v; want UTC", candidate.CreatedAtUTC.Location(), candidate.UpdatedAtUTC.Location())
 	}
 }
+
+// TestValidateSingleEndpointsHonorsExactRangeBoundaries 验证下界包含、开始上界排他且结束端点可落在上界。
+func TestValidateSingleEndpointsHonorsExactRangeBoundaries(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	snapshot := TimeSnapshot{Now: time.Date(2026, 1, 1, 12, 0, 0, 0, location), Location: location}
+	bounds := CalculateTimeBounds(snapshot)
+	for _, testCase := range []struct {
+		name       string
+		start, end time.Time
+	}{
+		{name: "single minimum", start: bounds.SingleMin, end: bounds.SingleMin.Add(30 * time.Minute)},
+		{name: "single maximum as end", start: bounds.SingleMaxExclusive.Add(-30 * time.Minute), end: bounds.SingleMaxExclusive},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidate, err := ValidateSingleEndpoints(snapshot, testCase.start.Unix(), testCase.end.Unix())
+			if err != nil {
+				t.Fatalf("ValidateSingleEndpoints() error = %v", err)
+			}
+			if candidate.DurationMinutes != 30 {
+				t.Fatalf("duration = %d, want 30", candidate.DurationMinutes)
+			}
+		})
+	}
+
+	_, err := ValidateSingleEndpoints(snapshot, bounds.SingleMaxExclusive.Unix(), bounds.SingleMaxExclusive.Add(30*time.Minute).Unix())
+	var businessErr *Error
+	if !errors.As(err, &businessErr) || businessErr.Code != TimeRangeExceeded {
+		t.Fatalf("start at exclusive maximum error = %#v, want time range error", err)
+	}
+}
+
+// TestValidateSingleEndpointsCalculatesDurationAcrossDST 验证跨 DST 端点按实际 Unix 时长而非墙钟差计算持续时间。
+func TestValidateSingleEndpointsCalculatesDurationAcrossDST(t *testing.T) {
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := TimeSnapshot{Now: time.Date(2026, 3, 7, 12, 0, 0, 0, location), Location: location}
+	start := time.Date(2026, 3, 8, 1, 30, 0, 0, location)
+	end := time.Date(2026, 3, 8, 4, 30, 0, 0, location)
+	candidate, err := ValidateSingleEndpoints(snapshot, start.Unix(), end.Unix())
+	if err != nil {
+		t.Fatalf("ValidateSingleEndpoints() error = %v", err)
+	}
+	if candidate.DurationMinutes != 120 {
+		t.Fatalf("duration = %d, want 120 actual minutes", candidate.DurationMinutes)
+	}
+	if candidate.FirstStartLocal.Format(time.RFC3339) != "2026-03-08T01:30:00-05:00" {
+		t.Fatalf("start = %s, want pre-DST offset", candidate.FirstStartLocal.Format(time.RFC3339))
+	}
+}

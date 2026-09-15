@@ -107,6 +107,28 @@ func TestServiceListOccurrencesValidatesUpperBoundAndCursor(t *testing.T) {
 	}
 }
 
+// TestServiceListOccurrencesUsesExclusiveQueryEnd 验证允许查询上界且不返回恰好落在 to 的发生。
+func TestServiceListOccurrencesUsesExclusiveQueryEnd(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	clock := &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: time.UTC}}
+	bounds := domain.CalculateTimeBounds(clock.snapshot)
+	boundarySchedule := domain.Schedule{
+		ID: 1, FirstStartLocal: bounds.QueryMaxExclusive, OriginalStartLocal: bounds.QueryMaxExclusive,
+		DurationMinutes: 30, Revision: 1, Title: "boundary", Open: true,
+	}
+	store := &occurrenceQueryFake{generation: 1, sources: []OccurrenceSourceDTO{{Schedule: boundarySchedule}}}
+	service := NewService(store, clock)
+	result, err := service.ListOccurrences(context.Background(), ListOccurrencesRequest{
+		FromUnix: bounds.SingleMin.Unix(), ToUnix: bounds.QueryMaxExclusive.Unix(), Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListOccurrences() error = %v", err)
+	}
+	if len(result.Items) != 0 {
+		t.Fatalf("occurrences = %+v, want occurrence at exclusive end omitted", result.Items)
+	}
+}
+
 func TestServiceListOccurrencesRejectsStaleGeneration(t *testing.T) {
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	store := &occurrenceQueryFake{generation: 1, changeDuringQuery: true, sources: []OccurrenceSourceDTO{{Schedule: makeQuerySchedule(1, 9)}}}

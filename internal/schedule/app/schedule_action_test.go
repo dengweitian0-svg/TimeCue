@@ -91,6 +91,25 @@ func TestServiceCancelSchedulePreReadsAndMapsResult(t *testing.T) {
 	}
 }
 
+// TestServiceScheduleActionsRejectNonPositiveIDs 验证整组状态操作在访问存储前拒绝非法日程标识。
+func TestServiceScheduleActionsRejectNonPositiveIDs(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		id   domain.ScheduleID
+	}{
+		{name: "zero", id: 0},
+		{name: "negative", id: -1},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := NewService(nil, nil).CancelSchedule(context.Background(), testCase.id, ScheduleActionRequest{ExpectedRevision: 1})
+			var businessErr *domain.Error
+			if !errors.As(err, &businessErr) || businessErr.Code != domain.Validation {
+				t.Fatalf("CancelSchedule(%d) error = %#v, want validation", testCase.id, err)
+			}
+		})
+	}
+}
+
 // TestServiceRestoreScheduleRejectsSingle 验证单次日程不能走整组恢复写端口。
 func TestServiceRestoreScheduleRejectsSingle(t *testing.T) {
 	location := time.UTC
