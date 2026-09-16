@@ -48,6 +48,26 @@ func (f *FakeDesktopHost) Quit(ctx context.Context) error {
 	return nil
 }
 
+// RunCalls 返回主循环调用次数，供并发测试安全读取。
+func (f *FakeDesktopHost) RunCalls() int {
+	if f == nil {
+		return 0
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.RunCount
+}
+
+// QuitCalls 返回退出请求次数，供并发测试安全读取。
+func (f *FakeDesktopHost) QuitCalls() int {
+	if f == nil {
+		return 0
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.QuitCount
+}
+
 // FakeWindowController 是窗口契约的可控测试实现。
 type FakeWindowController struct {
 	ShowFunc     func(context.Context) error
@@ -122,6 +142,26 @@ func (f *FakeWindowController) Activate(ctx context.Context) error {
 	return nil
 }
 
+// ShowCalls 返回显示窗口调用次数，供并发测试安全读取。
+func (f *FakeWindowController) ShowCalls() int {
+	if f == nil {
+		return 0
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ShowCount
+}
+
+// ActivateCalls 返回激活窗口调用次数，供并发测试安全读取。
+func (f *FakeWindowController) ActivateCalls() int {
+	if f == nil {
+		return 0
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ActivateCount
+}
+
 // FrontendEvent 记录一次发送给前端的事件及其边界载荷。
 type FrontendEvent struct {
 	Name    string
@@ -149,6 +189,16 @@ func (f *FakeFrontendEvents) Emit(ctx context.Context, name string, payload any)
 		return hook(ctx, name, payload)
 	}
 	return nil
+}
+
+// EventCount 返回已记录的前端事件数量，供并发测试安全读取。
+func (f *FakeFrontendEvents) EventCount() int {
+	if f == nil {
+		return 0
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.Events)
 }
 
 // FakeActivationSource 是激活事件源的可控测试实现。

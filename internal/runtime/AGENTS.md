@@ -9,3 +9,7 @@
 - 运行时的窗口可见状态与调度生命周期状态分离；`running`、`suspended`、`stopping` 只由调度契约表达。停止时先关闭业务写入和提醒派发资格，再由顶层按资源所有权完成取消和释放。
 - 新增 UI、调度、存储或领域逻辑时必须拆分为职责独立的组件，通过窄接口接入运行时，并保持可测试性。
 - 运行循环、状态变化、并发控制和外部副作用必须有准确的中文注释、必要日志和对应测试。
+- `DesktopApplication` 只从 `bootstrap.Store` 一次性取得 `DesktopStore` 组合端口，并在运行时内共享唯一 `Service`、`MutationCoordinator`、`ReminderScheduler`；Store 的关闭责任仍归 bootstrap。
+- `WailsBindings` 是平台无关的强类型边界，所有前端输出必须带 `json` tag；写入继续经过 Service/Coordinator，停止阶段返回 `RUNTIME_STOPPING`。
+- 激活事件使用单调 sequence 和 `FrontendReady(last_sequence)` 握手；前端未就绪时只保留最新激活，发送失败不得静默丢弃。
+- 停止必须先使 scheduler/协调器进入 `stopping`，再取消并等待 scheduler，通知清理失败进入 `cleanup_failed` 并允许 `RetryCleanup`；成功后才关闭事件源、托盘和通知资源。runtime 不关闭 bootstrap Store。
