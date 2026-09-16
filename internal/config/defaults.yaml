@@ -8,3 +8,6 @@ log:
 
 backup:
   dir: ./backups
+
+window:
+  close_behavior: tray
