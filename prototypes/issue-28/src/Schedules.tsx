@@ -2,7 +2,8 @@ import { useEffect, useRef, type FormEvent, type KeyboardEvent as ReactKeyboardE
 import { Button, Feedback, Mascot } from './components';
 import type { AppState, Controller } from './controller';
 import type { ScheduleField, ScheduleType } from './contracts';
-import { parseLocal, scheduleSummary, scheduleTypes } from './schedule-model';
+import { localMinute, parseLocal, scheduleSummary, scheduleTypes } from './schedule-model';
+import { DateTimeField } from './DateTimeField';
 
 /** 展示定义列表或创建表单，日程操作全部交给控制器处理。 */
 export function Schedules({ controller, state }: { controller: Controller; state: AppState }) {
@@ -25,7 +26,7 @@ function FieldError({ name, state }: { name: ScheduleField; state: AppState }) {
   return message ? <span className="field-error" id={`schedule-${name}-error`}>{message}</span> : null;
 }
 
-/** 使用原生日期与文本控件承接任意填写，单次边界来自适配器。 */
+/** 使用主题日期弹层与文本控件承接填写，单次边界来自适配器。 */
 function ScheduleForm({ controller, state }: { controller: Controller; state: AppState }) {
   const draft = state.scheduleDraft!; const form = useRef<HTMLFormElement>(null);
   const start = parseLocal(draft.start); const type = draft.type;
@@ -36,7 +37,7 @@ function ScheduleForm({ controller, state }: { controller: Controller; state: Ap
   function invalid(name: ScheduleField) { return { 'aria-invalid': !!state.scheduleError?.fields[name], 'aria-describedby': state.scheduleError?.fields[name] ? `schedule-${name}-error` : undefined }; }
   useEffect(() => {
     /** Esc 与取消按钮走同一确认流程，等待中不丢弃提交。 */
-    function escape(event: KeyboardEvent) { if (event.key === 'Escape' && !state.discardTo) { event.preventDefault(); controller.cancelSchedule(); } }
+    function escape(event: KeyboardEvent) { if (event.key === 'Escape' && !event.defaultPrevented && !state.discardTo) { event.preventDefault(); controller.cancelSchedule(); } }
     window.addEventListener('keydown', escape); return () => window.removeEventListener('keydown', escape);
   }, [controller, state.discardTo]);
   return <form className="schedule-form" ref={form} noValidate onSubmit={event => void submit(event)} aria-label="添加日程">
@@ -45,10 +46,10 @@ function ScheduleForm({ controller, state }: { controller: Controller; state: Ap
       <label className="schedule-field" htmlFor="schedule-title">日程标题 *<input id="schedule-title" autoFocus value={draft.title} placeholder="例如：读完一本喜欢的书" {...invalid('title')} onChange={event => controller.editSchedule({ title: event.target.value })} /><FieldError name="title" state={state} /></label>
       <label className="schedule-field" htmlFor="schedule-notes">备注 · 选填<textarea id="schedule-notes" rows={1} value={draft.notes} placeholder="写点想提醒自己的话" onChange={event => controller.editSchedule({ notes: event.target.value })} /></label>
       <div className="schedule-types" role="group" aria-label="日程类型">{(Object.keys(scheduleTypes) as ScheduleType[]).map(key => <Button type="button" key={key} secondary={type !== key} aria-pressed={type === key} onClick={() => controller.editSchedule({ type: key })}>{scheduleTypes[key]}</Button>)}</div><FieldError name="type" state={state} />
-      <div className="schedule-endpoints">{(['start', 'end'] as const).map(name => <label className="schedule-field" htmlFor={`schedule-${name}`} key={name}>{name === 'start' ? '开始时间 *' : '结束时间 *'}<input id={`schedule-${name}`} type="datetime-local" step={60} value={draft[name]} min={type === 'single' ? state.scheduleBounds?.min : undefined} {...invalid(name)} onChange={event => controller.editSchedule({ [name]: event.target.value })} /><FieldError name={name} state={state} /></label>)}</div>
+      <div className="schedule-endpoints">{(['start', 'end'] as const).map(name => <div className="schedule-field" key={name}><label htmlFor={`schedule-${name}`}>{name === 'start' ? '开始时间 *' : '结束时间 *'}</label><DateTimeField id={`schedule-${name}`} label={name === 'start' ? '开始时间' : '结束时间'} value={draft[name]} min={type === 'single' ? state.scheduleBounds?.min : undefined} max={type === 'single' && state.scheduleBounds ? name === 'end' ? state.scheduleBounds.endMaxInclusive : localMinute(new Date(new Date(state.scheduleBounds.startMaxExclusive).getTime() - 60000)) : undefined} {...invalid(name)} onChange={value => controller.editSchedule({ [name]: value })} /><FieldError name={name} state={state} /></div>)}</div>
       <div className="schedule-rule"><p>{repeatLabel}{start ? ` · ${draft.start.slice(11)}` : ''}{type === 'single' ? ' · 仅提醒一次' : ' · 从首次开始日期生效'}</p>
         <p className="hint">{type === 'monthly' ? '短月取月末，例如 1/31 → 2/28 → 3/31；下月恢复原日期。' : type === 'single' ? '使用本机时区，精确到分钟。保存时会重新验证可选日期范围。' : '重复截止包含当天，不套用单次日程的一年限制。'}</p>
-        {type !== 'single' ? <label className="schedule-field" htmlFor="schedule-until">重复截止日期 *<input id="schedule-until" type="date" value={draft.until} min={draft.start.slice(0, 10) || undefined} {...invalid('until')} onChange={event => controller.editSchedule({ until: event.target.value })} /><FieldError name="until" state={state} /></label> : state.scheduleBounds && <p className="schedule-bounds">可选范围：{state.scheduleBounds.min.replace('T', ' ')} 起；开始早于 {state.scheduleBounds.startMaxExclusive.replace('T', ' ')}，结束不晚于此时。</p>}
+        {type !== 'single' ? <div className="schedule-field"><label htmlFor="schedule-until">重复截止日期 *</label><DateTimeField id="schedule-until" label="重复截止日期" dateOnly value={draft.until} min={parseLocal(draft.start) ? draft.start.slice(0, 10) : undefined} {...invalid('until')} onChange={value => controller.editSchedule({ until: value })} /><FieldError name="until" state={state} /></div> : state.scheduleBounds && <p className="schedule-bounds">可选范围：{state.scheduleBounds.min.replace('T', ' ')} 起；开始早于 {state.scheduleBounds.startMaxExclusive.replace('T', ' ')}，结束不晚于此时。</p>}
       </div>
       {state.scheduleError && <Feedback kind="error">{state.scheduleError.message}</Feedback>}
       <div className="schedule-actions"><Button type="button" secondary onClick={() => controller.cancelSchedule()}>取消</Button><Button type="submit" busy={state.scheduleBusy}>{state.scheduleError ? '重试保存' : '保存日程'}</Button></div>

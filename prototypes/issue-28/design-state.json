@@ -72,7 +72,7 @@
       ],
       "checks": {
         "unitTests": 49,
-        "browserTests": 28,
+        "browserTests": 38,
         "typecheck": "passed",
         "build": "passed"
       },

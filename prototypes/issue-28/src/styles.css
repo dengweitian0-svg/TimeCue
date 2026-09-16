@@ -197,3 +197,29 @@ h1 { font-size: 30px; font-weight: 700; line-height: 1.6; }
   .schedule-row .button { padding-inline: 16px; }.sidebar .companion { min-height: 130px; }
 }
 @media (max-width: 760px) { .sidebar { flex-wrap: wrap; }.schedule-endpoints { grid-template-columns: 1fr; }.schedule-row { align-items: stretch; flex-direction: column; }.schedule-types .button { padding-inline: 8px; } }
+
+/* 日期与时间弹层完全使用语义主题色，避免系统白底和蓝色选中态。 */
+.date-time-field { position: relative; min-width: 0; }
+.date-time-field > input { padding-right: 48px; }
+.date-picker-trigger { position: absolute; inset: 1px 1px 1px auto; width: 44px; border: 0; border-radius: 0 12px 12px 0; color: var(--accent); background: transparent; font-size: 24px; }
+.date-picker-trigger:hover { background: var(--soft); }
+.date-picker { position: fixed; inset: auto; margin: 0; width: min(472px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 24px); overflow: auto; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-20); background: var(--bg); color: var(--text); box-shadow: 0 12px 32px color-mix(in srgb, var(--text) 18%, transparent); font-size: 14px; }
+.date-picker::backdrop { background: transparent; }
+.date-picker.date-only { width: min(336px, calc(100vw - 24px)); }
+.date-picker button { display: inline-flex; justify-content: center; align-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); padding: 0; font: inherit; min-height: 34px; }
+.date-picker button:hover { background: var(--soft); }
+.date-picker button:focus-visible, .date-picker input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.date-picker button:disabled { opacity: .4; background: transparent; cursor: default; }
+.picker-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }.picker-header strong { font-size: 16px; }.picker-header button { width: 34px; font-size: 22px; color: var(--muted); }
+.picker-body { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 12px; }.date-only .picker-body { grid-template-columns: 1fr; }
+.picker-month { display: flex; align-items: center; gap: 4px; height: 40px; margin-bottom: 8px; }.picker-month > button { width: 32px; font-size: 24px; color: var(--accent); flex-shrink: 0; }.picker-month > button:last-child { margin-left: auto; }
+.picker-month label { display: flex; align-items: center; gap: 2px; }
+.date-picker .picker-month input { width: 72px; height: 34px; min-height: 0; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; }
+.picker-calendar table { width: 100%; border-collapse: separate; border-spacing: 2px; table-layout: fixed; }.picker-calendar th { font-size: 12px; font-weight: 500; color: var(--muted); height: 26px; }.picker-calendar td { padding: 0; }.picker-calendar td button { width: 100%; height: 34px; min-height: 34px; }
+.picker-calendar .other-month { color: var(--muted); }.picker-calendar [aria-current='date'] { border-color: var(--accent); }
+.date-picker .selected, .date-picker [aria-pressed='true'] { background: var(--accent); color: var(--onAccent); font-weight: 500; }.date-picker .selected:hover, .date-picker [aria-pressed='true']:hover { background: var(--hover); }
+.picker-time { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; border-left: 1px solid var(--border); padding-left: 12px; }.time-column { min-width: 0; }.time-column > strong { display: block; text-align: center; font-size: 12px; color: var(--muted); font-weight: 500; line-height: 40px; margin-bottom: 8px; }
+.time-options { display: flex; flex-direction: column; gap: 4px; height: 250px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) var(--bg); }.time-options button { flex: 0 0 34px; width: 100%; }
+.picker-selection { color: var(--muted); font-size: 12px; margin-top: 12px; min-height: 20px; }
+.picker-footer { display: flex; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); margin-top: 8px; }.picker-footer button { min-width: 56px; min-height: 40px; color: var(--accent); }.picker-footer .picker-confirm { margin-left: auto; padding: 0 20px; background: var(--accent); color: var(--onAccent); }.picker-footer .picker-confirm:hover { background: var(--hover); }
+@media (max-width: 480px) { .date-picker { padding: 12px; }.picker-body { grid-template-columns: minmax(0, 1fr) 100px; gap: 8px; }.picker-time { padding-left: 8px; gap: 4px; }.picker-calendar td button { min-height: 30px; height: 30px; }.time-options { height: 226px; } }
