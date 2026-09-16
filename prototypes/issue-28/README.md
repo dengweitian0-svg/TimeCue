@@ -65,4 +65,4 @@ npm run build
 - [Issue 验收映射与验证记录](docs/acceptance.md)
 - [Figma 状态索引](design-state.json)
 
-本次只做本地提交，不含远程推送、PR、合并或发布。真实 Wails、Windows 通知与目录切换由关联 Issue 实现。
+本目录交付 Figma 设计依据与 React 模拟原型。真实 Wails、Windows 通知与目录切换由关联 Issue 实现。
