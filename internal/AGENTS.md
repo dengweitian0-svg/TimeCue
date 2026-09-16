@@ -6,6 +6,7 @@
   - [`config/`](config/AGENTS.md)：配置来源、解析和校验。
   - [`log/`](log/AGENTS.md)：结构化日志器构造。
   - [`runtime/`](runtime/AGENTS.md)：应用运行单元。
+  - [`platform/`](platform/AGENTS.md)：桌面运行时与平台适配器之间的跨平台窄契约。
   - [`schedule/`](schedule/AGENTS.md)：日程领域规则、应用用例和时间环境。
   - [`storage/`](storage/AGENTS.md)：持久化适配器及其数据库实现。
   - [`utils/`](utils/AGENTS.md)：错误分类和退出码映射。
