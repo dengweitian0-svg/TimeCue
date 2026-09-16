@@ -5,6 +5,7 @@
 - `bootstrap.go`：定义独占启动资格、受控 `Store` 和 `Resources`，实现 `Start`、`Initialize` 和 `Run`。
   - `bootstrap_test.go`、`initialize_test.go`：验证启动顺序、资格拒绝、部分失败清理、关闭错误、取消退出和日志结果。
 - `Application.Run` 接收 `context.Context`、已校验的 `config.Config`、`*slog.Logger` 和 bootstrap 注入的 `Store`，返回应用运行错误。
+- `ErrAlreadyRunning` 仅表示单实例 broker 已成功将第二实例/Toast 激活转发给主实例；`Run` 将其视为正常退出，其他资格获取错误仍按启动失败传播。
 - `Start` 负责加载配置；配置加载失败时包装为 `ConfigError` 并直接返回，不进入初始化。`Initialize` 严格按配置校验、独占资格、目录准备、日志和 SQLite 的顺序创建资源；未获资格时不得创建目录、打开或迁移数据库。
 - bootstrap 持有 `Store`、日志文件和独占资格释放函数；失败和退出按 `Store → 日志文件 → 独占资格` 逆序关闭，并通过 `errors.Join` 保留所有 cause。
 - 只有值恰好等于 `context.Canceled` 才表示正常主动退出；包装错误或组合错误必须保留、包装为运行错误，并在此顶层边界记录一次最终 `ERROR`。

@@ -3,6 +3,7 @@ module github.com/dengweitian0-svg/TimeCue
 go 1.27.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/spf13/viper v1.21.0
 	modernc.org/sqlite v1.58.0
 )
