@@ -14,6 +14,7 @@ import (
 
 	"github.com/dengweitian0-svg/TimeCue/internal/bootstrap"
 	"github.com/dengweitian0-svg/TimeCue/internal/platform"
+	"github.com/dengweitian0-svg/TimeCue/internal/schedule/domain"
 )
 
 const brokerChildEnvironment = "TIMECUE_BROKER_CHILD"
@@ -81,5 +82,26 @@ func TestWindowsInstanceBrokerToastWithoutPrimary(t *testing.T) {
 	}
 	if _, err := broker.Acquire(context.Background()); !errors.Is(err, ErrActivationWithoutInstance) {
 		t.Fatalf("Acquire() error = %v, want ErrActivationWithoutInstance", err)
+	}
+}
+
+// TestWindowsInstanceBrokerPublishCloseRaceGuard 验证进程内激活发布与 Close 不会向已关闭通道发送。
+func TestWindowsInstanceBrokerPublishCloseRaceGuard(t *testing.T) {
+	broker, err := NewWindowsInstanceBrokerWithOptions(WindowsInstanceBrokerOptions{ApplicationName: fmt.Sprintf("publish-test-%d", time.Now().UnixNano())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation := platform.Activation{Kind: platform.ActivationKindToast, Target: &domain.OccurrenceIdentity{ScheduleID: 7, OriginalDate: "2026-09-16"}}
+	if err := broker.Publish(activation); err != nil {
+		t.Fatalf("Publish() error = %v", err)
+	}
+	if got := <-broker.Events(); got.Kind != platform.ActivationKindToast || got.Target == nil {
+		t.Fatalf("published activation = %+v", got)
+	}
+	if err := broker.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Publish(activation); err == nil {
+		t.Fatal("Publish() error = nil after Close")
 	}
 }

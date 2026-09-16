@@ -3,6 +3,7 @@ package windows
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,7 +39,14 @@ func ParseActivationArgs(args []string) (platform.Activation, bool, error) {
 		return platform.Activation{Kind: platform.ActivationKindSecondInstance}, true, nil
 	}
 	if args[0] != "--toast" {
-		return platform.Activation{}, false, fmt.Errorf("parse activation arguments: unsupported argument %q", args[0])
+		if len(args) != 1 {
+			return platform.Activation{}, false, fmt.Errorf("parse activation arguments: unsupported argument %q", args[0])
+		}
+		activation, err := parseWailsNotificationArgument(args[0])
+		if err != nil {
+			return platform.Activation{}, false, fmt.Errorf("parse activation arguments: unsupported argument: %w", err)
+		}
+		return activation, true, nil
 	}
 	if len(args) != 3 {
 		return platform.Activation{}, false, errors.New("parse activation arguments: toast requires schedule ID and original date")
@@ -57,6 +65,46 @@ func ParseActivationArgs(args []string) (platform.Activation, bool, error) {
 			OriginalDate: args[2],
 		},
 	}, true, nil
+}
+
+// wailsNotificationPayload 是 Wails v2.15 冷启动参数的受控外层形状。
+type wailsNotificationPayload struct {
+	Action  string          `json:"action"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// parseWailsNotificationArgument 解码 Wails 注册的单个 Base64 JSON 参数，只提取稳定身份。
+func parseWailsNotificationArgument(encoded string) (platform.Activation, error) {
+	if encoded == "" || len(encoded) > ((maxActivationMessageBytes+2)/3)*4 {
+		return platform.Activation{}, errors.New("Wails notification argument size is invalid")
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil {
+		return platform.Activation{}, fmt.Errorf("decode Wails notification argument: %w", err)
+	}
+	if len(decoded) == 0 || len(decoded) > maxActivationMessageBytes {
+		return platform.Activation{}, errors.New("Wails notification payload size is invalid")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(decoded))
+	decoder.DisallowUnknownFields()
+	var payload wailsNotificationPayload
+	if err := decoder.Decode(&payload); err != nil {
+		return platform.Activation{}, fmt.Errorf("decode Wails notification JSON: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return platform.Activation{}, errors.New("Wails notification JSON contains trailing data")
+	}
+	if payload.Action == "" {
+		return platform.Activation{}, errors.New("Wails notification action must not be empty")
+	}
+	var options struct {
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(payload.Payload, &options); err != nil {
+		return platform.Activation{}, fmt.Errorf("decode Wails notification payload: %w", err)
+	}
+	return notificationResponseActivation(options.Data)
 }
 
 // EncodeActivation 将激活事件编码为受控的跨进程 JSON 消息。

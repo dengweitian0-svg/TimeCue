@@ -21,21 +21,26 @@ type MessageHandlerToken uint64
 
 // MessageThread 是时钟与托盘共用的单一消息线程抽象。
 type MessageThread struct {
-	mu        sync.Mutex
-	handlers  map[MessageHandlerToken]MessageHandler
-	nextID    MessageHandlerToken
-	threadID  uint32
-	started   bool
-	closed    bool
-	done      chan struct{}
-	loopDone  chan struct{}
-	closeOnce sync.Once
-	closeErr  error
+	mu         sync.Mutex
+	handlers   map[MessageHandlerToken]MessageHandler
+	nextID     MessageHandlerToken
+	threadID   uint32
+	window     windows.Handle
+	started    bool
+	closed     bool
+	ready      chan struct{}
+	done       chan struct{}
+	loopDone   chan struct{}
+	readyOnce  sync.Once
+	loopOnce   sync.Once
+	closeOnce  sync.Once
+	startupErr error
+	closeErr   error
 }
 
 // NewMessageThread 创建带受控消息处理器的 Win32 消息线程。
 func NewMessageThread(handler MessageHandler) (*MessageThread, error) {
-	thread := &MessageThread{handlers: make(map[MessageHandlerToken]MessageHandler), done: make(chan struct{}), loopDone: make(chan struct{})}
+	thread := &MessageThread{handlers: make(map[MessageHandlerToken]MessageHandler), ready: make(chan struct{}), done: make(chan struct{}), loopDone: make(chan struct{})}
 	if handler != nil {
 		if _, err := thread.RegisterHandler(handler); err != nil {
 			return nil, fmt.Errorf("create message thread: %w", err)
@@ -98,29 +103,34 @@ func (t *MessageThread) Start(ctx context.Context) error {
 	t.threadID = windows.GetCurrentThreadId()
 	t.started = true
 	t.mu.Unlock()
-	defer close(t.loopDone)
+	defer t.signalLoopDone()
 	className, err := windows.UTF16PtrFromString(fmt.Sprintf("TimeCueMessageThread-%d", t.threadID))
 	if err != nil {
-		return fmt.Errorf("encode message thread class: %w", err)
+		return t.failStartup(fmt.Errorf("encode message thread class: %w", err))
 	}
 	windowProc := windows.NewCallback(messageThreadWindowProc)
 	class := wndClassEx{Size: uint32(unsafe.Sizeof(wndClassEx{})), WindowProc: windowProc, ClassName: className}
 	atom, _, callErr := procRegisterClassEx.Call(uintptr(unsafe.Pointer(&class)))
 	if atom == 0 {
-		return fmt.Errorf("register message thread class: %w", callErr)
+		return t.failStartup(fmt.Errorf("register message thread class: %w", callErr))
 	}
 	window, _, callErr := procCreateWindowEx.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(className)), 0, 0, 0, 0, 0, uintptr(hwndMessage), 0, 0, 0)
 	if window == 0 {
 		procUnregisterClass.Call(uintptr(unsafe.Pointer(className)), 0)
-		return fmt.Errorf("create message thread window: %w", callErr)
+		return t.failStartup(fmt.Errorf("create message thread window: %w", callErr))
 	}
 	t.mu.Lock()
+	t.window = windows.Handle(window)
 	messageThreadWindows.Store(window, t)
 	t.mu.Unlock()
+	t.signalReady()
 	defer func() {
 		messageThreadWindows.Delete(window)
 		procDestroyWindow.Call(window)
 		procUnregisterClass.Call(uintptr(unsafe.Pointer(className)), 0)
+		t.mu.Lock()
+		t.window = 0
+		t.mu.Unlock()
 	}()
 	finished := make(chan struct{})
 	watchDone := make(chan struct{})
@@ -168,15 +178,57 @@ func (t *MessageThread) Close() error {
 		close(t.done)
 		t.mu.Unlock()
 		if !started {
-			close(t.loopDone)
-		} else if err := t.postQuit(); err != nil {
-			t.recordError(err)
+			t.signalReady()
+			t.signalLoopDone()
 		}
 	})
 	<-t.loopDone
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.closeErr
+}
+
+// waitWindow 等待隐藏消息窗口就绪，并返回只在消息线程存活期有效的句柄。
+func (t *MessageThread) waitWindow(ctx context.Context) (windows.Handle, error) {
+	if t == nil {
+		return 0, errors.New("wait message thread window: thread is nil")
+	}
+	if ctx == nil {
+		return 0, errors.New("wait message thread window: context is nil")
+	}
+	select {
+	case <-t.ready:
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.startupErr != nil {
+			return 0, t.startupErr
+		}
+		if t.window == 0 {
+			return 0, errors.New("wait message thread window: thread closed before becoming ready")
+		}
+		return t.window, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+// failStartup 保存启动错误并唤醒所有等待隐藏窗口的适配器。
+func (t *MessageThread) failStartup(err error) error {
+	t.mu.Lock()
+	t.startupErr = err
+	t.mu.Unlock()
+	t.signalReady()
+	return err
+}
+
+// signalReady 只关闭一次窗口就绪信号。
+func (t *MessageThread) signalReady() {
+	t.readyOnce.Do(func() { close(t.ready) })
+}
+
+// signalLoopDone 只关闭一次消息循环结束信号。
+func (t *MessageThread) signalLoopDone() {
+	t.loopOnce.Do(func() { close(t.loopDone) })
 }
 
 // messageThreadWindowProc 将消息转交给受控处理器，不保存平台状态。

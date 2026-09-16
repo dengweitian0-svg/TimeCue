@@ -1,6 +1,7 @@
 package windows
 
 import (
+	"encoding/base64"
 	"reflect"
 	"strings"
 	"testing"
@@ -8,6 +9,25 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/platform"
 	"github.com/dengweitian0-svg/TimeCue/internal/schedule/domain"
 )
+
+// TestParseWailsNotificationArgument 验证 Wails v2.15 冷启动载荷可提取稳定身份。
+func TestParseWailsNotificationArgument(t *testing.T) {
+	const payload = `{"action":"DEFAULT_ACTION","payload":{"id":"timecue/7/2026-09-16","title":"title","body":"notes","data":{"schedule_id":"7","original_date":"2026-09-16"}}}`
+	encoded := base64.StdEncoding.EncodeToString([]byte(payload))
+	want := platform.Activation{Kind: platform.ActivationKindToast, Target: &domain.OccurrenceIdentity{ScheduleID: 7, OriginalDate: "2026-09-16"}}
+	got, found, err := ParseActivationArgs([]string{encoded})
+	if err != nil || !found || !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseActivationArgs(Wails payload) = %+v, %v, %v; want %+v, true, nil", got, found, err, want)
+	}
+	for _, data := range []string{
+		`{"action":"DEFAULT_ACTION","payload":{"data":{"schedule_id":7,"original_date":"2026-09-16"}}}`,
+		`{"action":"DEFAULT_ACTION","payload":{"data":{"schedule_id":"7","original_date":"2026-09-16","extra":"x"}}}`,
+	} {
+		if _, err := parseWailsNotificationArgument(base64.StdEncoding.EncodeToString([]byte(data))); err == nil {
+			t.Fatalf("parseWailsNotificationArgument(%s) error = nil", data)
+		}
+	}
+}
 
 // TestParseActivationArgs 验证普通启动、Toast 激活和显式非法参数的纯解析行为。
 func TestParseActivationArgs(t *testing.T) {

@@ -47,5 +47,10 @@ func (*WindowsInstanceBroker) Start(context.Context) error {
 // Events 返回空事件流，供非 Windows 代码保持可编译。
 func (*WindowsInstanceBroker) Events() <-chan platform.Activation { return nil }
 
+// Publish 报告当前平台不支持 Windows 激活发布。
+func (*WindowsInstanceBroker) Publish(platform.Activation) error {
+	return errors.New("publish activation: Windows is required")
+}
+
 // Close 在非 Windows 平台上不持有资源。
 func (*WindowsInstanceBroker) Close() error { return nil }

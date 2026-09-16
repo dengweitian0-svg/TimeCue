@@ -44,15 +44,16 @@ type WindowsInstanceBroker struct {
 	activation      platform.Activation
 	explicit        bool
 
-	mu        sync.Mutex
-	mutex     windows.Handle
-	listener  net.Listener
-	started   bool
-	closed    bool
-	acceptErr error
-	done      chan struct{}
-	events    chan platform.Activation
-	handlers  sync.WaitGroup
+	mu         sync.Mutex
+	mutex      windows.Handle
+	listener   net.Listener
+	started    bool
+	closed     bool
+	acceptErr  error
+	done       chan struct{}
+	events     chan platform.Activation
+	handlers   sync.WaitGroup
+	publishers sync.WaitGroup
 
 	closeOnce sync.Once
 	closeDone chan struct{}
@@ -203,6 +204,35 @@ func (b *WindowsInstanceBroker) Events() <-chan platform.Activation {
 	return b.events
 }
 
+// Publish 将进程内通知激活安全地写入 broker；关闭后拒绝发布且不会触发 send-on-closed-channel。
+func (b *WindowsInstanceBroker) Publish(activation platform.Activation) error {
+	if b == nil {
+		return errors.New("publish activation: broker is nil")
+	}
+	if activation.Kind != platform.ActivationKindToast && activation.Kind != platform.ActivationKindSecondInstance {
+		return fmt.Errorf("publish activation: unsupported kind %q", activation.Kind)
+	}
+	if activation.Kind == platform.ActivationKindToast && activation.Target == nil {
+		return errors.New("publish activation: toast target must not be nil")
+	}
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return errors.New("publish activation: broker is closed")
+	}
+	b.publishers.Add(1)
+	events := b.events
+	done := b.done
+	b.mu.Unlock()
+	defer b.publishers.Done()
+	select {
+	case events <- activation:
+		return nil
+	case <-done:
+		return errors.New("publish activation: broker is closed")
+	}
+}
+
 // Close 停止 listener、等待请求处理、关闭事件流并释放命名 Mutex，且保持幂等。
 func (b *WindowsInstanceBroker) Close() error {
 	if b == nil {
@@ -222,6 +252,7 @@ func (b *WindowsInstanceBroker) Close() error {
 			}
 		}
 		b.handlers.Wait()
+		b.publishers.Wait()
 		close(b.events)
 		b.mu.Lock()
 		acceptErr := b.acceptErr
