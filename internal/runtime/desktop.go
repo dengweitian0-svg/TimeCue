@@ -490,15 +490,17 @@ func (a *DesktopApplication) onTrayOpen() {
 	}
 }
 
-// onTrayExit 将托盘退出动作汇入统一停止路径。
+// onTrayExit 异步汇入统一停止路径，确保托盘消息回调先返回后再关闭托盘资源。
 func (a *DesktopApplication) onTrayExit() {
 	ctx := a.lifecycleContext()
 	if ctx == nil {
 		return
 	}
-	if err := a.Stop(ctx); err != nil {
-		a.recordError(err)
-	}
+	go func() {
+		if err := a.Stop(context.WithoutCancel(ctx)); err != nil {
+			a.recordError(err)
+		}
+	}()
 }
 
 // Stop 进入可重入、可重试的停止状态机，并在成功清理后请求宿主退出。
