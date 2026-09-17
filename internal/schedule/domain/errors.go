@@ -10,12 +10,13 @@ import (
 type Code string
 
 const (
-	Validation        Code = "VALIDATION"
-	TimeRangeExceeded Code = "TIME_RANGE_EXCEEDED"
-	NotFound          Code = "NOT_FOUND"
-	StaleRevision     Code = "STALE_REVISION"
-	StaleCursor       Code = "STALE_CURSOR"
-	RuntimeStopping   Code = "RUNTIME_STOPPING"
+	Validation             Code = "VALIDATION"
+	TimeRangeExceeded      Code = "TIME_RANGE_EXCEEDED"
+	NotFound               Code = "NOT_FOUND"
+	StaleRevision          Code = "STALE_REVISION"
+	StaleCursor            Code = "STALE_CURSOR"
+	ReminderNotProcessable Code = "REMINDER_NOT_PROCESSABLE"
+	RuntimeStopping        Code = "RUNTIME_STOPPING"
 )
 
 // Error 表示带有机器可读字段和原始原因的业务错误。
@@ -50,6 +51,11 @@ func NewNotFound(message string) error {
 // NewStaleCursor 创建要求从第一页刷新的查询游标错误。
 func NewStaleCursor(message string, fields ...string) error {
 	return &Error{Code: StaleCursor, Message: message, Fields: append([]string(nil), fields...)}
+}
+
+// NewReminderNotProcessable 创建发送状态不允许确认的业务错误。
+func NewReminderNotProcessable(message string, fields ...string) error {
+	return &Error{Code: ReminderNotProcessable, Message: message, Fields: append([]string(nil), fields...)}
 }
 
 // NewStaleRevision 创建并发更新使用的版本冲突错误。
