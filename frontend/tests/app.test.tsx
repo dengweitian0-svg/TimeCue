@@ -109,7 +109,8 @@ describe('App', () => {
   it('shows unavailable reminder content without inventing a body', async () => {
     const unavailable: ReminderDetail = { scheduleId: '7', originalDate: '2026-09-16', attemptedAtUtc: '2026-09-16T02:00:00Z', startUnix: null, endUnix: null, title: null, notes: null, contentStatus: 'unavailable', status: 'pending', processedAtUtc: null };
     const reminders: ReminderPage = { items: [unavailable], nextCursor: '', limit: 20 };
-    const platform = port({ listPendingReminders: vi.fn(async () => reminders), getReminderDetail: vi.fn(async () => unavailable) });
+    const confirmReminder = vi.fn(async () => ({ scheduleId: '7', originalDate: unavailable.originalDate, processedAtUtc: '2026-09-16T03:00:00Z', changed: true }));
+    const platform = port({ listPendingReminders: vi.fn(async () => reminders), getReminderDetail: vi.fn(async () => unavailable), confirmReminder });
     const controller = new Controller(platform);
     const host = document.createElement('div');
     document.body.append(host);
@@ -122,7 +123,9 @@ describe('App', () => {
     await flushRender();
     expect(host.textContent).toContain('提醒内容暂不可用');
     expect(host.textContent).not.toContain('undefined');
-    expect(platform.confirmReminder).not.toHaveBeenCalled();
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('确认已投递提醒'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+    expect(confirmReminder).toHaveBeenCalledWith({ scheduleId: '7', originalDate: unavailable.originalDate });
     root.unmount();
     controller.dispose();
     host.remove();

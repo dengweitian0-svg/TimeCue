@@ -75,3 +75,46 @@ describe('Controller reminder grouping', () => {
     controller.dispose();
   });
 });
+
+describe('Controller reminder confirmation', () => {
+  it('refreshes after success and prefers the next reminder at the same time', async () => {
+    const first = detail('1'); const next = detail('2'); const later = { ...detail('3'), startUnix: 1799967600, endUnix: 1799968500 };
+    let calls = 0;
+    const listPendingReminders = vi.fn(async () => { calls++; return calls === 1 ? { items: [first, next, later], nextCursor: '', limit: 20 } : { items: [next, later], nextCursor: '', limit: 20 }; });
+    const confirmReminder = vi.fn(async () => ({ scheduleId: '1', originalDate: first.originalDate, processedAtUtc: '2026-09-16T03:00:00Z', changed: true }));
+    const platform = port({ listPendingReminders, getReminderDetail: vi.fn(async identity => identity.scheduleId === '2' ? next : first), confirmReminder });
+    const controller = new Controller(platform); await controller.initialize(); controller.selectReminder(first); await new Promise(resolve => setTimeout(resolve, 0));
+    await controller.confirmReminder();
+    expect(confirmReminder).toHaveBeenCalledWith({ scheduleId: '1', originalDate: first.originalDate });
+    expect(controller.snapshot().activeReminder).toEqual({ scheduleId: '2', originalDate: next.originalDate });
+    expect(controller.snapshot().reminders.items.map(item => item.scheduleId)).toEqual(['2', '3']);
+    expect(controller.snapshot().reminderConfirming).toBe(false);
+    controller.dispose();
+  });
+
+  it('keeps detail after failure and allows retry', async () => {
+    const current = detail('1'); let attempts = 0;
+    const confirmReminder = vi.fn(async () => { attempts++; if (attempts === 1) throw { data: JSON.stringify({ code: 'STORAGE', message: 'failed' }) }; return { scheduleId: '1', originalDate: current.originalDate, processedAtUtc: '2026-09-16T03:00:00Z', changed: true }; });
+    const platform = port({ listPendingReminders: vi.fn(async () => ({ items: [current], nextCursor: '', limit: 20 })), getReminderDetail: vi.fn(async () => current), confirmReminder });
+    const controller = new Controller(platform); await controller.initialize(); controller.selectReminder(current); await new Promise(resolve => setTimeout(resolve, 0));
+    await controller.confirmReminder();
+    expect(controller.snapshot().reminderDetail?.title).toBe(current.title);
+    expect(controller.snapshot().reminderError?.code).toBe('STORAGE');
+    await controller.confirmReminder();
+    expect(confirmReminder).toHaveBeenCalledTimes(2);
+    controller.dispose();
+  });
+
+  it('lets a new activation win over an in-flight confirmation', async () => {
+    const current = detail('1'); const activated = detail('2'); const pending = deferred<{ scheduleId: string; originalDate: string; processedAtUtc: string; changed: boolean }>();
+    const platform = port({ listPendingReminders: vi.fn(async () => ({ items: [current, activated], nextCursor: '', limit: 20 })), getReminderDetail: vi.fn(async identity => identity.scheduleId === '2' ? activated : current), confirmReminder: vi.fn(() => pending.promise) });
+    const controller = new Controller(platform); await controller.initialize(); controller.selectReminder(current); await new Promise(resolve => setTimeout(resolve, 0));
+    const confirmation = controller.confirmReminder();
+    platform.emit({ sequence: 9, targetId: '2', originalDate: activated.originalDate });
+    pending.resolve({ scheduleId: '1', originalDate: current.originalDate, processedAtUtc: '2026-09-16T03:00:00Z', changed: true });
+    await confirmation; await new Promise(resolve => setTimeout(resolve, 0));
+    expect(controller.snapshot().activeReminder?.scheduleId).toBe('2');
+    expect(controller.snapshot().reminderConfirming).toBe(false);
+    controller.dispose();
+  });
+});
