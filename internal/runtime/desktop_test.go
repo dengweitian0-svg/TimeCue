@@ -72,7 +72,7 @@ func newRunningDesktopTestApplicationWithStore(t *testing.T, dependencies Deskto
 		Log:           config.LogConfig{Level: "info", Path: filepath.Join(root, "logs", "timecue.log")},
 		Backup:        config.BackupConfig{Dir: filepath.Join(root, "backups")},
 		Window:        config.WindowConfig{CloseBehavior: config.CloseBehaviorTray},
-		ResolvedPaths: config.ResolvedPaths{ConfigPath: filepath.Join(root, "config.yaml"), DatabasePath: filepath.Join(root, "data", "timecue.db"), LogPath: filepath.Join(root, "logs", "timecue.log"), BackupDir: filepath.Join(root, "backups"), PreferencesPath: t.TempDir() + "/preferences.yaml"},
+		ResolvedPaths: config.ResolvedPaths{ConfigPath: filepath.Join(root, "config.yaml"), DatabasePath: filepath.Join(root, "data", "timecue.db"), LogPath: filepath.Join(root, "logs", "timecue.log"), BackupDir: filepath.Join(root, "backups")},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
@@ -201,7 +201,7 @@ func TestStopDuringDomReadyStartupCancelsStartupGate(t *testing.T) {
 		Log:           config.LogConfig{Level: "info", Path: filepath.Join(root, "logs", "timecue.log")},
 		Backup:        config.BackupConfig{Dir: filepath.Join(root, "backups")},
 		Window:        config.WindowConfig{CloseBehavior: config.CloseBehaviorTray},
-		ResolvedPaths: config.ResolvedPaths{ConfigPath: filepath.Join(root, "config.yaml"), DatabasePath: filepath.Join(root, "data", "timecue.db"), LogPath: filepath.Join(root, "logs", "timecue.log"), BackupDir: filepath.Join(root, "backups"), PreferencesPath: filepath.Join(root, "preferences.yaml")},
+		ResolvedPaths: config.ResolvedPaths{ConfigPath: filepath.Join(root, "config.yaml"), DatabasePath: filepath.Join(root, "data", "timecue.db"), LogPath: filepath.Join(root, "logs", "timecue.log"), BackupDir: filepath.Join(root, "backups")},
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	runDone := make(chan error, 1)
@@ -367,7 +367,7 @@ func TestRunCancellationBeforeDomReadyClosesOwnedResources(t *testing.T) {
 		Notifications: notifications,
 		Clock:         clock,
 	})
-	cfg := config.Config{Window: config.WindowConfig{CloseBehavior: config.CloseBehaviorTray}, ResolvedPaths: config.ResolvedPaths{PreferencesPath: t.TempDir() + "/preferences.yaml"}}
+	cfg := config.Config{Window: config.WindowConfig{CloseBehavior: config.CloseBehaviorTray}, ResolvedPaths: config.ResolvedPaths{ConfigPath: filepath.Join(t.TempDir(), "config.yaml")}}
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
@@ -443,6 +443,42 @@ func TestWailsBindingsUseJSONPresenceAndSQLiteStore(t *testing.T) {
 	}
 	if deleted.Title != "Focus" {
 		t.Fatalf("deleted title = %q, want Focus", deleted.Title)
+	}
+}
+
+// TestConfigBindingsExposeLogLevelAndRestoreDefault 验证日志级别保存与显式恢复默认的运行时边界。
+func TestConfigBindingsExposeLogLevelAndRestoreDefault(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	application, cancel := newDesktopTestApplication(t, host, nil)
+	defer cancel()
+	binding := application.Bindings()
+
+	initial, err := binding.GetLogLevel()
+	if err != nil {
+		t.Fatalf("GetLogLevel() error = %v", err)
+	}
+	if initial.EffectiveLevel != "info" || initial.SavedLevel != "info" || initial.RestartRequired {
+		t.Fatalf("initial log level = %+v, want info without restart", initial)
+	}
+	saved, err := binding.SaveLogLevel(SaveLogLevelRequest{Level: "debug"})
+	if err != nil {
+		t.Fatalf("SaveLogLevel() error = %v", err)
+	}
+	if saved.EffectiveLevel != "info" || saved.SavedLevel != "debug" || !saved.RestartRequired {
+		t.Fatalf("saved log level = %+v, want effective info/saved debug", saved)
+	}
+	if err := binding.RestoreConfigDefault(RestoreConfigDefaultRequest{Property: string(config.ConfigPropertyLogLevel)}); err != nil {
+		t.Fatalf("RestoreConfigDefault() error = %v", err)
+	}
+	restored, err := binding.GetLogLevel()
+	if err != nil {
+		t.Fatalf("GetLogLevel() after restore error = %v", err)
+	}
+	if restored.EffectiveLevel != "info" || restored.SavedLevel != "info" || restored.RestartRequired {
+		t.Fatalf("restored log level = %+v, want info without restart", restored)
+	}
+	if err := binding.RestoreConfigDefault(RestoreConfigDefaultRequest{Property: "app.version"}); err == nil {
+		t.Fatal("RestoreConfigDefault() error = nil, want invalid property error")
 	}
 }
 

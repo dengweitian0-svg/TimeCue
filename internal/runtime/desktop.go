@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/bootstrap"
@@ -100,6 +101,23 @@ type CloseBehaviorDTO struct {
 	Behavior string `json:"behavior"`
 }
 
+// LogLevelDTO 返回日志级别当前生效值与下次启动保存值的受控视图。
+type LogLevelDTO struct {
+	EffectiveLevel  string `json:"effective_level"`
+	SavedLevel      string `json:"saved_level"`
+	RestartRequired bool   `json:"restart_required"`
+}
+
+// SaveLogLevelRequest 描述一次日志级别保存请求。
+type SaveLogLevelRequest struct {
+	Level string `json:"level"`
+}
+
+// RestoreConfigDefaultRequest 描述一次受限配置属性恢复默认请求。
+type RestoreConfigDefaultRequest struct {
+	Property string `json:"property"`
+}
+
 // StorageDirectoryDTO 返回目录当前生效值和配置保存值的受控视图。
 type StorageDirectoryDTO struct {
 	Kind            string `json:"kind"`
@@ -134,6 +152,7 @@ type DesktopApplication struct {
 
 	mu                   sync.Mutex
 	config               *config.Config
+	effectiveLogLevel    string
 	service              *app.Service
 	coordinator          *app.MutationCoordinator
 	scheduler            *app.ReminderScheduler
@@ -348,6 +367,7 @@ func (a *DesktopApplication) assemble(cfg config.Config, logger *slog.Logger, st
 	service := app.NewServiceWithCoordinator(store, a.deps.Clock, coordinator)
 	scheduler := app.NewReminderScheduler(store, store, a.deps.Notifications, a.deps.Clock, a.deps.TimerFactory, logger, coordinator)
 	a.config = &cfg
+	a.effectiveLogLevel = cfg.Log.Level
 	a.logger = logger
 	a.coordinator = coordinator
 	a.service = service
@@ -750,6 +770,105 @@ func (a *DesktopApplication) GetStorageDirectories() (StorageDirectoriesDTO, err
 	return storageDirectoriesDTO(cfg)
 }
 
+// GetLogLevel 返回日志级别当前生效值与保存值，日志器不会在运行中切换级别。
+func (a *DesktopApplication) GetLogLevel() (LogLevelDTO, error) {
+	if a == nil {
+		return LogLevelDTO{}, errors.New("desktop application is nil")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.config == nil || a.service == nil {
+		return LogLevelDTO{}, errors.New("desktop application is not assembled")
+	}
+	return logLevelDTO(a.effectiveLogLevel, a.config.Log.Level)
+}
+
+// SaveLogLevel 保存日志级别；当前日志器保持原级别，重启后加载新值。
+func (a *DesktopApplication) SaveLogLevel(ctx context.Context, request SaveLogLevelRequest) (LogLevelDTO, error) {
+	if a == nil {
+		return LogLevelDTO{}, errors.New("desktop application is nil")
+	}
+	if err := a.ensureWritable(); err != nil {
+		return LogLevelDTO{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return LogLevelDTO{}, err
+	}
+	a.mu.Lock()
+	if a.state != DesktopStateRunning {
+		a.mu.Unlock()
+		return LogLevelDTO{}, domain.NewRuntimeStopping()
+	}
+	if a.config == nil {
+		a.mu.Unlock()
+		return LogLevelDTO{}, errors.New("runtime config is not configured")
+	}
+	if err := a.config.SaveLogLevel(request.Level); err != nil {
+		wrapped := a.newStorageOperationError("save log level", request.Level, err)
+		a.lastError = wrapped
+		logger := a.logger
+		a.mu.Unlock()
+		if logger != nil {
+			logger.Error("log level configuration save failed", "operation", "save_log_level", "error", wrapped)
+		}
+		return LogLevelDTO{}, wrapped
+	}
+	result, err := logLevelDTO(a.effectiveLogLevel, a.config.Log.Level)
+	logger := a.logger
+	a.mu.Unlock()
+	if err != nil {
+		return LogLevelDTO{}, err
+	}
+	if logger != nil {
+		logger.Info("log level configuration saved", "operation", "save_log_level", "restart_required", result.RestartRequired)
+	}
+	return result, nil
+}
+
+// RestoreConfigDefault 将一个公开配置属性的默认值写回 config.yaml。
+func (a *DesktopApplication) RestoreConfigDefault(ctx context.Context, property string) error {
+	if a == nil {
+		return errors.New("desktop application is nil")
+	}
+	if err := a.ensureWritable(); err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	if a.state != DesktopStateRunning {
+		a.mu.Unlock()
+		return domain.NewRuntimeStopping()
+	}
+	if a.config == nil {
+		a.mu.Unlock()
+		return errors.New("runtime config is not configured")
+	}
+	if err := a.config.RestoreDefault(config.ConfigProperty(property)); err != nil {
+		wrapped := a.newStorageOperationError("restore config default", property, err)
+		a.lastError = wrapped
+		logger := a.logger
+		a.mu.Unlock()
+		if logger != nil {
+			logger.Error("config default restore failed", "operation", "restore_config_default", "property", property, "error", wrapped)
+		}
+		return wrapped
+	}
+	logger := a.logger
+	a.mu.Unlock()
+	if logger != nil {
+		logger.Info("config default restored", "operation", "restore_config_default", "property", property)
+	}
+	return nil
+}
+
 // SaveStorageDirectory 验证并保存目录配置；当前生效路径保持不变，重启后才加载新路径。
 func (a *DesktopApplication) SaveStorageDirectory(ctx context.Context, request SaveStorageDirectoryRequest) (StorageDirectoryDTO, error) {
 	if a == nil {
@@ -881,6 +1000,16 @@ func storageDirectoriesDTO(cfg config.Config) (StorageDirectoriesDTO, error) {
 		return StorageDirectoriesDTO{}, err
 	}
 	return StorageDirectoriesDTO{Logs: logs, Backups: backups}, nil
+}
+
+// logLevelDTO 将日志级别的运行时生效值与配置保存值投影到前端。
+func logLevelDTO(effective, saved string) (LogLevelDTO, error) {
+	effective = strings.ToLower(strings.TrimSpace(effective))
+	saved = strings.ToLower(strings.TrimSpace(saved))
+	if effective == "" || saved == "" {
+		return LogLevelDTO{}, errors.New("log level must not be empty")
+	}
+	return LogLevelDTO{EffectiveLevel: effective, SavedLevel: saved, RestartRequired: effective != saved}, nil
 }
 
 // storageDirectoryDTO 计算单个目录的生效/保存差异，并按物理目录判断重启需求。
