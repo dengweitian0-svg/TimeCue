@@ -59,6 +59,11 @@ func newDesktopTestApplication(t *testing.T, host *platform.FakeDesktopHost, not
 
 // newRunningDesktopTestApplication 启动一个已完成 DOM ready 的测试运行时并返回外部取消函数。
 func newRunningDesktopTestApplication(t *testing.T, dependencies DesktopDependencies) (*DesktopApplication, context.CancelFunc) {
+	return newRunningDesktopTestApplicationWithStore(t, dependencies, openDesktopTestStore(t))
+}
+
+// newRunningDesktopTestApplicationWithStore 启动测试运行时并保留 SQLite Store，便于注入提醒发送结果。
+func newRunningDesktopTestApplicationWithStore(t *testing.T, dependencies DesktopDependencies, store *sqlite.Store) (*DesktopApplication, context.CancelFunc) {
 	t.Helper()
 	application := NewDesktopApplication(dependencies)
 	root := t.TempDir()
@@ -72,7 +77,7 @@ func newRunningDesktopTestApplication(t *testing.T, dependencies DesktopDependen
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		result <- application.Run(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), openDesktopTestStore(t))
+		result <- application.Run(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), store)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -300,6 +305,49 @@ func TestWailsBindingsUseJSONPresenceAndSQLiteStore(t *testing.T) {
 	}
 	if deleted.Title != "Focus" {
 		t.Fatalf("deleted title = %q, want Focus", deleted.Title)
+	}
+}
+
+// TestReminderQueryBindingsUseSQLiteStore 验证提醒查询绑定复用运行时 Service 和真实 SQLite 状态。
+func TestReminderQueryBindingsUseSQLiteStore(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	store := openDesktopTestStore(t)
+	application, cancel := newRunningDesktopTestApplicationWithStore(t, DesktopDependencies{
+		Host:          host,
+		Notifications: &platform.FakeNotificationCenter{},
+		Clock: desktopTestClock{snapshot: domain.TimeSnapshot{
+			Now:      time.Date(2026, 1, 1, 8, 0, 0, 0, time.FixedZone("CST", 8*60*60)),
+			Location: time.FixedZone("CST", 8*60*60),
+		}},
+	}, store)
+	defer cancel()
+
+	start := time.Date(2026, 1, 1, 9, 0, 0, 0, time.FixedZone("CST", 8*60*60)).Unix()
+	created, err := application.Bindings().CreateSchedule(`{"title":"Focus","start_unix":` + formatInt(start) + `,"end_unix":` + formatInt(start+30*60) + `}`)
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	identity := domain.OccurrenceIdentity{ScheduleID: domain.ScheduleID(created.ID), OriginalDate: "2026-01-01"}
+	if claimed, err := store.ClaimReminderAttempt(context.Background(), identity, time.Unix(start, 0).UTC()); err != nil || !claimed {
+		t.Fatalf("ClaimReminderAttempt() = (%t, %v), want claimed", claimed, err)
+	}
+	if err := store.SetReminderAttemptStatus(context.Background(), identity, app.ReminderAttemptSubmitted); err != nil {
+		t.Fatalf("SetReminderAttemptStatus() error = %v", err)
+	}
+
+	page, err := application.Bindings().ListPendingReminders(app.ListPendingRemindersRequest{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListPendingReminders() error = %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ScheduleID != created.ID || page.Items[0].OriginalDate != identity.OriginalDate {
+		t.Fatalf("pending page = %+v, want one stable identity", page)
+	}
+	detail, err := application.Bindings().GetReminderDetail(created.ID, identity.OriginalDate)
+	if err != nil {
+		t.Fatalf("GetReminderDetail() error = %v", err)
+	}
+	if detail.Status != app.ReminderStatusPending || detail.ContentStatus != app.ReminderContentAvailable || detail.Title == nil || *detail.Title != "Focus" || detail.StartUnix == nil || *detail.StartUnix != start {
+		t.Fatalf("reminder detail = %+v, want rebuilt content", detail)
 	}
 }
 
