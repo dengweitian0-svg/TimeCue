@@ -84,6 +84,9 @@ export class Controller {
   /** 切换页面并清除上一页的短暂提示。 */
   setPage(page: Page): void { if (!this.state.busy) this.update({ page, error: null, notice: '' }); }
 
+  /** 按消息内容清除中央 Toast，避免旧消息的定时器误清除新消息。 */
+  clearNotice(expected?: string): void { if (expected !== undefined && this.state.notice !== expected) return; this.update({ notice: '' }); }
+
   /** 选中列表中的提醒并异步读取最新详情，不修改确认状态。 */
   selectReminder(identity: ReminderIdentity): void {
     if (this.state.busy) return;

@@ -21,7 +21,7 @@ export function App({ controller }: { controller: Controller }) {
     <main className="main-content">
       <header className="topbar"><div><p className="kicker">TIME CUE / DESKTOP</p><p className="today">今天，按自己的节奏来</p></div><span className="status-dot" aria-label="应用在线" /></header>
       {state.error && <ErrorBanner error={state.error} />}
-      {state.notice && <div className="notice" role="status">{state.notice}</div>}
+      {state.notice && <NoticeToast controller={controller} message={state.notice} />}
       {state.page === 'settings' ? <Settings controller={controller} closeBehavior={state.closeBehavior} storageDirectories={state.storageDirectories} busy={state.busy} /> : state.page === 'reminders' ? <Reminders controller={controller} state={state} /> : <Schedules controller={controller} state={state} />}
     </main>
   </div>;
@@ -34,6 +34,15 @@ function NavButton({ active, children, onClick }: { active: boolean; children: s
 function RuntimeChip({ runtime }: { runtime: AppState['runtime'] }) {
   const label = !runtime ? '正在连接' : runtime.lifecycle === 'cleanup-failed' ? '需要清理' : runtime.lifecycle === 'running' ? '后台提醒运行中' : runtime.lifecycle === 'stopping' ? '正在停止' : '已停止';
   return <div className={`runtime-chip ${runtime?.lifecycle === 'cleanup-failed' ? 'warning' : ''}`}><span className="pulse" />{label}</div>;
+}
+
+/** 在页面中央显示业务结果，并在五秒后自动清除。 */
+function NoticeToast({ controller, message }: { controller: Controller; message: string }) {
+  useEffect(() => {
+    const timer = window.setTimeout(() => controller.clearNotice(message), 5000);
+    return () => window.clearTimeout(timer);
+  }, [controller, message]);
+  return <div className="notice-toast" role="status" aria-live="polite">{message}</div>;
 }
 
 /** 待处理提醒页面只读取列表和当前详情，不在查看或切换时提交确认。 */
@@ -76,7 +85,6 @@ function Schedules({ controller, state }: { controller: Controller; state: AppSt
     <div className="list-toolbar"><span>{state.loading ? '正在读取…' : `${state.schedules.items.length} 个日程`}</span><button className="text-button" onClick={() => void controller.refreshSchedules()} disabled={state.loading}>重新加载</button></div>
     {state.schedules.items.length ? <div className="schedule-list">{state.schedules.items.map(item => <ScheduleCard key={item.id} schedule={item} onDelete={() => controller.askDelete(item)} />)}</div> : state.loading ? <LoadingCard /> : <EmptySchedules onCreate={() => void controller.beginCreate()} />}
     {state.schedules.nextCursor && <button className="secondary-button pagination" onClick={() => void controller.nextPage()}>加载更多</button>}
-    {state.notice && <p className="inline-notice">{state.notice}</p>}
     {state.deleting && <DeleteDialog controller={controller} item={state.deleting} busy={state.busy} error={state.error} />}
   </section>;
 }
