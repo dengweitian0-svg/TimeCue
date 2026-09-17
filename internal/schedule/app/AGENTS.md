@@ -42,3 +42,7 @@
 - `ReminderScheduler.ApplyRuntimeEvent` 是生命周期事件进入提醒派发的唯一应用边界：暂停或停止清空候选并关闭派发资格，恢复和时钟变化从当前环境严格向后重建，不补发过去发生。到期回调还必须检查 `TimeSnapshot` 的环境异常事实，异常时拒绝发送并重建。
 - 提醒调度始终只维护一个全局最近计时器和每个日程一个最早候选；候选携带日程 revision 与 runtime epoch，通知提交使用可取消 context。`reminder_attempts` 的稳定发生身份负责持久化去重，发送结果只回写 `submitted`、`failed` 或 `skipped`。
 - 所有正式业务写入必须通过 `MutationCoordinator.BeginMutation` 取得准入；`stopping` 之后返回 `RUNTIME_STOPPING`，查询和只读预览不经过该准入，也不依据提醒派发状态改变结果。
+- 提醒发送状态与处理状态独立：`submitted` 只表示通知端口接收请求，`processed_at_utc` 只表示用户确认；应用层不得把二者合并为一个状态或让发送回写覆盖处理时间。
+- 待处理提醒不保存历史正文快照；列表和详情通过 `OccurrenceSourceReader` 读取当前日程及例外并调用 `domain.OccurrenceForIdentity` 重建。内容无法重建时返回 `content_status=unavailable`，仍保留稳定身份和尝试时间，不伪造标题、备注或时间。
+- 待处理列表以发生开始时间倒序、稳定身份升序分页；无法重建的记录以尝试时间排序 fallback。游标绑定 limit、generation、排序键和稳定身份，日程事实变化时返回 `STALE_CURSOR`。
+- 确认用例使用一次 `Clock.Snapshot` 的 UTC 时间，经 `MutationCoordinator` 进入正式写入边界；SQLite 事务提交成功后才返回，首次写入与重复确认并发幂等。查看、读取和切换不写入处理状态。
