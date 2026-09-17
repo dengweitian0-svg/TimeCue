@@ -51,6 +51,13 @@ func NewWailsHost(options WailsHostOptions) *Host {
 			wailsruntime.EventsEmit(ctx, name, payload)
 			return nil
 		},
+		OpenDirectory: func(ctx context.Context, title, defaultDirectory string) (string, error) {
+			return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
+				Title:                title,
+				DefaultDirectory:     defaultDirectory,
+				CanCreateDirectories: true,
+			})
+		},
 	}
 	appOptions := options.App
 	runner := func(callbacks RunCallbacks) error {

@@ -16,6 +16,7 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/bootstrap"
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	"github.com/dengweitian0-svg/TimeCue/internal/platform"
+	platformfilesystem "github.com/dengweitian0-svg/TimeCue/internal/platform/filesystem"
 	"github.com/dengweitian0-svg/TimeCue/internal/platform/wailshost"
 	platformwindows "github.com/dengweitian0-svg/TimeCue/internal/platform/windows"
 	appRuntime "github.com/dengweitian0-svg/TimeCue/internal/runtime"
@@ -143,14 +144,16 @@ func (entry desktopEntrypoint) Run(ctx context.Context, cfg config.Config, logge
 		ErrorFormatter: func(err error) any { return (appRuntime.ErrorFormatter{}).Format(err) },
 	})
 	application = appRuntime.NewDesktopApplication(appRuntime.DesktopDependencies{
-		Host:          host,
-		Window:        host.Window(),
-		Frontend:      host.Events(),
-		Activation:    nonOwningActivationSource{WindowsInstanceBroker: entry.broker},
-		Environment:   environment,
-		Tray:          tray,
-		Notifications: notificationCenter,
-		Clock:         environment,
+		Host:             host,
+		Window:           host.Window(),
+		Frontend:         host.Events(),
+		Activation:       nonOwningActivationSource{WindowsInstanceBroker: entry.broker},
+		Environment:      environment,
+		Tray:             tray,
+		Notifications:    notificationCenter,
+		DirectoryAccess:  platformfilesystem.DirectoryAccess{},
+		DirectoryChooser: host.DirectoryChooser(),
+		Clock:            environment,
 	})
 	return application.Run(ctx, cfg, logger, store)
 }

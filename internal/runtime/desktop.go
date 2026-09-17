@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/bootstrap"
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	"github.com/dengweitian0-svg/TimeCue/internal/platform"
 	"github.com/dengweitian0-svg/TimeCue/internal/schedule/app"
+	"github.com/dengweitian0-svg/TimeCue/internal/schedule/domain"
 )
 
 // DesktopStore 是桌面运行时一次性取得的完整存储组合端口。
@@ -33,15 +36,17 @@ type DesktopStore interface {
 // DesktopDependencies 描述 DesktopApplication 需要的运行时和平台端口。
 // platform 字段均为可替换窄契约，runtime 不依赖任何具体桌面工具包。
 type DesktopDependencies struct {
-	Host          platform.DesktopHost
-	Window        platform.WindowController
-	Frontend      platform.FrontendEvents
-	Activation    platform.ActivationSource
-	Environment   platform.EnvironmentEventSource
-	Tray          platform.TrayPort
-	Notifications platform.NotificationCenter
-	Clock         app.Clock
-	TimerFactory  app.TimerFactory
+	Host             platform.DesktopHost
+	Window           platform.WindowController
+	Frontend         platform.FrontendEvents
+	Activation       platform.ActivationSource
+	Environment      platform.EnvironmentEventSource
+	Tray             platform.TrayPort
+	Notifications    platform.NotificationCenter
+	DirectoryAccess  platform.DirectoryAccess
+	DirectoryChooser platform.DirectoryChooser
+	Clock            app.Clock
+	TimerFactory     app.TimerFactory
 }
 
 // DesktopLifecycleState 是桌面资源停止状态机的受控状态。
@@ -93,6 +98,26 @@ type FrontendReadyResponse struct {
 // CloseBehaviorDTO 是窗口关闭偏好的稳定 JSON 视图。
 type CloseBehaviorDTO struct {
 	Behavior string `json:"behavior"`
+}
+
+// StorageDirectoryDTO 返回目录当前生效值和配置保存值的受控视图。
+type StorageDirectoryDTO struct {
+	Kind            string `json:"kind"`
+	EffectivePath   string `json:"effective_path"`
+	SavedPath       string `json:"saved_path"`
+	RestartRequired bool   `json:"restart_required"`
+}
+
+// StorageDirectoriesDTO 同时返回日志和备份目录设置，不包含数据库路径。
+type StorageDirectoriesDTO struct {
+	Logs    StorageDirectoryDTO `json:"logs"`
+	Backups StorageDirectoryDTO `json:"backups"`
+}
+
+// SaveStorageDirectoryRequest 描述一次目录保存请求。
+type SaveStorageDirectoryRequest struct {
+	Kind string `json:"kind"`
+	Path string `json:"path"`
 }
 
 // DeleteScheduleDTO 是永久删除结果的稳定 JSON 视图。
@@ -643,6 +668,183 @@ func (a *DesktopApplication) GetDesktopStatus() DesktopStatusDTO {
 		status.LastError = a.lastError.Error()
 	}
 	return status
+}
+
+// GetStorageDirectories 返回日志和备份目录的 effective/saved 对照，不暴露固定数据库路径。
+func (a *DesktopApplication) GetStorageDirectories() (StorageDirectoriesDTO, error) {
+	if a == nil {
+		return StorageDirectoriesDTO{}, errors.New("desktop application is nil")
+	}
+	a.mu.Lock()
+	if a.config == nil || a.service == nil {
+		a.mu.Unlock()
+		return StorageDirectoriesDTO{}, errors.New("desktop application is not assembled")
+	}
+	cfg := *a.config
+	a.mu.Unlock()
+	return storageDirectoriesDTO(cfg)
+}
+
+// SaveStorageDirectory 验证并保存目录配置；当前生效路径保持不变，重启后才加载新路径。
+func (a *DesktopApplication) SaveStorageDirectory(ctx context.Context, request SaveStorageDirectoryRequest) (StorageDirectoryDTO, error) {
+	if a == nil {
+		return StorageDirectoryDTO{}, errors.New("desktop application is nil")
+	}
+	if err := a.ensureWritable(); err != nil {
+		return StorageDirectoryDTO{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return StorageDirectoryDTO{}, err
+	}
+	kind, err := parseStorageDirectoryKind(request.Kind)
+	if err != nil {
+		return StorageDirectoryDTO{}, a.storageOperationError("validate storage directory kind", request.Kind, err)
+	}
+	a.mu.Lock()
+	access := a.deps.DirectoryAccess
+	configValue := a.config
+	state := a.state
+	a.mu.Unlock()
+	if state != DesktopStateRunning {
+		return StorageDirectoryDTO{}, domain.NewRuntimeStopping()
+	}
+	if configValue == nil {
+		return StorageDirectoryDTO{}, errors.New("runtime config is not configured")
+	}
+	if access == nil {
+		return StorageDirectoryDTO{}, a.storageOperationError("validate storage directory", string(kind), errors.New("directory access is not configured"))
+	}
+	normalized, err := access.ValidateDirectory(ctx, request.Path)
+	if err != nil {
+		return StorageDirectoryDTO{}, a.storageOperationError("validate storage directory", string(kind), err)
+	}
+	if err := ctx.Err(); err != nil {
+		return StorageDirectoryDTO{}, err
+	}
+
+	a.mu.Lock()
+	if a.state != DesktopStateRunning {
+		a.mu.Unlock()
+		return StorageDirectoryDTO{}, domain.NewRuntimeStopping()
+	}
+	if a.config == nil {
+		a.mu.Unlock()
+		return StorageDirectoryDTO{}, errors.New("runtime config is not configured")
+	}
+	if err := a.config.SaveStorageDirectory(kind, normalized); err != nil {
+		wrapped := a.newStorageOperationError("save storage directory", string(kind), err)
+		a.lastError = wrapped
+		logger := a.logger
+		a.mu.Unlock()
+		if logger != nil {
+			logger.Error("storage directory save failed", "operation", "save_storage_directory", "kind", string(kind), "error", wrapped)
+		}
+		return StorageDirectoryDTO{}, wrapped
+	}
+	directory, err := storageDirectoryDTO(*a.config, kind)
+	if err != nil {
+		a.mu.Unlock()
+		return StorageDirectoryDTO{}, err
+	}
+	logger := a.logger
+	a.mu.Unlock()
+	if logger != nil {
+		logger.Info("storage directory configuration saved", "operation", "save_storage_directory", "kind", string(kind), "restart_required", directory.RestartRequired)
+	}
+	return directory, nil
+}
+
+// ChooseStorageDirectory 打开目录选择器；取消返回空字符串且不改变任何配置。
+func (a *DesktopApplication) ChooseStorageDirectory(ctx context.Context, kindValue string) (string, error) {
+	if a == nil {
+		return "", errors.New("desktop application is nil")
+	}
+	kind, err := parseStorageDirectoryKind(kindValue)
+	if err != nil {
+		return "", a.storageOperationError("choose storage directory", kindValue, err)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a.mu.Lock()
+	chooser := a.deps.DirectoryChooser
+	configValue := a.config
+	state := a.state
+	a.mu.Unlock()
+	if state != DesktopStateRunning {
+		return "", domain.NewRuntimeStopping()
+	}
+	if configValue == nil {
+		return "", errors.New("runtime config is not configured")
+	}
+	if chooser == nil {
+		return "", a.storageOperationError("choose storage directory", string(kind), errors.New("directory chooser is not configured"))
+	}
+	directory, err := storageDirectoryDTO(*configValue, kind)
+	if err != nil {
+		return "", err
+	}
+	defaultDirectory := directory.SavedPath
+	if _, statErr := os.Stat(defaultDirectory); statErr != nil {
+		defaultDirectory = directory.EffectivePath
+	}
+	title := "选择日志目录"
+	if kind == config.StorageDirectoryBackups {
+		title = "选择备份目录"
+	}
+	selected, err := chooser.ChooseDirectory(ctx, title, defaultDirectory)
+	if err != nil {
+		return "", a.storageOperationError("choose storage directory", string(kind), err)
+	}
+	if selected == "" {
+		return "", nil
+	}
+	return selected, nil
+}
+
+// storageDirectoriesDTO 将配置保存值与进程启动时冻结的生效值投影到前端。
+func storageDirectoriesDTO(cfg config.Config) (StorageDirectoriesDTO, error) {
+	logs, err := storageDirectoryDTO(cfg, config.StorageDirectoryLogs)
+	if err != nil {
+		return StorageDirectoriesDTO{}, err
+	}
+	backups, err := storageDirectoryDTO(cfg, config.StorageDirectoryBackups)
+	if err != nil {
+		return StorageDirectoriesDTO{}, err
+	}
+	return StorageDirectoriesDTO{Logs: logs, Backups: backups}, nil
+}
+
+// storageDirectoryDTO 计算单个目录的生效/保存差异，并按物理目录判断重启需求。
+func storageDirectoryDTO(cfg config.Config, kind config.StorageDirectoryKind) (StorageDirectoryDTO, error) {
+	saved, err := cfg.SavedStorageDirectory(kind)
+	if err != nil {
+		return StorageDirectoryDTO{}, err
+	}
+	var effective string
+	switch kind {
+	case config.StorageDirectoryLogs:
+		effective = filepath.Dir(cfg.ResolvedPaths.LogPath)
+	case config.StorageDirectoryBackups:
+		effective = cfg.ResolvedPaths.BackupDir
+	default:
+		return StorageDirectoryDTO{}, fmt.Errorf("invalid storage directory kind %q", kind)
+	}
+	effective = filepath.Clean(effective)
+	saved = filepath.Clean(saved)
+	return StorageDirectoryDTO{Kind: string(kind), EffectivePath: effective, SavedPath: saved, RestartRequired: !config.SamePhysicalDirectory(effective, saved)}, nil
+}
+
+// parseStorageDirectoryKind 将 Wails 请求限制到两个产品目录类型。
+func parseStorageDirectoryKind(value string) (config.StorageDirectoryKind, error) {
+	kind := config.StorageDirectoryKind(value)
+	if kind != config.StorageDirectoryLogs && kind != config.StorageDirectoryBackups {
+		return "", fmt.Errorf("invalid storage directory kind %q: want logs or backups", value)
+	}
+	return kind, nil
 }
 
 // RetryCleanup 重试失败的通知清理和桌面资源释放。

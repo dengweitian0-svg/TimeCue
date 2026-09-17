@@ -8,6 +8,70 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/schedule/app"
 )
 
+// FakeDirectoryAccess 是目录验证端口的可控测试实现。
+type FakeDirectoryAccess struct {
+	ValidateFunc func(context.Context, string) (string, error)
+
+	mu             sync.Mutex
+	ValidatedPaths []string
+	ValidateCount  int
+}
+
+// ValidateDirectory 记录目录验证请求并执行测试钩子。
+func (f *FakeDirectoryAccess) ValidateDirectory(ctx context.Context, path string) (string, error) {
+	if f == nil {
+		return "", errors.New("nil fake directory access")
+	}
+	f.mu.Lock()
+	f.ValidatedPaths = append(f.ValidatedPaths, path)
+	f.ValidateCount++
+	hook := f.ValidateFunc
+	f.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, path)
+	}
+	return path, nil
+}
+
+// Calls 返回目录验证次数，供并发测试安全读取。
+func (f *FakeDirectoryAccess) Calls() int {
+	if f == nil {
+		return 0
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ValidateCount
+}
+
+// DirectoryChoice 记录一次目录选择对话框请求。
+type DirectoryChoice struct {
+	Title            string
+	DefaultDirectory string
+}
+
+// FakeDirectoryChooser 是目录选择端口的可控测试实现。
+type FakeDirectoryChooser struct {
+	ChooseFunc func(context.Context, string, string) (string, error)
+
+	mu      sync.Mutex
+	Choices []DirectoryChoice
+}
+
+// ChooseDirectory 记录标题和默认目录，并执行测试钩子。
+func (f *FakeDirectoryChooser) ChooseDirectory(ctx context.Context, title, defaultDirectory string) (string, error) {
+	if f == nil {
+		return "", errors.New("nil fake directory chooser")
+	}
+	f.mu.Lock()
+	f.Choices = append(f.Choices, DirectoryChoice{Title: title, DefaultDirectory: defaultDirectory})
+	hook := f.ChooseFunc
+	f.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, title, defaultDirectory)
+	}
+	return "", nil
+}
+
 // FakeDesktopHost 是桌面宿主契约的可控测试实现。
 type FakeDesktopHost struct {
 	RunFunc  func(context.Context) error

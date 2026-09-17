@@ -50,6 +50,7 @@ type RuntimeCallbacks struct {
 	WindowMinimise func(context.Context) error
 	WindowActivate func(context.Context) error
 	EventsEmit     func(context.Context, string, any) error
+	OpenDirectory  func(context.Context, string, string) (string, error)
 }
 
 // RunCallbacks 是 Wails Run 需要注册的回调集合。
@@ -124,6 +125,14 @@ func (h *Host) Events() platform.FrontendEvents {
 		return frontendEvents{}
 	}
 	return h.events
+}
+
+// DirectoryChooser 返回使用宿主生命周期 context 的目录选择端口。
+func (h *Host) DirectoryChooser() platform.DirectoryChooser {
+	if h == nil {
+		return directoryChooser{}
+	}
+	return directoryChooser{state: &h.state, runtime: h.runtime}
 }
 
 // SetLogger 在 bootstrap 日志器就绪后替换构造期默认日志器。
@@ -541,6 +550,27 @@ type frontendEvents struct {
 	runtime RuntimeCallbacks
 }
 
+// directoryChooser 将目录选择对话框绑定到 Wails 的 Runtime context。
+type directoryChooser struct {
+	state   *lifecycleState
+	runtime RuntimeCallbacks
+}
+
+// ChooseDirectory 打开目录选择器；空路径表示用户取消，不产生配置变更。
+func (d directoryChooser) ChooseDirectory(_ context.Context, title, defaultDirectory string) (string, error) {
+	if d.state == nil {
+		return "", errors.New("wails directory chooser is not configured")
+	}
+	ctx, err := d.state.context(true)
+	if err != nil {
+		return "", err
+	}
+	if d.runtime.OpenDirectory == nil {
+		return "", errors.New("wails runtime open directory is not configured")
+	}
+	return d.runtime.OpenDirectory(ctx, title, defaultDirectory)
+}
+
 // Emit 发送单个前端 payload，并始终使用保存的生命周期 context。
 func (e frontendEvents) Emit(_ context.Context, name string, payload any) error {
 	ctx, err := e.state.context(true)
@@ -604,4 +634,5 @@ var (
 	_ platform.DesktopHost      = (*Host)(nil)
 	_ platform.WindowController = windowController{}
 	_ platform.FrontendEvents   = frontendEvents{}
+	_ platform.DirectoryChooser = directoryChooser{}
 )

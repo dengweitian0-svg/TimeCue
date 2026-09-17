@@ -140,6 +140,33 @@ func TestLifecycleGatesRuntimeAndUsesSavedContext(t *testing.T) {
 	}
 }
 
+// TestDirectoryChooserUsesReadyContextAndReturnsCancellation 验证目录选择器只在 DOM ready 后调用 Wails Runtime。
+func TestDirectoryChooserUsesReadyContextAndReturnsCancellation(t *testing.T) {
+	startup := context.WithValue(context.Background(), "phase", "startup")
+	domReady := context.WithValue(context.Background(), "phase", "dom-ready")
+	var called context.Context
+	host := New(HostOptions{Runtime: RuntimeCallbacks{OpenDirectory: func(ctx context.Context, title, defaultDirectory string) (string, error) {
+		called = ctx
+		if title != "选择日志目录" || defaultDirectory != "C:/TimeCue/logs" {
+			t.Fatalf("directory dialog arguments = (%q, %q)", title, defaultDirectory)
+		}
+		return "", nil
+	}}})
+	chooser := host.DirectoryChooser()
+	if _, err := chooser.ChooseDirectory(startup, "选择日志目录", "C:/TimeCue/logs"); !errors.Is(err, ErrRuntimeNotReady) {
+		t.Fatalf("pre-ready ChooseDirectory() error = %v, want %v", err, ErrRuntimeNotReady)
+	}
+	host.OnStartup(startup)
+	host.OnDomReady(domReady)
+	selected, err := chooser.ChooseDirectory(context.Background(), "选择日志目录", "C:/TimeCue/logs")
+	if err != nil || selected != "" {
+		t.Fatalf("ChooseDirectory() = (%q, %v), want cancellation", selected, err)
+	}
+	if called != domReady {
+		t.Fatalf("directory dialog context = %v, want DOM-ready context", called)
+	}
+}
+
 // hostWindowShow 提供测试中的最小窗口调用，避免在生命周期回调中重复取端口。
 func hostWindowShow(host *Host, ctx context.Context) error {
 	return host.Window().Show(ctx)

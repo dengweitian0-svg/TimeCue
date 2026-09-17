@@ -405,5 +405,69 @@ export namespace runtime {
 		    return a;
 		}
 	}
+	export class SaveStorageDirectoryRequest {
+	    kind: string;
+	    path: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SaveStorageDirectoryRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.path = source["path"];
+	    }
+	}
+	export class StorageDirectoryDTO {
+	    kind: string;
+	    effective_path: string;
+	    saved_path: string;
+	    restart_required: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new StorageDirectoryDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.effective_path = source["effective_path"];
+	        this.saved_path = source["saved_path"];
+	        this.restart_required = source["restart_required"];
+	    }
+	}
+	export class StorageDirectoriesDTO {
+	    logs: StorageDirectoryDTO;
+	    backups: StorageDirectoryDTO;
+
+	    static createFrom(source: any = {}) {
+	        return new StorageDirectoriesDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.logs = this.convertValues(source["logs"], StorageDirectoryDTO);
+	        this.backups = this.convertValues(source["backups"], StorageDirectoryDTO);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }

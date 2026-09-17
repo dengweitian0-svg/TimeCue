@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -60,12 +61,13 @@ func newDesktopTestApplication(t *testing.T, host *platform.FakeDesktopHost, not
 func newRunningDesktopTestApplication(t *testing.T, dependencies DesktopDependencies) (*DesktopApplication, context.CancelFunc) {
 	t.Helper()
 	application := NewDesktopApplication(dependencies)
+	root := t.TempDir()
 	cfg := config.Config{
 		App:           config.AppConfig{Name: "TimeCue", Version: "test"},
-		Log:           config.LogConfig{Level: "info", Path: "test.log"},
-		Backup:        config.BackupConfig{Dir: t.TempDir()},
+		Log:           config.LogConfig{Level: "info", Path: filepath.Join(root, "logs", "timecue.log")},
+		Backup:        config.BackupConfig{Dir: filepath.Join(root, "backups")},
 		Window:        config.WindowConfig{CloseBehavior: config.CloseBehaviorTray},
-		ResolvedPaths: config.ResolvedPaths{PreferencesPath: t.TempDir() + "/preferences.yaml"},
+		ResolvedPaths: config.ResolvedPaths{ConfigPath: filepath.Join(root, "config.yaml"), DatabasePath: filepath.Join(root, "data", "timecue.db"), LogPath: filepath.Join(root, "logs", "timecue.log"), BackupDir: filepath.Join(root, "backups"), PreferencesPath: t.TempDir() + "/preferences.yaml"},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
@@ -298,6 +300,80 @@ func TestWailsBindingsUseJSONPresenceAndSQLiteStore(t *testing.T) {
 	}
 	if deleted.Title != "Focus" {
 		t.Fatalf("deleted title = %q, want Focus", deleted.Title)
+	}
+}
+
+// TestStorageDirectoryBindingsExposeRestartOnlyState 验证保存后 effective 仍是旧目录、saved 是新目录。
+func TestStorageDirectoryBindingsExposeRestartOnlyState(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	access := &platform.FakeDirectoryAccess{ValidateFunc: func(_ context.Context, path string) (string, error) { return filepath.Clean(path), nil }}
+	application, cancel := newRunningDesktopTestApplication(t, DesktopDependencies{Host: host, Notifications: &platform.FakeNotificationCenter{}, Clock: desktopTestClock{snapshot: domain.TimeSnapshot{Now: time.Now(), Location: time.Local}}, DirectoryAccess: access})
+	defer cancel()
+	binding := application.Bindings()
+	before, err := binding.GetStorageDirectories()
+	if err != nil {
+		t.Fatalf("GetStorageDirectories() error = %v", err)
+	}
+	newDirectory := filepath.Join(t.TempDir(), "new logs")
+	after, err := binding.SaveStorageDirectory(SaveStorageDirectoryRequest{Kind: "logs", Path: newDirectory})
+	if err != nil {
+		t.Fatalf("SaveStorageDirectory() error = %v", err)
+	}
+	if after.EffectivePath != before.Logs.EffectivePath {
+		t.Fatalf("effective log path = %q, want old %q", after.EffectivePath, before.Logs.EffectivePath)
+	}
+	if after.SavedPath != filepath.Clean(newDirectory) || !after.RestartRequired {
+		t.Fatalf("saved directory = %+v, want new path and restart_required", after)
+	}
+	current, err := binding.GetStorageDirectories()
+	if err != nil {
+		t.Fatalf("GetStorageDirectories() after save error = %v", err)
+	}
+	if current.Logs.EffectivePath != before.Logs.EffectivePath || current.Logs.SavedPath != after.SavedPath {
+		t.Fatalf("directory snapshot after save = %+v, want effective old and saved new", current.Logs)
+	}
+	if access.Calls() != 1 {
+		t.Fatalf("directory validation calls = %d, want one", access.Calls())
+	}
+}
+
+// TestStorageDirectorySaveRejectsStoppedRuntime 验证停止、清理失败等非 running 状态不允许保存配置。
+func TestStorageDirectorySaveRejectsStoppedRuntime(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	application, cancel := newRunningDesktopTestApplication(t, DesktopDependencies{Host: host, Notifications: &platform.FakeNotificationCenter{}, Clock: desktopTestClock{snapshot: domain.TimeSnapshot{Now: time.Now(), Location: time.Local}}, DirectoryAccess: &platform.FakeDirectoryAccess{}})
+	cancel()
+	if err := application.StopFromHost(context.Background()); err != nil {
+		t.Fatalf("StopFromHost() error = %v", err)
+	}
+	_, err := application.Bindings().SaveStorageDirectory(SaveStorageDirectoryRequest{Kind: "logs", Path: t.TempDir()})
+	var runtimeErr *domain.Error
+	if !errors.As(err, &runtimeErr) || runtimeErr.Code != domain.RuntimeStopping {
+		t.Fatalf("SaveStorageDirectory() error = %v, want RUNTIME_STOPPING", err)
+	}
+}
+
+// TestStorageDirectoryChooserCancellationAndFailure 验证取消不改变配置，选择器错误经正式边界返回。
+func TestStorageDirectoryChooserCancellationAndFailure(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	chooser := &platform.FakeDirectoryChooser{}
+	application, cancel := newRunningDesktopTestApplication(t, DesktopDependencies{Host: host, Notifications: &platform.FakeNotificationCenter{}, Clock: desktopTestClock{snapshot: domain.TimeSnapshot{Now: time.Now(), Location: time.Local}}, DirectoryChooser: chooser})
+	defer cancel()
+	before, err := application.Bindings().GetStorageDirectories()
+	if err != nil {
+		t.Fatalf("GetStorageDirectories() error = %v", err)
+	}
+	selected, err := application.Bindings().ChooseStorageDirectory("logs")
+	if err != nil || selected != "" {
+		t.Fatalf("ChooseStorageDirectory() = (%q, %v), want cancellation", selected, err)
+	}
+	after, err := application.Bindings().GetStorageDirectories()
+	if err != nil || after.Logs.SavedPath != before.Logs.SavedPath {
+		t.Fatalf("directory changed after cancellation: before=%+v after=%+v error=%v", before.Logs, after.Logs, err)
+	}
+	wantErr := errors.New("directory dialog failed")
+	chooser.ChooseFunc = func(context.Context, string, string) (string, error) { return "", wantErr }
+	if _, err := application.Bindings().ChooseStorageDirectory("backups"); !errors.Is(err, wantErr) {
+		t.Fatalf("ChooseStorageDirectory() error = %v, want %v", err, wantErr)
 	}
 }
 

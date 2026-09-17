@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -31,6 +32,9 @@ func TestLoadUsesEmbeddedDefaults(t *testing.T) {
 	if cfg.ResolvedPaths.DatabasePath != filepath.Join(os.Getenv("LOCALAPPDATA"), "TimeCue", "timecue.db") {
 		t.Fatalf("DatabasePath = %q, want fixed LOCALAPPDATA path", cfg.ResolvedPaths.DatabasePath)
 	}
+	if cfg.ResolvedPaths.ConfigPath != filepath.Join(dir, "config.yaml") {
+		t.Fatalf("ConfigPath = %q, want executable config path", cfg.ResolvedPaths.ConfigPath)
+	}
 	if cfg.ResolvedPaths.PreferencesPath != filepath.Join(os.Getenv("LOCALAPPDATA"), "TimeCue", "preferences.yaml") {
 		t.Fatalf("PreferencesPath = %q, want fixed LOCALAPPDATA path", cfg.ResolvedPaths.PreferencesPath)
 	}
@@ -39,6 +43,182 @@ func TestLoadUsesEmbeddedDefaults(t *testing.T) {
 	}
 	if cfg.ResolvedPaths.BackupDir != filepath.Join(dir, "backups") {
 		t.Fatalf("BackupDir = %q, want executable-relative path", cfg.ResolvedPaths.BackupDir)
+	}
+}
+
+// TestSaveStorageDirectoryPreservesFilenameAndEffectivePath 验证保存目录不替换当前进程路径且保留日志文件名。
+func TestSaveStorageDirectoryPreservesFilenameAndEffectivePath(t *testing.T) {
+	dir := t.TempDir()
+	localAppData := filepath.Join(t.TempDir(), "LocalAppData")
+	t.Setenv("LOCALAPPDATA", localAppData)
+	oldLogs := filepath.Join(dir, "旧 日志")
+	oldBackups := filepath.Join(dir, "旧备份")
+	newLogs := filepath.Join(dir, "新的 中文 日志")
+	newBackups := filepath.Join(dir, "新的 中文 备份")
+	for _, path := range []string{oldLogs, oldBackups} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("create old directory %q: %v", path, err)
+		}
+	}
+	configPath := filepath.Join(dir, "config.yaml")
+	original := "app:\n  name: Custom\nlog:\n  level: debug\n  path: ./旧 日志/custom-name.log\nbackup:\n  dir: ./旧备份\nfuture:\n  enabled: true\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
+	}
+	effectiveLog := cfg.ResolvedPaths.LogPath
+	effectiveBackup := cfg.ResolvedPaths.BackupDir
+	if err := cfg.SaveLogDirectory(newLogs); err != nil {
+		t.Fatalf("SaveLogDirectory() error = %v", err)
+	}
+	if cfg.ResolvedPaths.LogPath != effectiveLog || cfg.ResolvedPaths.BackupDir != effectiveBackup {
+		t.Fatalf("effective paths changed after save: log=%q backup=%q", cfg.ResolvedPaths.LogPath, cfg.ResolvedPaths.BackupDir)
+	}
+	if filepath.Base(cfg.Log.Path) != "custom-name.log" || filepath.Dir(cfg.Log.Path) != filepath.Clean(newLogs) {
+		t.Fatalf("saved log path = %q, want new directory and original filename", cfg.Log.Path)
+	}
+	if err := cfg.SaveBackupDirectory(newBackups); err != nil {
+		t.Fatalf("SaveBackupDirectory() error = %v", err)
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	text := string(contents)
+	for _, expected := range []string{"future:", "enabled: true", "custom-name.log"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("saved config = %q, missing %q", text, expected)
+		}
+	}
+	reloaded, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("reload configuration: %v", err)
+	}
+	if reloaded.ResolvedPaths.LogPath != filepath.Join(newLogs, "custom-name.log") || reloaded.ResolvedPaths.BackupDir != filepath.Clean(newBackups) {
+		t.Fatalf("reloaded effective paths = (%q, %q), want new directories", reloaded.ResolvedPaths.LogPath, reloaded.ResolvedPaths.BackupDir)
+	}
+}
+
+// TestSaveStorageDirectoryCreatesConfigFromEmbeddedDefaults 验证无 config.yaml 时以嵌入默认配置为基底创建文件。
+func TestSaveStorageDirectoryCreatesConfigFromEmbeddedDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+	cfg, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
+	}
+	newLogs := filepath.Join(dir, "logs with 空格")
+	if err := cfg.SaveLogDirectory(newLogs); err != nil {
+		t.Fatalf("SaveLogDirectory() error = %v", err)
+	}
+	contents, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read created config: %v", err)
+	}
+	if !strings.Contains(string(contents), "path:") || !strings.Contains(string(contents), "timecue.log") || !strings.Contains(string(contents), "backup:") {
+		t.Fatalf("created config = %q, want embedded defaults plus saved log path", contents)
+	}
+}
+
+// TestSaveStorageDirectoriesConcurrentPreservesBothFields 验证并发保存两类目录不会互相覆盖 YAML 字段。
+func TestSaveStorageDirectoriesConcurrentPreservesBothFields(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("log:\n  level: info\n  path: ./logs/timecue.log\nbackup:\n  dir: ./backups\nfuture: keep\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
+	}
+	logs := filepath.Join(dir, "并发日志")
+	backups := filepath.Join(dir, "并发备份")
+	var group sync.WaitGroup
+	group.Add(2)
+	var logErr, backupErr error
+	go func() { defer group.Done(); logErr = cfg.SaveLogDirectory(logs) }()
+	go func() { defer group.Done(); backupErr = cfg.SaveBackupDirectory(backups) }()
+	group.Wait()
+	if logErr != nil || backupErr != nil {
+		t.Fatalf("concurrent save errors = (%v, %v)", logErr, backupErr)
+	}
+	reloaded, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("reload configuration: %v", err)
+	}
+	if filepath.Dir(reloaded.Log.Path) != filepath.Clean(logs) || reloaded.Backup.Dir != filepath.Clean(backups) {
+		t.Fatalf("saved fields = (%q, %q), want both concurrent updates", reloaded.Log.Path, reloaded.Backup.Dir)
+	}
+}
+
+// TestSaveStorageDirectoryFailurePreservesFileAndMemory 验证写入、同步或替换失败不会更新文件和内存保存值。
+func TestSaveStorageDirectoryFailurePreservesFileAndMemory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+	configPath := filepath.Join(dir, "config.yaml")
+	original := []byte("log:\n  level: info\n  path: ./logs/timecue.log\nbackup:\n  dir: ./backups\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
+	}
+	oldPath, oldBackup := cfg.Log.Path, cfg.Backup.Dir
+	failures := []struct {
+		name string
+		set  func() func()
+	}{
+		{name: "write", set: func() func() {
+			old := writeConfigContents
+			writeConfigContents = func(*os.File, []byte) (int, error) { return 0, errors.New("write failed") }
+			return func() { writeConfigContents = old }
+		}},
+		{name: "sync", set: func() func() {
+			old := syncConfigFile
+			syncConfigFile = func(*os.File) error { return errors.New("sync failed") }
+			return func() { syncConfigFile = old }
+		}},
+		{name: "replace", set: func() func() {
+			old := replaceConfigFile
+			replaceConfigFile = func(string, string) error { return errors.New("replace failed") }
+			return func() { replaceConfigFile = old }
+		}},
+	}
+	for _, failure := range failures {
+		t.Run(failure.name, func(t *testing.T) {
+			restore := failure.set()
+			defer restore()
+			if err := cfg.SaveLogDirectory(filepath.Join(dir, "new", failure.name)); err == nil {
+				t.Fatal("SaveLogDirectory() error = nil, want injected failure")
+			}
+			contents, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("read original config: %v", err)
+			}
+			if string(contents) != string(original) || cfg.Log.Path != oldPath || cfg.Backup.Dir != oldBackup {
+				t.Fatalf("failure changed config or memory: file=%q log=%q backup=%q", contents, cfg.Log.Path, cfg.Backup.Dir)
+			}
+		})
+	}
+}
+
+// TestSamePhysicalDirectoryResolvesSymlink 验证目录别名不会被判断为需要重启的不同物理目录。
+func TestSamePhysicalDirectoryResolvesSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "real")
+	link := filepath.Join(root, "alias")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("create target directory: %v", err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink is not available in this environment: %v", err)
+	}
+	if !SamePhysicalDirectory(target, link) {
+		t.Fatalf("SamePhysicalDirectory(%q, %q) = false, want true", target, link)
 	}
 }
 

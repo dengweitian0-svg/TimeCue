@@ -2,13 +2,16 @@ package config
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spf13/viper"
 	"go.yaml.in/yaml/v3"
@@ -40,6 +43,26 @@ type BackupConfig struct {
 	Dir string `mapstructure:"dir"`
 }
 
+// StorageDirectoryKind 标识可以由用户配置的持久化目录类型。
+type StorageDirectoryKind string
+
+const (
+	// StorageDirectoryLogs 表示日志文件所在目录。
+	StorageDirectoryLogs StorageDirectoryKind = "logs"
+	// StorageDirectoryBackups 表示 SQLite 迁移备份所在目录。
+	StorageDirectoryBackups StorageDirectoryKind = "backups"
+)
+
+// DirectoryKind 是目录设置 API 使用的兼容别名。
+type DirectoryKind = StorageDirectoryKind
+
+const (
+	// DirectoryKindLogs 是日志目录设置的兼容常量。
+	DirectoryKindLogs = StorageDirectoryLogs
+	// DirectoryKindBackups 是备份目录设置的兼容常量。
+	DirectoryKindBackups = StorageDirectoryBackups
+)
+
 // CloseBehavior 表示用户关闭窗口时应用应隐藏到托盘还是直接退出。
 type CloseBehavior string
 
@@ -57,11 +80,15 @@ type WindowConfig struct {
 
 // ResolvedPaths 保存启动时解析出的实际文件系统路径。
 type ResolvedPaths struct {
+	ConfigPath      string
 	DatabasePath    string
 	LogPath         string
 	BackupDir       string
 	PreferencesPath string
 }
+
+// configSaveMu 串行化所有配置文件保存，避免日志和备份设置并发读旧文件后互相覆盖。
+var configSaveMu sync.Mutex
 
 // Load 加载可执行文件目录下的用户配置；文件不存在时回退到内嵌默认配置。
 func Load() (Config, error) {
@@ -228,10 +255,20 @@ func (c Config) ResolvePaths(baseDir string) (ResolvedPaths, error) {
 	if !ok || strings.TrimSpace(localAppData) == "" {
 		return ResolvedPaths{}, errors.New("resolve database path: LOCALAPPDATA must not be empty")
 	}
+	logPath := resolvePath(baseDir, c.Log.Path)
+	logDirectory, err := normalizeConfiguredDirectory(filepath.Dir(logPath), "log")
+	if err != nil {
+		return ResolvedPaths{}, err
+	}
+	backupDirectory, err := normalizeConfiguredDirectory(resolvePath(baseDir, c.Backup.Dir), "backup")
+	if err != nil {
+		return ResolvedPaths{}, err
+	}
 	return ResolvedPaths{
+		ConfigPath:      filepath.Clean(filepath.Join(baseDir, "config.yaml")),
 		DatabasePath:    filepath.Clean(filepath.Join(localAppData, "TimeCue", "timecue.db")),
-		LogPath:         resolvePath(baseDir, c.Log.Path),
-		BackupDir:       resolvePath(baseDir, c.Backup.Dir),
+		LogPath:         filepath.Join(logDirectory, filepath.Base(logPath)),
+		BackupDir:       backupDirectory,
 		PreferencesPath: filepath.Clean(filepath.Join(localAppData, "TimeCue", "preferences.yaml")),
 	}, nil
 }
@@ -284,6 +321,8 @@ func (c *Config) SaveCloseBehavior(behavior CloseBehavior) error {
 	if path == "." || path == "" {
 		return errors.New("save close behavior: preferences path must not be empty")
 	}
+	configSaveMu.Lock()
+	defer configSaveMu.Unlock()
 	document, err := readPreferencesDocument(path)
 	if err != nil {
 		return err
@@ -302,6 +341,211 @@ func (c *Config) SaveCloseBehavior(behavior CloseBehavior) error {
 		return err
 	}
 	c.Window.CloseBehavior = behavior
+	return nil
+}
+
+// SaveStorageDirectory 原子保存日志或备份目录，并保留当前进程仍在使用的 ResolvedPaths。
+// 配置写入成功前不改变内存中的保存值；保存成功后也不替换运行中的日志器或 SQLite Store，
+// 因此新目录统一在下一次启动时生效。
+func (c *Config) SaveStorageDirectory(kind StorageDirectoryKind, directory string) error {
+	if c == nil {
+		return errors.New("save storage directory: config must not be nil")
+	}
+	if err := validateStorageDirectoryKind(kind); err != nil {
+		return err
+	}
+	configPath := filepath.Clean(strings.TrimSpace(c.ResolvedPaths.ConfigPath))
+	if configPath == "." || configPath == "" {
+		return errors.New("save storage directory: config path must not be empty")
+	}
+	normalizedDirectory, err := ValidateDirectoryPath(context.Background(), directory)
+	if err != nil {
+		return fmt.Errorf("validate %s directory: %w", kind, err)
+	}
+
+	configSaveMu.Lock()
+	defer configSaveMu.Unlock()
+	document, err := readConfigDocument(configPath)
+	if err != nil {
+		return err
+	}
+
+	var savedValue string
+	switch kind {
+	case StorageDirectoryLogs:
+		if err := c.Log.Validate(); err != nil {
+			return fmt.Errorf("save log directory: %w", err)
+		}
+		filename := filepath.Base(strings.TrimSpace(c.Log.Path))
+		savedValue = filepath.Join(normalizedDirectory, filename)
+		if err := setConfigDocumentValue(document, "log", "path", savedValue, configPath); err != nil {
+			return err
+		}
+	case StorageDirectoryBackups:
+		savedValue = normalizedDirectory
+		if err := setConfigDocumentValue(document, "backup", "dir", savedValue, configPath); err != nil {
+			return err
+		}
+	}
+
+	contents, err := yaml.Marshal(document)
+	if err != nil {
+		return fmt.Errorf("encode config file %q: %w", configPath, err)
+	}
+	if err := writeConfigAtomically(configPath, contents); err != nil {
+		return err
+	}
+
+	// 只有原子替换成功后才改变配置保存值；ResolvedPaths 仍代表本进程的实际生效目录。
+	switch kind {
+	case StorageDirectoryLogs:
+		c.Log.Path = savedValue
+	case StorageDirectoryBackups:
+		c.Backup.Dir = savedValue
+	}
+	return nil
+}
+
+// SaveLogDirectory 保存日志目录并保留 Log.Path 中原有的日志文件名。
+func (c *Config) SaveLogDirectory(directory string) error {
+	return c.SaveStorageDirectory(StorageDirectoryLogs, directory)
+}
+
+// SaveBackupDirectory 保存 SQLite 迁移备份目录。
+func (c *Config) SaveBackupDirectory(directory string) error {
+	return c.SaveStorageDirectory(StorageDirectoryBackups, directory)
+}
+
+// SavedStorageDirectory 返回配置中下次启动将使用的规范目录，而不是当前进程的生效目录。
+func (c Config) SavedStorageDirectory(kind StorageDirectoryKind) (string, error) {
+	if err := validateStorageDirectoryKind(kind); err != nil {
+		return "", err
+	}
+	baseDir := filepath.Dir(filepath.Clean(strings.TrimSpace(c.ResolvedPaths.ConfigPath)))
+	if baseDir == "." || baseDir == "" {
+		// 手工构造的测试配置可能没有 ConfigPath；用当前解析路径提供兼容的受控视图。
+		switch kind {
+		case StorageDirectoryLogs:
+			baseDir = filepath.Dir(c.ResolvedPaths.LogPath)
+		case StorageDirectoryBackups:
+			baseDir = filepath.Dir(c.ResolvedPaths.BackupDir)
+		}
+	}
+	var value string
+	switch kind {
+	case StorageDirectoryLogs:
+		value = filepath.Dir(resolvePath(baseDir, c.Log.Path))
+	case StorageDirectoryBackups:
+		value = resolvePath(baseDir, c.Backup.Dir)
+	}
+	return normalizeConfiguredDirectory(value, string(kind))
+}
+
+// StorageDirectory 返回保存配置中的目录，是 SavedStorageDirectory 的简短别名。
+func (c Config) StorageDirectory(kind StorageDirectoryKind) (string, error) {
+	return c.SavedStorageDirectory(kind)
+}
+
+// validateStorageDirectoryKind 限定设置 API 只能修改日志和备份两类目录。
+func validateStorageDirectoryKind(kind StorageDirectoryKind) error {
+	switch kind {
+	case StorageDirectoryLogs, StorageDirectoryBackups:
+		return nil
+	default:
+		return fmt.Errorf("invalid storage directory kind %q: want logs or backups", kind)
+	}
+}
+
+// readConfigDocument 读取现有配置并保留未由本用例拥有的 YAML 字段。
+func readConfigDocument(path string) (map[string]any, error) {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			contents = embeddedConfig
+		} else {
+			return nil, fmt.Errorf("read config file %q: %w", path, err)
+		}
+	}
+	var document map[string]any
+	if err := yaml.Unmarshal(contents, &document); err != nil {
+		return nil, fmt.Errorf("decode config file %q: %w", path, err)
+	}
+	if document == nil {
+		document = make(map[string]any)
+	}
+	return document, nil
+}
+
+// setConfigDocumentValue 只修改目标配置节中的一个字段，不覆盖未知字段。
+func setConfigDocumentValue(document map[string]any, section, key, value, path string) error {
+	fields, ok := document[section]
+	if !ok {
+		fields = make(map[string]any)
+		document[section] = fields
+	}
+	mapping, ok := fields.(map[string]any)
+	if !ok {
+		return fmt.Errorf("invalid config file %q: %s must be a mapping", path, section)
+	}
+	mapping[key] = value
+	return nil
+}
+
+// writeConfigContents、syncConfigFile 和 replaceConfigFile 是配置原子保存的可控边界。
+var (
+	writeConfigContents = func(file *os.File, contents []byte) (int, error) { return file.Write(contents) }
+	syncConfigFile      = func(file *os.File) error { return file.Sync() }
+	replaceConfigFile   = replaceFile
+)
+
+// writeConfigAtomically 通过同目录临时文件、Sync、关闭和原子替换保存配置。
+func writeConfigAtomically(path string, contents []byte) (err error) {
+	dir := filepath.Dir(path)
+	temporary, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary config file in %q: %w", dir, err)
+	}
+	temporaryPath := temporary.Name()
+	temporaryClosed := false
+	defer func() {
+		if !temporaryClosed {
+			if closeErr := temporary.Close(); closeErr != nil {
+				closeErr = fmt.Errorf("close temporary config file %q: %w", temporaryPath, closeErr)
+				if err == nil {
+					err = closeErr
+				} else {
+					err = errors.Join(err, closeErr)
+				}
+			}
+		}
+		if cleanupErr := os.Remove(temporaryPath); cleanupErr != nil && !errors.Is(cleanupErr, fs.ErrNotExist) {
+			cleanupErr = fmt.Errorf("remove temporary config file %q: %w", temporaryPath, cleanupErr)
+			if err == nil {
+				err = cleanupErr
+			} else {
+				err = errors.Join(err, cleanupErr)
+			}
+		}
+	}()
+
+	written, err := writeConfigContents(temporary, contents)
+	if err != nil {
+		return fmt.Errorf("write temporary config file %q: %w", temporaryPath, err)
+	}
+	if written != len(contents) {
+		return fmt.Errorf("write temporary config file %q: %w", temporaryPath, io.ErrShortWrite)
+	}
+	if err := syncConfigFile(temporary); err != nil {
+		return fmt.Errorf("sync temporary config file %q: %w", temporaryPath, err)
+	}
+	closeErr := temporary.Close()
+	temporaryClosed = true
+	if closeErr != nil {
+		return fmt.Errorf("close temporary config file %q: %w", temporaryPath, closeErr)
+	}
+	if err := replaceConfigFile(temporaryPath, path); err != nil {
+		return fmt.Errorf("replace config file %q: %w", path, err)
+	}
 	return nil
 }
 
