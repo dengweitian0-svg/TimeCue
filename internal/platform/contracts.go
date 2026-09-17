@@ -38,6 +38,19 @@ type FrontendEvents interface {
 	Emit(context.Context, string, any) error
 }
 
+// DirectoryAccess 验证用户选择的目录并返回规范物理路径。
+// 实现负责创建缺失目录以及验证临时文件的写入、同步和删除；运行时不直接
+// 操作文件系统，从而可以用 fake 覆盖权限和失败分支。
+type DirectoryAccess interface {
+	ValidateDirectory(context.Context, string) (string, error)
+}
+
+// DirectoryChooser 提供桌面目录选择对话框。
+// 返回空字符串且无错误表示用户取消；取消不能改变输入或已保存配置。
+type DirectoryChooser interface {
+	ChooseDirectory(context.Context, string, string) (string, error)
+}
+
 // ActivationKind 表示一次外部激活的来源。
 type ActivationKind string
 

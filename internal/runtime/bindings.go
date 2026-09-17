@@ -15,6 +15,32 @@ type WailsBindings struct {
 	application *DesktopApplication
 }
 
+// StorageDirectoryError 标记目录设置边界错误，并保留底层原因供日志和测试检查。
+type StorageDirectoryError struct {
+	Operation string
+	Kind      string
+	Cause     error
+}
+
+// Error 返回带操作和目录类型上下文的目录设置错误。
+func (e *StorageDirectoryError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	if e.Cause == nil {
+		return fmt.Sprintf("%s (%s)", e.Operation, e.Kind)
+	}
+	return fmt.Sprintf("%s (%s): %v", e.Operation, e.Kind, e.Cause)
+}
+
+// Unwrap 返回目录设置的底层原因，保持正式错误链路。
+func (e *StorageDirectoryError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
 // NewWailsBindingsForGeneration 创建只供 Wails 反射生成前端声明的无副作用绑定实例。
 func NewWailsBindingsForGeneration() *WailsBindings {
 	return &WailsBindings{}
@@ -144,6 +170,41 @@ func (b *WailsBindings) SaveCloseBehavior(request CloseBehaviorDTO) error {
 	return nil
 }
 
+// GetStorageDirectories 返回日志和备份目录的当前生效值与已保存值。
+func (b *WailsBindings) GetStorageDirectories() (StorageDirectoriesDTO, error) {
+	if err := b.validate(); err != nil {
+		return StorageDirectoriesDTO{}, err
+	}
+	return b.application.GetStorageDirectories()
+}
+
+// SaveStorageDirectory 保存一类目录配置，并返回重启提示所需的完整对照 DTO。
+func (b *WailsBindings) SaveStorageDirectory(request SaveStorageDirectoryRequest) (StorageDirectoryDTO, error) {
+	if err := b.validate(); err != nil {
+		return StorageDirectoryDTO{}, err
+	}
+	if err := b.application.ensureWritable(); err != nil {
+		return StorageDirectoryDTO{}, err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return StorageDirectoryDTO{}, err
+	}
+	return b.application.SaveStorageDirectory(ctx, request)
+}
+
+// ChooseStorageDirectory 打开日志或备份目录选择器；用户取消时返回空字符串。
+func (b *WailsBindings) ChooseStorageDirectory(kind string) (string, error) {
+	if err := b.validate(); err != nil {
+		return "", err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return "", err
+	}
+	return b.application.ChooseStorageDirectory(ctx, kind)
+}
+
 // FrontendReady 完成 React 激活事件订阅后的序列握手。
 func (b *WailsBindings) FrontendReady(request FrontendReadyRequest) (FrontendReadyResponse, error) {
 	if b == nil || b.application == nil {
@@ -192,6 +253,18 @@ func (a *DesktopApplication) ensureWritable() error {
 	return nil
 }
 
+// newStorageOperationError 创建不向前端泄露底层路径细节的目录设置错误。
+func (a *DesktopApplication) newStorageOperationError(operation, kind string, cause error) error {
+	return &StorageDirectoryError{Operation: operation, Kind: kind, Cause: cause}
+}
+
+// storageOperationError 记录目录设置最终失败并返回保留 cause 的错误。
+func (a *DesktopApplication) storageOperationError(operation, kind string, cause error) error {
+	err := a.newStorageOperationError(operation, kind, cause)
+	a.recordError(err)
+	return err
+}
+
 // ErrorDTO 是前端稳定错误结构，不暴露底层错误 cause。
 type ErrorDTO struct {
 	Code    string             `json:"code"`
@@ -214,6 +287,10 @@ func FormatError(err error) ErrorDTO {
 		return ErrorDTO{Code: "INTERNAL", Message: "internal error"}
 	}
 	result := ErrorDTO{Code: "INTERNAL", Message: "internal error"}
+	var storageDirectoryErr *StorageDirectoryError
+	if errors.As(err, &storageDirectoryErr) {
+		return ErrorDTO{Code: "STORAGE", Message: "目录设置未完成，请检查目录和配置文件权限。"}
+	}
 	var businessErr *domain.Error
 	if errors.As(err, &businessErr) {
 		result.Code = string(businessErr.Code)
