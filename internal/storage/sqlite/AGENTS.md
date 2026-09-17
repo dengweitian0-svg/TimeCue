@@ -34,3 +34,7 @@
 - occurrence_query_store.go 按日程 ID 游标批量读取定义及例外快照，复用统一扫描逻辑，不生成或持久化发生实例。
 - reminder_attempt_store.go 以稳定发生身份原子 claim 和终态回写提醒尝试。
 - 版本 6 为 reminder_attempts 增加 (schedule_id, occurrence_local) 唯一身份和 claimed → submitted|failed|skipped 状态守卫；claim 与结果回写均为独立事务，回写失败不得覆盖或删除 claimed。
+- 版本 7 仅为 `reminder_attempts` 增加可空 `processed_at_utc` 及待处理局部索引，不回填历史确认时间；发送状态和处理状态保持独立，状态回写只更新 `status`。
+- `ListPendingReminderAttempts` 严格筛选 `status='submitted' AND processed_at_utc IS NULL`；`GetReminderAttempt` 可读取任意发送状态，`ConfirmReminderAttempt` 在单事务内只允许 submitted 首次写入，已确认返回首次时间，其他发送状态返回 `REMINDER_NOT_PROCESSABLE`。
+- 确认事务必须提交成功后才向应用层返回，成功里程碑只记录稳定身份、是否首次确认和 UTC 处理时间；日程级 generation 不因处理状态改变而伪增。
+- reminder_attempts 不保存通知正文快照。日程删除沿用外键级联，目标记录被删除后详情状态为缺失，不恢复已删除的提醒。

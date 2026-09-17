@@ -91,6 +91,42 @@ type ReminderAttemptStore interface {
 	SetReminderAttemptStatus(context.Context, domain.OccurrenceIdentity, ReminderAttemptStatus) error
 }
 
+// ReminderAttemptRecord 是提醒处理查询所需的持久化尝试视图。
+type ReminderAttemptRecord struct {
+	ID             int64
+	Identity       domain.OccurrenceIdentity
+	AttemptedAtUTC time.Time
+	Status         ReminderAttemptStatus
+	ProcessedAtUTC *time.Time
+}
+
+// ListPendingReminderAttemptsRequest 表示按数据库记录 ID 分页读取待处理尝试。
+// 它是存储内部游标，不等同于对外按发生时间排序的不透明游标。
+type ListPendingReminderAttemptsRequest struct {
+	AfterID int64
+	Limit   int
+}
+
+// ListPendingReminderAttemptsResponse 是一批满足 submitted 且未确认条件的尝试。
+type ListPendingReminderAttemptsResponse struct {
+	Items      []ReminderAttemptRecord
+	NextCursor int64
+}
+
+// ReminderConfirmationResult 表示一次原子确认提交后的首次写入事实。
+type ReminderConfirmationResult struct {
+	ProcessedAtUTC time.Time
+	Changed        bool
+}
+
+// ReminderProcessingStore 定义提醒处理状态查询和确认的窄持久化端口。
+// 发送状态与处理时间通过不同操作维护，存储实现不得让发送回写覆盖处理状态。
+type ReminderProcessingStore interface {
+	ListPendingReminderAttempts(context.Context, ListPendingReminderAttemptsRequest) (ListPendingReminderAttemptsResponse, error)
+	GetReminderAttempt(context.Context, domain.OccurrenceIdentity) (ReminderAttemptRecord, error)
+	ConfirmReminderAttempt(context.Context, domain.OccurrenceIdentity, time.Time) (ReminderConfirmationResult, error)
+}
+
 // OccurrenceSourceReader 定义发送前一致读取单个日程及其例外快照的端口。
 type OccurrenceSourceReader interface {
 	GetOccurrenceSource(context.Context, domain.ScheduleID) (OccurrenceSourceDTO, error)
@@ -403,6 +439,62 @@ type ListOccurrencesRequest struct {
 type ListOccurrencesResponse struct {
 	Items      []OccurrenceDTO `json:"items"`
 	NextCursor string          `json:"next_cursor,omitzero"`
+}
+
+// ReminderContentStatus 表示当前是否能够从日程事实重建发生正文。
+type ReminderContentStatus string
+
+const (
+	ReminderContentAvailable   ReminderContentStatus = "available"
+	ReminderContentUnavailable ReminderContentStatus = "unavailable"
+)
+
+// ReminderDetailStatus 表示提醒处理详情的受控状态。
+type ReminderDetailStatus string
+
+const (
+	ReminderStatusPending        ReminderDetailStatus = "pending"
+	ReminderStatusConfirmed      ReminderDetailStatus = "confirmed"
+	ReminderStatusMissing        ReminderDetailStatus = "missing"
+	ReminderStatusNotProcessable ReminderDetailStatus = "not_processable"
+)
+
+// ReminderDetailDTO 表示一次提醒的稳定身份、处理状态和当前可重建正文。
+// 正文字段使用指针，内容不可用或已确认时不会伪造空正文。
+type ReminderDetailDTO struct {
+	ScheduleID     int64                 `json:"schedule_id"`
+	OriginalDate   string                `json:"original_date"`
+	AttemptedAtUTC time.Time             `json:"attempted_at_utc,omitzero"`
+	StartUnix      *int64                `json:"start_unix,omitzero"`
+	EndUnix        *int64                `json:"end_unix,omitzero"`
+	Title          *string               `json:"title,omitzero"`
+	Notes          *string               `json:"notes,omitzero"`
+	ContentStatus  ReminderContentStatus `json:"content_status"`
+	Status         ReminderDetailStatus  `json:"status"`
+	ProcessedAtUTC *time.Time            `json:"processed_at_utc,omitzero"`
+}
+
+// PendingReminderDTO 是待处理列表中的提醒详情视图。
+type PendingReminderDTO = ReminderDetailDTO
+
+// ListPendingRemindersRequest 表示按当前发生开始时间倒序的待处理列表请求。
+type ListPendingRemindersRequest struct {
+	Limit  int    `json:"limit"`
+	Cursor string `json:"cursor,omitzero"`
+}
+
+// ListPendingRemindersResponse 表示待处理提醒分页结果。
+type ListPendingRemindersResponse struct {
+	Items      []PendingReminderDTO `json:"items"`
+	NextCursor string               `json:"next_cursor,omitzero"`
+}
+
+// ReminderConfirmationDTO 表示确认事务提交后的幂等结果。
+type ReminderConfirmationDTO struct {
+	ScheduleID     int64     `json:"schedule_id"`
+	OriginalDate   string    `json:"original_date"`
+	ProcessedAtUTC time.Time `json:"processed_at_utc"`
+	Changed        bool      `json:"changed"`
 }
 
 // ListSchedulesRequest 表示列表分页输入。
