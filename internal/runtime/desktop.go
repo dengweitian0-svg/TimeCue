@@ -149,6 +149,9 @@ type DesktopApplication struct {
 	lastError          error
 	runtimeContext     context.Context
 	domReady           bool
+	starting           bool
+	startupDone        chan struct{}
+	startupCancel      context.CancelFunc
 	stopDone           chan struct{}
 	activationSequence uint64
 	latestActivation   *ActivationDTO
@@ -287,22 +290,43 @@ func (a *DesktopApplication) OnDomReady(ctx context.Context) error {
 	// 资源初始化与 scheduler 启动必须发生在 DOM ready 之后，Wails Runtime context 才有效。
 	runCtx, cancel := context.WithCancel(ctx)
 	a.schedulerCancel = cancel
-	a.schedulerDone = make(chan error, 1)
-	a.schedulerJoined = false
 	a.eventCancel = cancel
-	a.state = DesktopStateRunning
+	a.starting = true
+	a.startupDone = make(chan struct{})
+	a.startupCancel = cancel
 	scheduler := a.scheduler
-	schedulerDone := a.schedulerDone
 	a.mu.Unlock()
-	if err := a.startResources(ctx); err != nil {
+	if err := a.startResources(runCtx); err != nil {
+		if runCtx.Err() != nil {
+			a.finishStartup()
+			return nil
+		}
 		cancel()
-		return a.failStart(err)
+		startErr := a.failStart(err)
+		a.finishStartup()
+		return startErr
 	}
+	if runCtx.Err() != nil {
+		a.finishStartup()
+		return nil
+	}
+	schedulerDone := make(chan error, 1)
+	a.mu.Lock()
+	a.schedulerDone = schedulerDone
+	a.schedulerJoined = false
+	a.mu.Unlock()
 	go func() {
 		// scheduler 是唯一的提醒循环；其他 goroutine 只负责转发外部事件。
 		schedulerDone <- scheduler.Run(runCtx)
 	}()
 	a.startEventForwarders(runCtx)
+	a.mu.Lock()
+	startupCancelled := runCtx.Err() != nil
+	if !startupCancelled {
+		a.state = DesktopStateRunning
+	}
+	a.mu.Unlock()
+	a.finishStartup()
 	return nil
 }
 
@@ -371,6 +395,19 @@ func (a *DesktopApplication) failStart(primary error) error {
 		return errors.Join(primary, cleanupErr)
 	}
 	return primary
+}
+
+// finishStartup 结束 DOM ready 启动闸门，并唤醒等待启动完成的停止请求。
+func (a *DesktopApplication) finishStartup() {
+	a.mu.Lock()
+	done := a.startupDone
+	a.startupDone = nil
+	a.startupCancel = nil
+	a.starting = false
+	a.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
 }
 
 // startEventForwarders 将平台事实回流至调度器，并保持失败可观察。
@@ -522,6 +559,22 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 		ctx = context.Background()
 	}
 	a.mu.Lock()
+	if a.starting {
+		startupDone := a.startupDone
+		startupCancel := a.startupCancel
+		a.mu.Unlock()
+		if startupCancel != nil {
+			startupCancel()
+		}
+		if startupDone != nil {
+			select {
+			case <-startupDone:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return a.stop(ctx, requestQuit)
+	}
 	if a.state == DesktopStateStopped && a.resourcesClosed {
 		a.mu.Unlock()
 		return nil
