@@ -1,4 +1,4 @@
-import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type SchedulePage } from './contracts';
+import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type DirectoryKind, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type SchedulePage, type StorageDirectories, type StorageDirectory } from './contracts';
 import { draftRequest, emptyDraft } from './schedule-model';
 
 export type Page = 'schedules' | 'settings';
@@ -14,6 +14,7 @@ export interface AppState {
   notice: string;
   runtime: RuntimeStatus | null;
   closeBehavior: CloseBehavior;
+  storageDirectories: StorageDirectories | null;
   activation: Activation | null;
 }
 
@@ -21,7 +22,7 @@ const initialPage: SchedulePage = { items: [], nextCursor: '', limit: 20 };
 
 /** 编排生产前端的日程、偏好、运行状态和激活用例，不拥有后端持久状态。 */
 export class Controller {
-  private state: AppState = { page: 'schedules', schedules: initialPage, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', activation: null };
+  private state: AppState = { page: 'schedules', schedules: initialPage, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', storageDirectories: null, activation: null };
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeActivation: () => void;
   private disposed = false;
@@ -43,10 +44,10 @@ export class Controller {
   /** 初始化窗口状态、日程列表和前端激活握手。 */
   async initialize(): Promise<void> {
     try {
-      const [desktop, schedules, bounds, closeBehavior] = await Promise.all([this.port.getDesktopStatus(), this.port.listSchedules(), this.port.getScheduleTimeBounds(), this.port.getCloseBehavior()]);
+      const [desktop, schedules, bounds, closeBehavior, storageDirectories] = await Promise.all([this.port.getDesktopStatus(), this.port.listSchedules(), this.port.getScheduleTimeBounds(), this.port.getCloseBehavior(), this.port.getStorageDirectories()]);
       if (this.disposed) return;
       this.lastSequence = desktop.activation?.sequence ?? 0;
-      this.update({ runtime: desktop.runtime, activation: desktop.activation, schedules, bounds, closeBehavior, loading: false });
+      this.update({ runtime: desktop.runtime, activation: desktop.activation, schedules, bounds, closeBehavior, storageDirectories, loading: false });
       const pending = await this.port.frontendReady(this.lastSequence);
       if (pending) this.onActivation(pending);
     } catch (error) {
@@ -123,6 +124,39 @@ export class Controller {
 
   /** 读取关闭行为；保存失败不改变本地已生效值。 */
   async saveCloseBehavior(value: CloseBehavior): Promise<void> { if (this.state.busy) return; this.update({ busy: true, error: null, notice: '' }); try { const saved = await this.port.saveCloseBehavior(value); if (!this.disposed) this.update({ closeBehavior: saved, notice: '关闭偏好已保存。' }); } catch (error) { if (!this.disposed) this.fail(error); } finally { if (!this.disposed) this.update({ busy: false }); } }
+
+  /** 通过设置端口打开目录选择器；取消时返回 null 且不修改输入。 */
+  async chooseDirectory(kind: DirectoryKind): Promise<string | null> {
+    if (this.state.busy) return null;
+    this.update({ busy: true, error: null, notice: '' });
+    try { return await this.port.chooseDirectory(kind); }
+    catch (error) { if (!this.disposed) this.fail(error); return null; }
+    finally { if (!this.disposed) this.update({ busy: false }); }
+  }
+
+  /** 保存单个目录配置，成功后刷新 effective/saved 对照，失败时保留用户输入。 */
+  async saveStorageDirectory(kind: DirectoryKind, path: string): Promise<StorageDirectory | null> {
+    if (this.state.busy) return null;
+    this.update({ busy: true, error: null, notice: '' });
+    try {
+      const saved = await this.port.saveStorageDirectory(kind, path);
+      if (!this.disposed) {
+        const current = this.state.storageDirectories;
+        const storageDirectories = current ? { ...current, [kind]: saved } : null;
+        this.update({ storageDirectories, notice: saved.restartRequired ? '目录配置已保存，重启后生效。' : '目录配置已保存。' });
+      }
+      return saved;
+    } catch (error) {
+      if (!this.disposed) this.fail(error);
+      return null;
+    } finally { if (!this.disposed) this.update({ busy: false }); }
+  }
+
+  /** 重新读取两个目录的实际/保存状态，避免设置页依赖本地猜测。 */
+  async refreshStorageDirectories(): Promise<void> {
+    try { const storageDirectories = await this.port.getStorageDirectories(); if (!this.disposed) this.update({ storageDirectories }); }
+    catch (error) { if (!this.disposed) this.fail(error); }
+  }
 
   /** 读取运行状态并尝试完成通知清理。 */
   async retryCleanup(): Promise<void> { if (this.state.busy) return; this.update({ busy: true, error: null }); try { await this.port.retryCleanup(); const status = await this.port.getRuntimeStatus(); if (!this.disposed) this.update({ runtime: status, notice: '通知清理已重试。' }); } catch (error) { if (!this.disposed) this.fail(error); } finally { if (!this.disposed) this.update({ busy: false }); } }

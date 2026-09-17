@@ -1,4 +1,5 @@
 export type CloseBehavior = 'tray' | 'exit';
+export type DirectoryKind = 'logs' | 'backups';
 export type ScheduleType = 'single' | 'daily' | 'weekly' | 'monthly';
 export type Lifecycle = 'running' | 'stopping' | 'stopped' | 'cleanup-failed';
 
@@ -66,6 +67,18 @@ export interface FrontendStatus {
   activation: Activation | null;
 }
 
+export interface StorageDirectory {
+  kind: DirectoryKind;
+  effectivePath: string;
+  savedPath: string;
+  restartRequired: boolean;
+}
+
+export interface StorageDirectories {
+  logs: StorageDirectory;
+  backups: StorageDirectory;
+}
+
 export interface ActivationListener {
   (activation: Activation): void;
 }
@@ -80,6 +93,9 @@ export interface WailsPort {
   getDesktopStatus(): Promise<FrontendStatus>;
   getCloseBehavior(): Promise<CloseBehavior>;
   saveCloseBehavior(value: CloseBehavior): Promise<CloseBehavior>;
+  getStorageDirectories(): Promise<StorageDirectories>;
+  chooseDirectory(kind: DirectoryKind): Promise<string | null>;
+  saveStorageDirectory(kind: DirectoryKind, path: string): Promise<StorageDirectory>;
   frontendReady(lastSequence: number): Promise<Activation | null>;
   retryCleanup(): Promise<void>;
   subscribeActivation(listener: ActivationListener): () => void;
@@ -91,7 +107,7 @@ export interface AppPort extends WailsPort {
 
 export class ScheduleError extends Error {
   constructor(
-    public readonly code: 'VALIDATION' | 'TIME_RANGE_EXCEEDED' | 'STALE_REVISION' | 'NOT_FOUND' | 'STORAGE',
+    public readonly code: 'VALIDATION' | 'TIME_RANGE_EXCEEDED' | 'STALE_REVISION' | 'NOT_FOUND' | 'STORAGE' | 'RUNTIME_STOPPING',
     message: string,
     public readonly fields: Partial<Record<ScheduleField, string>> = {},
     public readonly bounds?: ScheduleBounds,
@@ -166,5 +182,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** 限定后端错误码，未知错误统一按存储失败处理。 */
 function isScheduleCode(value: unknown): value is ScheduleError['code'] {
-  return value === 'VALIDATION' || value === 'TIME_RANGE_EXCEEDED' || value === 'STALE_REVISION' || value === 'NOT_FOUND' || value === 'STORAGE';
+  return value === 'VALIDATION' || value === 'TIME_RANGE_EXCEEDED' || value === 'STALE_REVISION' || value === 'NOT_FOUND' || value === 'STORAGE' || value === 'RUNTIME_STOPPING';
 }

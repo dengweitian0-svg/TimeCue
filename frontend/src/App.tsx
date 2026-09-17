@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore, type FormEvent } from 'react';
-import { ScheduleError, type AppPort, type CloseBehavior, type Schedule, type ScheduleField, type ScheduleType } from './contracts';
+import { ScheduleError, type AppPort, type CloseBehavior, type Schedule, type ScheduleField, type ScheduleType, type StorageDirectories, type StorageDirectory } from './contracts';
 import { Controller } from './controller';
 import { draftRequest, localMinute, scheduleSummary, scheduleTypes } from './schedule-model';
 
@@ -22,7 +22,7 @@ export function App({ controller }: { controller: Controller }) {
       {state.activation && <div className="activation-banner" role="status">已收到窗口激活请求 {state.activation.targetId && <><strong>#{state.activation.targetId}</strong>{state.activation.originalDate && <span>{state.activation.originalDate}</span>}</>}<span>序列 {state.activation.sequence}</span></div>}
       {state.error && <ErrorBanner error={state.error} />}
       {state.notice && !state.activation && <div className="notice" role="status">{state.notice}</div>}
-      {state.page === 'settings' ? <Settings controller={controller} closeBehavior={state.closeBehavior} busy={state.busy} /> : <Schedules controller={controller} state={state} />}
+      {state.page === 'settings' ? <Settings controller={controller} closeBehavior={state.closeBehavior} storageDirectories={state.storageDirectories} busy={state.busy} /> : <Schedules controller={controller} state={state} />}
     </main>
   </div>;
 }
@@ -83,10 +83,43 @@ function FieldError({ error, name }: { error: ScheduleError | null; name: Schedu
 function DeleteDialog({ controller, item, busy, error }: { controller: Controller; item: Schedule; busy: boolean; error: ScheduleError | null }) { const recovery = error?.code === 'STALE_REVISION' || error?.code === 'NOT_FOUND'; return <div className="dialog-backdrop" role="presentation"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title"><p className="kicker">DELETE SCHEDULE</p><h2 id="delete-title">{recovery ? '日程状态已变化' : '删除这条日程？'}</h2><p><strong>{item.title}</strong></p><p className="dialog-copy">{recovery ? error?.message : '删除后无法恢复，也不会再产生这条日程的提醒。'}</p><div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => controller.cancelDelete()}>保留日程</button>{recovery ? <button className="primary-button" disabled={busy} onClick={() => void controller.recoverDelete()}>{error?.code === 'NOT_FOUND' ? '刷新列表' : '查看最新内容'}</button> : <button className="danger-button" disabled={busy} onClick={() => void controller.confirmDelete()}>永久删除</button>}</div></section></div>; }
 
 /** 设置页面只呈现已冻结的关闭偏好和清理重试操作。 */
-function Settings({ controller, closeBehavior, busy }: { controller: Controller; closeBehavior: CloseBehavior; busy: boolean }) { const [choice, setChoice] = useState(closeBehavior); useEffect(() => setChoice(closeBehavior), [closeBehavior]); const state = controller.snapshot(); return <section className="page-section"><div className="page-heading"><div><p className="kicker">PREFERENCES</p><h1>设置</h1><p>让 TimeCue 按你的习惯，安静陪伴。</p></div></div><section className="settings-card"><p className="card-eyebrow">窗口行为</p><h2>关闭窗口时</h2><p className="card-copy">选择点击右上角关闭按钮后的行为。</p><div className="preference-options"><Preference value="tray" choice={choice} busy={busy} onChange={setChoice} title="隐藏到托盘" copy="窗口收起，后台提醒继续。" /><Preference value="exit" choice={choice} busy={busy} onChange={setChoice} title="退出应用" copy="停止提醒并清理已投递通知。" /></div><button className="primary-button" disabled={busy || choice === closeBehavior} onClick={() => void controller.saveCloseBehavior(choice)}>保存偏好</button></section>{state.runtime?.lifecycle === 'cleanup-failed' && <section className="settings-card warning-card"><p className="card-eyebrow">运行状态</p><h2>通知清理未完成</h2><p className="card-copy">应用仍然可用，可以重试清理系统通知。</p><button className="secondary-button" disabled={busy} onClick={() => void controller.retryCleanup()}>重试清理</button></section>}</section>; }
+function Settings({ controller, closeBehavior, storageDirectories, busy }: { controller: Controller; closeBehavior: CloseBehavior; storageDirectories: StorageDirectories | null; busy: boolean }) { const [choice, setChoice] = useState(closeBehavior); useEffect(() => setChoice(closeBehavior), [closeBehavior]); const state = controller.snapshot(); return <section className="page-section"><div className="page-heading"><div><p className="kicker">PREFERENCES</p><h1>设置</h1><p>让 TimeCue 按你的习惯，安静陪伴。</p></div></div><section className="settings-card"><p className="card-eyebrow">窗口行为</p><h2>关闭窗口时</h2><p className="card-copy">选择点击右上角关闭按钮后的行为。</p><div className="preference-options"><Preference value="tray" choice={choice} busy={busy} onChange={setChoice} title="隐藏到托盘" copy="窗口收起，后台提醒继续。" /><Preference value="exit" choice={choice} busy={busy} onChange={setChoice} title="退出应用" copy="停止提醒并清理已投递通知。" /></div><button className="primary-button" disabled={busy || choice === closeBehavior} onClick={() => void controller.saveCloseBehavior(choice)}>保存偏好</button></section><div className="settings-subheading"><p className="card-eyebrow">存储位置</p><h2>日志与备份</h2><p>保存后重启应用生效，旧目录中的文件会保留。</p></div>{storageDirectories ? <><StorageDirectoryCard controller={controller} directory={storageDirectories.logs} busy={busy} /><StorageDirectoryCard controller={controller} directory={storageDirectories.backups} busy={busy} /></> : <LoadingCard />}{state.runtime?.lifecycle === 'cleanup-failed' && <section className="settings-card warning-card"><p className="card-eyebrow">运行状态</p><h2>通知清理未完成</h2><p className="card-copy">应用仍然可用，可以重试清理系统通知。</p><button className="secondary-button" disabled={busy} onClick={() => void controller.retryCleanup()}>重试清理</button></section>}</section>; }
 
 /** 单项关闭行为选择。 */
 function Preference({ value, choice, busy, title, copy, onChange }: { value: CloseBehavior; choice: CloseBehavior; busy: boolean; title: string; copy: string; onChange: (value: CloseBehavior) => void }) { return <label className={`preference ${choice === value ? 'selected' : ''}`}><input type="radio" name="close-behavior" value={value} checked={choice === value} disabled={busy} onChange={() => onChange(value)} /><span><strong>{title}</strong><small>{copy}</small></span>{choice === value && <b>✓</b>}</label>; }
+
+/** 独立呈现一类目录的待保存输入、当前生效值和重启提示。 */
+function StorageDirectoryCard({ controller, directory, busy }: { controller: Controller; directory: StorageDirectory; busy: boolean }) {
+  const label = directory.kind === 'logs' ? '日志' : '备份';
+  const [input, setInput] = useState(directory.savedPath);
+  const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
+  useEffect(() => { setInput(directory.savedPath); }, [directory.savedPath]);
+
+  /** 目录选择取消时保留原输入和当前生效/保存状态。 */
+  async function choose() {
+    if (busy) return;
+    const selected = await controller.chooseDirectory(directory.kind);
+    const error = controller.snapshot().error;
+    if (error) setResult({ text: error.message, error: true });
+    else if (selected === null) setResult({ text: '已取消选择，目录未改变。', error: false });
+    else { setInput(selected); setResult(null); }
+  }
+
+  /** 保存失败时保留输入，成功时只显示后端返回的 effective/saved 结果。 */
+  async function save() {
+    if (busy) return;
+    const saved = await controller.saveStorageDirectory(directory.kind, input);
+    if (saved) {
+      setInput(saved.savedPath);
+      setResult({ text: saved.restartRequired ? '已保存，重启后生效。当前仍使用旧目录。' : '已保存，当前目录无需切换。', error: false });
+    } else {
+      const error = controller.snapshot().error;
+      setResult({ text: error?.message ?? '保存失败，请重试。', error: true });
+    }
+  }
+
+  return <section className="settings-card directory-card" aria-label={`${label}目录设置`}><div className="directory-heading"><div><p className="card-eyebrow">{label}目录</p><h2>{label}文件存储位置</h2></div>{directory.restartRequired && <span className="restart-badge">重启后生效</span>}</div><dl className="directory-status"><div><dt>当前生效</dt><dd data-testid={`${directory.kind}-effective`}>{directory.effectivePath}</dd></div><div><dt>已保存</dt><dd data-testid={`${directory.kind}-saved`}>{directory.savedPath}</dd></div></dl><div className="directory-row"><label className="visually-hidden" htmlFor={`${directory.kind}-path`}>{label}目录</label><input id={`${directory.kind}-path`} className="path-input" value={input} disabled={busy} onChange={event => setInput(event.target.value)} spellCheck={false} /><button className="secondary-button" disabled={busy} onClick={() => void choose()}>选择目录</button><button className="primary-button" disabled={busy || input === directory.savedPath} onClick={() => void save()}>{busy ? '正在保存…' : '保存'}</button></div>{result && <p className={result.error ? 'directory-result error' : 'directory-result'} role={result.error ? 'alert' : 'status'}>{result.text}</p>}</section>;
+}
 
 /** 空列表的友好引导。 */
 function EmptySchedules({ onCreate }: { onCreate: () => void }) { return <div className="empty-card"><span className="empty-mark">✦</span><h2>还没有日程</h2><p>从一个小小的安排开始，让时间为你留出空间。</p><button className="secondary-button" onClick={onCreate}>添加第一个日程</button></div>; }

@@ -1,4 +1,4 @@
-import type { Activation, ActivationListener, AppPort, CloseBehavior, CreateScheduleRequest, FrontendStatus, RuntimeStatus, Schedule, ScheduleBounds, ScheduleListRequest, SchedulePage } from './contracts';
+import type { Activation, ActivationListener, AppPort, CloseBehavior, CreateScheduleRequest, DirectoryKind, FrontendStatus, RuntimeStatus, Schedule, ScheduleBounds, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory } from './contracts';
 import * as generatedBindings from '../wailsjs/go/runtime/WailsBindings';
 import { EventsOn as generatedEventsOn } from '../wailsjs/runtime/runtime';
 
@@ -13,6 +13,9 @@ export interface BindingsPort {
   GetDesktopStatus(): Promise<unknown>;
   GetCloseBehavior(): Promise<unknown>;
   SaveCloseBehavior(request: { behavior: CloseBehavior }): Promise<unknown>;
+  GetStorageDirectories(): Promise<unknown>;
+  ChooseStorageDirectory(kind: DirectoryKind): Promise<unknown>;
+  SaveStorageDirectory(request: { kind: DirectoryKind; path: string }): Promise<unknown>;
   FrontendReady(request: { last_sequence: number }): Promise<unknown>;
   RetryCleanup(): Promise<unknown>;
 }
@@ -81,6 +84,15 @@ export class WailsAdapter implements AppPort {
   /** 保存关闭行为，并只接受两个产品枚举。 */
   async saveCloseBehavior(value: CloseBehavior): Promise<CloseBehavior> { await this.bindings.SaveCloseBehavior({ behavior: value }); return value; }
 
+  /** 读取日志和备份目录的 effective/saved 对照。 */
+  async getStorageDirectories(): Promise<StorageDirectories> { return toStorageDirectories(await this.bindings.GetStorageDirectories()); }
+
+  /** 打开目录选择器；Wails 空字符串表示取消。 */
+  async chooseDirectory(kind: DirectoryKind): Promise<string | null> { const value = await this.bindings.ChooseStorageDirectory(kind); return typeof value === 'string' && value !== '' ? value : null; }
+
+  /** 保存单类目录，并保留后端返回的重启状态。 */
+  async saveStorageDirectory(kind: DirectoryKind, path: string): Promise<StorageDirectory> { return toStorageDirectory(await this.bindings.SaveStorageDirectory({ kind, path }), kind); }
+
   /** 注册前端事件后向后端回报最后消费的激活序号。 */
   async frontendReady(lastSequence: number): Promise<Activation | null> {
     const raw = await this.bindings.FrontendReady({ last_sequence: lastSequence });
@@ -103,6 +115,9 @@ export async function createWailsAdapter(): Promise<WailsAdapter> {
     GetDesktopStatus: generatedBindings.GetDesktopStatus,
     GetCloseBehavior: generatedBindings.GetCloseBehavior,
     SaveCloseBehavior: generatedBindings.SaveCloseBehavior,
+    GetStorageDirectories: generatedBindings.GetStorageDirectories,
+    ChooseStorageDirectory: generatedBindings.ChooseStorageDirectory,
+    SaveStorageDirectory: generatedBindings.SaveStorageDirectory,
     FrontendReady: generatedBindings.FrontendReady,
     RetryCleanup: generatedBindings.RetryCleanup,
   };
@@ -166,6 +181,28 @@ function enumValue<T extends string>(value: unknown, values: readonly T[], fallb
 function toDesktopStatus(value: unknown): FrontendStatus {
   const item = asRecord(value); const runtime = read(item, 'runtime', 'Runtime');
   const activation = toActivation(read(item, 'activation', 'Activation')); return { runtime: toRuntime(runtime ?? item), closeBehavior: toCloseBehavior(read(item, 'close_behavior', 'closeBehavior', 'CloseBehavior', 'behavior', 'Behavior')), activation };
+}
+
+/** 将目录设置 DTO 从 Go snake_case 字段转换为页面模型。 */
+function toStorageDirectories(value: unknown): StorageDirectories {
+  const item = asRecord(value);
+  return {
+    logs: toStorageDirectory(read(item, 'logs', 'Logs'), 'logs'),
+    backups: toStorageDirectory(read(item, 'backups', 'Backups'), 'backups'),
+  };
+}
+
+/** 转换单个目录 DTO，并拒绝数据库等未开放的目录类型。 */
+function toStorageDirectory(value: unknown, fallbackKind: DirectoryKind): StorageDirectory {
+  const item = asRecord(value);
+  const rawKind = read(item, 'kind', 'Kind');
+  const kind: DirectoryKind = rawKind === 'backups' ? 'backups' : rawKind === 'logs' ? 'logs' : fallbackKind;
+  return {
+    kind,
+    effectivePath: String(read(item, 'effective_path', 'effectivePath', 'EffectivePath') ?? ''),
+    savedPath: String(read(item, 'saved_path', 'savedPath', 'SavedPath') ?? ''),
+    restartRequired: Boolean(read(item, 'restart_required', 'restartRequired', 'RestartRequired')),
+  };
 }
 
 /** 只接受 tray/exit，防止平台数据污染界面状态。 */

@@ -3,6 +3,8 @@
 import {app} from '../models';
 import {runtime} from '../models';
 
+export function ChooseStorageDirectory(arg1:string):Promise<string>;
+
 export function CreateSchedule(arg1:string):Promise<app.ScheduleDTO>;
 
 export function DeleteSchedule(arg1:number,arg2:string):Promise<runtime.DeleteScheduleDTO>;
@@ -19,8 +21,12 @@ export function GetSchedule(arg1:number):Promise<app.ScheduleDTO>;
 
 export function GetScheduleTimeBounds():Promise<app.TimeBoundsDTO>;
 
+export function GetStorageDirectories():Promise<runtime.StorageDirectoriesDTO>;
+
 export function ListSchedules(arg1:app.ListSchedulesRequest):Promise<app.ListSchedulesResponse>;
 
 export function RetryCleanup():Promise<runtime.DesktopStatusDTO>;
 
 export function SaveCloseBehavior(arg1:runtime.CloseBehaviorDTO):Promise<void>;
+
+export function SaveStorageDirectory(arg1:runtime.SaveStorageDirectoryRequest):Promise<runtime.StorageDirectoryDTO>;
