@@ -144,6 +144,22 @@ func TestRunRejectsInvalidConfigurationBeforeCreatingLog(t *testing.T) {
 	}
 }
 
+// TestRunTreatsAlreadyRunningAsNormalExit 验证已成功转发的第二实例不初始化 Store 或记录运行错误。
+func TestRunTreatsAlreadyRunningAsNormalExit(t *testing.T) {
+	cfg := testConfig(filepath.Join(t.TempDir(), "timecue.log"))
+	qualification := recordingQualification{err: ErrAlreadyRunning, events: new([]string)}
+	err := Run(context.Background(), cfg, applicationFunc(func(context.Context, config.Config, *slog.Logger, Store) error {
+		t.Fatal("application was called for already-running instance")
+		return nil
+	}), qualification)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if _, statErr := os.Stat(cfg.ResolvedPaths.DatabasePath); !os.IsNotExist(statErr) {
+		t.Fatalf("database state = %v, want not created", statErr)
+	}
+}
+
 // logRecord 保存测试所需的结构化日志字段。
 type logRecord struct {
 	Level   string `json:"level"`

@@ -29,6 +29,9 @@ type ExclusiveStartup interface {
 	Acquire(context.Context) (func() error, error)
 }
 
+// ErrAlreadyRunning 表示第二实例已成功把激活请求转发给主实例。
+var ErrAlreadyRunning = errors.New("another instance is already running")
+
 // AlwaysQualified 是当前尚未接入 Windows 单实例锁时使用的默认资格实现。
 type AlwaysQualified struct{}
 
@@ -187,6 +190,9 @@ func Run(ctx context.Context, cfg config.Config, app Application, qualification 
 	}
 	resources, err := Initialize(ctx, cfg, qualification)
 	if err != nil {
+		if errors.Is(err, ErrAlreadyRunning) {
+			return nil
+		}
 		return err
 	}
 	defer func() {
