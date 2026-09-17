@@ -11,3 +11,5 @@ log/*
 .npm-cache/
 build/bin/
 frontend/package.json.md5
+
+.worktrees/*
