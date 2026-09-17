@@ -1,4 +1,4 @@
-import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type DirectoryKind, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type SchedulePage, type StorageDirectories, type StorageDirectory } from './contracts';
+import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type SchedulePage, type StorageDirectories, type StorageDirectory } from './contracts';
 import { draftRequest, emptyDraft } from './schedule-model';
 
 export type Page = 'schedules' | 'reminders' | 'settings';
@@ -21,6 +21,7 @@ export interface AppState {
   notice: string;
   runtime: RuntimeStatus | null;
   closeBehavior: CloseBehavior;
+  logLevel: LogLevelSettings;
   storageDirectories: StorageDirectories | null;
   activation: Activation | null;
 }
@@ -42,7 +43,7 @@ export function groupReminders(items: ReminderDetail[], active: ReminderIdentity
 
 /** 编排生产前端的日程、偏好、运行状态和激活用例，不拥有后端持久状态。 */
 export class Controller {
-  private state: AppState = { page: 'schedules', schedules: initialPage, reminders: initialReminderPage, reminderLoading: true, reminderDetailLoading: false, reminderConfirming: false, reminderError: null, activeReminder: null, reminderDetail: null, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', storageDirectories: null, activation: null };
+  private state: AppState = { page: 'schedules', schedules: initialPage, reminders: initialReminderPage, reminderLoading: true, reminderDetailLoading: false, reminderConfirming: false, reminderError: null, activeReminder: null, reminderDetail: null, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', logLevel: { effectiveLevel: 'info', savedLevel: 'info', restartRequired: false }, storageDirectories: null, activation: null };
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeActivation: () => void;
   private disposed = false;
@@ -67,11 +68,11 @@ export class Controller {
   /** 初始化窗口状态、日程列表、提醒列表和前端激活握手。 */
   async initialize(): Promise<void> {
     try {
-      const [desktop, schedules, bounds, closeBehavior, storageDirectories] = await Promise.all([this.port.getDesktopStatus(), this.port.listSchedules(), this.port.getScheduleTimeBounds(), this.port.getCloseBehavior(), this.port.getStorageDirectories()]);
+      const [desktop, schedules, bounds, closeBehavior, logLevel, storageDirectories] = await Promise.all([this.port.getDesktopStatus(), this.port.listSchedules(), this.port.getScheduleTimeBounds(), this.port.getCloseBehavior(), this.port.getLogLevel(), this.port.getStorageDirectories()]);
       if (this.disposed) return;
       const initialActivation = desktop.activation && desktop.activation.sequence > this.lastSequence ? desktop.activation : null;
       this.lastSequence = Math.max(this.lastSequence, desktop.activation?.sequence ?? 0);
-      this.update({ runtime: desktop.runtime, activation: desktop.activation, schedules, bounds, closeBehavior, storageDirectories, loading: false });
+      this.update({ runtime: desktop.runtime, activation: desktop.activation, schedules, bounds, closeBehavior, logLevel, storageDirectories, loading: false });
       if (initialActivation) void this.activateReminder(initialActivation);
       await this.refreshReminders();
       const pending = await this.port.frontendReady(this.lastSequence);
@@ -218,6 +219,38 @@ export class Controller {
 
   /** 读取关闭行为；保存失败不改变本地已生效值。 */
   async saveCloseBehavior(value: CloseBehavior): Promise<void> { if (this.state.busy) return; this.update({ busy: true, error: null, notice: '' }); try { const saved = await this.port.saveCloseBehavior(value); if (!this.disposed) this.update({ closeBehavior: saved, notice: '关闭偏好已保存。' }); } catch (error) { if (!this.disposed) this.fail(error); } finally { if (!this.disposed) this.update({ busy: false }); } }
+
+  /** 保存日志级别；保存成功但重启前继续使用当前生效级别。 */
+  async saveLogLevel(value: LogLevel): Promise<void> {
+    if (this.state.busy) return;
+    this.update({ busy: true, error: null, notice: '' });
+    try {
+      const saved = await this.port.saveLogLevel(value);
+      if (!this.disposed) this.update({ logLevel: saved, notice: saved.restartRequired ? '日志级别已保存，重启后生效。' : '日志级别已保存。' });
+    } catch (error) {
+      if (!this.disposed) this.fail(error);
+    } finally {
+      if (!this.disposed) this.update({ busy: false });
+    }
+  }
+
+  /** 显式恢复单个配置属性默认值，并刷新设置页的受控视图。 */
+  async restoreConfigDefault(property: ConfigProperty): Promise<void> {
+    if (this.state.busy) return;
+    this.update({ busy: true, error: null, notice: '' });
+    try {
+      await this.port.restoreConfigDefault(property);
+      const [closeBehavior, logLevel, storageDirectories] = await Promise.all([this.port.getCloseBehavior(), this.port.getLogLevel(), this.port.getStorageDirectories()]);
+      if (!this.disposed) {
+        const notice = property === 'window.close_behavior' ? '窗口关闭行为已恢复默认。' : '配置已恢复默认，重启后生效。';
+        this.update({ closeBehavior, logLevel, storageDirectories, notice });
+      }
+    } catch (error) {
+      if (!this.disposed) this.fail(error);
+    } finally {
+      if (!this.disposed) this.update({ busy: false });
+    }
+  }
 
   /** 通过设置端口打开目录选择器；取消时返回 null 且不修改输入。 */
   async chooseDirectory(kind: DirectoryKind): Promise<string | null> {

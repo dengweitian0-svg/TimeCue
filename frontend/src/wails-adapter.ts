@@ -1,4 +1,4 @@
-import type { Activation, ActivationListener, AppPort, CloseBehavior, CreateScheduleRequest, DirectoryKind, FrontendStatus, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory } from './contracts';
+import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory } from './contracts';
 import * as generatedBindings from '../wailsjs/go/runtime/WailsBindings';
 import { EventsOn as generatedEventsOn } from '../wailsjs/runtime/runtime';
 
@@ -16,9 +16,12 @@ export interface BindingsPort {
   GetDesktopStatus(): Promise<unknown>;
   GetCloseBehavior(): Promise<unknown>;
   SaveCloseBehavior(request: { behavior: CloseBehavior }): Promise<unknown>;
+  GetLogLevel(): Promise<unknown>;
+  SaveLogLevel(request: { level: LogLevel }): Promise<unknown>;
   GetStorageDirectories(): Promise<unknown>;
   ChooseStorageDirectory(kind: DirectoryKind): Promise<unknown>;
   SaveStorageDirectory(request: { kind: DirectoryKind; path: string }): Promise<unknown>;
+  RestoreConfigDefault(request: { property: ConfigProperty }): Promise<unknown>;
   FrontendReady(request: { last_sequence: number }): Promise<unknown>;
   RetryCleanup(): Promise<unknown>;
 }
@@ -102,6 +105,12 @@ export class WailsAdapter implements AppPort {
   /** 保存关闭行为，并只接受两个产品枚举。 */
   async saveCloseBehavior(value: CloseBehavior): Promise<CloseBehavior> { await this.bindings.SaveCloseBehavior({ behavior: value }); return value; }
 
+  /** 读取日志级别当前生效值与保存值。 */
+  async getLogLevel(): Promise<LogLevelSettings> { return toLogLevel(await this.bindings.GetLogLevel()); }
+
+  /** 保存日志级别，并保留重启生效状态。 */
+  async saveLogLevel(value: LogLevel): Promise<LogLevelSettings> { return toLogLevel(await this.bindings.SaveLogLevel({ level: value })); }
+
   /** 读取日志和备份目录的 effective/saved 对照。 */
   async getStorageDirectories(): Promise<StorageDirectories> { return toStorageDirectories(await this.bindings.GetStorageDirectories()); }
 
@@ -110,6 +119,9 @@ export class WailsAdapter implements AppPort {
 
   /** 保存单类目录，并保留后端返回的重启状态。 */
   async saveStorageDirectory(kind: DirectoryKind, path: string): Promise<StorageDirectory> { return toStorageDirectory(await this.bindings.SaveStorageDirectory({ kind, path }), kind); }
+
+  /** 将指定配置属性恢复为默认值。 */
+  async restoreConfigDefault(property: ConfigProperty): Promise<void> { await this.bindings.RestoreConfigDefault({ property }); }
 
   /** 注册前端事件后向后端回报最后消费的激活序号。 */
   async frontendReady(lastSequence: number): Promise<Activation | null> {
@@ -136,9 +148,12 @@ export async function createWailsAdapter(): Promise<WailsAdapter> {
     GetDesktopStatus: generatedBindings.GetDesktopStatus,
     GetCloseBehavior: generatedBindings.GetCloseBehavior,
     SaveCloseBehavior: generatedBindings.SaveCloseBehavior,
+    GetLogLevel: generatedBindings.GetLogLevel,
+    SaveLogLevel: generatedBindings.SaveLogLevel,
     GetStorageDirectories: generatedBindings.GetStorageDirectories,
     ChooseStorageDirectory: generatedBindings.ChooseStorageDirectory,
     SaveStorageDirectory: generatedBindings.SaveStorageDirectory,
+    RestoreConfigDefault: generatedBindings.RestoreConfigDefault,
     FrontendReady: generatedBindings.FrontendReady,
     RetryCleanup: generatedBindings.RetryCleanup,
   };
@@ -276,6 +291,17 @@ function toStorageDirectory(value: unknown, fallbackKind: DirectoryKind): Storag
     kind,
     effectivePath: String(read(item, 'effective_path', 'effectivePath', 'EffectivePath') ?? ''),
     savedPath: String(read(item, 'saved_path', 'savedPath', 'SavedPath') ?? ''),
+    restartRequired: Boolean(read(item, 'restart_required', 'restartRequired', 'RestartRequired')),
+  };
+}
+
+/** 将日志级别 DTO 映射为受控枚举和重启状态。 */
+function toLogLevel(value: unknown): LogLevelSettings {
+  const item = asRecord(value);
+  const level = (candidate: unknown): LogLevel => enumValue(candidate, ['debug', 'info', 'warn', 'error'], 'info');
+  return {
+    effectiveLevel: level(read(item, 'effective_level', 'effectiveLevel', 'EffectiveLevel')),
+    savedLevel: level(read(item, 'saved_level', 'savedLevel', 'SavedLevel')),
     restartRequired: Boolean(read(item, 'restart_required', 'restartRequired', 'RestartRequired')),
   };
 }

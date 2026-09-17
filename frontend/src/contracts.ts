@@ -1,5 +1,7 @@
 export type CloseBehavior = 'tray' | 'exit';
 export type DirectoryKind = 'logs' | 'backups';
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type ConfigProperty = 'log.level' | 'log.path' | 'backup.dir' | 'window.close_behavior';
 export type ScheduleType = 'single' | 'daily' | 'weekly' | 'monthly';
 export type Lifecycle = 'running' | 'stopping' | 'stopped' | 'cleanup-failed';
 
@@ -79,6 +81,12 @@ export interface StorageDirectories {
   backups: StorageDirectory;
 }
 
+export interface LogLevelSettings {
+  effectiveLevel: LogLevel;
+  savedLevel: LogLevel;
+  restartRequired: boolean;
+}
+
 export interface ReminderIdentity {
   scheduleId: string;
   originalDate: string;
@@ -132,9 +140,12 @@ export interface WailsPort {
   getDesktopStatus(): Promise<FrontendStatus>;
   getCloseBehavior(): Promise<CloseBehavior>;
   saveCloseBehavior(value: CloseBehavior): Promise<CloseBehavior>;
+  getLogLevel(): Promise<LogLevelSettings>;
+  saveLogLevel(value: LogLevel): Promise<LogLevelSettings>;
   getStorageDirectories(): Promise<StorageDirectories>;
   chooseDirectory(kind: DirectoryKind): Promise<string | null>;
   saveStorageDirectory(kind: DirectoryKind, path: string): Promise<StorageDirectory>;
+  restoreConfigDefault(property: ConfigProperty): Promise<void>;
   frontendReady(lastSequence: number): Promise<Activation | null>;
   retryCleanup(): Promise<void>;
   subscribeActivation(listener: ActivationListener): () => void;

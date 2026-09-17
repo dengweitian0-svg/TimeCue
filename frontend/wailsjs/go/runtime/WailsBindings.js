@@ -30,6 +30,10 @@ export function GetDesktopStatus() {
   return window['go']['runtime']['WailsBindings']['GetDesktopStatus']();
 }
 
+export function GetLogLevel() {
+  return window['go']['runtime']['WailsBindings']['GetLogLevel']();
+}
+
 export function GetReminderDetail(arg1, arg2) {
   return window['go']['runtime']['WailsBindings']['GetReminderDetail'](arg1, arg2);
 }
@@ -62,8 +66,16 @@ export function RetryCleanup() {
   return window['go']['runtime']['WailsBindings']['RetryCleanup']();
 }
 
+export function RestoreConfigDefault(arg1) {
+  return window['go']['runtime']['WailsBindings']['RestoreConfigDefault'](arg1);
+}
+
 export function SaveCloseBehavior(arg1) {
   return window['go']['runtime']['WailsBindings']['SaveCloseBehavior'](arg1);
+}
+
+export function SaveLogLevel(arg1) {
+  return window['go']['runtime']['WailsBindings']['SaveLogLevel'](arg1);
 }
 
 export function SaveStorageDirectory(arg1) {

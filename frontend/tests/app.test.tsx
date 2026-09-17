@@ -27,8 +27,11 @@ function port(overrides: Partial<AppPort> = {}): AppPort {
     getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true })),
     getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true }, closeBehavior: 'tray' as const, activation: null })),
     getCloseBehavior: vi.fn(async () => 'tray' as const),
+    getLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })),
     getStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs' as const, effectivePath: 'C:/TimeCue/logs', savedPath: 'C:/TimeCue/logs', restartRequired: false }, backups: { kind: 'backups' as const, effectivePath: 'C:/TimeCue/backups', savedPath: 'C:/TimeCue/backups', restartRequired: false } })),
     chooseDirectory: vi.fn(async () => null),
+    restoreConfigDefault: vi.fn(async () => undefined),
+    saveLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })),
     saveStorageDirectory: vi.fn(),
     saveCloseBehavior: vi.fn(),
     frontendReady: vi.fn(async () => null),
@@ -67,7 +70,7 @@ describe('App', () => {
     host.remove();
   });
 
-  it('renders independent log and backup directory cards without a database path input', async () => {
+  it('renders configuration controls without a database path input', async () => {
     const platform = port();
     const controller = new Controller(platform);
     const host = document.createElement('div');
@@ -82,6 +85,8 @@ describe('App', () => {
     expect(host.querySelector('[aria-label="备份目录设置"]')).not.toBeNull();
     expect(host.querySelector('#logs-path')).not.toBeNull();
     expect(host.querySelector('#backups-path')).not.toBeNull();
+    expect(host.querySelector('#log-level')).not.toBeNull();
+    expect([...host.querySelectorAll('button')].filter(button => button.textContent?.includes('恢复默认'))).toHaveLength(4);
     expect(host.querySelector('input[id*="database" i]')).toBeNull();
     root.unmount();
     controller.dispose();

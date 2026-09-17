@@ -17,6 +17,8 @@ export function GetCloseBehavior():Promise<runtime.CloseBehaviorDTO>;
 
 export function GetDesktopStatus():Promise<runtime.DesktopStatusDTO>;
 
+export function GetLogLevel():Promise<runtime.LogLevelDTO>;
+
 export function GetReminderDetail(arg1:number,arg2:string):Promise<app.ReminderDetailDTO>;
 
 export function GetRuntimeStatus():Promise<app.SchedulerStatus>;
@@ -33,6 +35,10 @@ export function ListSchedules(arg1:app.ListSchedulesRequest):Promise<app.ListSch
 
 export function RetryCleanup():Promise<runtime.DesktopStatusDTO>;
 
+export function RestoreConfigDefault(arg1:runtime.RestoreConfigDefaultRequest):Promise<void>;
+
 export function SaveCloseBehavior(arg1:runtime.CloseBehaviorDTO):Promise<void>;
+
+export function SaveLogLevel(arg1:runtime.SaveLogLevelRequest):Promise<runtime.LogLevelDTO>;
 
 export function SaveStorageDirectory(arg1:runtime.SaveStorageDirectoryRequest):Promise<runtime.StorageDirectoryDTO>;
