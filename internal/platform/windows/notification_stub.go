@@ -15,11 +15,10 @@ type WailsNotificationCenter struct{}
 
 // WailsNotificationCenterOptions 保持非 Windows 编译时的构造 API 形状。
 type WailsNotificationCenterOptions struct {
-	Runtime                any
-	Cleaner                NotificationHistoryCleaner
-	ActivationPublisher    ActivationPublisher
-	ApplicationUserModelID string
-	Logger                 *slog.Logger
+	Runtime             any
+	Cleaner             NotificationHistoryCleaner
+	ActivationPublisher ActivationPublisher
+	Logger              *slog.Logger
 }
 
 // NewWailsNotificationCenter 报告当前平台不支持 Wails Windows 通知。
@@ -55,6 +54,6 @@ func (*WailsNotificationCenter) SetLogger(*slog.Logger) {}
 type WinRTNotificationHistoryCleaner struct{}
 
 // NewWinRTNotificationHistoryCleaner 报告当前平台不支持 WinRT 通知历史清理。
-func NewWinRTNotificationHistoryCleaner(string) (*WinRTNotificationHistoryCleaner, error) {
-	return nil, errors.New("create notification history cleaner: Windows is required")
+func NewWinRTNotificationHistoryCleaner() *WinRTNotificationHistoryCleaner {
+	return &WinRTNotificationHistoryCleaner{}
 }
