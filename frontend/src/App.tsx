@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore, type FormEvent } from 'react';
-import { ScheduleError, type AppPort, type CloseBehavior, type Schedule, type ScheduleField, type ScheduleType, type StorageDirectories, type StorageDirectory } from './contracts';
-import { Controller } from './controller';
+import { ScheduleError, type AppPort, type CloseBehavior, type ReminderDetail, type Schedule, type ScheduleField, type ScheduleType, type StorageDirectories, type StorageDirectory } from './contracts';
+import { Controller, groupReminders } from './controller';
 import { draftRequest, localMinute, scheduleSummary, scheduleTypes } from './schedule-model';
 
 /** 生产桌面页面只呈现日程、关闭偏好、运行状态和激活结果。 */
@@ -12,6 +12,7 @@ export function App({ controller }: { controller: Controller }) {
       <div className="brand"><span className="brand-mark">◷</span><span>TimeCue</span></div>
       <p className="sidebar-label">工作台</p>
       <NavButton active={state.page === 'schedules'} onClick={() => controller.setPage('schedules')}>我的日程</NavButton>
+      <NavButton active={state.page === 'reminders'} onClick={() => controller.setPage('reminders')}>待处理提醒</NavButton>
       <NavButton active={state.page === 'settings'} onClick={() => controller.setPage('settings')}>设置</NavButton>
       <div className="sidebar-spacer" />
       <RuntimeChip runtime={state.runtime} />
@@ -22,7 +23,7 @@ export function App({ controller }: { controller: Controller }) {
       {state.activation && <div className="activation-banner" role="status">已收到窗口激活请求 {state.activation.targetId && <><strong>#{state.activation.targetId}</strong>{state.activation.originalDate && <span>{state.activation.originalDate}</span>}</>}<span>序列 {state.activation.sequence}</span></div>}
       {state.error && <ErrorBanner error={state.error} />}
       {state.notice && !state.activation && <div className="notice" role="status">{state.notice}</div>}
-      {state.page === 'settings' ? <Settings controller={controller} closeBehavior={state.closeBehavior} storageDirectories={state.storageDirectories} busy={state.busy} /> : <Schedules controller={controller} state={state} />}
+      {state.page === 'settings' ? <Settings controller={controller} closeBehavior={state.closeBehavior} storageDirectories={state.storageDirectories} busy={state.busy} /> : state.page === 'reminders' ? <Reminders controller={controller} state={state} /> : <Schedules controller={controller} state={state} />}
     </main>
   </div>;
 }
@@ -35,6 +36,36 @@ function RuntimeChip({ runtime }: { runtime: AppState['runtime'] }) {
   const label = !runtime ? '正在连接' : runtime.lifecycle === 'cleanup-failed' ? '需要清理' : runtime.lifecycle === 'running' ? '后台提醒运行中' : runtime.lifecycle === 'stopping' ? '正在停止' : '已停止';
   return <div className={`runtime-chip ${runtime?.lifecycle === 'cleanup-failed' ? 'warning' : ''}`}><span className="pulse" />{label}</div>;
 }
+
+/** 待处理提醒页面只读取列表和当前详情，不在查看或切换时提交确认。 */
+function Reminders({ controller, state }: { controller: Controller; state: AppState }) {
+  const group = groupReminders(state.reminders.items, state.activeReminder);
+  return <section className="page-section reminder-page"><div className="page-heading"><div><p className="kicker">PENDING REMINDERS</p><h1>待处理提醒</h1><p>从通知回到这里，查看仍需要你处理的消息。</p></div></div>
+    {state.reminderError && <ErrorBanner error={state.reminderError} />}
+    <div className="list-toolbar"><span>{state.reminderLoading && !state.reminders.items.length ? '正在读取…' : `${state.reminders.items.length} 条待处理提醒`}</span><button className="text-button" onClick={() => void controller.refreshReminders()} disabled={state.reminderLoading}>重新加载</button></div>
+    {state.reminderLoading && !state.reminders.items.length ? <LoadingCard /> : state.reminders.items.length ? <div className="reminder-layout"><div><div className="reminder-list">{state.reminders.items.map(item => <ReminderCard key={`${item.scheduleId}/${item.originalDate}`} item={item} active={item.scheduleId === state.activeReminder?.scheduleId && item.originalDate === state.activeReminder.originalDate} onClick={() => controller.selectReminder(item)} />)}</div>{state.reminders.nextCursor && <button className="secondary-button pagination" onClick={() => void controller.nextReminderPage()} disabled={state.reminderLoading}>加载更多</button>}</div><ReminderDetailPanel controller={controller} detail={state.reminderDetail} group={group} loading={state.reminderDetailLoading} active={state.activeReminder} /></div> : <EmptyReminders />}
+  </section>;
+}
+
+/** 显示待处理列表项的稳定身份、状态和可用时间。 */
+function ReminderCard({ item, active, onClick }: { item: ReminderDetail; active: boolean; onClick: () => void }) {
+  const label = item.contentStatus === 'available' && item.title ? item.title : '提醒内容暂不可用';
+  return <button className={`reminder-card${active ? ' active' : ''}`} onClick={onClick} aria-current={active ? 'true' : undefined}><span className="reminder-card-mark">◷</span><span className="reminder-card-body"><strong>{label}</strong><small>{item.startUnix === null ? item.originalDate : formatReminderTime(item.startUnix)}</small></span><span className="reminder-card-arrow">›</span></button>;
+}
+
+/** 呈现当前提醒的只读正文、状态和同刻切换入口。 */
+function ReminderDetailPanel({ controller, detail, group, loading, active }: { controller: Controller; detail: ReminderDetail | null; group: ReminderDetail[]; loading: boolean; active: AppState['activeReminder'] }) {
+  return <section className="reminder-detail-card" aria-label="提醒详情"><p className="card-eyebrow">CURRENT REMINDER</p>{loading ? <LoadingCard /> : !detail || !active ? <div className="detail-empty"><h2>选择一条提醒</h2><p>从左侧列表选择消息，查看它当前可重建的详情。</p></div> : <><div className="reminder-detail-heading"><div><h2>{detail.title ?? reminderStatusTitle(detail.status)}</h2><p>{detail.startUnix === null ? detail.originalDate : formatReminderTime(detail.startUnix)}</p></div><span className={`reminder-status ${detail.status}`}>{reminderStatusLabel(detail.status)}</span></div>{detail.status === 'pending' && detail.contentStatus === 'available' ? <div className="reminder-copy"><p>{detail.notes || '这条提醒没有附加正文。'}</p></div> : <div className="reminder-unavailable" role="status"><strong>{detail.status === 'confirmed' ? '这条提醒已经确认。' : detail.status === 'missing' ? '这条提醒已不存在。' : detail.status === 'not_processable' ? '这条提醒当前不可处理。' : '提醒内容暂不可用。'}</strong><p>{detail.status === 'pending' ? '系统保留了提醒身份，但无法从当前日程事实重建正文。' : '页面不会用当前或空白内容代替历史正文。'}</p></div>}{group.length > 1 && <div className="same-time-group"><p className="card-eyebrow">SAME TIME</p><div>{group.map(item => <button key={`${item.scheduleId}/${item.originalDate}`} className={`text-button${item.scheduleId === active.scheduleId && item.originalDate === active.originalDate ? ' selected' : ''}`} onClick={() => controller.selectReminder(item)}>{item.contentStatus === 'available' && item.title ? item.title : `提醒 ${item.scheduleId}`}</button>)}</div></div>}</>}</section>;
+}
+
+/** 将提醒状态转换成页面可读标题。 */
+function reminderStatusTitle(status: ReminderDetail['status']): string { return status === 'confirmed' ? '已确认的提醒' : status === 'missing' ? '已不存在的提醒' : status === 'not_processable' ? '不可处理的提醒' : '待处理提醒'; }
+
+/** 将提醒状态转换成短标签。 */
+function reminderStatusLabel(status: ReminderDetail['status']): string { return status === 'pending' ? '待处理' : status === 'confirmed' ? '已确认' : status === 'missing' ? '已不存在' : '不可处理'; }
+
+/** 将 Unix 秒转换为本地化的提醒时间。 */
+function formatReminderTime(unix: number): string { return new Date(unix * 1000).toLocaleString('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 
 /** 展示结构化错误及字段级提示。 */
 function ErrorBanner({ error }: { error: ScheduleError }) { return <div className="error-banner" role="alert"><span className="error-icon">!</span><div><strong>{error.message}</strong>{Object.values(error.fields)[0] && <p>{Object.values(error.fields)[0]}</p>}</div></div>; }
@@ -123,6 +154,9 @@ function StorageDirectoryCard({ controller, directory, busy }: { controller: Con
 
 /** 空列表的友好引导。 */
 function EmptySchedules({ onCreate }: { onCreate: () => void }) { return <div className="empty-card"><span className="empty-mark">✦</span><h2>还没有日程</h2><p>从一个小小的安排开始，让时间为你留出空间。</p><button className="secondary-button" onClick={onCreate}>添加第一个日程</button></div>; }
+
+/** 待处理提醒为空时明确说明没有需要确认的消息。 */
+function EmptyReminders() { return <div className="empty-card"><span className="empty-mark">✓</span><h2>没有待处理提醒</h2><p>新的系统通知到达后，会在这里保留到你确认。</p></div>; }
 
 /** 读取期间保留页面布局，避免内容跳动。 */
 function LoadingCard() { return <div className="loading-card"><span /><span /><span /></div>; }
