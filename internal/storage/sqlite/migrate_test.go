@@ -53,8 +53,8 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations error = %v", err)
 	}
-	if count != 6 {
-		t.Fatalf("migration count = %d, want 6", count)
+	if count != 7 {
+		t.Fatalf("migration count = %d, want 7", count)
 	}
 }
 
@@ -68,8 +68,102 @@ func TestMigrationVersionIsRecorded(t *testing.T) {
 	if err := db.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("read migration version error = %v", err)
 	}
-	if version != 6 {
-		t.Fatalf("version = %d, want 6", version)
+	if version != 7 {
+		t.Fatalf("version = %d, want 7", version)
+	}
+}
+
+// TestReminderProcessingMigrationPreservesNullAndIsIdempotent 验证 v6 到 v7 不回填确认时间且重复迁移安全。
+func TestReminderProcessingMigrationPreservesNullAndIsIdempotent(t *testing.T) {
+	db := openRawTestDB(t)
+	ctx := context.Background()
+	for _, migration := range migrations[:6] {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("begin migration %d error = %v", migration.version, err)
+		}
+		if err := applyMigration(ctx, tx, migration); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply migration %d error = %v", migration.version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit migration %d error = %v", migration.version, err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO schedules(title, first_start_local, original_start_local, duration_minutes, created_at_utc, updated_at_utc)
+		VALUES ('legacy', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 30, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("insert legacy schedule error = %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status)
+		VALUES (1, '2026-01-01', '2026-01-01T00:00:00Z', 'submitted')`); err != nil {
+		t.Fatalf("insert legacy attempt error = %v", err)
+	}
+	if err := migrate(ctx, db); err != nil {
+		t.Fatalf("upgrade to v7 error = %v", err)
+	}
+	var processed sql.NullString
+	if err := db.QueryRow("SELECT processed_at_utc FROM reminder_attempts WHERE id = 1").Scan(&processed); err != nil {
+		t.Fatalf("read legacy processed time error = %v", err)
+	}
+	if processed.Valid {
+		t.Fatalf("legacy processed time = %q, want NULL", processed.String)
+	}
+	var indexCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'reminder_attempts_pending_idx'").Scan(&indexCount); err != nil {
+		t.Fatalf("inspect pending index error = %v", err)
+	}
+	if indexCount != 1 {
+		t.Fatalf("pending index count = %d, want 1", indexCount)
+	}
+	if err := migrate(ctx, db); err != nil {
+		t.Fatalf("repeat v7 migration error = %v", err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
+		t.Fatalf("count migrations error = %v", err)
+	}
+	if count != 7 {
+		t.Fatalf("migration count after repeat = %d, want 7", count)
+	}
+}
+
+// TestReminderProcessingMigrationRollsBackPartialDDL 验证 v7 中途失败不会留下确认列或索引。
+func TestReminderProcessingMigrationRollsBackPartialDDL(t *testing.T) {
+	db := openRawTestDB(t)
+	ctx := context.Background()
+	for _, migration := range migrations[:6] {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("begin migration %d error = %v", migration.version, err)
+		}
+		if err := applyMigration(ctx, tx, migration); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply migration %d error = %v", migration.version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit migration %d error = %v", migration.version, err)
+		}
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin partial migration error = %v", err)
+	}
+	if err := applyMigration(ctx, tx, migration{version: 7, sql: `
+		ALTER TABLE reminder_attempts ADD COLUMN processed_at_utc TEXT NULL;
+		CREATE INDEX reminder_attempts_pending_idx ON reminder_attempts(id);
+		CREATE TABLE broken (id INTEGER NOT NULL;
+	`}); err == nil {
+		t.Fatal("partial v7 migration error = nil")
+	}
+	if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+		t.Fatalf("partial migration rollback error = %v", rollbackErr)
+	}
+	var columnCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('reminder_attempts') WHERE name = 'processed_at_utc'").Scan(&columnCount); err != nil {
+		t.Fatalf("inspect rolled back column error = %v", err)
+	}
+	if columnCount != 0 {
+		t.Fatal("partial v7 migration left processed_at_utc")
 	}
 }
 
