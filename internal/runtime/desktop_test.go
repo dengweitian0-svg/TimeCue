@@ -351,6 +351,108 @@ func TestReminderQueryBindingsUseSQLiteStore(t *testing.T) {
 	}
 }
 
+// newReminderBindingFixture 创建带真实 SQLite 提醒尝试的运行时绑定测试夹具。
+func newReminderBindingFixture(t *testing.T) (*DesktopApplication, *sqlite.Store, domain.OccurrenceIdentity) {
+	t.Helper()
+	location := time.FixedZone("CST", 8*60*60)
+	store := openDesktopTestStore(t)
+	application, _ := newRunningDesktopTestApplicationWithStore(t, DesktopDependencies{
+		Host:          &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }},
+		Notifications: &platform.FakeNotificationCenter{},
+		Clock: desktopTestClock{snapshot: domain.TimeSnapshot{
+			Now:      time.Date(2026, 1, 1, 8, 0, 0, 0, location),
+			Location: location,
+		}},
+	}, store)
+	start := time.Date(2026, 1, 1, 9, 0, 0, 0, location).Unix()
+	created, err := application.Bindings().CreateSchedule(`{"title":"Focus","start_unix":` + formatInt(start) + `,"end_unix":` + formatInt(start+30*60) + `}`)
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	return application, store, domain.OccurrenceIdentity{ScheduleID: domain.ScheduleID(created.ID), OriginalDate: "2026-01-01"}
+}
+
+// seedReminderAttempt 写入测试所需的提醒发送结果，不绕过 SQLite 状态转换。
+func seedReminderAttempt(t *testing.T, store *sqlite.Store, identity domain.OccurrenceIdentity, status app.ReminderAttemptStatus) {
+	t.Helper()
+	if claimed, err := store.ClaimReminderAttempt(context.Background(), identity, time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)); err != nil || !claimed {
+		t.Fatalf("ClaimReminderAttempt() = (%t, %v), want claimed", claimed, err)
+	}
+	if status == app.ReminderAttemptClaimed {
+		return
+	}
+	if err := store.SetReminderAttemptStatus(context.Background(), identity, status); err != nil {
+		t.Fatalf("SetReminderAttemptStatus() error = %v", err)
+	}
+}
+
+// TestConfirmReminderBindingIsIdempotent 验证重复确认只首次写入并从待处理列表消失。
+func TestConfirmReminderBindingIsIdempotent(t *testing.T) {
+	application, store, identity := newReminderBindingFixture(t)
+	defer func() { _ = application.StopFromHost(context.Background()) }()
+	seedReminderAttempt(t, store, identity, app.ReminderAttemptSubmitted)
+
+	first, err := application.Bindings().ConfirmReminder(int64(identity.ScheduleID), identity.OriginalDate)
+	if err != nil || !first.Changed {
+		t.Fatalf("first ConfirmReminder() = %+v, %v", first, err)
+	}
+	second, err := application.Bindings().ConfirmReminder(int64(identity.ScheduleID), identity.OriginalDate)
+	if err != nil || second.Changed || !second.ProcessedAtUTC.Equal(first.ProcessedAtUTC) {
+		t.Fatalf("second ConfirmReminder() = %+v, %v, want idempotent result", second, err)
+	}
+	pending, err := application.Bindings().ListPendingReminders(app.ListPendingRemindersRequest{Limit: 10})
+	if err != nil || len(pending.Items) != 0 {
+		t.Fatalf("pending after confirmation = %+v, %v", pending, err)
+	}
+}
+
+// TestConfirmReminderBindingPreservesErrorCategories 验证目标不存在和不可处理状态不被绑定层改写。
+func TestConfirmReminderBindingPreservesErrorCategories(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		application, _, identity := newReminderBindingFixture(t)
+		defer func() { _ = application.StopFromHost(context.Background()) }()
+		_, err := application.Bindings().ConfirmReminder(int64(identity.ScheduleID), identity.OriginalDate)
+		if err == nil || FormatError(err).Code != string(domain.NotFound) {
+			t.Fatalf("missing confirmation error = %v, formatted = %+v", err, FormatError(err))
+		}
+	})
+	t.Run("not processable", func(t *testing.T) {
+		application, store, identity := newReminderBindingFixture(t)
+		defer func() { _ = application.StopFromHost(context.Background()) }()
+		seedReminderAttempt(t, store, identity, app.ReminderAttemptFailed)
+		_, err := application.Bindings().ConfirmReminder(int64(identity.ScheduleID), identity.OriginalDate)
+		if err == nil || FormatError(err).Code != string(domain.ReminderNotProcessable) {
+			t.Fatalf("not processable confirmation error = %v, formatted = %+v", err, FormatError(err))
+		}
+	})
+}
+
+// TestConfirmReminderBindingRejectsStoppingAndStorageFailures 验证停止准入和底层失败均可观察。
+func TestConfirmReminderBindingRejectsStoppingAndStorageFailures(t *testing.T) {
+	t.Run("stopping", func(t *testing.T) {
+		application, store, identity := newReminderBindingFixture(t)
+		seedReminderAttempt(t, store, identity, app.ReminderAttemptSubmitted)
+		if err := application.StopFromHost(context.Background()); err != nil {
+			t.Fatalf("StopFromHost() error = %v", err)
+		}
+		_, err := application.Bindings().ConfirmReminder(int64(identity.ScheduleID), identity.OriginalDate)
+		if err == nil || FormatError(err).Code != string(domain.RuntimeStopping) {
+			t.Fatalf("stopping confirmation error = %v, formatted = %+v", err, FormatError(err))
+		}
+	})
+	t.Run("storage failure", func(t *testing.T) {
+		application, store, identity := newReminderBindingFixture(t)
+		seedReminderAttempt(t, store, identity, app.ReminderAttemptSubmitted)
+		if err := store.Close(); err != nil {
+			t.Fatalf("Store.Close() error = %v", err)
+		}
+		_, err := application.Bindings().ConfirmReminder(int64(identity.ScheduleID), identity.OriginalDate)
+		if err == nil || FormatError(err).Code != "INTERNAL" {
+			t.Fatalf("storage confirmation error = %v, formatted = %+v", err, FormatError(err))
+		}
+	})
+}
+
 // TestStorageDirectoryBindingsExposeRestartOnlyState 验证保存后 effective 仍是旧目录、saved 是新目录。
 func TestStorageDirectoryBindingsExposeRestartOnlyState(t *testing.T) {
 	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}

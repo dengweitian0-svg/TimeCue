@@ -113,6 +113,24 @@ func (b *WailsBindings) GetReminderDetail(scheduleID int64, originalDate string)
 	})
 }
 
+// ConfirmReminder 确认当前提醒，并在停止阶段拒绝新的持久化写入。
+func (b *WailsBindings) ConfirmReminder(scheduleID int64, originalDate string) (app.ReminderConfirmationDTO, error) {
+	if err := b.validate(); err != nil {
+		return app.ReminderConfirmationDTO{}, err
+	}
+	if err := b.application.ensureWritable(); err != nil {
+		return app.ReminderConfirmationDTO{}, err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return app.ReminderConfirmationDTO{}, err
+	}
+	return b.application.service.ConfirmReminder(ctx, domain.OccurrenceIdentity{
+		ScheduleID:   domain.ScheduleID(scheduleID),
+		OriginalDate: originalDate,
+	})
+}
+
 // DeleteSchedule 永久删除日程并返回已删除标题。
 func (b *WailsBindings) DeleteSchedule(id int64, payload string) (DeleteScheduleDTO, error) {
 	if err := b.validate(); err != nil {
