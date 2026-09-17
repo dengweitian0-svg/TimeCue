@@ -132,16 +132,17 @@ type DesktopApplication struct {
 	deps   DesktopDependencies
 	logger *slog.Logger
 
-	mu              sync.Mutex
-	config          *config.Config
-	service         *app.Service
-	coordinator     *app.MutationCoordinator
-	scheduler       *app.ReminderScheduler
-	bindings        *WailsBindings
-	schedulerCancel context.CancelFunc
-	schedulerDone   chan error
-	schedulerJoined bool
-	eventCancel     context.CancelFunc
+	mu                   sync.Mutex
+	config               *config.Config
+	service              *app.Service
+	coordinator          *app.MutationCoordinator
+	scheduler            *app.ReminderScheduler
+	bindings             *WailsBindings
+	schedulerCancel      context.CancelFunc
+	schedulerDone        chan error
+	schedulerJoined      bool
+	eventCancel          context.CancelFunc
+	environmentForwarder sync.WaitGroup
 
 	state              DesktopLifecycleState
 	cleanupError       error
@@ -149,6 +150,9 @@ type DesktopApplication struct {
 	lastError          error
 	runtimeContext     context.Context
 	domReady           bool
+	starting           bool
+	startupDone        chan struct{}
+	startupCancel      context.CancelFunc
 	stopDone           chan struct{}
 	activationSequence uint64
 	latestActivation   *ActivationDTO
@@ -287,22 +291,43 @@ func (a *DesktopApplication) OnDomReady(ctx context.Context) error {
 	// 资源初始化与 scheduler 启动必须发生在 DOM ready 之后，Wails Runtime context 才有效。
 	runCtx, cancel := context.WithCancel(ctx)
 	a.schedulerCancel = cancel
-	a.schedulerDone = make(chan error, 1)
-	a.schedulerJoined = false
 	a.eventCancel = cancel
-	a.state = DesktopStateRunning
+	a.starting = true
+	a.startupDone = make(chan struct{})
+	a.startupCancel = cancel
 	scheduler := a.scheduler
-	schedulerDone := a.schedulerDone
 	a.mu.Unlock()
-	if err := a.startResources(ctx); err != nil {
+	if err := a.startResources(runCtx); err != nil {
+		if runCtx.Err() != nil {
+			a.finishStartup()
+			return nil
+		}
 		cancel()
-		return a.failStart(err)
+		startErr := a.failStart(err)
+		a.finishStartup()
+		return startErr
 	}
+	if runCtx.Err() != nil {
+		a.finishStartup()
+		return nil
+	}
+	schedulerDone := make(chan error, 1)
+	a.mu.Lock()
+	a.schedulerDone = schedulerDone
+	a.schedulerJoined = false
+	a.mu.Unlock()
 	go func() {
 		// scheduler 是唯一的提醒循环；其他 goroutine 只负责转发外部事件。
 		schedulerDone <- scheduler.Run(runCtx)
 	}()
 	a.startEventForwarders(runCtx)
+	a.mu.Lock()
+	startupCancelled := runCtx.Err() != nil
+	if !startupCancelled {
+		a.state = DesktopStateRunning
+	}
+	a.mu.Unlock()
+	a.finishStartup()
 	return nil
 }
 
@@ -373,13 +398,45 @@ func (a *DesktopApplication) failStart(primary error) error {
 	return primary
 }
 
+// finishStartup 结束 DOM ready 启动闸门，并唤醒等待启动完成的停止请求。
+func (a *DesktopApplication) finishStartup() {
+	a.mu.Lock()
+	done := a.startupDone
+	a.startupDone = nil
+	a.startupCancel = nil
+	a.starting = false
+	a.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
+}
+
 // startEventForwarders 将平台事实回流至调度器，并保持失败可观察。
 func (a *DesktopApplication) startEventForwarders(ctx context.Context) {
 	if a.deps.Activation != nil {
 		go a.forwardActivations(ctx, a.deps.Activation.Events())
 	}
 	if a.deps.Environment != nil {
-		go a.forwardEnvironmentEvents(ctx, a.deps.Environment.Events())
+		a.environmentForwarder.Add(1)
+		go func() {
+			defer a.environmentForwarder.Done()
+			a.forwardEnvironmentEvents(ctx, a.deps.Environment.Events())
+		}()
+	}
+}
+
+// waitEnvironmentForwarder 等待环境事件转发退出，阻止关闭底层时钟后仍有事件进入调度器。
+func (a *DesktopApplication) waitEnvironmentForwarder(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		a.environmentForwarder.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -490,15 +547,17 @@ func (a *DesktopApplication) onTrayOpen() {
 	}
 }
 
-// onTrayExit 将托盘退出动作汇入统一停止路径。
+// onTrayExit 异步汇入统一停止路径，确保托盘消息回调先返回后再关闭托盘资源。
 func (a *DesktopApplication) onTrayExit() {
 	ctx := a.lifecycleContext()
 	if ctx == nil {
 		return
 	}
-	if err := a.Stop(ctx); err != nil {
-		a.recordError(err)
-	}
+	go func() {
+		if err := a.Stop(context.WithoutCancel(ctx)); err != nil {
+			a.recordError(err)
+		}
+	}()
 }
 
 // Stop 进入可重入、可重试的停止状态机，并在成功清理后请求宿主退出。
@@ -520,6 +579,22 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 		ctx = context.Background()
 	}
 	a.mu.Lock()
+	if a.starting {
+		startupDone := a.startupDone
+		startupCancel := a.startupCancel
+		a.mu.Unlock()
+		if startupCancel != nil {
+			startupCancel()
+		}
+		if startupDone != nil {
+			select {
+			case <-startupDone:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return a.stop(ctx, requestQuit)
+	}
 	if a.state == DesktopStateStopped && a.resourcesClosed {
 		a.mu.Unlock()
 		return nil
@@ -543,7 +618,6 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 		a.mu.Unlock()
 		return err
 	}
-	retryCleanup := a.state == DesktopStateCleanupFailed
 	a.state = DesktopStateStopping
 	done := make(chan struct{})
 	a.stopDone = done
@@ -553,27 +627,18 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 	a.mu.Unlock()
 
 	var stopErr error
-	if !retryCleanup {
-		if coordinator != nil {
-			stopErr = errors.Join(stopErr, coordinator.ApplyRuntimeEvent(app.RuntimeEvent{Type: app.RuntimeEventStop}))
-		}
-		if cancel != nil {
-			cancel()
-		}
-		if schedulerDone != nil {
-			select {
-			case schedulerErr := <-schedulerDone:
-				a.mu.Lock()
-				a.schedulerJoined = true
-				a.mu.Unlock()
-				if schedulerErr != nil && !errors.Is(schedulerErr, context.Canceled) {
-					stopErr = errors.Join(stopErr, schedulerErr)
-				}
-			case <-ctx.Done():
-				stopErr = errors.Join(stopErr, ctx.Err())
-			}
-		}
-	} else if schedulerDone != nil {
+	// 先取消 scheduler 和环境事件转发，再进入 coordinator 停止转换；否则事件转发
+	// 可能持有 coordinator 锁等待存储，而 Stop 同时等待同一把锁形成阻塞环。
+	if cancel != nil {
+		cancel()
+	}
+	if err := a.waitEnvironmentForwarder(ctx); err != nil {
+		stopErr = errors.Join(stopErr, fmt.Errorf("wait environment event forwarder: %w", err))
+	}
+	if stopErr == nil && coordinator != nil {
+		stopErr = errors.Join(stopErr, coordinator.ApplyRuntimeEvent(app.RuntimeEvent{Type: app.RuntimeEventStop}))
+	}
+	if schedulerDone != nil {
 		// 首次 Stop 可能因调用方 context 超时提前返回；重试仍必须先等 scheduler 真正退出。
 		a.mu.Lock()
 		joined := a.schedulerJoined
