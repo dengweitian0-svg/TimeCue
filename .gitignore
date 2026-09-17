@@ -4,3 +4,10 @@
 
 .env
 log/*
+
+# 本地验证缓存与 Wails 构建产物
+.gocache*/
+.gotmp*/
+.npm-cache/
+build/bin/
+frontend/package.json.md5

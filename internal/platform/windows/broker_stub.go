@@ -52,5 +52,8 @@ func (*WindowsInstanceBroker) Publish(platform.Activation) error {
 	return errors.New("publish activation: Windows is required")
 }
 
+// Stop 在非 Windows 平台上不持有 Pipe 或事件资源。
+func (*WindowsInstanceBroker) Stop() error { return nil }
+
 // Close 在非 Windows 平台上不持有资源。
 func (*WindowsInstanceBroker) Close() error { return nil }

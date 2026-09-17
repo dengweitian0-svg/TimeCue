@@ -48,6 +48,9 @@ func (*WailsNotificationCenter) Close() error { return nil }
 // LastResponseError 在非 Windows 平台上没有异步通知响应，因此返回空错误。
 func (*WailsNotificationCenter) LastResponseError() error { return nil }
 
+// SetLogger 在非 Windows 平台不保存日志器。
+func (*WailsNotificationCenter) SetLogger(*slog.Logger) {}
+
 // WinRTNotificationHistoryCleaner 是非 Windows 平台上的清理器占位类型。
 type WinRTNotificationHistoryCleaner struct{}
 

@@ -1,4 +1,6 @@
 import type { Activation, ActivationListener, AppPort, CloseBehavior, CreateScheduleRequest, FrontendStatus, RuntimeStatus, Schedule, ScheduleBounds, ScheduleListRequest, SchedulePage } from './contracts';
+import * as generatedBindings from '../wailsjs/go/runtime/WailsBindings';
+import { EventsOn as generatedEventsOn } from '../wailsjs/runtime/runtime';
 
 /** 可注入的 Go bindings 端口；生成文件只在生产启动时接入，测试不依赖其存在。 */
 export interface BindingsPort {
@@ -19,8 +21,6 @@ export interface BindingsPort {
 export type EventsOn = (name: string, listener: (...args: unknown[]) => void) => void | (() => void);
 
 export const ACTIVATION_EVENT = 'activation';
-const BINDINGS_MODULE = '../wailsjs/go/runtime/WailsBindings';
-const RUNTIME_MODULE = '../wailsjs/runtime/runtime';
 
 /** 将 Wails 生成模块包成生产前端需要的类型安全端口。 */
 export class WailsAdapter implements AppPort {
@@ -91,11 +91,22 @@ export class WailsAdapter implements AppPort {
   async retryCleanup(): Promise<void> { await this.bindings.RetryCleanup(); }
 }
 
-/** 延迟加载正式生成的 Go bindings 和 Wails runtime，避免测试或生成阶段静态依赖文件。 */
+/** 使用生成方法的显式包装建立稳定端口，避免生产代码自行拼接 IPC 名称。 */
 export async function createWailsAdapter(): Promise<WailsAdapter> {
-  const bindings = await import(/* @vite-ignore */ BINDINGS_MODULE) as unknown as BindingsPort;
-  const runtime = await import(/* @vite-ignore */ RUNTIME_MODULE) as unknown as { EventsOn?: EventsOn };
-  return new WailsAdapter(bindings, runtime.EventsOn);
+  const bindings: BindingsPort = {
+    ListSchedules: request => generatedBindings.ListSchedules({ limit: request.limit, cursor: request.cursor ?? '' }),
+    GetSchedule: id => generatedBindings.GetSchedule(Number(id)),
+    GetScheduleTimeBounds: generatedBindings.GetScheduleTimeBounds,
+    CreateSchedule: generatedBindings.CreateSchedule,
+    DeleteSchedule: generatedBindings.DeleteSchedule,
+    GetRuntimeStatus: generatedBindings.GetRuntimeStatus,
+    GetDesktopStatus: generatedBindings.GetDesktopStatus,
+    GetCloseBehavior: generatedBindings.GetCloseBehavior,
+    SaveCloseBehavior: generatedBindings.SaveCloseBehavior,
+    FrontendReady: generatedBindings.FrontendReady,
+    RetryCleanup: generatedBindings.RetryCleanup,
+  };
+  return new WailsAdapter(bindings, generatedEventsOn as EventsOn);
 }
 
 /** 将动态导入模块的取消返回值统一为可调用函数。 */

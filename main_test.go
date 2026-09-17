@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	platformwindows "github.com/dengweitian0-svg/TimeCue/internal/platform/windows"
 	"github.com/dengweitian0-svg/TimeCue/internal/utils"
 )
 
@@ -37,5 +38,16 @@ func TestReportErrorPreservesOutputAndExitCode(t *testing.T) {
 				t.Fatalf("reportError() output = %q, want %q", output.String(), testCase.wantOutput)
 			}
 		})
+	}
+}
+
+// TestNormalizeDesktopStartErrorSilencesStaleToastColdActivation 验证无主实例的过期 Toast 不显示致命错误框。
+func TestNormalizeDesktopStartErrorSilencesStaleToastColdActivation(t *testing.T) {
+	wantErr := errors.New("other startup failure")
+	if err := normalizeDesktopStartError(utils.Wrap(utils.StartupError, "confirm exclusive startup", platformwindows.ErrActivationWithoutInstance)); err != nil {
+		t.Fatalf("normalizeDesktopStartError() = %v, want nil", err)
+	}
+	if err := normalizeDesktopStartError(wantErr); !errors.Is(err, wantErr) {
+		t.Fatalf("normalizeDesktopStartError() = %v, want %v", err, wantErr)
 	}
 }

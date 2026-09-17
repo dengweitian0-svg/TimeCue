@@ -165,6 +165,85 @@ func TestDesktopApplicationAssemblesOneServiceCoordinatorScheduler(t *testing.T)
 	}
 }
 
+// TestStopFromHostCleansUpWithoutRecursivelyQuitting 验证宿主关闭回调复用正式清理状态机且不再次请求 Quit。
+func TestStopFromHostCleansUpWithoutRecursivelyQuitting(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	application, cancel := newDesktopTestApplication(t, host, nil)
+	defer cancel()
+	if err := application.StopFromHost(context.Background()); err != nil {
+		t.Fatalf("StopFromHost() error = %v", err)
+	}
+	if host.QuitCalls() != 0 {
+		t.Fatalf("host Quit count = %d, want 0", host.QuitCalls())
+	}
+}
+
+// TestRunAssemblyFailureClosesOwnedPlatformResources 验证已移交给运行时的平台资源在组装失败时不泄漏。
+func TestRunAssemblyFailureClosesOwnedPlatformResources(t *testing.T) {
+	activation := platform.NewFakeActivationSource(1)
+	environment := platform.NewFakeEnvironmentEventSource(1)
+	tray := &platform.FakeTrayPort{}
+	notifications := &platform.FakeNotificationCenter{}
+	application := NewDesktopApplication(DesktopDependencies{
+		Activation:    activation,
+		Environment:   environment,
+		Tray:          tray,
+		Notifications: notifications,
+	})
+	err := application.Run(context.Background(), config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), openDesktopTestStore(t))
+	if err == nil {
+		t.Fatal("Run() error = nil, want missing clock error")
+	}
+	if !activation.Closed || !environment.Closed || !tray.Closed || !notifications.Closed {
+		t.Fatalf("resource closure = activation:%t environment:%t tray:%t notifications:%t, want all closed", activation.Closed, environment.Closed, tray.Closed, notifications.Closed)
+	}
+	if err := application.OnDomReady(context.Background()); err != nil {
+		t.Fatalf("late OnDomReady() error = %v", err)
+	}
+	if activation.Started || environment.Started || tray.Started || notifications.Initialized {
+		t.Fatal("late OnDomReady restarted resources after failed assembly")
+	}
+}
+
+// TestRunCancellationBeforeDomReadyClosesOwnedResources 验证宿主在 DOM ready 前退出时仍执行完整资源清理。
+func TestRunCancellationBeforeDomReadyClosesOwnedResources(t *testing.T) {
+	activation := platform.NewFakeActivationSource(1)
+	environment := platform.NewFakeEnvironmentEventSource(1)
+	tray := &platform.FakeTrayPort{}
+	notifications := &platform.FakeNotificationCenter{}
+	location := time.FixedZone("CST", 8*60*60)
+	clock := desktopTestClock{snapshot: domain.TimeSnapshot{Now: time.Date(2026, 1, 1, 8, 0, 0, 0, location), Location: location}}
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	application := NewDesktopApplication(DesktopDependencies{
+		Host:          host,
+		Activation:    activation,
+		Environment:   environment,
+		Tray:          tray,
+		Notifications: notifications,
+		Clock:         clock,
+	})
+	cfg := config.Config{Window: config.WindowConfig{CloseBehavior: config.CloseBehaviorTray}, ResolvedPaths: config.ResolvedPaths{PreferencesPath: t.TempDir() + "/preferences.yaml"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- application.Run(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), openDesktopTestStore(t))
+	}()
+	waitForDesktopCondition(t, func() bool { return application.Service() != nil })
+	cancel()
+	if err := <-result; err != nil {
+		t.Fatalf("Run() error = %v, want nil cancellation", err)
+	}
+	if !activation.Closed || !environment.Closed || !tray.Closed || !notifications.Closed {
+		t.Fatalf("resource closure = activation:%t environment:%t tray:%t notifications:%t, want all closed", activation.Closed, environment.Closed, tray.Closed, notifications.Closed)
+	}
+	if err := application.OnDomReady(context.Background()); err != nil {
+		t.Fatalf("late OnDomReady() error = %v", err)
+	}
+	if activation.Started || environment.Started || tray.Started || notifications.Initialized {
+		t.Fatal("late OnDomReady restarted resources after cancellation")
+	}
+}
+
 // TestWailsBindingsUseJSONPresenceAndSQLiteStore 验证绑定通过现有 JSON 解码器调用创建/读取/列表/删除用例。
 func TestWailsBindingsUseJSONPresenceAndSQLiteStore(t *testing.T) {
 	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}

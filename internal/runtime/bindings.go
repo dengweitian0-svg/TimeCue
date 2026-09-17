@@ -15,6 +15,11 @@ type WailsBindings struct {
 	application *DesktopApplication
 }
 
+// NewWailsBindingsForGeneration 创建只供 Wails 反射生成前端声明的无副作用绑定实例。
+func NewWailsBindingsForGeneration() *WailsBindings {
+	return &WailsBindings{}
+}
+
 // CreateSchedule 创建单次或重复日程。
 func (b *WailsBindings) CreateSchedule(payload string) (app.ScheduleDTO, error) {
 	if err := b.validate(); err != nil {

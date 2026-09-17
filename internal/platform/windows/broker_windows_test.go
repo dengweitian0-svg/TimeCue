@@ -105,3 +105,43 @@ func TestWindowsInstanceBrokerPublishCloseRaceGuard(t *testing.T) {
 		t.Fatal("Publish() error = nil after Close")
 	}
 }
+
+// TestWindowsInstanceBrokerStopRejectsForwardingUntilMutexRelease 验证停止 Pipe 后不再误报转发成功，且 Mutex 保持到 Bootstrap 释放。
+func TestWindowsInstanceBrokerStopRejectsForwardingUntilMutexRelease(t *testing.T) {
+	name := fmt.Sprintf("stopping-test-%d", time.Now().UnixNano())
+	primary, err := NewWindowsInstanceBrokerWithOptions(WindowsInstanceBrokerOptions{ApplicationName: name, DialTimeout: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := primary.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("primary Acquire() error = %v", err)
+	}
+	t.Cleanup(func() { _ = release() })
+	if err := primary.Stop(); err != nil {
+		t.Fatalf("primary Stop() error = %v", err)
+	}
+
+	stoppingInstance, err := NewWindowsInstanceBrokerWithOptions(WindowsInstanceBrokerOptions{ApplicationName: name, DialTimeout: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stoppingInstance.Acquire(context.Background()); err == nil || errors.Is(err, bootstrap.ErrAlreadyRunning) {
+		t.Fatalf("Acquire() during stop error = %v, want explicit forwarding failure", err)
+	}
+	if err := release(); err != nil {
+		t.Fatalf("release primary error = %v", err)
+	}
+
+	restarted, err := NewWindowsInstanceBrokerWithOptions(WindowsInstanceBrokerOptions{ApplicationName: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedRelease, err := restarted.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire() after release error = %v", err)
+	}
+	if err := restartedRelease(); err != nil {
+		t.Fatalf("release restarted broker error = %v", err)
+	}
+}

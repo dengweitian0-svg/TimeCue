@@ -55,6 +55,10 @@ type WindowsInstanceBroker struct {
 	handlers   sync.WaitGroup
 	publishers sync.WaitGroup
 
+	stopOnce sync.Once
+	stopDone chan struct{}
+	stopErr  error
+
 	closeOnce sync.Once
 	closeDone chan struct{}
 	closeErr  error
@@ -98,6 +102,7 @@ func NewWindowsInstanceBrokerWithOptions(options WindowsInstanceBrokerOptions) (
 		pipeSDDL:        "D:P(A;;GA;;;" + sid + ")(A;;GA;;;SY)",
 		done:            make(chan struct{}),
 		events:          make(chan platform.Activation, options.QueueSize),
+		stopDone:        make(chan struct{}),
 		closeDone:       make(chan struct{}),
 	}
 	if explicit {
@@ -233,22 +238,21 @@ func (b *WindowsInstanceBroker) Publish(activation platform.Activation) error {
 	}
 }
 
-// Close 停止 listener、等待请求处理、关闭事件流并释放命名 Mutex，且保持幂等。
-func (b *WindowsInstanceBroker) Close() error {
+// Stop 停止 Pipe listener 和事件流，但保留 Mutex 直到 Bootstrap 最终释放资格。
+func (b *WindowsInstanceBroker) Stop() error {
 	if b == nil {
 		return nil
 	}
-	b.closeOnce.Do(func() {
-		defer close(b.closeDone)
+	b.stopOnce.Do(func() {
+		defer close(b.stopDone)
 		b.mu.Lock()
 		b.closed = true
 		listener := b.listener
-		mutex := b.mutex
 		close(b.done)
 		b.mu.Unlock()
 		if listener != nil {
 			if err := listener.Close(); err != nil {
-				b.closeErr = errors.Join(b.closeErr, fmt.Errorf("close activation pipe: %w", err))
+				b.stopErr = errors.Join(b.stopErr, fmt.Errorf("close activation pipe: %w", err))
 			}
 		}
 		b.handlers.Wait()
@@ -258,8 +262,26 @@ func (b *WindowsInstanceBroker) Close() error {
 		acceptErr := b.acceptErr
 		b.mu.Unlock()
 		if acceptErr != nil {
-			b.closeErr = errors.Join(b.closeErr, acceptErr)
+			b.stopErr = errors.Join(b.stopErr, acceptErr)
 		}
+	})
+	<-b.stopDone
+	return b.stopErr
+}
+
+// Close 先停止激活通道，再释放命名 Mutex，且保持幂等。
+func (b *WindowsInstanceBroker) Close() error {
+	if b == nil {
+		return nil
+	}
+	stopErr := b.Stop()
+	b.closeOnce.Do(func() {
+		defer close(b.closeDone)
+		b.mu.Lock()
+		mutex := b.mutex
+		b.mutex = 0
+		b.mu.Unlock()
+		b.closeErr = stopErr
 		if mutex != 0 {
 			if err := windows.CloseHandle(mutex); err != nil {
 				b.closeErr = errors.Join(b.closeErr, fmt.Errorf("close instance mutex: %w", err))

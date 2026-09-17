@@ -120,6 +120,7 @@ type DesktopApplication struct {
 
 	state              DesktopLifecycleState
 	cleanupError       error
+	resourcesClosed    bool
 	lastError          error
 	runtimeContext     context.Context
 	domReady           bool
@@ -174,6 +175,16 @@ func (a *DesktopApplication) Bindings() *WailsBindings {
 	return a.bindings
 }
 
+// Logger 返回 bootstrap 注入的统一结构化日志器；组装完成前返回 nil。
+func (a *DesktopApplication) Logger() *slog.Logger {
+	if a == nil {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.logger
+}
+
 // Run 组装并启动桌面应用，主机运行路径保持同步且 scheduler 只启动一个 goroutine。
 func (a *DesktopApplication) Run(ctx context.Context, cfg config.Config, logger *slog.Logger, store bootstrap.Store) error {
 	if a == nil {
@@ -183,14 +194,14 @@ func (a *DesktopApplication) Run(ctx context.Context, cfg config.Config, logger 
 		ctx = context.Background()
 	}
 	if logger == nil {
-		return errors.New("desktop application logger is nil")
+		return a.failStart(errors.New("desktop application logger is nil"))
 	}
 	desktopStore, ok := store.(DesktopStore)
 	if !ok || desktopStore == nil {
-		return errors.New("bootstrap store does not implement desktop store")
+		return a.failStart(errors.New("bootstrap store does not implement desktop store"))
 	}
 	if err := a.assemble(cfg, logger, desktopStore); err != nil {
-		return err
+		return a.failStart(err)
 	}
 
 	var hostErr error
@@ -231,13 +242,20 @@ func (a *DesktopApplication) OnDomReady(ctx context.Context) error {
 		return errors.New("desktop DOM-ready context is nil")
 	}
 	a.mu.Lock()
-	if a.scheduler == nil {
-		a.mu.Unlock()
-		return errors.New("desktop application is not assembled")
-	}
 	if a.domReady {
 		a.mu.Unlock()
 		return nil
+	}
+	if a.resourcesClosed || a.state == DesktopStateStopping || a.state == DesktopStateCleanupFailed {
+		// 早到的取消可能先于 DOM ready 进入停止；只保存 context 供清理失败页面重试，不得重启资源。
+		a.runtimeContext = ctx
+		a.domReady = true
+		a.mu.Unlock()
+		return nil
+	}
+	if a.scheduler == nil {
+		a.mu.Unlock()
+		return errors.New("desktop application is not assembled")
 	}
 	a.runtimeContext = ctx
 	a.domReady = true
@@ -285,6 +303,7 @@ func (a *DesktopApplication) assemble(cfg config.Config, logger *slog.Logger, st
 	a.service = service
 	a.scheduler = scheduler
 	a.bindings = &WailsBindings{application: a}
+	a.resourcesClosed = false
 	return nil
 }
 
@@ -316,6 +335,7 @@ func (a *DesktopApplication) failStart(primary error) error {
 	cleanupErr := errors.Join(closeEnvironment(a.deps.Environment), closeActivation(a.deps.Activation), closeTray(a.deps.Tray), closeNotifications(a.deps.Notifications))
 	a.mu.Lock()
 	a.state = DesktopStateStopped
+	a.resourcesClosed = true
 	a.domReady = false
 	a.schedulerCancel = nil
 	a.schedulerDone = nil
@@ -461,6 +481,11 @@ func (a *DesktopApplication) Stop(ctx context.Context) error {
 	return a.stop(ctx, true)
 }
 
+// StopFromHost 进入同一停止状态机，但由正在处理关闭的宿主掌握最终 Quit。
+func (a *DesktopApplication) StopFromHost(ctx context.Context) error {
+	return a.stop(ctx, false)
+}
+
 // stop 执行停止状态机；requestQuit 仅由外部停止请求使用，避免 Run 收尾递归退出。
 func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 	if a == nil {
@@ -470,7 +495,7 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 		ctx = context.Background()
 	}
 	a.mu.Lock()
-	if a.state == DesktopStateStopped {
+	if a.state == DesktopStateStopped && a.resourcesClosed {
 		a.mu.Unlock()
 		return nil
 	}
@@ -553,13 +578,13 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 	a.cleanupError = stopErr
 	if stopErr == nil {
 		a.state = DesktopStateStopped
+		a.resourcesClosed = true
 	} else {
 		a.state = DesktopStateCleanupFailed
 	}
 	close(done)
 	a.mu.Unlock()
 	if stopErr != nil {
-		a.recordError(stopErr)
 		return stopErr
 	}
 	if requestQuit && a.deps.Host != nil {

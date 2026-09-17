@@ -91,6 +91,16 @@ func NewWailsNotificationCenter(options WailsNotificationCenterOptions) (*WailsN
 
 var _ platform.NotificationCenter = (*WailsNotificationCenter)(nil)
 
+// SetLogger 在 bootstrap 日志器就绪后替换构造期默认日志器。
+func (c *WailsNotificationCenter) SetLogger(logger *slog.Logger) {
+	if c == nil || logger == nil {
+		return
+	}
+	c.mu.Lock()
+	c.logger = logger
+	c.mu.Unlock()
+}
+
 // Initialize 在给定 Wails 生命周期上下文中初始化通知并注册一次响应回流。
 func (c *WailsNotificationCenter) Initialize(ctx context.Context) error {
 	if c == nil {
@@ -231,7 +241,10 @@ func (c *WailsNotificationCenter) handleResponse(result wailsruntime.Notificatio
 // recordResponseError 保存并记录无法向调用方同步返回的通知响应错误。
 func (c *WailsNotificationCenter) recordResponseError(err error) {
 	c.responseErr.set(err)
-	c.logger.Warn("notification response could not be processed", "operation", "notification_response", "error", err)
+	c.mu.Lock()
+	logger := c.logger
+	c.mu.Unlock()
+	logger.Warn("notification response could not be processed", "operation", "notification_response", "error", err)
 }
 
 // waitNotificationSubmissions 以可取消等待避免关闭上下文永久阻塞。
