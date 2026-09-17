@@ -17,20 +17,21 @@ TimeCue 是一个 Windows 桌面应用，用于提醒用户处理日程。
 
 `go run` 会使用 Go 工具链生成的临时可执行文件，因此 `config.yaml`、相对日志和备份目录也会相对该临时可执行文件解析；临时构建目录可能随运行而变化。开发时如需稳定的日志或备份位置，请使用发布后的可执行文件，或在配置中指定绝对路径。数据库仍固定使用 `%LOCALAPPDATA%\TimeCue\timecue.db`。
 
-默认配置示例：
+用户配置示例（只保存可配置项，不包含应用版本元数据）：
 
 ```yaml
-app:
-  name: TimeCue
-  version: 0.0.1
-
 log:
   level: info
-  path: .\logs\timecue.log
+  path: .\log\timecue.log
 
 backup:
   dir: .\backups
+
+window:
+  close_behavior: tray
 ```
+
+默认值统一来自内嵌的 `internal/config/defaults.yaml`，用户修改和恢复默认值时只写入程序目录下的 `config.yaml`。设置页支持日志级别、日志目录、备份目录和窗口关闭行为的保存及属性级恢复默认；日志级别、日志目录和备份目录重启后生效，窗口关闭行为立即生效。
 
 ## 迁移备份与恢复
 

@@ -2,7 +2,7 @@
 
 - TimeCue 是 Windows 桌面提醒应用。
 - 项目使用 Go 1.27；进程入口为仓库根目录的 `main.go`，核心代码位于 `internal`。
-- 配置使用 YAML：优先读取工作目录下的 `config.yaml`，不存在时使用 `internal/config/defaults.yaml`；日志使用标准库 `log/slog` 输出 JSONL 文件。
+- 配置使用 YAML：以 `internal/config/defaults.yaml` 作为内嵌默认基线，再读取 `timecue.exe` 所在目录的 `config.yaml` 覆盖；日志使用标准库 `log/slog` 输出 JSONL 文件。
 - 目录规范：
   - [`cmd/AGENTS.md`](cmd/AGENTS.md)：命令目录结构和约束（当前无独立命令子目录）。
   - [`internal/AGENTS.md`](internal/AGENTS.md)：内部模块结构和依赖方向。
