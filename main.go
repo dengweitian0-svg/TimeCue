@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/bootstrap"
@@ -83,8 +82,7 @@ func (entry desktopEntrypoint) Run(ctx context.Context, cfg config.Config, logge
 		return utils.Wrap(utils.StartupError, "create Windows tray", err)
 	}
 	notificationCenter, err := platformwindows.NewWailsNotificationCenter(platformwindows.WailsNotificationCenterOptions{
-		ActivationPublisher:    entry.broker,
-		ApplicationUserModelID: executableName(),
+		ActivationPublisher: entry.broker,
 	})
 	if err != nil {
 		_ = environment.Close()
@@ -164,15 +162,6 @@ func requireDesktop(application *appRuntime.DesktopApplication) *appRuntime.Desk
 		panic("desktop application lifecycle invoked before wiring completed")
 	}
 	return application
-}
-
-// executableName 返回 Wails Notification Runtime 实际使用的可执行文件名应用身份。
-func executableName() string {
-	path, err := os.Executable()
-	if err != nil {
-		return applicationName
-	}
-	return filepath.Base(path)
 }
 
 // nonOwningActivationSource 让 Runtime 停止 Pipe 和激活消费，但把 Mutex 的最终释放留给 bootstrap。

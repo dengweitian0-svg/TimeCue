@@ -15,19 +15,12 @@ import (
 
 const toastNotificationManagerClass = "Windows.UI.Notifications.ToastNotificationManager"
 
-const toastNotificationHistory2IID = "3bc3d253-2f31-4092-9129-8ad5abf067da"
+// WinRTNotificationHistoryCleaner 清除当前桌面应用的 Windows Toast 历史，不参与发送和激活。
+type WinRTNotificationHistoryCleaner struct{}
 
-// WinRTNotificationHistoryCleaner 按应用身份清除 Windows Toast 历史，不参与发送和激活。
-type WinRTNotificationHistoryCleaner struct {
-	applicationUserModelID string
-}
-
-// NewWinRTNotificationHistoryCleaner 创建绑定到单一应用身份的历史清理器。
-func NewWinRTNotificationHistoryCleaner(applicationUserModelID string) (*WinRTNotificationHistoryCleaner, error) {
-	if applicationUserModelID == "" {
-		return nil, errors.New("notification application user model ID must not be empty")
-	}
-	return &WinRTNotificationHistoryCleaner{applicationUserModelID: applicationUserModelID}, nil
+// NewWinRTNotificationHistoryCleaner 创建当前桌面应用的历史清理器。
+func NewWinRTNotificationHistoryCleaner() *WinRTNotificationHistoryCleaner {
+	return &WinRTNotificationHistoryCleaner{}
 }
 
 // Clear 在当前调用线程初始化 WinRT，并只清理当前应用身份的通知历史。
@@ -64,8 +57,8 @@ func (c *WinRTNotificationHistoryCleaner) Clear(ctx context.Context) error {
 		return fmt.Errorf("get notification history: %w", err)
 	}
 	defer history.Release()
-	if err := history.clearWithID(c.applicationUserModelID); err != nil {
-		return fmt.Errorf("clear notification history for %q: %w", c.applicationUserModelID, err)
+	if err := history.clear(); err != nil {
+		return fmt.Errorf("clear current notification history: %w", err)
 	}
 	return nil
 }
@@ -144,42 +137,13 @@ func (v *toastNotificationHistory) VTable() *toastNotificationHistoryVtbl {
 	return (*toastNotificationHistoryVtbl)(unsafe.Pointer(v.RawVTable))
 }
 
-// clearWithID 通过 IToastNotificationHistory2 只清除指定桌面应用身份的历史。
-func (v *toastNotificationHistory) clearWithID(applicationID string) error {
-	var history2 *toastNotificationHistory2
-	if err := v.PutQueryInterface(ole.NewGUID(toastNotificationHistory2IID), &history2); err != nil {
-		return fmt.Errorf("query app-scoped notification history: %w", err)
-	}
-	defer history2.Release()
-	hstring, err := ole.NewHString(applicationID)
-	if err != nil {
-		return fmt.Errorf("encode application identity: %w", err)
-	}
-	defer ole.DeleteHString(hstring)
-	hr, _, _ := syscall.SyscallN(history2.VTable().ClearWithID, uintptr(unsafe.Pointer(history2)), uintptr(hstring))
+// clear 清除当前应用发送的全部通知；带应用 ID 的重载只适用于同一应用包内的其他应用。
+func (v *toastNotificationHistory) clear() error {
+	hr, _, _ := syscall.SyscallN(v.VTable().Clear, uintptr(unsafe.Pointer(v)))
 	if hr != 0 {
 		return ole.NewError(hr)
 	}
 	return nil
-}
-
-// toastNotificationHistory2 是支持显式 AUMID 清理的 WinRT 历史接口。
-type toastNotificationHistory2 struct {
-	ole.IInspectable
-}
-
-// toastNotificationHistory2Vtbl 声明应用身份版本的历史操作槽位。
-type toastNotificationHistory2Vtbl struct {
-	ole.IInspectableVtbl
-	ClearWithID       uintptr
-	RemoveGroupWithID uintptr
-	RemoveWithID      uintptr
-	GetHistoryWithID  uintptr
-}
-
-// VTable 返回 app-scoped 历史接口的 ABI 表。
-func (v *toastNotificationHistory2) VTable() *toastNotificationHistory2Vtbl {
-	return (*toastNotificationHistory2Vtbl)(unsafe.Pointer(v.RawVTable))
 }
 
 // isWinRTAlreadyInitialized 接受 RoInitialize 的 S_FALSE 成功状态。

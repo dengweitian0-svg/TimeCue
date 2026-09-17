@@ -23,11 +23,10 @@ type WailsNotificationRuntime interface {
 
 // WailsNotificationCenterOptions 配置 Wails 通知中心及激活回流端口。
 type WailsNotificationCenterOptions struct {
-	Runtime                WailsNotificationRuntime
-	Cleaner                NotificationHistoryCleaner
-	ActivationPublisher    ActivationPublisher
-	ApplicationUserModelID string
-	Logger                 *slog.Logger
+	Runtime             WailsNotificationRuntime
+	Cleaner             NotificationHistoryCleaner
+	ActivationPublisher ActivationPublisher
+	Logger              *slog.Logger
 }
 
 // WailsNotificationCenter 将每条提醒逐条提交到 Wails，并管理通知资源所有权。
@@ -64,7 +63,7 @@ func (nativeWailsNotificationRuntime) OnNotificationResponse(ctx context.Context
 	wailsruntime.OnNotificationResponse(ctx, callback)
 }
 
-// NewWailsNotificationCenter 创建生产通知中心；默认清理器只清理 TimeCue 应用身份的历史。
+// NewWailsNotificationCenter 创建生产通知中心；默认清理器清理当前桌面应用的历史。
 func NewWailsNotificationCenter(options WailsNotificationCenterOptions) (*WailsNotificationCenter, error) {
 	runtime := options.Runtime
 	if runtime == nil {
@@ -72,15 +71,7 @@ func NewWailsNotificationCenter(options WailsNotificationCenterOptions) (*WailsN
 	}
 	cleaner := options.Cleaner
 	if cleaner == nil {
-		applicationID := options.ApplicationUserModelID
-		if applicationID == "" {
-			applicationID = "TimeCue"
-		}
-		var err error
-		cleaner, err = NewWinRTNotificationHistoryCleaner(applicationID)
-		if err != nil {
-			return nil, fmt.Errorf("create notification history cleaner: %w", err)
-		}
+		cleaner = NewWinRTNotificationHistoryCleaner()
 	}
 	logger := options.Logger
 	if logger == nil {
