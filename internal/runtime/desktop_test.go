@@ -286,6 +286,43 @@ func TestTrayExitReturnsBeforeTrayClose(t *testing.T) {
 	})
 }
 
+// TestStopCancelsEnvironmentForwarderBeforeCoordinatorStop 验证 Stop 先取消环境转发，避免等待协调锁形成阻塞环。
+func TestStopCancelsEnvironmentForwarderBeforeCoordinatorStop(t *testing.T) {
+	eventContext, cancelEvent := context.WithCancel(context.Background())
+	coordinator := app.NewMutationCoordinator()
+	notifications := &platform.FakeNotificationCenter{}
+	application := &DesktopApplication{
+		deps:            DesktopDependencies{Notifications: notifications},
+		coordinator:     coordinator,
+		schedulerCancel: cancelEvent,
+		state:           DesktopStateRunning,
+	}
+	application.environmentForwarder.Add(1)
+	locked := make(chan struct{})
+	go func() {
+		coordinator.Lock()
+		close(locked)
+		<-eventContext.Done()
+		coordinator.Unlock()
+		application.environmentForwarder.Done()
+	}()
+	<-locked
+
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- application.StopFromHost(context.Background()) }()
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("StopFromHost() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("StopFromHost() blocked while environment forwarder held coordinator lock")
+	}
+	if status := application.GetDesktopStatus(); status.State != DesktopStateStopped {
+		t.Fatalf("desktop state = %q, want stopped", status.State)
+	}
+}
+
 // TestRunAssemblyFailureClosesOwnedPlatformResources 验证已移交给运行时的平台资源在组装失败时不泄漏。
 func TestRunAssemblyFailureClosesOwnedPlatformResources(t *testing.T) {
 	activation := platform.NewFakeActivationSource(1)
