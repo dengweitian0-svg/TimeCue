@@ -35,9 +35,6 @@ func TestLoadUsesEmbeddedDefaults(t *testing.T) {
 	if cfg.ResolvedPaths.ConfigPath != filepath.Join(dir, "config.yaml") {
 		t.Fatalf("ConfigPath = %q, want executable config path", cfg.ResolvedPaths.ConfigPath)
 	}
-	if cfg.ResolvedPaths.PreferencesPath != filepath.Join(os.Getenv("LOCALAPPDATA"), "TimeCue", "preferences.yaml") {
-		t.Fatalf("PreferencesPath = %q, want fixed LOCALAPPDATA path", cfg.ResolvedPaths.PreferencesPath)
-	}
 	if cfg.ResolvedPaths.LogPath != filepath.Join(dir, "logs", "timecue.log") {
 		t.Fatalf("LogPath = %q, want executable-relative path", cfg.ResolvedPaths.LogPath)
 	}
@@ -102,7 +99,7 @@ func TestSaveStorageDirectoryPreservesFilenameAndEffectivePath(t *testing.T) {
 	}
 }
 
-// TestSaveStorageDirectoryCreatesConfigFromEmbeddedDefaults 验证无 config.yaml 时以嵌入默认配置为基底创建文件。
+// TestSaveStorageDirectoryCreatesConfigWithoutMaterializingDefaults 验证首次保存只创建用户配置属性。
 func TestSaveStorageDirectoryCreatesConfigFromEmbeddedDefaults(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
@@ -118,8 +115,9 @@ func TestSaveStorageDirectoryCreatesConfigFromEmbeddedDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read created config: %v", err)
 	}
-	if !strings.Contains(string(contents), "path:") || !strings.Contains(string(contents), "timecue.log") || !strings.Contains(string(contents), "backup:") {
-		t.Fatalf("created config = %q, want embedded defaults plus saved log path", contents)
+	text := string(contents)
+	if !strings.Contains(text, "path:") || !strings.Contains(text, "timecue.log") || strings.Contains(text, "app:") {
+		t.Fatalf("created config = %q, want only saved user config without app defaults", contents)
 	}
 }
 
@@ -226,7 +224,7 @@ func TestLoadUsesExternalConfigFromExecutableDirectory(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.yaml")
 	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
-	config := []byte("app:\n  name: CustomTimeCue\nlog:\n  level: debug\n  path: ./custom/timecue.log\nbackup:\n  dir: ./custom/backups\nwindow:\n  close_behavior: exit\n")
+	config := []byte("app:\n  name: CustomTimeCue\n  version: custom\nlog:\n  level: debug\n  path: ./custom/timecue.log\nwindow:\n  close_behavior: exit\n")
 	if err := os.WriteFile(configFile, config, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -235,8 +233,8 @@ func TestLoadUsesExternalConfigFromExecutableDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.App.Name != "CustomTimeCue" {
-		t.Fatalf("App.Name = %q, want CustomTimeCue", cfg.App.Name)
+	if cfg.App.Name != "TimeCue" || cfg.App.Version != "0.0.1" {
+		t.Fatalf("App = %+v, want embedded application metadata", cfg.App)
 	}
 	if cfg.Log.Level != "debug" {
 		t.Fatalf("Log.Level = %q, want debug", cfg.Log.Level)
@@ -249,8 +247,8 @@ func TestLoadUsesExternalConfigFromExecutableDirectory(t *testing.T) {
 	}
 }
 
-// TestLoadPreferenceOverridesExecutableConfig 验证偏好层只覆盖窗口关闭行为。
-func TestLoadPreferenceOverridesExecutableConfig(t *testing.T) {
+// TestLoadIgnoresLegacyPreferencesFile 验证旧 preferences.yaml 不再覆盖 config.yaml。
+func TestLoadIgnoresLegacyPreferencesFile(t *testing.T) {
 	dir := t.TempDir()
 	localAppData := filepath.Join(t.TempDir(), "LocalAppData")
 	preferencesDir := filepath.Join(localAppData, "TimeCue")
@@ -269,64 +267,41 @@ func TestLoadPreferenceOverridesExecutableConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadFromExecutable() error = %v", err)
 	}
-	if cfg.Window.CloseBehavior != CloseBehaviorTray {
-		t.Fatalf("Window.CloseBehavior = %q, want tray preference", cfg.Window.CloseBehavior)
+	if cfg.Window.CloseBehavior != CloseBehaviorExit {
+		t.Fatalf("Window.CloseBehavior = %q, want config.yaml value exit", cfg.Window.CloseBehavior)
 	}
 }
 
-// TestLoadRejectsInvalidPreference 验证非法偏好在启动配置边界包含文件路径。
-func TestLoadRejectsInvalidPreference(t *testing.T) {
-	localAppData := filepath.Join(t.TempDir(), "LocalAppData")
-	preferencesPath := filepath.Join(localAppData, "TimeCue", "preferences.yaml")
-	t.Setenv("LOCALAPPDATA", localAppData)
-	if err := os.MkdirAll(filepath.Dir(preferencesPath), 0o755); err != nil {
-		t.Fatalf("create preferences directory: %v", err)
+// TestSaveCloseBehaviorPreservesUnknownConfig 验证窗口关闭行为写回 config.yaml 并保留其他字段。
+func TestSaveCloseBehaviorPreservesUnknownConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+	configPath := filepath.Join(dir, "config.yaml")
+	original := []byte("app:\n  name: Legacy\nfuture:\n  enabled: true\nwindow:\n  close_behavior: tray\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
-	if err := os.WriteFile(preferencesPath, []byte("window:\n  close_behavior: minimize\n"), 0o600); err != nil {
-		t.Fatalf("write preferences: %v", err)
+	cfg, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
 	}
-
-	_, err := loadFromExecutable(filepath.Join(t.TempDir(), "timecue.exe"))
-	if err == nil {
-		t.Fatal("loadFromExecutable() error = nil, want invalid preference error")
-	}
-	if !strings.Contains(err.Error(), filepath.Base(preferencesPath)) || !strings.Contains(err.Error(), "tray or exit") {
-		t.Fatalf("error = %v, want preference path and close behavior context", err)
-	}
-}
-
-// TestSaveCloseBehaviorPreservesUnknownPreferences 验证保存关闭行为时保留其他偏好字段。
-func TestSaveCloseBehaviorPreservesUnknownPreferences(t *testing.T) {
-	localAppData := t.TempDir()
-	preferencesDir := filepath.Join(localAppData, "TimeCue")
-	preferencesPath := filepath.Join(preferencesDir, "preferences.yaml")
-	t.Setenv("LOCALAPPDATA", localAppData)
-	if err := os.MkdirAll(preferencesDir, 0o755); err != nil {
-		t.Fatalf("create preferences directory: %v", err)
-	}
-	original := []byte("theme: mint\nfuture:\n  enabled: true\nwindow:\n  close_behavior: tray\n")
-	if err := os.WriteFile(preferencesPath, original, 0o600); err != nil {
-		t.Fatalf("write preferences: %v", err)
-	}
-	cfg := Config{Window: WindowConfig{CloseBehavior: CloseBehaviorTray}, ResolvedPaths: ResolvedPaths{PreferencesPath: preferencesPath}}
-
 	if err := cfg.SaveCloseBehavior(CloseBehaviorExit); err != nil {
 		t.Fatalf("SaveCloseBehavior() error = %v", err)
 	}
-	contents, err := os.ReadFile(preferencesPath)
+	contents, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("read preferences: %v", err)
+		t.Fatalf("read config: %v", err)
 	}
 	text := string(contents)
-	for _, expected := range []string{"theme: mint", "future:", "enabled: true", "close_behavior: exit"} {
+	for _, expected := range []string{"future:", "enabled: true", "close_behavior: exit"} {
 		if !strings.Contains(text, expected) {
-			t.Fatalf("saved preferences = %q, missing %q", text, expected)
+			t.Fatalf("saved config = %q, missing %q", text, expected)
 		}
 	}
-	if cfg.Window.CloseBehavior != CloseBehaviorExit {
-		t.Fatalf("Window.CloseBehavior = %q, want exit", cfg.Window.CloseBehavior)
+	if strings.Contains(text, "app:") {
+		t.Fatalf("saved config = %q, must remove app metadata", text)
 	}
-	reloaded, err := loadFromExecutable(filepath.Join(t.TempDir(), "timecue.exe"))
+	reloaded, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
 	if err != nil {
 		t.Fatalf("reload configuration: %v", err)
 	}
@@ -335,147 +310,67 @@ func TestSaveCloseBehaviorPreservesUnknownPreferences(t *testing.T) {
 	}
 }
 
-// TestSaveCloseBehaviorCreatesPreferenceFile 验证首次保存写入默认偏好文档。
-func TestSaveCloseBehaviorCreatesPreferenceFile(t *testing.T) {
-	preferencesDir := filepath.Join(t.TempDir(), "TimeCue")
-	preferencesPath := filepath.Join(preferencesDir, "preferences.yaml")
-	if err := os.MkdirAll(preferencesDir, 0o755); err != nil {
-		t.Fatalf("create preferences directory: %v", err)
-	}
-	cfg := Config{ResolvedPaths: ResolvedPaths{PreferencesPath: preferencesPath}}
+// TestSaveCloseBehaviorCreatesConfigFile 验证首次保存只写入目标属性，不物化其他默认值。
+func TestSaveCloseBehaviorCreatesConfigFile(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := Config{ResolvedPaths: ResolvedPaths{ConfigPath: configPath}}
 	if err := cfg.SaveCloseBehavior(CloseBehaviorExit); err != nil {
 		t.Fatalf("SaveCloseBehavior() error = %v", err)
 	}
-	loaded, found, err := loadCloseBehavior(preferencesPath)
+	contents, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("loadCloseBehavior() error = %v", err)
+		t.Fatalf("read config: %v", err)
 	}
-	if !found {
-		t.Fatal("loadCloseBehavior() found = false, want true")
+	text := string(contents)
+	if !strings.Contains(text, "close_behavior: exit") {
+		t.Fatalf("created config = %q, want window close behavior", text)
 	}
-	if loaded != CloseBehaviorExit {
-		t.Fatalf("loaded close behavior = %q, want exit", loaded)
+	if strings.Contains(text, "app:") || strings.Contains(text, "backup:") || strings.Contains(text, "log:") {
+		t.Fatalf("created config = %q, must not materialize unrelated defaults", text)
 	}
 }
 
-// TestSaveCloseBehaviorFailurePreservesOldState 验证临时文件创建失败时旧文件和内存值不变。
+// TestSaveCloseBehaviorFailurePreservesOldState 验证配置替换失败时旧文件和内存值不变。
 func TestSaveCloseBehaviorFailurePreservesOldState(t *testing.T) {
-	preferencesPath := filepath.Join(t.TempDir(), "missing", "preferences.yaml")
-	cfg := Config{Window: WindowConfig{CloseBehavior: CloseBehaviorTray}, ResolvedPaths: ResolvedPaths{PreferencesPath: preferencesPath}}
-	if err := cfg.SaveCloseBehavior(CloseBehaviorExit); err == nil {
-		t.Fatal("SaveCloseBehavior() error = nil, want missing directory failure")
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	original := []byte("window:\n  close_behavior: tray\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatalf("write original config: %v", err)
+	}
+	cfg := Config{Window: WindowConfig{CloseBehavior: CloseBehaviorTray}, ResolvedPaths: ResolvedPaths{ConfigPath: configPath}}
+	wantErr := errors.New("injected replace failure")
+	originalReplacer := replaceConfigFile
+	t.Cleanup(func() { replaceConfigFile = originalReplacer })
+	replaceConfigFile = func(string, string) error { return wantErr }
+	if err := cfg.SaveCloseBehavior(CloseBehaviorExit); !errors.Is(err, wantErr) {
+		t.Fatalf("SaveCloseBehavior() error = %v, want injected replace failure", err)
 	}
 	if cfg.Window.CloseBehavior != CloseBehaviorTray {
 		t.Fatalf("Window.CloseBehavior = %q, want old tray value", cfg.Window.CloseBehavior)
 	}
-	if _, err := os.Stat(preferencesPath); !os.IsNotExist(err) {
-		t.Fatalf("preference file state = %v, want not created", err)
-	}
-}
-
-// TestWritePreferencesAtomicallyReplacementFailure 验证替换失败时目标和临时文件状态均安全。
-func TestWritePreferencesAtomicallyReplacementFailure(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "preferences.yaml")
-	if err := os.Mkdir(target, 0o755); err != nil {
-		t.Fatalf("create target directory: %v", err)
-	}
-	if err := writePreferencesAtomically(target, []byte("window:\n  close_behavior: exit\n")); err == nil {
-		t.Fatal("writePreferencesAtomically() error = nil, want replacement failure")
-	}
-	info, err := os.Stat(target)
+	contents, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("stat target after failed replacement: %v", err)
-	}
-	if !info.IsDir() {
-		t.Fatal("target was replaced despite replacement failure")
-	}
-	temporary, err := filepath.Glob(filepath.Join(dir, ".preferences.yaml.tmp-*"))
-	if err != nil {
-		t.Fatalf("glob temporary files: %v", err)
-	}
-	if len(temporary) != 0 {
-		t.Fatalf("temporary files after failed replacement = %v, want none", temporary)
-	}
-}
-
-// TestWritePreferencesAtomicallyWriteFailurePreservesOldFile 验证写入失败不会覆盖旧偏好。
-func TestWritePreferencesAtomicallyWriteFailurePreservesOldFile(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "preferences.yaml")
-	original := []byte("window:\n  close_behavior: tray\n")
-	if err := os.WriteFile(target, original, 0o600); err != nil {
-		t.Fatalf("write original preferences: %v", err)
-	}
-	wantErr := errors.New("injected write failure")
-	originalWriter := writePreferencesContents
-	t.Cleanup(func() { writePreferencesContents = originalWriter })
-	writePreferencesContents = func(*os.File, []byte) (int, error) { return 0, wantErr }
-
-	if err := writePreferencesAtomically(target, []byte("new")); !errors.Is(err, wantErr) {
-		t.Fatalf("writePreferencesAtomically() error = %v, want injected write failure", err)
-	}
-	contents, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("read original preferences: %v", err)
+		t.Fatalf("read original config: %v", err)
 	}
 	if string(contents) != string(original) {
-		t.Fatalf("preferences after failed write = %q, want %q", contents, original)
-	}
-	temporary, err := filepath.Glob(filepath.Join(dir, ".preferences.yaml.tmp-*"))
-	if err != nil {
-		t.Fatalf("glob temporary files: %v", err)
-	}
-	if len(temporary) != 0 {
-		t.Fatalf("temporary files after failed write = %v, want none", temporary)
-	}
-}
-
-// TestWritePreferencesAtomicallyReplaceFailurePreservesOldFile 验证替换失败不会覆盖旧偏好。
-func TestWritePreferencesAtomicallyReplaceFailurePreservesOldFile(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "preferences.yaml")
-	original := []byte("window:\n  close_behavior: tray\n")
-	if err := os.WriteFile(target, original, 0o600); err != nil {
-		t.Fatalf("write original preferences: %v", err)
-	}
-	wantErr := errors.New("injected replace failure")
-	originalReplacer := replacePreferencesFile
-	t.Cleanup(func() { replacePreferencesFile = originalReplacer })
-	replacePreferencesFile = func(string, string) error { return wantErr }
-
-	if err := writePreferencesAtomically(target, []byte("new")); !errors.Is(err, wantErr) {
-		t.Fatalf("writePreferencesAtomically() error = %v, want injected replace failure", err)
-	}
-	contents, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("read original preferences: %v", err)
-	}
-	if string(contents) != string(original) {
-		t.Fatalf("preferences after failed replacement = %q, want %q", contents, original)
-	}
-	temporary, err := filepath.Glob(filepath.Join(dir, ".preferences.yaml.tmp-*"))
-	if err != nil {
-		t.Fatalf("glob temporary files: %v", err)
-	}
-	if len(temporary) != 0 {
-		t.Fatalf("temporary files after failed replacement = %v, want none", temporary)
+		t.Fatalf("config after failed replacement = %q, want %q", contents, original)
 	}
 }
 
 // TestSaveCloseBehaviorReplaceFailurePreservesMemory 验证保存替换失败时 Config 内存值仍保持旧值。
 func TestSaveCloseBehaviorReplaceFailurePreservesMemory(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "preferences.yaml")
+	target := filepath.Join(dir, "config.yaml")
 	original := []byte("window:\n  close_behavior: tray\n")
 	if err := os.WriteFile(target, original, 0o600); err != nil {
-		t.Fatalf("write original preferences: %v", err)
+		t.Fatalf("write original config: %v", err)
 	}
-	cfg := Config{Window: WindowConfig{CloseBehavior: CloseBehaviorTray}, ResolvedPaths: ResolvedPaths{PreferencesPath: target}}
+	cfg := Config{Window: WindowConfig{CloseBehavior: CloseBehaviorTray}, ResolvedPaths: ResolvedPaths{ConfigPath: target}}
 	wantErr := errors.New("injected replace failure")
-	originalReplacer := replacePreferencesFile
-	t.Cleanup(func() { replacePreferencesFile = originalReplacer })
-	replacePreferencesFile = func(string, string) error { return wantErr }
+	originalReplacer := replaceConfigFile
+	t.Cleanup(func() { replaceConfigFile = originalReplacer })
+	replaceConfigFile = func(string, string) error { return wantErr }
 
 	if err := cfg.SaveCloseBehavior(CloseBehaviorExit); !errors.Is(err, wantErr) {
 		t.Fatalf("SaveCloseBehavior() error = %v, want injected replace failure", err)
@@ -485,22 +380,92 @@ func TestSaveCloseBehaviorReplaceFailurePreservesMemory(t *testing.T) {
 	}
 	contents, err := os.ReadFile(target)
 	if err != nil {
-		t.Fatalf("read original preferences: %v", err)
+		t.Fatalf("read original config: %v", err)
 	}
 	if string(contents) != string(original) {
-		t.Fatalf("preferences after failed replacement = %q, want %q", contents, original)
+		t.Fatalf("config after failed replacement = %q, want %q", contents, original)
 	}
 }
 
 // TestSaveCloseBehaviorRejectsInvalidValue 验证保存请求只接受两个关闭行为枚举值。
 func TestSaveCloseBehaviorRejectsInvalidValue(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "preferences.yaml")
-	cfg := Config{Window: WindowConfig{CloseBehavior: CloseBehaviorTray}, ResolvedPaths: ResolvedPaths{PreferencesPath: path}}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := Config{Window: WindowConfig{CloseBehavior: CloseBehaviorTray}, ResolvedPaths: ResolvedPaths{ConfigPath: path}}
 	if err := cfg.SaveCloseBehavior(CloseBehavior("minimize")); err == nil {
 		t.Fatal("SaveCloseBehavior() error = nil, want invalid enum error")
 	}
 	if cfg.Window.CloseBehavior != CloseBehaviorTray {
 		t.Fatalf("Window.CloseBehavior = %q, want tray", cfg.Window.CloseBehavior)
+	}
+}
+
+// TestSaveLogLevelWritesConfig 验证日志级别保存到 config.yaml 并保留其他配置。
+func TestSaveLogLevelWritesConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("log:\n  level: info\n  path: ./custom/timecue.log\nfuture: keep\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
+	}
+	if err := cfg.SaveLogLevel("DEBUG"); err != nil {
+		t.Fatalf("SaveLogLevel() error = %v", err)
+	}
+	if cfg.Log.Level != "debug" {
+		t.Fatalf("Log.Level = %q, want debug", cfg.Log.Level)
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(contents), "level: debug") || !strings.Contains(string(contents), "future: keep") {
+		t.Fatalf("saved config = %q, want updated level and preserved field", contents)
+	}
+}
+
+// TestRestoreDefaultUpdatesOnlySelectedProperty 验证四类属性逐项恢复默认且不覆盖其他配置。
+func TestRestoreDefaultUpdatesOnlySelectedProperty(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+	configPath := filepath.Join(dir, "config.yaml")
+	original := []byte("log:\n  level: debug\n  path: ./custom/timecue.log\nbackup:\n  dir: ./custom/backups\nwindow:\n  close_behavior: exit\nfuture: keep\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
+	}
+
+	properties := []ConfigProperty{ConfigPropertyLogLevel, ConfigPropertyLogPath, ConfigPropertyBackupDir, ConfigPropertyWindowCloseBehavior}
+	for _, property := range properties {
+		if err := cfg.RestoreDefault(property); err != nil {
+			t.Fatalf("RestoreDefault(%q) error = %v", property, err)
+		}
+	}
+	if cfg.Log.Level != "info" || cfg.Log.Path != "./logs/timecue.log" || cfg.Backup.Dir != "./backups" || cfg.Window.CloseBehavior != CloseBehaviorTray {
+		t.Fatalf("restored config = %+v, want embedded defaults", cfg)
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read restored config: %v", err)
+	}
+	text := string(contents)
+	for _, expected := range []string{"level: info", "path: ./logs/timecue.log", "dir: ./backups", "close_behavior: tray", "future: keep"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("restored config = %q, missing %q", text, expected)
+		}
+	}
+}
+
+// TestRestoreDefaultRejectsUnknownProperty 验证恢复默认接口不接受任意 YAML 路径。
+func TestRestoreDefaultRejectsUnknownProperty(t *testing.T) {
+	cfg := Config{ResolvedPaths: ResolvedPaths{ConfigPath: filepath.Join(t.TempDir(), "config.yaml")}}
+	if err := cfg.RestoreDefault(ConfigProperty("app.version")); err == nil {
+		t.Fatal("RestoreDefault() error = nil, want invalid property error")
 	}
 }
 
