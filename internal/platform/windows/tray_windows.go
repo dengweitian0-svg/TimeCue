@@ -28,14 +28,14 @@ const (
 	nifTip        = 0x00000004
 	notifyVersion = 4
 
-	wmContextMenu      = 0x007B
-	wmLeftButtonDblClk = 0x0203
-	wmRightButtonUp    = 0x0205
-	mfString           = 0x00000000
-	tpmRightButton     = 0x0002
-	tpmReturnCommand   = 0x0100
-	tpmNoNotify        = 0x0080
-	idiApplication     = 32512
+	wmContextMenu             = 0x007B
+	wmLeftButtonDblClk        = 0x0203
+	wmRightButtonUp           = 0x0205
+	mfString                  = 0x00000000
+	tpmRightButton            = 0x0002
+	tpmReturnCommand          = 0x0100
+	tpmNoNotify               = 0x0080
+	applicationIconResourceID = 3
 )
 
 // WindowsTrayOptions 配置托盘使用的共享消息线程及显示文本。
@@ -226,11 +226,11 @@ type nativeTrayShell struct{}
 
 // Add 添加图标并切换到 NOTIFYICON_VERSION_4 回调语义。
 func (nativeTrayShell) Add(window windows.Handle, tooltip string) error {
-	icon, _, iconErr := procLoadIcon.Call(0, idiApplication)
-	if icon == 0 {
-		return fmt.Errorf("load application icon: %w", iconErr)
+	icon, err := loadApplicationIcon()
+	if err != nil {
+		return err
 	}
-	data, err := newNotifyIconData(window, windows.Handle(icon), tooltip)
+	data, err := newNotifyIconData(window, icon, tooltip)
 	if err != nil {
 		return err
 	}
@@ -243,6 +243,19 @@ func (nativeTrayShell) Add(window windows.Handle, tooltip string) error {
 		return fmt.Errorf("Shell_NotifyIcon NIM_SETVERSION: %w", callErr)
 	}
 	return nil
+}
+
+// loadApplicationIcon 从当前 exe 的 Wails 资源中读取应用图标，保证托盘与窗口使用同一图标。
+func loadApplicationIcon() (windows.Handle, error) {
+	var module windows.Handle
+	if err := windows.GetModuleHandleEx(0, nil, &module); err != nil {
+		return 0, fmt.Errorf("get application module handle: %w", err)
+	}
+	icon, _, callErr := procLoadIcon.Call(uintptr(module), applicationIconResourceID)
+	if icon == 0 {
+		return 0, fmt.Errorf("load application icon resource %d: %w", applicationIconResourceID, callErr)
+	}
+	return windows.Handle(icon), nil
 }
 
 // Delete 从通知区域移除当前窗口拥有的图标。

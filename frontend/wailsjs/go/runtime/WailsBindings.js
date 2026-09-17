@@ -6,6 +6,10 @@ export function ChooseStorageDirectory(arg1) {
   return window['go']['runtime']['WailsBindings']['ChooseStorageDirectory'](arg1);
 }
 
+export function ConfirmReminder(arg1, arg2) {
+  return window['go']['runtime']['WailsBindings']['ConfirmReminder'](arg1, arg2);
+}
+
 export function CreateSchedule(arg1) {
   return window['go']['runtime']['WailsBindings']['CreateSchedule'](arg1);
 }
@@ -26,6 +30,10 @@ export function GetDesktopStatus() {
   return window['go']['runtime']['WailsBindings']['GetDesktopStatus']();
 }
 
+export function GetReminderDetail(arg1, arg2) {
+  return window['go']['runtime']['WailsBindings']['GetReminderDetail'](arg1, arg2);
+}
+
 export function GetRuntimeStatus() {
   return window['go']['runtime']['WailsBindings']['GetRuntimeStatus']();
 }
@@ -40,6 +48,10 @@ export function GetScheduleTimeBounds() {
 
 export function GetStorageDirectories() {
   return window['go']['runtime']['WailsBindings']['GetStorageDirectories']();
+}
+
+export function ListPendingReminders(arg1) {
+  return window['go']['runtime']['WailsBindings']['ListPendingReminders'](arg1);
 }
 
 export function ListSchedules(arg1) {

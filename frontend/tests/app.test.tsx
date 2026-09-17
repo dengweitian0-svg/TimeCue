@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
 import { Controller } from '../src/controller';
-import type { AppPort, ScheduleBounds, SchedulePage } from '../src/contracts';
+import type { AppPort, ReminderDetail, ReminderPage, ScheduleBounds, SchedulePage } from '../src/contracts';
 
 const page: SchedulePage = { items: [], nextCursor: '', limit: 20 };
 const bounds: ScheduleBounds = {
@@ -14,11 +14,14 @@ const bounds: ScheduleBounds = {
 };
 
 /** 为组件交互测试提供稳定的内存端口。 */
-function port(): AppPort {
-  return {
+function port(overrides: Partial<AppPort> = {}): AppPort {
+  const base: AppPort = {
     listSchedules: vi.fn(async () => page),
     getSchedule: vi.fn(),
     getScheduleTimeBounds: vi.fn(async () => bounds),
+    listPendingReminders: vi.fn(async () => ({ items: [], nextCursor: '', limit: 20 })),
+    getReminderDetail: vi.fn(),
+    confirmReminder: vi.fn(),
     createSchedule: vi.fn(),
     deleteSchedule: vi.fn(),
     getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true })),
@@ -32,6 +35,7 @@ function port(): AppPort {
     retryCleanup: vi.fn(),
     subscribeActivation: vi.fn(() => () => undefined),
   };
+  return { ...base, ...overrides };
 }
 
 /** 等待 React 完成一次异步渲染提交。 */
@@ -79,6 +83,49 @@ describe('App', () => {
     expect(host.querySelector('#logs-path')).not.toBeNull();
     expect(host.querySelector('#backups-path')).not.toBeNull();
     expect(host.querySelector('input[id*="database" i]')).toBeNull();
+    root.unmount();
+    controller.dispose();
+    host.remove();
+  });
+
+  it('renders the pending reminder empty state without confirming anything', async () => {
+    const platform = port();
+    const controller = new Controller(platform);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    root.render(<App controller={controller} />);
+    await flushRender();
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('待处理提醒'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+    expect(host.querySelector('h1')?.textContent).toBe('待处理提醒');
+    expect(host.textContent).toContain('没有待处理提醒');
+    expect(platform.confirmReminder).not.toHaveBeenCalled();
+    root.unmount();
+    controller.dispose();
+    host.remove();
+  });
+
+  it('shows unavailable reminder content without inventing a body', async () => {
+    const unavailable: ReminderDetail = { scheduleId: '7', originalDate: '2026-09-16', attemptedAtUtc: '2026-09-16T02:00:00Z', startUnix: null, endUnix: null, title: null, notes: null, contentStatus: 'unavailable', status: 'pending', processedAtUtc: null };
+    const reminders: ReminderPage = { items: [unavailable], nextCursor: '', limit: 20 };
+    const confirmReminder = vi.fn(async () => ({ scheduleId: '7', originalDate: unavailable.originalDate, processedAtUtc: '2026-09-16T03:00:00Z', changed: true }));
+    const platform = port({ listPendingReminders: vi.fn(async () => reminders), getReminderDetail: vi.fn(async () => unavailable), confirmReminder });
+    const controller = new Controller(platform);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    root.render(<App controller={controller} />);
+    await flushRender();
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('待处理提醒'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('提醒内容暂不可用'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+    expect(host.textContent).toContain('提醒内容暂不可用');
+    expect(host.textContent).not.toContain('undefined');
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('确认已投递提醒'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+    expect(confirmReminder).toHaveBeenCalledWith({ scheduleId: '7', originalDate: unavailable.originalDate });
     root.unmount();
     controller.dispose();
     host.remove();

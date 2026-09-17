@@ -86,6 +86,51 @@ func (b *WailsBindings) ListSchedules(request app.ListSchedulesRequest) (app.Lis
 	return b.application.service.ListSchedules(ctx, request)
 }
 
+// ListPendingReminders 返回尚未确认的提醒，并保留服务层定义的不透明分页游标。
+func (b *WailsBindings) ListPendingReminders(request app.ListPendingRemindersRequest) (app.ListPendingRemindersResponse, error) {
+	if err := b.validate(); err != nil {
+		return app.ListPendingRemindersResponse{}, err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return app.ListPendingRemindersResponse{}, err
+	}
+	return b.application.service.ListPendingReminders(ctx, request)
+}
+
+// GetReminderDetail 按稳定发生身份读取提醒详情，不因读取而改变处理状态。
+func (b *WailsBindings) GetReminderDetail(scheduleID int64, originalDate string) (app.ReminderDetailDTO, error) {
+	if err := b.validate(); err != nil {
+		return app.ReminderDetailDTO{}, err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return app.ReminderDetailDTO{}, err
+	}
+	return b.application.service.GetReminderDetail(ctx, domain.OccurrenceIdentity{
+		ScheduleID:   domain.ScheduleID(scheduleID),
+		OriginalDate: originalDate,
+	})
+}
+
+// ConfirmReminder 确认当前提醒，并在停止阶段拒绝新的持久化写入。
+func (b *WailsBindings) ConfirmReminder(scheduleID int64, originalDate string) (app.ReminderConfirmationDTO, error) {
+	if err := b.validate(); err != nil {
+		return app.ReminderConfirmationDTO{}, err
+	}
+	if err := b.application.ensureWritable(); err != nil {
+		return app.ReminderConfirmationDTO{}, err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return app.ReminderConfirmationDTO{}, err
+	}
+	return b.application.service.ConfirmReminder(ctx, domain.OccurrenceIdentity{
+		ScheduleID:   domain.ScheduleID(scheduleID),
+		OriginalDate: originalDate,
+	})
+}
+
 // DeleteSchedule 永久删除日程并返回已删除标题。
 func (b *WailsBindings) DeleteSchedule(id int64, payload string) (DeleteScheduleDTO, error) {
 	if err := b.validate(); err != nil {

@@ -5,6 +5,8 @@ import {runtime} from '../models';
 
 export function ChooseStorageDirectory(arg1:string):Promise<string>;
 
+export function ConfirmReminder(arg1:number,arg2:string):Promise<app.ReminderConfirmationDTO>;
+
 export function CreateSchedule(arg1:string):Promise<app.ScheduleDTO>;
 
 export function DeleteSchedule(arg1:number,arg2:string):Promise<runtime.DeleteScheduleDTO>;
@@ -15,6 +17,8 @@ export function GetCloseBehavior():Promise<runtime.CloseBehaviorDTO>;
 
 export function GetDesktopStatus():Promise<runtime.DesktopStatusDTO>;
 
+export function GetReminderDetail(arg1:number,arg2:string):Promise<app.ReminderDetailDTO>;
+
 export function GetRuntimeStatus():Promise<app.SchedulerStatus>;
 
 export function GetSchedule(arg1:number):Promise<app.ScheduleDTO>;
@@ -22,6 +26,8 @@ export function GetSchedule(arg1:number):Promise<app.ScheduleDTO>;
 export function GetScheduleTimeBounds():Promise<app.TimeBoundsDTO>;
 
 export function GetStorageDirectories():Promise<runtime.StorageDirectoriesDTO>;
+
+export function ListPendingReminders(arg1:app.ListPendingRemindersRequest):Promise<app.ListPendingRemindersResponse>;
 
 export function ListSchedules(arg1:app.ListSchedulesRequest):Promise<app.ListSchedulesResponse>;
 

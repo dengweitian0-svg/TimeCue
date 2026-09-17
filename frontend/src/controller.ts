@@ -1,10 +1,17 @@
-import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type DirectoryKind, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type SchedulePage, type StorageDirectories, type StorageDirectory } from './contracts';
+import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type DirectoryKind, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type SchedulePage, type StorageDirectories, type StorageDirectory } from './contracts';
 import { draftRequest, emptyDraft } from './schedule-model';
 
-export type Page = 'schedules' | 'settings';
+export type Page = 'schedules' | 'reminders' | 'settings';
 export interface AppState {
   page: Page;
   schedules: SchedulePage;
+  reminders: ReminderPage;
+  reminderLoading: boolean;
+  reminderDetailLoading: boolean;
+  reminderConfirming: boolean;
+  reminderError: ScheduleError | null;
+  activeReminder: ReminderIdentity | null;
+  reminderDetail: ReminderDetail | null;
   bounds: ScheduleBounds | null;
   draft: ScheduleDraft | null;
   deleting: Schedule | null;
@@ -19,15 +26,31 @@ export interface AppState {
 }
 
 const initialPage: SchedulePage = { items: [], nextCursor: '', limit: 20 };
+const initialReminderPage: ReminderPage = { items: [], nextCursor: '', limit: 20 };
+
+/** 以稳定身份比较两条提醒，避免依赖列表位置或可变正文。 */
+export function sameReminder(left: ReminderIdentity | null | undefined, right: ReminderIdentity | null | undefined): boolean {
+  return Boolean(left && right && left.scheduleId === right.scheduleId && left.originalDate === right.originalDate);
+}
+
+/** 返回当前提醒同一实际开始时刻的可切换项；无法重建时间的项不被错误合并。 */
+export function groupReminders(items: ReminderDetail[], active: ReminderIdentity | null): ReminderDetail[] {
+  const selected = items.find(item => sameReminder(item, active));
+  if (!selected || selected.startUnix === null) return selected ? [selected] : [];
+  return items.filter(item => item.startUnix === selected.startUnix);
+}
 
 /** 编排生产前端的日程、偏好、运行状态和激活用例，不拥有后端持久状态。 */
 export class Controller {
-  private state: AppState = { page: 'schedules', schedules: initialPage, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', storageDirectories: null, activation: null };
+  private state: AppState = { page: 'schedules', schedules: initialPage, reminders: initialReminderPage, reminderLoading: true, reminderDetailLoading: false, reminderConfirming: false, reminderError: null, activeReminder: null, reminderDetail: null, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', storageDirectories: null, activation: null };
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeActivation: () => void;
   private disposed = false;
   private lastSequence = 0;
   private readVersion = 0;
+  private reminderReadVersion = 0;
+  private reminderDetailVersion = 0;
+  private reminderActionVersion = 0;
 
   /** 注入窄平台端口，并从构造时开始接收激活事件。 */
   constructor(public readonly port: AppPort) { this.unsubscribeActivation = port.subscribeActivation(this.onActivation); }
@@ -41,13 +64,16 @@ export class Controller {
   /** 释放事件订阅和端口资源。 */
   dispose(): void { this.disposed = true; this.unsubscribeActivation(); this.port.dispose?.(); this.listeners.clear(); }
 
-  /** 初始化窗口状态、日程列表和前端激活握手。 */
+  /** 初始化窗口状态、日程列表、提醒列表和前端激活握手。 */
   async initialize(): Promise<void> {
     try {
       const [desktop, schedules, bounds, closeBehavior, storageDirectories] = await Promise.all([this.port.getDesktopStatus(), this.port.listSchedules(), this.port.getScheduleTimeBounds(), this.port.getCloseBehavior(), this.port.getStorageDirectories()]);
       if (this.disposed) return;
-      this.lastSequence = desktop.activation?.sequence ?? 0;
+      const initialActivation = desktop.activation && desktop.activation.sequence > this.lastSequence ? desktop.activation : null;
+      this.lastSequence = Math.max(this.lastSequence, desktop.activation?.sequence ?? 0);
       this.update({ runtime: desktop.runtime, activation: desktop.activation, schedules, bounds, closeBehavior, storageDirectories, loading: false });
+      if (initialActivation) void this.activateReminder(initialActivation);
+      await this.refreshReminders();
       const pending = await this.port.frontendReady(this.lastSequence);
       if (pending) this.onActivation(pending);
     } catch (error) {
@@ -57,6 +83,74 @@ export class Controller {
 
   /** 切换页面并清除上一页的短暂提示。 */
   setPage(page: Page): void { if (!this.state.busy) this.update({ page, error: null, notice: '' }); }
+
+  /** 按消息内容清除中央 Toast，避免旧消息的定时器误清除新消息。 */
+  clearNotice(expected?: string): void { if (expected !== undefined && this.state.notice !== expected) return; this.update({ notice: '' }); }
+
+  /** 选中列表中的提醒并异步读取最新详情，不修改确认状态。 */
+  selectReminder(identity: ReminderIdentity): void {
+    if (this.state.busy) return;
+    const stableIdentity: ReminderIdentity = { scheduleId: identity.scheduleId, originalDate: identity.originalDate };
+    this.reminderActionVersion++;
+    this.update({ page: 'reminders', activeReminder: stableIdentity, reminderDetail: null, reminderDetailLoading: true, reminderConfirming: false, reminderError: null, notice: '' });
+    void this.readReminderDetail(stableIdentity);
+  }
+
+  /** 重新读取第一页待处理提醒，保留当前草稿和稳定选中身份。 */
+  async refreshReminders(): Promise<ReminderPage | null> {
+    const version = ++this.reminderReadVersion;
+    this.update({ reminderLoading: true, reminderError: null });
+    try {
+      const page = await this.port.listPendingReminders({ limit: this.state.reminders.limit });
+      if (!this.disposed && version === this.reminderReadVersion) this.update({ reminders: page, reminderLoading: false });
+      return page;
+    } catch (error) {
+      if (!this.disposed && version === this.reminderReadVersion) this.failReminder(error, false);
+      return null;
+    }
+  }
+
+  /** 追加待处理提醒下一页；游标失效时回到第一页并重新读取。 */
+  async nextReminderPage(): Promise<void> {
+    const current = this.state.reminders;
+    if (this.state.busy || this.state.reminderLoading || !current.nextCursor) return;
+    const version = ++this.reminderReadVersion;
+    this.update({ reminderLoading: true, reminderError: null });
+    try {
+      const page = await this.port.listPendingReminders({ limit: current.limit, cursor: current.nextCursor });
+      if (!this.disposed && version === this.reminderReadVersion) this.update({ reminders: { ...page, items: [...current.items, ...page.items] }, reminderLoading: false });
+    } catch (error) {
+      if (this.disposed || version !== this.reminderReadVersion) return;
+      if (toScheduleError(error).code === 'STALE_CURSOR') await this.refreshReminders();
+      else this.failReminder(error, false);
+    }
+  }
+
+  /** 确认当前提醒，成功后刷新列表并优先定位同刻的下一条提醒。 */
+  async confirmReminder(): Promise<void> {
+    const identity = this.state.activeReminder;
+    const detail = this.state.reminderDetail;
+    if (!identity || !detail || detail.status !== 'pending' || this.state.busy || this.state.reminderConfirming) return;
+    const actionVersion = ++this.reminderActionVersion;
+    const sameTime = groupReminders(this.state.reminders.items, identity);
+    const currentIndex = sameTime.findIndex(item => sameReminder(item, identity));
+    const preferredNext = currentIndex >= 0 ? sameTime[currentIndex + 1] : undefined;
+    this.update({ reminderConfirming: true, reminderError: null });
+    try {
+      const result = await this.port.confirmReminder(identity);
+      if (this.disposed || actionVersion !== this.reminderActionVersion || !sameReminder(this.state.activeReminder, identity)) return;
+      const page = await this.refreshReminders();
+      if (this.disposed || actionVersion !== this.reminderActionVersion || !sameReminder(this.state.activeReminder, identity)) return;
+      const next = preferredNext && page?.items.some(item => sameReminder(item, preferredNext)) ? preferredNext : page?.items.find(item => item.startUnix !== null && detail.startUnix !== null && item.startUnix === detail.startUnix && !sameReminder(item, identity)) ?? page?.items[0];
+      if (next) {
+        this.selectReminder(next);
+      } else {
+        this.update({ activeReminder: null, reminderDetail: null, reminderDetailLoading: false, reminderConfirming: false, notice: result.changed ? '提醒已确认。' : '这条提醒已经确认。' });
+      }
+    } catch (error) {
+      if (!this.disposed && actionVersion === this.reminderActionVersion && sameReminder(this.state.activeReminder, identity)) this.update({ reminderConfirming: false, reminderError: toScheduleError(error) });
+    }
+  }
 
   /** 进入创建页面并取得最新时间边界。 */
   async beginCreate(): Promise<void> { if (this.state.busy) return; this.update({ page: 'schedules', draft: emptyDraft(), error: null, notice: '' }); if (!this.state.bounds) await this.refreshBounds(); }
@@ -161,12 +255,41 @@ export class Controller {
   /** 读取运行状态并尝试完成通知清理。 */
   async retryCleanup(): Promise<void> { if (this.state.busy) return; this.update({ busy: true, error: null }); try { await this.port.retryCleanup(); const status = await this.port.getRuntimeStatus(); if (!this.disposed) this.update({ runtime: status, notice: '通知清理已重试。' }); } catch (error) { if (!this.disposed) this.fail(error); } finally { if (!this.disposed) this.update({ busy: false }); } }
 
-  /** 处理最新激活并按 sequence 去重，避免重复通知扰动当前输入。 */
-  private onActivation = (activation: Activation): void => { if (this.disposed || activation.sequence <= this.lastSequence) return; this.lastSequence = activation.sequence; this.update({ activation, notice: `已收到日程 #${activation.targetId} 的激活请求。` }); };
+  /** 处理最新激活并按 sequence 去重，定位提醒详情且不清除日程草稿。 */
+  private onActivation = (activation: Activation): void => {
+    if (this.disposed || activation.sequence <= this.lastSequence) return;
+    this.lastSequence = activation.sequence;
+    this.reminderActionVersion++;
+    this.update({ activation, page: 'reminders', activeReminder: activation.targetId ? { scheduleId: activation.targetId, originalDate: activation.originalDate } : null, reminderDetail: null, reminderDetailLoading: Boolean(activation.targetId), reminderConfirming: false, reminderError: null, notice: '' });
+    if (activation.targetId) void this.activateReminder(activation);
+  };
+
+  /** 处理前端未就绪后补发的激活，分别刷新列表和稳定身份详情。 */
+  private async activateReminder(activation: Activation): Promise<void> {
+    if (!activation.targetId || this.disposed) return;
+    const identity: ReminderIdentity = { scheduleId: activation.targetId, originalDate: activation.originalDate };
+    this.update({ page: 'reminders', activeReminder: identity, reminderDetail: null, reminderDetailLoading: true, reminderConfirming: false });
+    void this.refreshReminders();
+    await this.readReminderDetail(identity);
+  }
+
+  /** 使用请求序号保护详情，迟到响应不能覆盖更新的激活或选择。 */
+  private async readReminderDetail(identity: ReminderIdentity): Promise<void> {
+    const version = ++this.reminderDetailVersion;
+    try {
+      const detail = await this.port.getReminderDetail(identity);
+      if (!this.disposed && version === this.reminderDetailVersion && sameReminder(this.state.activeReminder, identity)) this.update({ reminderDetail: detail, reminderDetailLoading: false, reminderError: null });
+    } catch (error) {
+      if (!this.disposed && version === this.reminderDetailVersion && sameReminder(this.state.activeReminder, identity)) this.failReminder(error, true);
+    }
+  };
 
   /** 统一状态变更通知。 */
   private update(patch: Partial<AppState>): void { if (this.disposed) return; this.state = { ...this.state, ...patch }; for (const listener of this.listeners) listener(); }
 
   /** 将平台拒绝值转换成可绑定字段的错误。 */
   private fail(error: unknown): void { const failure = toScheduleError(error); this.update({ error: failure, notice: '' }); }
+
+  /** 将提醒端口错误隔离到提醒页面，并保留当前详情以便显示稳定状态。 */
+  private failReminder(error: unknown, detail: boolean): void { const failure = toScheduleError(error); this.update({ reminderError: failure, reminderLoading: detail ? this.state.reminderLoading : false, reminderDetailLoading: detail ? false : this.state.reminderDetailLoading }); }
 }
