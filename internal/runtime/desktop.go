@@ -132,16 +132,17 @@ type DesktopApplication struct {
 	deps   DesktopDependencies
 	logger *slog.Logger
 
-	mu              sync.Mutex
-	config          *config.Config
-	service         *app.Service
-	coordinator     *app.MutationCoordinator
-	scheduler       *app.ReminderScheduler
-	bindings        *WailsBindings
-	schedulerCancel context.CancelFunc
-	schedulerDone   chan error
-	schedulerJoined bool
-	eventCancel     context.CancelFunc
+	mu                   sync.Mutex
+	config               *config.Config
+	service              *app.Service
+	coordinator          *app.MutationCoordinator
+	scheduler            *app.ReminderScheduler
+	bindings             *WailsBindings
+	schedulerCancel      context.CancelFunc
+	schedulerDone        chan error
+	schedulerJoined      bool
+	eventCancel          context.CancelFunc
+	environmentForwarder sync.WaitGroup
 
 	state              DesktopLifecycleState
 	cleanupError       error
@@ -416,7 +417,26 @@ func (a *DesktopApplication) startEventForwarders(ctx context.Context) {
 		go a.forwardActivations(ctx, a.deps.Activation.Events())
 	}
 	if a.deps.Environment != nil {
-		go a.forwardEnvironmentEvents(ctx, a.deps.Environment.Events())
+		a.environmentForwarder.Add(1)
+		go func() {
+			defer a.environmentForwarder.Done()
+			a.forwardEnvironmentEvents(ctx, a.deps.Environment.Events())
+		}()
+	}
+}
+
+// waitEnvironmentForwarder 等待环境事件转发退出，阻止关闭底层时钟后仍有事件进入调度器。
+func (a *DesktopApplication) waitEnvironmentForwarder(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		a.environmentForwarder.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -598,7 +618,6 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 		a.mu.Unlock()
 		return err
 	}
-	retryCleanup := a.state == DesktopStateCleanupFailed
 	a.state = DesktopStateStopping
 	done := make(chan struct{})
 	a.stopDone = done
@@ -608,27 +627,18 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 	a.mu.Unlock()
 
 	var stopErr error
-	if !retryCleanup {
-		if coordinator != nil {
-			stopErr = errors.Join(stopErr, coordinator.ApplyRuntimeEvent(app.RuntimeEvent{Type: app.RuntimeEventStop}))
-		}
-		if cancel != nil {
-			cancel()
-		}
-		if schedulerDone != nil {
-			select {
-			case schedulerErr := <-schedulerDone:
-				a.mu.Lock()
-				a.schedulerJoined = true
-				a.mu.Unlock()
-				if schedulerErr != nil && !errors.Is(schedulerErr, context.Canceled) {
-					stopErr = errors.Join(stopErr, schedulerErr)
-				}
-			case <-ctx.Done():
-				stopErr = errors.Join(stopErr, ctx.Err())
-			}
-		}
-	} else if schedulerDone != nil {
+	// 先取消 scheduler 和环境事件转发，再进入 coordinator 停止转换；否则事件转发
+	// 可能持有 coordinator 锁等待存储，而 Stop 同时等待同一把锁形成阻塞环。
+	if cancel != nil {
+		cancel()
+	}
+	if err := a.waitEnvironmentForwarder(ctx); err != nil {
+		stopErr = errors.Join(stopErr, fmt.Errorf("wait environment event forwarder: %w", err))
+	}
+	if stopErr == nil && coordinator != nil {
+		stopErr = errors.Join(stopErr, coordinator.ApplyRuntimeEvent(app.RuntimeEvent{Type: app.RuntimeEventStop}))
+	}
+	if schedulerDone != nil {
 		// 首次 Stop 可能因调用方 context 超时提前返回；重试仍必须先等 scheduler 真正退出。
 		a.mu.Lock()
 		joined := a.schedulerJoined
