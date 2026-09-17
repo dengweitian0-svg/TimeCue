@@ -1,4 +1,4 @@
-import type { Activation, ActivationListener, AppPort, CloseBehavior, CreateScheduleRequest, DirectoryKind, FrontendStatus, RuntimeStatus, Schedule, ScheduleBounds, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory } from './contracts';
+import type { Activation, ActivationListener, AppPort, CloseBehavior, CreateScheduleRequest, DirectoryKind, FrontendStatus, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory } from './contracts';
 import * as generatedBindings from '../wailsjs/go/runtime/WailsBindings';
 import { EventsOn as generatedEventsOn } from '../wailsjs/runtime/runtime';
 
@@ -7,6 +7,9 @@ export interface BindingsPort {
   ListSchedules(request: ScheduleListRequest): Promise<unknown>;
   GetSchedule(id: number | string): Promise<unknown>;
   GetScheduleTimeBounds(): Promise<unknown>;
+  ListPendingReminders(request: ReminderListRequest): Promise<unknown>;
+  GetReminderDetail(scheduleID: number | string, originalDate: string): Promise<unknown>;
+  ConfirmReminder(scheduleID: number | string, originalDate: string): Promise<unknown>;
   CreateSchedule(payload: string): Promise<unknown>;
   DeleteSchedule(id: number, payload: string): Promise<unknown>;
   GetRuntimeStatus(): Promise<unknown>;
@@ -66,6 +69,21 @@ export class WailsAdapter implements AppPort {
   /** 读取后端当前时间边界。 */
   async getScheduleTimeBounds(): Promise<ScheduleBounds> { return toBounds(await this.bindings.GetScheduleTimeBounds()); }
 
+  /** 读取待处理提醒分页，并把后端身份和可空正文转换为前端模型。 */
+  async listPendingReminders(request: ReminderListRequest = { limit: 20 }): Promise<ReminderPage> {
+    return toReminderPage(await this.bindings.ListPendingReminders(request), request.limit);
+  }
+
+  /** 按稳定提醒身份读取详情，不把读取动作解释为确认。 */
+  async getReminderDetail(identity: ReminderIdentity): Promise<ReminderDetail> {
+    return toReminderDetail(await this.bindings.GetReminderDetail(int64Value(identity.scheduleId), identity.originalDate));
+  }
+
+  /** 按稳定提醒身份提交确认，并保留后端幂等结果。 */
+  async confirmReminder(identity: ReminderIdentity): Promise<ReminderConfirmation> {
+    return toReminderConfirmation(await this.bindings.ConfirmReminder(int64Value(identity.scheduleId), identity.originalDate));
+  }
+
   /** 提交创建请求并把返回的 int64 标识转为 string。 */
   async createSchedule(request: CreateScheduleRequest): Promise<Schedule> { return toSchedule(await this.bindings.CreateSchedule(JSON.stringify(request))); }
 
@@ -109,6 +127,9 @@ export async function createWailsAdapter(): Promise<WailsAdapter> {
     ListSchedules: request => generatedBindings.ListSchedules({ limit: request.limit, cursor: request.cursor ?? '' }),
     GetSchedule: id => generatedBindings.GetSchedule(Number(id)),
     GetScheduleTimeBounds: generatedBindings.GetScheduleTimeBounds,
+    ListPendingReminders: request => generatedBindings.ListPendingReminders({ limit: request.limit, cursor: request.cursor ?? '' }),
+    GetReminderDetail: (scheduleID, originalDate) => generatedBindings.GetReminderDetail(Number(scheduleID), originalDate),
+    ConfirmReminder: (scheduleID, originalDate) => generatedBindings.ConfirmReminder(Number(scheduleID), originalDate),
     CreateSchedule: generatedBindings.CreateSchedule,
     DeleteSchedule: generatedBindings.DeleteSchedule,
     GetRuntimeStatus: generatedBindings.GetRuntimeStatus,
@@ -166,6 +187,60 @@ function toBounds(value: unknown): ScheduleBounds {
   const min = read(item, 'min', 'Min'); const startMax = read(item, 'start_max_exclusive', 'startMaxExclusive', 'StartMaxExclusive'); const endMax = read(item, 'end_max_inclusive', 'endMaxInclusive', 'EndMaxInclusive');
   return { min: String(min ?? unixLocal(read(item, 'single_min_unix'))), startMaxExclusive: String(startMax ?? unixLocal(read(item, 'single_max_exclusive_unix'))), endMaxInclusive: String(endMax ?? unixLocal(read(item, 'single_max_exclusive_unix'))) };
 }
+
+/** 将提醒分页 DTO 转为前端列表模型，并保留不透明游标原文。 */
+function toReminderPage(value: unknown, fallbackLimit: number): ReminderPage {
+  if (Array.isArray(value)) return { items: value.map(toReminderDetail), nextCursor: '', limit: fallbackLimit };
+  const item = asRecord(value);
+  const values = read(item, 'items', 'Items', 'reminders', 'Reminders');
+  return {
+    items: Array.isArray(values) ? values.map(toReminderDetail) : [],
+    nextCursor: String(read(item, 'next_cursor', 'nextCursor', 'NextCursor') ?? ''),
+    limit: asNumber(read(item, 'limit', 'Limit')) ?? fallbackLimit,
+  };
+}
+
+/** 将提醒详情 DTO 转为稳定身份、状态和可空正文模型。 */
+function toReminderDetail(value: unknown): ReminderDetail {
+  const item = asRecord(value);
+  const identity = reminderIdentity(item);
+  return {
+    ...identity,
+    attemptedAtUtc: nullableString(read(item, 'attempted_at_utc', 'attemptedAtUtc', 'AttemptedAtUTC')),
+    startUnix: nullableUnix(read(item, 'start_unix', 'startUnix', 'StartUnix')),
+    endUnix: nullableUnix(read(item, 'end_unix', 'endUnix', 'EndUnix')),
+    title: nullableString(read(item, 'title', 'Title')),
+    notes: nullableString(read(item, 'notes', 'Notes')),
+    contentStatus: enumValue(read(item, 'content_status', 'contentStatus', 'ContentStatus'), ['available', 'unavailable'], 'unavailable'),
+    status: enumValue(read(item, 'status', 'Status'), ['pending', 'confirmed', 'missing', 'not_processable'], 'missing'),
+    processedAtUtc: nullableString(read(item, 'processed_at_utc', 'processedAtUtc', 'ProcessedAtUTC')),
+  };
+}
+
+/** 将确认结果 DTO 转为前端确认结果，并复用同一身份转换规则。 */
+function toReminderConfirmation(value: unknown): ReminderConfirmation {
+  const item = asRecord(value);
+  return {
+    ...reminderIdentity(item),
+    processedAtUtc: String(read(item, 'processed_at_utc', 'processedAtUtc', 'ProcessedAtUTC') ?? ''),
+    changed: Boolean(read(item, 'changed', 'Changed')),
+  };
+}
+
+/** 读取提醒的稳定身份，支持 DTO 直接字段和兼容嵌套字段。 */
+function reminderIdentity(value: Record<string, unknown>): ReminderIdentity {
+  const nested = asRecord(read(value, 'identity', 'Identity'));
+  return {
+    scheduleId: int64String(read(value, 'schedule_id', 'scheduleId', 'ScheduleID') ?? read(nested, 'schedule_id', 'scheduleId', 'ScheduleID')),
+    originalDate: String(read(value, 'original_date', 'originalDate', 'OriginalDate') ?? read(nested, 'original_date', 'originalDate', 'OriginalDate') ?? ''),
+  };
+}
+
+/** 将后端可空字符串字段映射为 null，避免以空正文伪造不可用内容。 */
+function nullableString(value: unknown): string | null { return value === null || value === undefined ? null : String(value); }
+
+/** 将后端可空 Unix 秒字段映射为安全数字或 null。 */
+function nullableUnix(value: unknown): number | null { const number = asNumber(value); return number === undefined ? null : number; }
 
 /** 将运行状态 DTO 映射为受控枚举。 */
 function toRuntime(value: unknown): RuntimeStatus {

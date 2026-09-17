@@ -79,6 +79,42 @@ export interface StorageDirectories {
   backups: StorageDirectory;
 }
 
+export interface ReminderIdentity {
+  scheduleId: string;
+  originalDate: string;
+}
+
+export type ReminderContentStatus = 'available' | 'unavailable';
+export type ReminderStatus = 'pending' | 'confirmed' | 'missing' | 'not_processable';
+export type PendingReminderErrorCode = 'STALE_CURSOR' | 'REMINDER_NOT_PROCESSABLE' | 'NOT_FOUND' | 'RUNTIME_STOPPING';
+
+export interface ReminderDetail extends ReminderIdentity {
+  attemptedAtUtc: string | null;
+  startUnix: number | null;
+  endUnix: number | null;
+  title: string | null;
+  notes: string | null;
+  contentStatus: ReminderContentStatus;
+  status: ReminderStatus;
+  processedAtUtc: string | null;
+}
+
+export interface ReminderPage {
+  items: ReminderDetail[];
+  nextCursor: string;
+  limit: number;
+}
+
+export interface ReminderListRequest {
+  limit: number;
+  cursor?: string;
+}
+
+export interface ReminderConfirmation extends ReminderIdentity {
+  processedAtUtc: string;
+  changed: boolean;
+}
+
 export interface ActivationListener {
   (activation: Activation): void;
 }
@@ -87,6 +123,9 @@ export interface WailsPort {
   listSchedules(request?: ScheduleListRequest): Promise<SchedulePage>;
   getSchedule(id: string): Promise<Schedule>;
   getScheduleTimeBounds(): Promise<ScheduleBounds>;
+  listPendingReminders(request?: ReminderListRequest): Promise<ReminderPage>;
+  getReminderDetail(identity: ReminderIdentity): Promise<ReminderDetail>;
+  confirmReminder(identity: ReminderIdentity): Promise<ReminderConfirmation>;
   createSchedule(request: CreateScheduleRequest): Promise<Schedule>;
   deleteSchedule(id: string, expectedRevision: number): Promise<void>;
   getRuntimeStatus(): Promise<RuntimeStatus>;
@@ -107,7 +146,7 @@ export interface AppPort extends WailsPort {
 
 export class ScheduleError extends Error {
   constructor(
-    public readonly code: 'VALIDATION' | 'TIME_RANGE_EXCEEDED' | 'STALE_REVISION' | 'NOT_FOUND' | 'STORAGE' | 'RUNTIME_STOPPING',
+    public readonly code: 'VALIDATION' | 'TIME_RANGE_EXCEEDED' | 'STALE_REVISION' | 'STALE_CURSOR' | 'REMINDER_NOT_PROCESSABLE' | 'NOT_FOUND' | 'STORAGE' | 'RUNTIME_STOPPING',
     message: string,
     public readonly fields: Partial<Record<ScheduleField, string>> = {},
     public readonly bounds?: ScheduleBounds,
@@ -182,5 +221,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** 限定后端错误码，未知错误统一按存储失败处理。 */
 function isScheduleCode(value: unknown): value is ScheduleError['code'] {
-  return value === 'VALIDATION' || value === 'TIME_RANGE_EXCEEDED' || value === 'STALE_REVISION' || value === 'NOT_FOUND' || value === 'STORAGE' || value === 'RUNTIME_STOPPING';
+  return value === 'VALIDATION' || value === 'TIME_RANGE_EXCEEDED' || value === 'STALE_REVISION' || value === 'STALE_CURSOR' || value === 'REMINDER_NOT_PROCESSABLE' || value === 'NOT_FOUND' || value === 'STORAGE' || value === 'RUNTIME_STOPPING';
 }
