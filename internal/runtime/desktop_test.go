@@ -185,6 +185,71 @@ func TestStopFromHostCleansUpWithoutRecursivelyQuitting(t *testing.T) {
 	}
 }
 
+// TestStopDuringDomReadyStartupCancelsStartupGate 验证停止不会等待尚未启动的 scheduler channel。
+func TestStopDuringDomReadyStartupCancelsStartupGate(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	startupEntered := make(chan struct{})
+	notifications := &platform.FakeNotificationCenter{InitializeFunc: func(ctx context.Context) error {
+		close(startupEntered)
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	application := NewDesktopApplication(DesktopDependencies{Host: host, Notifications: notifications, Clock: desktopTestClock{snapshot: domain.TimeSnapshot{Now: time.Now(), Location: time.Local}}})
+	root := t.TempDir()
+	cfg := config.Config{
+		App:           config.AppConfig{Name: "TimeCue", Version: "test"},
+		Log:           config.LogConfig{Level: "info", Path: filepath.Join(root, "logs", "timecue.log")},
+		Backup:        config.BackupConfig{Dir: filepath.Join(root, "backups")},
+		Window:        config.WindowConfig{CloseBehavior: config.CloseBehaviorTray},
+		ResolvedPaths: config.ResolvedPaths{ConfigPath: filepath.Join(root, "config.yaml"), DatabasePath: filepath.Join(root, "data", "timecue.db"), LogPath: filepath.Join(root, "logs", "timecue.log"), BackupDir: filepath.Join(root, "backups"), PreferencesPath: filepath.Join(root, "preferences.yaml")},
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- application.Run(runCtx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), openDesktopTestStore(t))
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runDone:
+		case <-time.After(3 * time.Second):
+			t.Error("desktop application did not stop during cleanup")
+		}
+	})
+	waitForDesktopCondition(t, func() bool { return application.Service() != nil })
+	if err := application.OnStartup(context.Background()); err != nil {
+		t.Fatalf("OnStartup() error = %v", err)
+	}
+	domReadyDone := make(chan error, 1)
+	go func() { domReadyDone <- application.OnDomReady(context.Background()) }()
+	select {
+	case <-startupEntered:
+	case <-time.After(time.Second):
+		t.Fatal("DOM-ready startup did not enter notification initialization")
+	}
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- application.Stop(context.Background()) }()
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("Stop() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop() waited for an unstarted scheduler")
+	}
+	select {
+	case err := <-domReadyDone:
+		if err != nil {
+			t.Fatalf("OnDomReady() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("OnDomReady() did not finish after startup cancellation")
+	}
+	if status := application.GetDesktopStatus(); status.State != DesktopStateStopped {
+		t.Fatalf("desktop state = %q, want stopped", status.State)
+	}
+}
+
 // TestTrayExitReturnsBeforeTrayClose 验证托盘回调先返回，避免关闭托盘时等待自身回调形成死锁。
 func TestTrayExitReturnsBeforeTrayClose(t *testing.T) {
 	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
