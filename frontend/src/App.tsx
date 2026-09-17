@@ -20,9 +20,8 @@ export function App({ controller }: { controller: Controller }) {
     </aside>
     <main className="main-content">
       <header className="topbar"><div><p className="kicker">TIME CUE / DESKTOP</p><p className="today">今天，按自己的节奏来</p></div><span className="status-dot" aria-label="应用在线" /></header>
-      {state.activation && <div className="activation-banner" role="status">已收到窗口激活请求 {state.activation.targetId && <><strong>#{state.activation.targetId}</strong>{state.activation.originalDate && <span>{state.activation.originalDate}</span>}</>}<span>序列 {state.activation.sequence}</span></div>}
       {state.error && <ErrorBanner error={state.error} />}
-      {state.notice && !state.activation && <div className="notice" role="status">{state.notice}</div>}
+      {state.notice && <div className="notice" role="status">{state.notice}</div>}
       {state.page === 'settings' ? <Settings controller={controller} closeBehavior={state.closeBehavior} storageDirectories={state.storageDirectories} busy={state.busy} /> : state.page === 'reminders' ? <Reminders controller={controller} state={state} /> : <Schedules controller={controller} state={state} />}
     </main>
   </div>;

@@ -257,7 +257,7 @@ export class Controller {
     if (this.disposed || activation.sequence <= this.lastSequence) return;
     this.lastSequence = activation.sequence;
     this.reminderActionVersion++;
-    this.update({ activation, page: 'reminders', activeReminder: activation.targetId ? { scheduleId: activation.targetId, originalDate: activation.originalDate } : null, reminderDetail: null, reminderDetailLoading: Boolean(activation.targetId), reminderConfirming: false, reminderError: null, notice: `已收到日程 #${activation.targetId} 的激活请求。` });
+    this.update({ activation, page: 'reminders', activeReminder: activation.targetId ? { scheduleId: activation.targetId, originalDate: activation.originalDate } : null, reminderDetail: null, reminderDetailLoading: Boolean(activation.targetId), reminderConfirming: false, reminderError: null, notice: '' });
     if (activation.targetId) void this.activateReminder(activation);
   };
 
