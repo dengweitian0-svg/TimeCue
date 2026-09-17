@@ -185,6 +185,42 @@ func TestStopFromHostCleansUpWithoutRecursivelyQuitting(t *testing.T) {
 	}
 }
 
+// TestTrayExitReturnsBeforeTrayClose 验证托盘回调先返回，避免关闭托盘时等待自身回调形成死锁。
+func TestTrayExitReturnsBeforeTrayClose(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	releaseClose := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseClose) }) }
+	t.Cleanup(release)
+	tray := &platform.FakeTrayPort{CloseFunc: func() error { <-releaseClose; return nil }}
+	location := time.FixedZone("CST", 8*60*60)
+	application, cancel := newRunningDesktopTestApplication(t, DesktopDependencies{
+		Host:          host,
+		Tray:          tray,
+		Notifications: &platform.FakeNotificationCenter{},
+		Clock: desktopTestClock{snapshot: domain.TimeSnapshot{
+			Now:      time.Date(2026, 1, 1, 8, 0, 0, 0, location),
+			Location: location,
+		}},
+	})
+	defer cancel()
+
+	callbackReturned := make(chan struct{})
+	go func() {
+		tray.InvokeExit()
+		close(callbackReturned)
+	}()
+	select {
+	case <-callbackReturned:
+	case <-time.After(time.Second):
+		t.Fatal("tray exit callback did not return before tray close")
+	}
+	release()
+	waitForDesktopCondition(t, func() bool {
+		return application.GetDesktopStatus().State == DesktopStateStopped && host.QuitCalls() == 1 && tray.Closed
+	})
+}
+
 // TestRunAssemblyFailureClosesOwnedPlatformResources 验证已移交给运行时的平台资源在组装失败时不泄漏。
 func TestRunAssemblyFailureClosesOwnedPlatformResources(t *testing.T) {
 	activation := platform.NewFakeActivationSource(1)
