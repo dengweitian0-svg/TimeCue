@@ -20,9 +20,12 @@ function bindings(overrides: Partial<BindingsPort> = {}): BindingsPort {
     GetDesktopStatus: vi.fn(async () => ({ visibility: 'visible', lifecycle: 'running', ready: true, close_behavior: 'tray', activation: null })),
     GetCloseBehavior: vi.fn(async () => ({ behavior: 'tray' })),
     SaveCloseBehavior: vi.fn(async () => undefined),
+    GetLogLevel: vi.fn(async () => ({ effective_level: 'info', saved_level: 'info', restart_required: false })),
+    SaveLogLevel: vi.fn(async () => ({ effective_level: 'info', saved_level: 'debug', restart_required: true })),
     GetStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs', effective_path: 'C:/TimeCue/logs', saved_path: 'C:/TimeCue/logs', restart_required: false }, backups: { kind: 'backups', effective_path: 'C:/TimeCue/backups', saved_path: 'C:/TimeCue/backups', restart_required: false } })),
     ChooseStorageDirectory: vi.fn(async () => ''),
     SaveStorageDirectory: vi.fn(async ({ kind, path }: { kind: string; path: string }) => ({ kind, effective_path: 'C:/TimeCue/logs', saved_path: path, restart_required: true })),
+    RestoreConfigDefault: vi.fn(async () => undefined),
     FrontendReady: vi.fn(async () => null),
     RetryCleanup: vi.fn(async () => undefined),
     ...overrides,
@@ -55,10 +58,15 @@ describe('WailsAdapter', () => {
     await expect(adapter.deleteSchedule('9223372036854775807', 3)).rejects.toThrow('超出桌面端');
     expect(await adapter.saveCloseBehavior('exit')).toBe('exit');
     expect(port.SaveCloseBehavior).toHaveBeenCalledWith({ behavior: 'exit' });
+    await expect(adapter.getLogLevel()).resolves.toEqual({ effectiveLevel: 'info', savedLevel: 'info', restartRequired: false });
+    await expect(adapter.saveLogLevel('debug')).resolves.toEqual({ effectiveLevel: 'info', savedLevel: 'debug', restartRequired: true });
+    expect(port.SaveLogLevel).toHaveBeenCalledWith({ level: 'debug' });
     expect(await adapter.getStorageDirectories()).toMatchObject({ logs: { effectivePath: 'C:/TimeCue/logs', restartRequired: false } });
     expect(await adapter.chooseDirectory('logs')).toBeNull();
     await expect(adapter.saveStorageDirectory('logs', 'D:/新的日志')).resolves.toMatchObject({ savedPath: 'D:/新的日志', restartRequired: true });
     expect(port.SaveStorageDirectory).toHaveBeenCalledWith({ kind: 'logs', path: 'D:/新的日志' });
+    await adapter.restoreConfigDefault('log.path');
+    expect(port.RestoreConfigDefault).toHaveBeenCalledWith({ property: 'log.path' });
     await adapter.frontendReady(4);
     expect(port.FrontendReady).toHaveBeenCalledWith({ last_sequence: 4 });
   });

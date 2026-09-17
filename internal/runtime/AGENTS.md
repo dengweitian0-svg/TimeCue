@@ -12,6 +12,7 @@
 - `DesktopApplication` 只从 `bootstrap.Store` 一次性取得 `DesktopStore` 组合端口，并在运行时内共享唯一 `Service`、`MutationCoordinator`、`ReminderScheduler`；Store 的关闭责任仍归 bootstrap。
 - `DesktopDependencies` 通过 `platform.DirectoryAccess` 和 `platform.DirectoryChooser` 接入目录设置；Runtime 绑定只协调验证和配置保存，不直接操作配置文件或替换 bootstrap 持有的 logger、SQLite Store。
 - `WailsBindings` 是平台无关的强类型边界，所有前端输出必须带 `json` tag；写入继续经过 Service/Coordinator，停止阶段返回 `RUNTIME_STOPPING`。
+- 配置绑定通过 `GetLogLevel`、`SaveLogLevel` 和 `RestoreConfigDefault` 暴露受限配置属性；日志级别、日志路径和备份路径保存后重启生效，窗口关闭行为保存后立即生效。Runtime 不直接操作 YAML 文件，统一调用 `config.Config` 的正式保存转换。
 - Issue #31 的提醒边界由 `ListPendingReminders`、`GetReminderDetail(schedule_id, original_date)` 和 `ConfirmReminder(schedule_id, original_date)` 组成。查询只读当前事实；详情正文不可重建时必须返回可观察状态和可空正文，不得从当前空值伪造历史内容。确认必须经过唯一 Service、MutationCoordinator 和 SQLite 事务，只有事务提交成功后才允许前端移除待处理项。
 - 提醒状态转换保持单向：`submitted + processed_at_utc IS NULL → pending → confirmed`；缺失、`claimed`、`failed`、`skipped` 等状态分别映射为 `missing` 或 `not_processable`，不能被确认绑定伪装成成功。重复确认返回首次处理时间且不产生第二次写入；目标不存在、不可处理、底层失败和 `stopping` 必须保留现有错误分类及 `ErrorFormatter` 行为。
 - 通知页面的稳定身份是 `schedule_id + original_date`，不是列表索引或标题。前端通过 `sequence` 去重、通过 `FrontendReady(last_sequence)` 接收前端未就绪期间保留的最新激活；激活只负责显示、切页和定位，不自动确认。逐条 Toast、退出后不冷启动、不自动确认和确认后优先同刻下一条是 Issue #31 的固定决定。

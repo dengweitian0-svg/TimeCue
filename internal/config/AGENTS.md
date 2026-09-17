@@ -2,21 +2,22 @@
 
 - 本目录负责配置来源、默认值、YAML 解析、结构化反序列化和启动阶段校验。
 - 当前文件：
-  - `config.go`：定义 `Config`、`AppConfig`、`LogConfig`、`BackupConfig`、`WindowConfig`、`CloseBehavior`、目录设置类型和 `ResolvedPaths`，实现配置加载、默认值注入、校验、用户偏好覆盖、目录配置原子保存和固定路径解析。
+  - `config.go`：定义 `Config`、`AppConfig`、`LogConfig`、`BackupConfig`、`WindowConfig`、`CloseBehavior`、配置属性、目录设置类型和 `ResolvedPaths`，实现默认配置基线、用户配置覆盖、校验、属性保存/恢复默认、目录配置原子保存和固定路径解析。
   - `directory.go` 及平台文件：实现目录创建、物理路径规范化和临时文件写入/同步/删除验证。
   - `atomic_replace_unix.go`、`atomic_replace_windows.go`：按宿主系统提供同目录临时文件的原子替换实现；Windows 使用可替换已有目标的原生 MoveFileEx 语义。
   - `defaults.yaml`：作为无工作目录配置时的内嵌 YAML 默认配置来源。
-  - `config_test.go`：验证默认配置、工作目录配置、用户偏好覆盖/持久化、非法设置和路径解析。
-- `Load` 先通过 `setDefaults` 为配置字段设置稳定默认值，再优先读取 `timecue.exe` 所在目录的 `config.yaml`；文件不存在时读取内嵌的 `defaults.yaml`。两条路径都必须完成反序列化、校验和路径解析。
+  - `config_test.go`：验证默认配置、可执行文件目录配置、用户配置持久化、属性恢复默认、非法设置和路径解析。
+- `Load` 先读取内嵌 `defaults.yaml` 形成默认基线，再覆盖可执行文件旁的 `config.yaml`；两者都必须完成反序列化、校验和路径解析。
+- `Config.App` 只来自默认配置；用户配置中的 `app` 段不参与覆盖，配置写回时也不得持久化该段。
 - 当前日志配置约束：级别只能为 `debug`、`info`、`warn` 或 `error`；路径不能为空且必须使用 `.log` 扩展名。
 - 备份目录不能为空；相对日志和备份路径必须基于可执行文件目录解析为规范绝对路径，绝对路径必须保留其绝对语义。
 - `ResolvedPaths.DatabasePath` 固定为 `%LOCALAPPDATA%\\TimeCue\\timecue.db`，不能被配置覆盖；旧 `data_dir` 以及数据库路径相关配置必须显式拒绝。
 - `ResolvedPaths.ConfigPath` 固定为 `timecue.exe` 所在目录的 `config.yaml`；目录设置保存只更新该文件，不建立第二套 `settings.yaml` 来源。
 - `ResolvedPaths` 是后续启动编排和存储初始化使用的受控路径视图；普通加载/解析不创建目录，目录设置保存用例单独允许通过 `ValidateDirectoryPath` 创建并验证用户指定目录，但不执行应用生命周期。
-- `ResolvedPaths.PreferencesPath` 固定为 `%LOCALAPPDATA%\\TimeCue\\preferences.yaml`；关闭行为默认是 `tray`，只允许 `tray` 和 `exit`。
-- 用户偏好文件只拥有 `window.close_behavior`。加载时它覆盖可执行文件旁 `config.yaml` 中的同名字段；保存时必须保留其他 YAML 字段，不得重写 `config.yaml`。
-- `Config.SaveCloseBehavior` 先写入同目录临时文件并完成 `Sync`，再替换目标文件；替换成功前不得更新内存值。Windows 目标存在时必须使用支持替换的原生语义，不能先删除旧文件。
-- `Config.SaveStorageDirectory` 只允许日志和备份两类目录：日志写回 `log.path` 并保留原文件名，备份写回 `backup.dir`；有配置文件时保留未知 YAML 字段，无配置文件时以内嵌默认配置为基底创建。保存按同目录临时文件、写入、`Sync`、关闭、原子替换执行，任何失败都保留旧文件、旧内存保存值和当前 `ResolvedPaths`。
+- `ResolvedPaths` 只暴露可执行文件旁的 `ConfigPath`、固定数据库路径和日志/备份实际路径；不存在独立的 `preferences.yaml` 配置来源。
+- `Config.SaveCloseBehavior`、`Config.SaveLogLevel` 和 `Config.RestoreDefault` 均写入 `ConfigPath`；恢复默认只更新指定属性，不自动物化其他默认值。
+- 配置保存先写入同目录临时文件并完成 `Sync`，再替换目标文件；替换成功前不得更新内存值。Windows 目标存在时必须使用支持替换的原生语义，不能先删除旧文件。
+- `Config.SaveStorageDirectory` 只允许日志和备份两类目录：日志写回 `log.path` 并保留原文件名，备份写回 `backup.dir`；配置文件不存在时只创建被保存的属性，不复制完整默认文件。保存按同目录临时文件、写入、`Sync`、关闭、原子替换执行，任何失败都保留旧文件、旧内存保存值和当前 `ResolvedPaths`。
 - 目录输入必须规范化为绝对物理路径；缺失目录可创建，并必须通过临时文件写入、同步和删除验证。Windows 目录句柄解析符号链接、junction、大小写和 UNC 别名，避免同一物理目录被识别为不同目录。
 - 目录保存仅持久化下次启动值；运行中的日志文件句柄、日志文件名和 SQLite Store 不在配置保存时替换，重启前 `ResolvedPaths` 保持不变。
 - 本目录不得初始化日志器、执行应用生命周期或承载业务逻辑；配置错误应返回并保留有效上下文。

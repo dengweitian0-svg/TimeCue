@@ -215,6 +215,44 @@ func (b *WailsBindings) SaveCloseBehavior(request CloseBehaviorDTO) error {
 	return nil
 }
 
+// GetLogLevel 返回日志级别当前生效值与保存值。
+func (b *WailsBindings) GetLogLevel() (LogLevelDTO, error) {
+	if err := b.validate(); err != nil {
+		return LogLevelDTO{}, err
+	}
+	return b.application.GetLogLevel()
+}
+
+// SaveLogLevel 校验并持久化日志级别配置。
+func (b *WailsBindings) SaveLogLevel(request SaveLogLevelRequest) (LogLevelDTO, error) {
+	if err := b.validate(); err != nil {
+		return LogLevelDTO{}, err
+	}
+	if err := b.application.ensureWritable(); err != nil {
+		return LogLevelDTO{}, err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return LogLevelDTO{}, err
+	}
+	return b.application.SaveLogLevel(ctx, request)
+}
+
+// RestoreConfigDefault 将受限配置属性恢复为 defaults.yaml 中的默认值。
+func (b *WailsBindings) RestoreConfigDefault(request RestoreConfigDefaultRequest) error {
+	if err := b.validate(); err != nil {
+		return err
+	}
+	if err := b.application.ensureWritable(); err != nil {
+		return err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return err
+	}
+	return b.application.RestoreConfigDefault(ctx, request.Property)
+}
+
 // GetStorageDirectories 返回日志和备份目录的当前生效值与已保存值。
 func (b *WailsBindings) GetStorageDirectories() (StorageDirectoriesDTO, error) {
 	if err := b.validate(); err != nil {

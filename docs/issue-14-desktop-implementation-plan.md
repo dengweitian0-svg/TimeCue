@@ -18,8 +18,8 @@
 ## 2. 已冻结的产品决策
 
 - 关闭窗口默认隐藏到托盘，用户可以切换为直接退出。
-- 关闭偏好保存在 `%LOCALAPPDATA%\TimeCue\preferences.yaml`。
-- 原有 `config.yaml` 加载位置和优先级保持不变。
+- 关闭偏好保存在可执行文件旁的 `config.yaml`。
+- 配置优先级为内嵌 `defaults.yaml`，再由可执行文件旁的 `config.yaml` 覆盖。
 - #12 的数据库路径规则保持不变。
 - 单实例范围为当前 Windows 登录用户。
 - 同时到期的 occurrence 逐条发送 Toast，不聚合。
@@ -210,29 +210,25 @@ Toast 清理和动态时区是最高风险项。验证不通过时，应先调�
 defaults.yaml
     ↓
 可执行文件旁 config.yaml
-    ↓
-%LOCALAPPDATA%\TimeCue\preferences.yaml
-    仅覆盖用户拥有的 Window.CloseBehavior
 ```
 
 #### 实现范围
 
 - 为 `config.Config` 增加 `Window.CloseBehavior`。
 - 枚举只允许 `tray` 和 `exit`，默认值为 `tray`。
-- 为 `ResolvedPaths` 增加 `PreferencesPath`。
-- 新增关闭偏好的原子保存函数：同目录临时文件、flush/sync、rename 替换。
+- 关闭行为写回 `ResolvedPaths.ConfigPath` 指向的 `config.yaml`。
+- 复用配置文件同目录临时文件、flush/sync、rename 替换的原子保存边界。
 - 保存失败时保留旧文件和旧内存值。
-- 不重写原有 `config.yaml`。
-- 非法偏好在启动配置边界返回带路径上下文的错误。
+- 不创建或读取独立的 `preferences.yaml`。
+- 非法配置在启动配置边界返回带路径上下文的错误。
 
 #### 验证
 
-- 无偏好文件时默认为 `tray`。
+- 无用户配置时默认为 `tray`。
 - 保存 `exit` 后重启仍读取为 `exit`。
-- 用户偏好覆盖配置值。
 - 非法枚举。
 - 写入和原子替换失败。
-- 保存时保留其他用户偏好字段。
+- 保存时保留其他用户配置字段。
 - #12 数据库路径规则不变。
 
 ### Commit 3：`feat(runtime): assemble desktop service scheduler and bindings`

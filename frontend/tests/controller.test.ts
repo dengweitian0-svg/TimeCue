@@ -9,7 +9,7 @@ function port(overrides: Partial<AppPort> = {}): AppPort & { emit: (value: Activ
   let listener: ((value: Activation) => void) | undefined;
   const base: AppPort & { emit: (value: Activation) => void } = {
     listSchedules: vi.fn(async () => page), getSchedule: vi.fn(), getScheduleTimeBounds: vi.fn(async () => ({ min: '2026-09-16T00:00', startMaxExclusive: '2027-09-16T00:00', endMaxInclusive: '2027-09-16T00:00' })), listPendingReminders: vi.fn(async () => ({ items: [], nextCursor: '', limit: 20 })), getReminderDetail: vi.fn(), confirmReminder: vi.fn(),
-    createSchedule: vi.fn(), deleteSchedule: vi.fn(), getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true })), getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true }, closeBehavior: 'tray' as const, activation: null })), getCloseBehavior: vi.fn(async () => 'tray' as const), saveCloseBehavior: vi.fn(), getStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs' as const, effectivePath: 'C:/TimeCue/logs', savedPath: 'C:/TimeCue/logs', restartRequired: false }, backups: { kind: 'backups' as const, effectivePath: 'C:/TimeCue/backups', savedPath: 'C:/TimeCue/backups', restartRequired: false } })), chooseDirectory: vi.fn(async () => null), saveStorageDirectory: vi.fn(), frontendReady: vi.fn(async () => null), retryCleanup: vi.fn(), subscribeActivation: vi.fn(value => { listener = value; return () => { listener = undefined; }; }), emit: value => listener?.(value),
+    createSchedule: vi.fn(), deleteSchedule: vi.fn(), getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true })), getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true }, closeBehavior: 'tray' as const, activation: null })), getCloseBehavior: vi.fn(async () => 'tray' as const), saveCloseBehavior: vi.fn(), getLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), getStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs' as const, effectivePath: 'C:/TimeCue/logs', savedPath: 'C:/TimeCue/logs', restartRequired: false }, backups: { kind: 'backups' as const, effectivePath: 'C:/TimeCue/backups', savedPath: 'C:/TimeCue/backups', restartRequired: false } })), chooseDirectory: vi.fn(async () => null), saveStorageDirectory: vi.fn(), saveLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), restoreConfigDefault: vi.fn(async () => undefined), frontendReady: vi.fn(async () => null), retryCleanup: vi.fn(), subscribeActivation: vi.fn(value => { listener = value; return () => { listener = undefined; }; }), emit: value => listener?.(value),
   };
   return { ...base, ...overrides, emit: base.emit };
 }
@@ -62,6 +62,20 @@ describe('Controller activation handshake', () => {
     await controller.initialize(); await controller.nextReminderPage();
     expect(calls).toBe(3);
     expect(controller.snapshot().reminders.items[0].scheduleId).toBe('2');
+    controller.dispose();
+  });
+});
+
+describe('Controller configuration settings', () => {
+  it('saves log level and refreshes all settings after restoring a default', async () => {
+    const platform = port();
+    const controller = new Controller(platform);
+    await controller.initialize();
+    await controller.saveLogLevel('debug');
+    expect(platform.saveLogLevel).toHaveBeenCalledWith('debug');
+    await controller.restoreConfigDefault('log.level');
+    expect(platform.restoreConfigDefault).toHaveBeenCalledWith('log.level');
+    expect(platform.getLogLevel).toHaveBeenCalledTimes(2);
     controller.dispose();
   });
 });
