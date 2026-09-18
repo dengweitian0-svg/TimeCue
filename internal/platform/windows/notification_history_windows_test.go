@@ -3,9 +3,12 @@
 package windows
 
 import (
+	"fmt"
 	"syscall"
 	"testing"
 	"unsafe"
+
+	"github.com/go-ole/go-ole"
 )
 
 // TestToastNotificationHistoryClearUsesCurrentAppMethod 验证历史清理调用当前应用的无参数 Clear。
@@ -24,5 +27,15 @@ func TestToastNotificationHistoryClearUsesCurrentAppMethod(t *testing.T) {
 	}
 	if calledWith != uintptr(unsafe.Pointer(history)) {
 		t.Fatalf("clear() receiver = %#x, want %#x", calledWith, uintptr(unsafe.Pointer(history)))
+	}
+}
+
+// TestIsNotificationHistoryNotFound 仅将不存在的当前应用通知历史视为幂等成功。
+func TestIsNotificationHistoryNotFound(t *testing.T) {
+	if !isNotificationHistoryNotFound(fmt.Errorf("clear: %w", ole.NewError(notificationHistoryNotFoundHRESULT))) {
+		t.Fatal("not-found HRESULT was not recognized")
+	}
+	if isNotificationHistoryNotFound(ole.NewError(0x80004005)) {
+		t.Fatal("unrelated HRESULT was incorrectly recognized")
 	}
 }
