@@ -68,7 +68,7 @@ func TestDecodeUpdateScheduleTracksFieldPresence(t *testing.T) {
 	}
 }
 
-// TestDecodePreviewChangeTracksNestedCronPresence 验证预览载荷中的显式 null cron 不会丢失类型转换语义。
+// TestDecodePreviewChangeTracksNestedCronPresence 验证预览载荷中的显式 null cron 不会丢失类型边界所需的存在性。
 func TestDecodePreviewChangeTracksNestedCronPresence(t *testing.T) {
 	request, err := DecodePreviewChange([]byte(`{"operation":"update_schedule","schedule_update":{"cron":null}}`))
 	if err != nil {

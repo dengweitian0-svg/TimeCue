@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/schedule/domain"
 )
@@ -153,25 +152,13 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 		return ScheduleDTO{}, err
 	}
 	preservedOverrideCount := 0
-	var overrides []domain.OccurrenceOverride
 	if existing.IsRecurring() {
 		if occurrenceReader, supportsOccurrences := s.store.(OccurrenceReader); supportsOccurrences {
-			var readErr error
-			overrides, readErr = occurrenceReader.ListOccurrenceOverrides(ctx, id)
+			overrides, readErr := occurrenceReader.ListOccurrenceOverrides(ctx, id)
 			if readErr != nil {
 				return ScheduleDTO{}, fmt.Errorf("read occurrence overrides for schedule %d: %w", id, readErr)
 			}
 			preservedOverrideCount = len(overrides)
-		} else if isRecurringToSingle(existing, request) {
-			return ScheduleDTO{}, errors.New("schedule store does not support occurrence reads for type conversion")
-		}
-	} else if isSingleToRecurring(existing, request) {
-		if occurrenceReader, supportsOccurrences := s.store.(OccurrenceReader); supportsOccurrences {
-			readOverrides, readErr := occurrenceReader.ListOccurrenceOverrides(ctx, id)
-			if readErr != nil {
-				return ScheduleDTO{}, fmt.Errorf("read occurrence overrides for schedule %d: %w", id, readErr)
-			}
-			preservedOverrideCount = len(readOverrides)
 		}
 	}
 
@@ -179,7 +166,7 @@ func (s *Service) UpdateSchedule(ctx context.Context, id domain.ScheduleID, requ
 	if err != nil {
 		return ScheduleDTO{}, fmt.Errorf("snapshot current time: %w", err)
 	}
-	candidate, _, err := prepareScheduleUpdate(snapshot, existing, request, overrides)
+	candidate, _, err := prepareScheduleUpdate(snapshot, existing, request)
 	if err != nil {
 		return ScheduleDTO{}, err
 	}
@@ -236,7 +223,7 @@ func validateScheduleTypeChange(existing domain.Schedule, request UpdateSchedule
 
 // prepareScheduleUpdate 校验整组编辑并用一次快照生成存储补丁和变更后的定义。
 // 正式更新和只读预览共用同一入口，确保预览不会绕过任何业务校验。
-func prepareScheduleUpdate(snapshot domain.TimeSnapshot, existing domain.Schedule, request UpdateScheduleRequest, overrides []domain.OccurrenceOverride) (domain.ScheduleUpdateCandidate, domain.Schedule, error) {
+func prepareScheduleUpdate(snapshot domain.TimeSnapshot, existing domain.Schedule, request UpdateScheduleRequest) (domain.ScheduleUpdateCandidate, domain.Schedule, error) {
 	if err := validateScheduleUpdateTarget(existing, request); err != nil {
 		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
 	}
@@ -273,13 +260,11 @@ func prepareScheduleUpdate(snapshot domain.TimeSnapshot, existing domain.Schedul
 	if endPresent && request.EndUnix == nil {
 		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("end time must be an integer", "end_unix")
 	}
-	if cronPresent && request.Cron == nil && !isRecurringToSingle(existing, request) {
+	if cronPresent && request.Cron == nil {
 		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("cron cannot be cleared", "cron")
 	}
 	if untilPresent && request.UntilUnix == nil {
-		if !(isRecurringToSingle(existing, request)) {
-			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("cutoff cannot be cleared", "until_unix")
-		}
+		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("cutoff cannot be cleared", "until_unix")
 	}
 
 	candidate := domain.ScheduleUpdateCandidate{
@@ -300,64 +285,7 @@ func prepareScheduleUpdate(snapshot domain.TimeSnapshot, existing domain.Schedul
 		candidate.Notes = &notes
 		post.Notes = notes
 	}
-	if isRecurringToSingle(existing, request) {
-		if request.UntilUnix != nil {
-			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("single schedule cannot carry a cutoff", "until_unix")
-		}
-		selection := existing
-		// 暂停的重复组转换时仍需从规则事实选择目标，提交候选会同时恢复该组。
-		selection.Open = true
-		occurrence, found, err := domain.NextMergedOccurrence(selection, overrides, snapshot.Now, snapshot.Location)
-		if err != nil {
-			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
-		}
-		if !found {
-			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("no valid occurrence is available for single conversion", "cron")
-		}
-		startUnix, endUnix := occurrence.StartLocal.Unix(), occurrence.EndLocal.Unix()
-		if startPresent || endPresent {
-			startUnix, endUnix, err = deriveUpdateEndpoints(domain.Schedule{
-				FirstStartLocal: occurrence.StartLocal, DurationMinutes: occurrenceDurationMinutes(occurrence),
-			}, request.StartUnix, request.EndUnix)
-			if err != nil {
-				return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
-			}
-		}
-		validated, err := domain.ValidateSingleEndpoints(snapshot, startUnix, endUnix)
-		if err != nil {
-			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
-		}
-		anchor, err := occurrenceIdentityAnchor(occurrence, snapshot.Location)
-		if err != nil {
-			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
-		}
-		candidate.FirstStartLocal = &validated.FirstStartLocal
-		candidate.OriginalStartLocal = &anchor
-		candidate.DurationMinutes = &validated.DurationMinutes
-		candidate.CronPresent = true
-		candidate.UntilDateLocalPresent = true
-		candidate.MonthEndPolicyPresent = true
-		open := true
-		candidate.Open, candidate.OpenPresent = &open, true
-		post.Cron = nil
-		post.UntilDateLocal = nil
-		post.MonthEndPolicy = nil
-		post.Open = true
-		post.FirstStartLocal = validated.FirstStartLocal
-		post.OriginalStartLocal = anchor
-		post.DurationMinutes = validated.DurationMinutes
-	} else if isSingleToRecurring(existing, request) {
-		if request.UntilUnix == nil {
-			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("recurring cutoff is required for type conversion", "until_unix")
-		}
-		if err := prepareRecurringUpdate(snapshot, existing, request, &candidate); err != nil {
-			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
-		}
-		open := true
-		candidate.Open, candidate.OpenPresent = &open, true
-		post.Open = true
-		applyRecurringPostChange(candidate, &post)
-	} else if existing.IsRecurring() {
+	if existing.IsRecurring() {
 		if err := prepareRecurringUpdate(snapshot, existing, request, &candidate); err != nil {
 			return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, err
 		}
@@ -379,34 +307,6 @@ func prepareScheduleUpdate(snapshot domain.TimeSnapshot, existing domain.Schedul
 		post.DurationMinutes = validated.DurationMinutes
 	}
 	return candidate, post, nil
-}
-
-// isRecurringToSingle 判断请求是否显式清空 cron 并将重复定义转换为单次定义。
-func isRecurringToSingle(existing domain.Schedule, request UpdateScheduleRequest) bool {
-	return existing.IsRecurring() && request.CronPresent && request.Cron == nil
-}
-
-// isSingleToRecurring 判断请求是否携带新的 cron 并将单次定义转换为重复定义。
-func isSingleToRecurring(existing domain.Schedule, request UpdateScheduleRequest) bool {
-	return !existing.IsRecurring() && request.Cron != nil
-}
-
-// occurrenceDurationMinutes 把有效发生的实际端点转换为更新候选所需的分钟时长。
-func occurrenceDurationMinutes(occurrence domain.Occurrence) int {
-	return int(occurrence.EndLocal.Sub(occurrence.StartLocal) / time.Minute)
-}
-
-// occurrenceIdentityAnchor 保留发生的原始日期，并使用实际开始的墙钟时间构造单次身份锚点。
-func occurrenceIdentityAnchor(occurrence domain.Occurrence, location *time.Location) (time.Time, error) {
-	if location == nil {
-		return time.Time{}, domain.NewValidation("time location must not be nil", "location")
-	}
-	date, err := time.ParseInLocation(time.DateOnly, occurrence.OriginalDate, location)
-	if err != nil {
-		return time.Time{}, domain.NewValidation("occurrence original date is invalid", "original_date")
-	}
-	start := occurrence.StartLocal.In(location)
-	return time.Date(date.Year(), date.Month(), date.Day(), start.Hour(), start.Minute(), start.Second(), start.Nanosecond(), location), nil
 }
 
 // applyRecurringPostChange 把重复编辑补丁投影到变更后的定义，供只读预览计算使用。
