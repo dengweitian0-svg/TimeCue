@@ -106,9 +106,6 @@ func prepareCreateCandidate(snapshot domain.TimeSnapshot, request CreateSchedule
 	if request.Cron == nil && (request.CronPresent || request.UntilUnixPresent || request.UntilUnix != nil) {
 		return domain.ScheduleCandidate{}, domain.NewValidation("single schedule cannot carry recurrence fields", "cron", "until_unix")
 	}
-	if request.Cron != nil && request.UntilUnix == nil {
-		return domain.ScheduleCandidate{}, domain.NewValidation("recurring cutoff is required", "until_unix")
-	}
 	var (
 		candidate domain.ScheduleCandidate
 		err       error
@@ -267,10 +264,6 @@ func prepareScheduleUpdate(snapshot domain.TimeSnapshot, existing domain.Schedul
 	if cronPresent && request.Cron == nil {
 		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("cron cannot be cleared", "cron")
 	}
-	if untilPresent && request.UntilUnix == nil {
-		return domain.ScheduleUpdateCandidate{}, domain.Schedule{}, domain.NewValidation("cutoff cannot be cleared", "until_unix")
-	}
-
 	candidate := domain.ScheduleUpdateCandidate{
 		ExpectedRevision: request.ExpectedRevision,
 		UpdatedAtUTC:     snapshot.Now.UTC(),

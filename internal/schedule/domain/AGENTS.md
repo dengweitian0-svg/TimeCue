@@ -15,7 +15,7 @@
 - `ScheduleUpdateCandidate` 只表达允许更新的字段、显式 `Cron`/截止日期/开放状态存在性、单次身份锚点、期望版本和 UTC 审计时间；可更新字段的指针为 nil 表示保持原值，而显式字段存在性不能被值的零值替代。
 - 日程类型由 `Schedule.Cron` 是否存在决定；领域候选不提供单次与重复之间的转换语义，应用层必须在正式更新前拒绝跨类型请求。
 - `MonthEndPolicy` 是可空的持久化策略字段；更新候选必须用 `MonthEndPolicyPresent` 区分保留策略和显式写入 `NULL`。
-- 重复创建候选和日程定义包含 `UntilDateLocal`；更新候选的该指针非 nil 才修改截止日期，本 Issue 不支持清空。应用层复用 `ValidateRecurring` 校验变更的首次端点，并通过 `NextBase` 校验合并后的定义，原始发生身份不进入更新候选。
+- 重复创建候选和日程定义包含可空的 `UntilDateLocal`；更新候选用 `UntilDateLocalPresent` 区分缺失（保留）和显式 nil（清空）。应用层复用 `ValidateRecurring` 校验变更的首次端点，并通过 `NextBase` 校验合并后的定义，原始发生身份不进入更新候选。
 - `StaleRevision` 表示乐观并发控制中的版本冲突，必须保留机器可读分类和字段信息，不能降级为普通校验或存储错误。
 - `AddCalendarYearClamped` 必须保留 2 月 29 日的同月同日语义，将非闰年的结果夹取到 2 月 28 日；不得直接依赖 `time.AddDate` 的默认归一化结果。
 - 领域错误必须保留分类、字段和可安全暴露的边界信息；底层原因通过 `Unwrap` 保留，但不得在对外 JSON 中泄露。

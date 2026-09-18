@@ -29,16 +29,18 @@ func prepareRecurringUpdate(snapshot domain.TimeSnapshot, existing domain.Schedu
 			candidate.MonthEndPolicy = nil
 		}
 	}
-	if request.UntilUnix != nil {
-		date, err := recurringUntilDate(snapshot.Location, *request.UntilUnix)
-		if err != nil {
-			return err
-		}
-		merged.UntilDateLocal, candidate.UntilDateLocal = &date, &date
+	if request.UntilUnixPresent || request.UntilUnix != nil {
 		candidate.UntilDateLocalPresent = true
-	}
-	if merged.UntilDateLocal == nil {
-		return domain.NewValidation("recurring cutoff is required", "until_unix")
+		if request.UntilUnix != nil {
+			date, err := recurringUntilDate(snapshot.Location, *request.UntilUnix)
+			if err != nil {
+				return err
+			}
+			merged.UntilDateLocal, candidate.UntilDateLocal = &date, &date
+		} else {
+			merged.UntilDateLocal = nil
+			candidate.UntilDateLocal = nil
+		}
 	}
 	if request.StartUnix != nil || request.EndUnix != nil {
 		start, end, err := deriveUpdateEndpoints(existing, request.StartUnix, request.EndUnix)

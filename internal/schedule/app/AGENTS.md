@@ -17,7 +17,7 @@
 - DTO 是对外的受控视图；转换时不得暴露领域原始内部字段、数据库连接或底层错误细节。
 - JSON 边界必须区分缺失字段与显式零值，严格拒绝非法数值和非对象的创建、更新、删除请求；错误响应只输出业务分类、消息、字段和允许的时间边界。
 - 本目录不得直接调用 `time.Now`、SQL、文件系统或具体日志实现；新增外部能力应先扩展窄接口并保持生产实现可替换。
-- 创建请求沿用 `start_unix/end_unix` 表示首次实际起止；省略 cron 创建单次，非空 cron 创建重复且必须提供 `until_unix`。该截止瞬间按一次快照的显式时区转换为包含式本地日期，不要求分钟精度。
+- 创建请求沿用 `start_unix/end_unix` 表示首次实际起止；省略 cron 创建单次，非空 cron 创建重复，`until_unix` 可省略表示无限期重复。该截止瞬间按一次快照的显式时区转换为包含式本地日期，不要求分钟精度。
 - 更新请求只支持同类型编辑；单次与重复日程之间的类型转换统一返回 `VALIDATION` 且字段为 `cron`。省略字段保持原值，显式 null 不能绕过类型边界；成功后 revision 加一并更新审计时间。
 - 日程的 `notes` 是可为空的普通文本；整组更新显式提供时替换父日程备注，例外更新显式提供时替换当前发生备注。
 - `UpdateOccurrence` 使用 `(schedule_id, original_date)` 读取当前例外或规则基础发生，补齐缺失端点和文本后只向存储提交完整快照；基础规则不匹配且不存在例外时拒绝写入。
@@ -25,7 +25,7 @@
 - `CancelOccurrence` 和 `RestoreOccurrence` 使用同一稳定身份和父 revision；空取消例外只有在当前规则重新产生该身份时才能被恢复删除，完整快照恢复为开放例外。例外动作结果同时回流父组 `schedule_open`。
 - `UpdateSchedule` 不删除或重建例外、提醒尝试记录；重复日程编辑前读取当前例外数量，并在成功响应的 `preserved_override_count` 中返回该数量。类型不匹配必须在 revision 校验后、时钟和例外读取前拒绝，不得调用写端口或改变协调器 epoch。
 - 预读发现旧 revision 时返回 STALE_REVISION，不调用更新端口；存储事务仍承担最终并发守卫。非法规则或合并后的日期/端点校验失败均不得写入。
-- `ScheduleDTO.until_date_local` 在单条读取、创建/更新响应和列表中均返回 `YYYY-MM-DD` 或 null；JSON 创建/更新边界都保留 cron 和 until_unix 的存在性。
+- `ScheduleDTO.until_date_local` 在单条读取、创建/更新响应和列表中均返回 `YYYY-MM-DD` 或 null；JSON 创建/更新边界都保留 cron 和 until_unix 的存在性。更新时缺失截止字段保持原值，显式 null 清空截止日期。
 - `ScheduleDTO.month_end_policy` 在单条读取、创建/更新响应和列表中返回 `clamp` 或 null；该字段由后端根据 cron 生成，创建/更新请求不接收该字段。
 - 重复更新先合并完整定义，再依据新 cron 通过领域校验生成或清空 `month_end_policy`；日/周/月之间可互换，cron 未修改时策略保持不变。单次/重复类型转换不属于该编辑流程。
 

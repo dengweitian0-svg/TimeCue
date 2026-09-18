@@ -159,10 +159,6 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		err = domain.NewValidation("schedule type conversion is not supported", "cron")
 		return domain.Schedule{}, err
 	}
-	if existing.IsRecurring() && untilPresent && candidate.UntilDateLocal == nil {
-		err = domain.NewValidation("recurring cutoff cannot be cleared", "until_date_local")
-		return domain.Schedule{}, err
-	}
 	if !existing.IsRecurring() && cronPresent && candidate.Cron == nil {
 		err = domain.NewValidation("single schedule cron cannot be cleared", "cron")
 		return domain.Schedule{}, err
