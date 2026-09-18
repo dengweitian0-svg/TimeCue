@@ -214,7 +214,24 @@ func validateScheduleUpdateTarget(existing domain.Schedule, request UpdateSchedu
 		// 预读发现旧版本时不读取时间也不生成补丁；事务内仍会复查以防预读后的竞争。
 		return domain.NewStaleRevision("schedule revision is stale", "expected_revision")
 	}
+	if err := validateScheduleTypeChange(existing, request); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validateScheduleTypeChange 在版本通过后拒绝单次和重复日程之间的类型转换。
+// 类型边界必须早于时钟、例外和候选读取，避免非法请求产生任何后续副作用。
+func validateScheduleTypeChange(existing domain.Schedule, request UpdateScheduleRequest) error {
+	cronPresent := request.CronPresent || request.Cron != nil
+	if !cronPresent {
+		return nil
+	}
+	targetRecurring := request.Cron != nil
+	if existing.IsRecurring() == targetRecurring {
+		return nil
+	}
+	return domain.NewValidation("schedule type conversion is not supported", "cron")
 }
 
 // prepareScheduleUpdate 校验整组编辑并用一次快照生成存储补丁和变更后的定义。

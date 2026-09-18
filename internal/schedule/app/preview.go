@@ -66,6 +66,9 @@ func (s *Service) PreviewChange(ctx context.Context, request PreviewChangeReques
 	if s.clock == nil {
 		return ChangePreviewDTO{}, errors.New("schedule clock is not configured")
 	}
+	if err := s.preflightPreviewScheduleUpdate(ctx, request); err != nil {
+		return ChangePreviewDTO{}, err
+	}
 	snapshot, err := s.clock.Snapshot(ctx)
 	if err != nil {
 		return ChangePreviewDTO{}, fmt.Errorf("snapshot current time: %w", err)
@@ -86,6 +89,25 @@ func (s *Service) PreviewChange(ctx context.Context, request PreviewChangeReques
 		Checked:   conflict.Checked,
 		HasMore:   detection.HasMore,
 	}, nil
+}
+
+// preflightPreviewScheduleUpdate 在预览读取时钟前复用正式更新的版本和类型边界。
+// 只有结构足够完整的整组更新进入此预检，其余请求交给统一解析流程返回原有错误优先级。
+func (s *Service) preflightPreviewScheduleUpdate(ctx context.Context, request PreviewChangeRequest) error {
+	if strings.TrimSpace(request.Operation) != ChangeOperationUpdateSchedule ||
+		request.ScheduleUpdate == nil || request.OccurrenceUpdate != nil ||
+		request.OccurrenceAction != nil || request.ScheduleAction != nil ||
+		request.OriginalDatePresent || !request.ScheduleIDPresent || request.ScheduleID <= 0 ||
+		!request.ExpectedRevisionPresent || request.ExpectedRevision <= 0 {
+		return nil
+	}
+	existing, err := s.previewSchedule(ctx, domain.ScheduleID(request.ScheduleID))
+	if err != nil {
+		return err
+	}
+	payload := *request.ScheduleUpdate
+	payload.ExpectedRevision = request.ExpectedRevision
+	return validateScheduleUpdateTarget(existing, payload)
 }
 
 // resolveChangeOperation 校验操作类型和必要载荷，并计算变更后的日程投影。
