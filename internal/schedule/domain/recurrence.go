@@ -2,6 +2,7 @@ package domain
 
 import (
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -12,10 +13,10 @@ type CronRule struct {
 	Minute     int
 	Hour       int
 	DayOfMonth *int
-	Weekday    *time.Weekday
+	Weekdays   []time.Weekday
 }
 
-// ParseCron 只接受五字段的每日 M H * * *、每周 M H * * D 和每月 M H D * *，星期日为 0。
+// ParseCron 只接受五字段的每日 M H * * *、每周 M H * * D[,D...] 和每月 M H D * *，星期日为 0。
 func ParseCron(expression string) (CronRule, error) {
 	fields := strings.Fields(expression)
 	if len(fields) != 5 || fields[3] != "*" {
@@ -45,14 +46,57 @@ func ParseCron(expression string) (CronRule, error) {
 		return rule, nil
 	}
 	if fields[4] != "*" {
-		day, err := cronNumber(fields[4], 6)
+		weekdays, err := parseWeekdays(fields[4])
 		if err != nil {
 			return CronRule{}, err
 		}
-		weekday := time.Weekday(day)
-		rule.Weekday = &weekday
+		rule.Weekdays = weekdays
 	}
 	return rule, nil
+}
+
+// parseWeekdays 解析星期列表，并以升序去重后的数值保留规则语义。
+func parseWeekdays(field string) ([]time.Weekday, error) {
+	parts := strings.Split(field, ",")
+	seen := make(map[int]struct{}, len(parts))
+	weekdays := make([]time.Weekday, 0, len(parts))
+	for _, part := range parts {
+		day, err := cronNumber(part, 6)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seen[day]; exists {
+			continue
+		}
+		seen[day] = struct{}{}
+		weekdays = append(weekdays, time.Weekday(day))
+	}
+	sort.Slice(weekdays, func(i, j int) bool { return weekdays[i] < weekdays[j] })
+	return weekdays, nil
+}
+
+// NormalizeCron 返回规则的稳定五字段表示，星期列表按升序去重。
+func NormalizeCron(expression string) (string, error) {
+	rule, err := ParseCron(expression)
+	if err != nil {
+		return "", err
+	}
+	return canonicalCron(rule), nil
+}
+
+// canonicalCron 将已校验规则编码为稳定的应用和存储表示。
+func canonicalCron(rule CronRule) string {
+	if rule.DayOfMonth != nil {
+		return strconv.Itoa(rule.Minute) + " " + strconv.Itoa(rule.Hour) + " " + strconv.Itoa(*rule.DayOfMonth) + " * *"
+	}
+	if len(rule.Weekdays) == 0 {
+		return strconv.Itoa(rule.Minute) + " " + strconv.Itoa(rule.Hour) + " * * *"
+	}
+	weekdays := make([]string, len(rule.Weekdays))
+	for index, weekday := range rule.Weekdays {
+		weekdays[index] = strconv.Itoa(int(weekday))
+	}
+	return strconv.Itoa(rule.Minute) + " " + strconv.Itoa(rule.Hour) + " * * " + strings.Join(weekdays, ",")
 }
 
 // cronNumber 拒绝符号、别名、范围、列表、步长和通配符，只接受范围内的十进制数字。
@@ -103,7 +147,8 @@ func ValidateRecurring(snapshot TimeSnapshot, startUnix, endUnix int64, cron str
 			return ScheduleCandidate{}, NewValidation("cutoff date precedes first start date", "until_unix")
 		}
 	}
-	return ScheduleCandidate{Cron: &cron, UntilDateLocal: untilDateLocal, MonthEndPolicy: monthEndPolicyForRule(rule), Open: true,
+	normalizedCron := canonicalCron(rule)
+	return ScheduleCandidate{Cron: &normalizedCron, UntilDateLocal: untilDateLocal, MonthEndPolicy: monthEndPolicyForRule(rule), Open: true,
 		FirstStartLocal: start, OriginalStartLocal: start, DurationMinutes: int(minutes),
 		CreatedAtUTC: snapshot.Now.UTC(), UpdatedAtUTC: snapshot.Now.UTC()}, nil
 }
@@ -167,14 +212,9 @@ func nextBase(schedule Schedule, rule CronRule, first time.Time, until *time.Tim
 	if afterDate.After(date) {
 		date = afterDate
 	}
-	step := 1
-	if rule.Weekday != nil {
-		date = date.AddDate(0, 0, (int(*rule.Weekday)-int(date.Weekday())+7)%7)
-		step = 7
-	}
 	for until == nil || !date.After(*until) {
 		start := resolveWallTime(date.Year(), date.Month(), date.Day(), rule.Hour, rule.Minute, location)
-		if !start.Before(first) && start.After(after) {
+		if !start.Before(first) && start.After(after) && weekdayMatches(rule.Weekdays, date.Weekday()) {
 			return Occurrence{
 				ScheduleID:   schedule.ID,
 				OriginalDate: date.Format(time.DateOnly),
@@ -184,9 +224,22 @@ func nextBase(schedule Schedule, rule CronRule, first time.Time, until *time.Tim
 				Notes:        schedule.Notes,
 			}, true
 		}
-		date = date.AddDate(0, 0, step)
+		date = date.AddDate(0, 0, 1)
 	}
 	return Occurrence{}, false
+}
+
+// weekdayMatches 判断每日规则或多星期规则是否命中当前自然日。
+func weekdayMatches(weekdays []time.Weekday, weekday time.Weekday) bool {
+	if len(weekdays) == 0 {
+		return true
+	}
+	for _, candidate := range weekdays {
+		if candidate == weekday {
+			return true
+		}
+	}
+	return false
 }
 
 // nextMonthlyBase 按月份首日推进月规则，每次重新计算短月中的有效日期。
