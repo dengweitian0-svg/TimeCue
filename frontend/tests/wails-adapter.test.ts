@@ -22,6 +22,7 @@ function bindings(overrides: Partial<BindingsPort> = {}): BindingsPort {
     SaveCloseBehavior: vi.fn(async () => undefined),
     GetTheme: vi.fn(async () => ({ theme: 'peach' })),
     SaveTheme: vi.fn(async ({ theme }: { theme: string }) => ({ theme })),
+    ApplyWindowTheme: vi.fn(async () => undefined),
     GetLogLevel: vi.fn(async () => ({ effective_level: 'info', saved_level: 'info', restart_required: false })),
     SaveLogLevel: vi.fn(async () => ({ effective_level: 'info', saved_level: 'debug', restart_required: true })),
     GetStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs', effective_path: 'C:/TimeCue/logs', saved_path: 'C:/TimeCue/logs', restart_required: false }, backups: { kind: 'backups', effective_path: 'C:/TimeCue/backups', saved_path: 'C:/TimeCue/backups', restart_required: false } })),
@@ -71,6 +72,8 @@ describe('WailsAdapter', () => {
     await expect(adapter.getTheme()).resolves.toBe('peach');
     await expect(adapter.saveTheme('mint')).resolves.toBe('mint');
     expect(port.SaveTheme).toHaveBeenCalledWith({ theme: 'mint' });
+    await adapter.applyWindowTheme({ surface: '#FCFEFB', text: '#293F35' });
+    expect(port.ApplyWindowTheme).toHaveBeenCalledWith({ surface: '#FCFEFB', text: '#293F35' });
     await expect(adapter.getLogLevel()).resolves.toEqual({ effectiveLevel: 'info', savedLevel: 'info', restartRequired: false });
     await expect(adapter.saveLogLevel('debug')).resolves.toEqual({ effectiveLevel: 'info', savedLevel: 'debug', restartRequired: true });
     expect(port.SaveLogLevel).toHaveBeenCalledWith({ level: 'debug' });

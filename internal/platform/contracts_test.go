@@ -13,6 +13,7 @@ import (
 var (
 	_ DesktopHost            = (*FakeDesktopHost)(nil)
 	_ WindowController       = (*FakeWindowController)(nil)
+	_ WindowThemeController  = (*FakeWindowThemeController)(nil)
 	_ FrontendEvents         = (*FakeFrontendEvents)(nil)
 	_ ActivationSource       = (*FakeActivationSource)(nil)
 	_ EnvironmentEventSource = (*FakeEnvironmentEventSource)(nil)
@@ -157,5 +158,13 @@ func TestFakeHooksPropagateErrors(t *testing.T) {
 	center := &FakeNotificationCenter{CleanupFunc: func(context.Context) error { return wantErr }}
 	if err := center.Cleanup(context.Background()); !errors.Is(err, wantErr) {
 		t.Fatalf("Cleanup() error = %v, want %v", err, wantErr)
+	}
+	theme := &FakeWindowThemeController{}
+	wantColors := WindowThemeColors{TitleBar: RGBColor{R: 1, G: 2, B: 3}, TitleText: RGBColor{R: 4, G: 5, B: 6}}
+	if err := theme.Apply(context.Background(), wantColors); err != nil {
+		t.Fatalf("window theme Apply() error = %v", err)
+	}
+	if theme.Calls() != 1 || len(theme.AppliedColors()) != 1 || theme.AppliedColors()[0] != wantColors {
+		t.Fatalf("window theme fake calls = %d, colors = %+v, want one call with %+v", theme.Calls(), theme.AppliedColors(), wantColors)
 	}
 }

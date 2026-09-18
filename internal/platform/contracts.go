@@ -31,6 +31,26 @@ type WindowController interface {
 	Activate(context.Context) error
 }
 
+// WindowThemeColors 是原生窗口标题栏需要的最小 RGB 配色视图。
+// 颜色来源和语义由上层决定，平台契约不携带主题名称或前端结构。
+type WindowThemeColors struct {
+	TitleBar  RGBColor
+	TitleText RGBColor
+}
+
+// RGBColor 表示一个不含透明度的 RGB 颜色，供平台 API 转换使用。
+type RGBColor struct {
+	R uint8
+	G uint8
+	B uint8
+}
+
+// WindowThemeController 将应用主题的标题栏配色应用到原生窗口。
+// 该端口只负责窗口外观副作用，不拥有主题配置，也不修改应用状态。
+type WindowThemeController interface {
+	Apply(context.Context, WindowThemeColors) error
+}
+
 // FrontendEvents 向前端发送受控的应用事件。
 // name 由运行时定义的事件名常量约束，payload 必须是边界 DTO；实现不得
 // 将数据库连接、领域内部可变对象或底层错误 cause 作为载荷暴露。

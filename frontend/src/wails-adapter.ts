@@ -1,4 +1,4 @@
-import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, RecoveryEvent, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleHidden, ScheduleHiddenListener, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory, Theme } from './contracts';
+import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, RecoveryEvent, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleHidden, ScheduleHiddenListener, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory, Theme, WindowThemeColors } from './contracts';
 import * as generatedBindings from '../wailsjs/go/runtime/WailsBindings';
 import { EventsOn as generatedEventsOn } from '../wailsjs/runtime/runtime';
 
@@ -18,6 +18,7 @@ export interface BindingsPort {
   SaveCloseBehavior(request: { behavior: CloseBehavior }): Promise<unknown>;
   GetTheme(): Promise<unknown>;
   SaveTheme(request: { theme: Theme }): Promise<unknown>;
+  ApplyWindowTheme(request: WindowThemeColors): Promise<unknown>;
   GetLogLevel(): Promise<unknown>;
   SaveLogLevel(request: { level: LogLevel }): Promise<unknown>;
   GetStorageDirectories(): Promise<unknown>;
@@ -155,6 +156,9 @@ export class WailsAdapter implements AppPort {
   /** 保存主题并只返回后端确认成功后的主题。 */
   async saveTheme(value: Theme): Promise<Theme> { const raw = await this.bindings.SaveTheme({ theme: value }); return toTheme(read(asRecord(raw), 'theme', 'Theme')); }
 
+  /** 将前端主题的原生标题栏颜色交给 Wails 平台端口。 */
+  async applyWindowTheme(colors: WindowThemeColors): Promise<void> { await this.bindings.ApplyWindowTheme(colors); }
+
   /** 读取日志级别当前生效值与保存值。 */
   async getLogLevel(): Promise<LogLevelSettings> { return toLogLevel(await this.bindings.GetLogLevel()); }
 
@@ -200,6 +204,7 @@ export async function createWailsAdapter(): Promise<WailsAdapter> {
     SaveCloseBehavior: generatedBindings.SaveCloseBehavior,
     GetTheme: generatedBindings.GetTheme,
     SaveTheme: generatedBindings.SaveTheme,
+    ApplyWindowTheme: generatedBindings.ApplyWindowTheme,
     GetLogLevel: generatedBindings.GetLogLevel,
     SaveLogLevel: generatedBindings.SaveLogLevel,
     GetStorageDirectories: generatedBindings.GetStorageDirectories,

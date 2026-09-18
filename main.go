@@ -22,6 +22,7 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/utils"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	wailswindows "github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 const applicationName = "TimeCue"
@@ -89,6 +90,13 @@ func (entry desktopEntrypoint) Run(ctx context.Context, cfg config.Config, logge
 		_ = tray.Close()
 		return utils.Wrap(utils.StartupError, "create Windows notification center", err)
 	}
+	windowTheme, err := platformwindows.NewWindowsWindowThemeController(platformwindows.MainWindowClassName)
+	if err != nil {
+		_ = environment.Close()
+		_ = tray.Close()
+		_ = notificationCenter.Close()
+		return utils.Wrap(utils.StartupError, "create Windows window theme controller", err)
+	}
 
 	var application *appRuntime.DesktopApplication
 	var host *wailshost.Host
@@ -100,6 +108,7 @@ func (entry desktopEntrypoint) Run(ctx context.Context, cfg config.Config, logge
 			MinWidth:          840,
 			MinHeight:         600,
 			BackgroundColour:  options.NewRGB(245, 242, 235),
+			Windows:           &wailswindows.Options{WindowClassName: platformwindows.MainWindowClassName},
 			AssetServer:       &assetserver.Options{Assets: frontendAssets()},
 			HideWindowOnClose: false,
 		},
@@ -144,6 +153,7 @@ func (entry desktopEntrypoint) Run(ctx context.Context, cfg config.Config, logge
 	application = appRuntime.NewDesktopApplication(appRuntime.DesktopDependencies{
 		Host:             host,
 		Window:           host.Window(),
+		WindowTheme:      windowTheme,
 		Frontend:         host.Events(),
 		Activation:       nonOwningActivationSource{WindowsInstanceBroker: entry.broker},
 		Environment:      environment,

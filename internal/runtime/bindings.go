@@ -279,6 +279,21 @@ func (b *WailsBindings) SaveTheme(request SaveThemeRequest) (ThemeDTO, error) {
 	return b.application.SaveTheme(ctx, request)
 }
 
+// ApplyWindowTheme 校验并应用前端主题的原生标题栏颜色。
+func (b *WailsBindings) ApplyWindowTheme(request ApplyWindowThemeRequest) error {
+	if err := b.validate(); err != nil {
+		return err
+	}
+	if err := b.application.ensureWritable(); err != nil {
+		return err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return err
+	}
+	return b.application.ApplyWindowTheme(ctx, request)
+}
+
 // RestoreConfigDefault 将受限配置属性恢复为 defaults.yaml 中的默认值。
 func (b *WailsBindings) RestoreConfigDefault(request RestoreConfigDefaultRequest) error {
 	if err := b.validate(); err != nil {

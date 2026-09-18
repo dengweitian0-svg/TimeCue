@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,6 +40,7 @@ type DesktopStore interface {
 type DesktopDependencies struct {
 	Host             platform.DesktopHost
 	Window           platform.WindowController
+	WindowTheme      platform.WindowThemeController
 	Frontend         platform.FrontendEvents
 	Activation       platform.ActivationSource
 	Environment      platform.EnvironmentEventSource
@@ -122,6 +124,12 @@ type SaveLogLevelRequest struct {
 // SaveThemeRequest 描述一次主题保存请求。
 type SaveThemeRequest struct {
 	Theme string `json:"theme"`
+}
+
+// ApplyWindowThemeRequest 描述前端传递给原生窗口的语义颜色。
+type ApplyWindowThemeRequest struct {
+	Surface string `json:"surface"`
+	Text    string `json:"text"`
 }
 
 // RestoreConfigDefaultRequest 描述一次受限配置属性恢复默认请求。
@@ -923,6 +931,67 @@ func (a *DesktopApplication) GetTheme() (ThemeDTO, error) {
 		return ThemeDTO{}, errors.New("desktop application is not assembled")
 	}
 	return ThemeDTO{Theme: string(a.config.Theme)}, nil
+}
+
+// ApplyWindowTheme 将前端主题的 surface/text 颜色应用到原生窗口标题栏。
+// 标题栏是非关键桌面副作用，平台失败会被记录并返回给前端，但不改变配置状态。
+func (a *DesktopApplication) ApplyWindowTheme(ctx context.Context, request ApplyWindowThemeRequest) error {
+	if a == nil {
+		return errors.New("desktop application is nil")
+	}
+	if err := a.ensureWritable(); err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	colors, err := windowThemeColorsFromRequest(request)
+	if err != nil {
+		return fmt.Errorf("apply window theme: %w", err)
+	}
+	a.mu.Lock()
+	controller := a.deps.WindowTheme
+	logger := a.logger
+	a.mu.Unlock()
+	if controller == nil {
+		return nil
+	}
+	if err := controller.Apply(ctx, colors); err != nil {
+		wrapped := fmt.Errorf("apply window theme: %w", err)
+		if logger != nil {
+			logger.Warn("native window theme synchronization failed", "operation", "apply_window_theme", "dependency", "windows_dwm", "error", wrapped)
+		}
+		return wrapped
+	}
+	return nil
+}
+
+// windowThemeColorsFromRequest 严格解析前端传入的两个不透明十六进制颜色。
+func windowThemeColorsFromRequest(request ApplyWindowThemeRequest) (platform.WindowThemeColors, error) {
+	titleBar, err := parseWindowThemeColor("surface", request.Surface)
+	if err != nil {
+		return platform.WindowThemeColors{}, err
+	}
+	titleText, err := parseWindowThemeColor("text", request.Text)
+	if err != nil {
+		return platform.WindowThemeColors{}, err
+	}
+	return platform.WindowThemeColors{TitleBar: titleBar, TitleText: titleText}, nil
+}
+
+// parseWindowThemeColor 将 #RRGGBB 解析为平台无关 RGB 通道，并拒绝透明或畸形值。
+func parseWindowThemeColor(name, value string) (platform.RGBColor, error) {
+	if len(value) != 7 || value[0] != '#' {
+		return platform.RGBColor{}, fmt.Errorf("window theme %s must be #RRGGBB", name)
+	}
+	decoded, err := hex.DecodeString(value[1:])
+	if err != nil {
+		return platform.RGBColor{}, fmt.Errorf("window theme %s must be #RRGGBB: %w", name, err)
+	}
+	return platform.RGBColor{R: decoded[0], G: decoded[1], B: decoded[2]}, nil
 }
 
 // SaveLogLevel 保存日志级别；当前日志器保持原级别，重启后加载新值。

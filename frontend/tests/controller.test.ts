@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Controller } from '../src/controller';
 import type { Activation, AppPort, RecoveryEvent, ReminderDetail, ReminderPage, ScheduleHidden, SchedulePage } from '../src/contracts';
+import { themes } from '../src/themes';
 
 const page: SchedulePage = { items: [], nextCursor: '', limit: 20 };
 
@@ -11,7 +12,7 @@ function port(overrides: Partial<AppPort> = {}): AppPort & { emit: (value: Activ
   let scheduleHiddenListener: ((value: ScheduleHidden) => void) | undefined;
   const base: AppPort & { emit: (value: Activation) => void; emitRecovery: (value: RecoveryEvent) => void; emitScheduleHidden: (value: ScheduleHidden) => void } = {
     listSchedules: vi.fn(async () => page), getSchedule: vi.fn(), getScheduleTimeBounds: vi.fn(async () => ({ min: '2026-09-16T00:00', startMaxExclusive: '2027-09-16T00:00', endMaxInclusive: '2027-09-16T00:00' })), listPendingReminders: vi.fn(async () => ({ items: [], nextCursor: '', limit: 20 })), getReminderDetail: vi.fn(), confirmReminder: vi.fn(),
-    createSchedule: vi.fn(), deleteSchedule: vi.fn(), getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const })), getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const }, closeBehavior: 'tray' as const, activation: null })), getCloseBehavior: vi.fn(async () => 'tray' as const), saveCloseBehavior: vi.fn(), getTheme: vi.fn(async () => 'peach' as const), saveTheme: vi.fn(async (value: 'peach' | 'mint' | 'sky' | 'lavender') => value), getLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), getStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs' as const, effectivePath: 'C:/TimeCue/logs', savedPath: 'C:/TimeCue/logs', restartRequired: false }, backups: { kind: 'backups' as const, effectivePath: 'C:/TimeCue/backups', savedPath: 'C:/TimeCue/backups', restartRequired: false } })), chooseDirectory: vi.fn(async () => null), saveStorageDirectory: vi.fn(), saveLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), restoreConfigDefault: vi.fn(async () => undefined), frontendReady: vi.fn(async () => null), retryCleanup: vi.fn(), subscribeActivation: vi.fn(value => { listener = value; return () => { listener = undefined; }; }), subscribeScheduleHidden: vi.fn(value => { scheduleHiddenListener = value; return () => { scheduleHiddenListener = undefined; }; }), subscribeRecovery: vi.fn(value => { recoveryListener = value; return () => { recoveryListener = undefined; }; }), emit: value => listener?.(value), emitScheduleHidden: value => scheduleHiddenListener?.(value), emitRecovery: value => recoveryListener?.(value),
+    createSchedule: vi.fn(), deleteSchedule: vi.fn(), getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const })), getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const }, closeBehavior: 'tray' as const, activation: null })), getCloseBehavior: vi.fn(async () => 'tray' as const), saveCloseBehavior: vi.fn(), getTheme: vi.fn(async () => 'peach' as const), saveTheme: vi.fn(async (value: 'peach' | 'mint' | 'sky' | 'lavender') => value), applyWindowTheme: vi.fn(async () => undefined), getLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), getStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs' as const, effectivePath: 'C:/TimeCue/logs', savedPath: 'C:/TimeCue/logs', restartRequired: false }, backups: { kind: 'backups' as const, effectivePath: 'C:/TimeCue/backups', savedPath: 'C:/TimeCue/backups', restartRequired: false } })), chooseDirectory: vi.fn(async () => null), saveStorageDirectory: vi.fn(), saveLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), restoreConfigDefault: vi.fn(async () => undefined), frontendReady: vi.fn(async () => null), retryCleanup: vi.fn(), subscribeActivation: vi.fn(value => { listener = value; return () => { listener = undefined; }; }), subscribeScheduleHidden: vi.fn(value => { scheduleHiddenListener = value; return () => { scheduleHiddenListener = undefined; }; }), subscribeRecovery: vi.fn(value => { recoveryListener = value; return () => { recoveryListener = undefined; }; }), emit: value => listener?.(value), emitScheduleHidden: value => scheduleHiddenListener?.(value), emitRecovery: value => recoveryListener?.(value),
   };
   return { ...base, ...overrides, emit: base.emit };
 }
@@ -178,14 +179,28 @@ describe('Controller configuration settings', () => {
     await controller.initialize();
     expect(controller.snapshot().theme).toBe('peach');
     expect(controller.snapshot().themeLoading).toBe(false);
+    expect(platform.applyWindowTheme).toHaveBeenCalledWith({ surface: themes.peach.surface, text: themes.peach.text });
     await controller.saveTheme('mint');
     expect(controller.snapshot().theme).toBe('mint');
     expect(saveTheme).toHaveBeenCalledTimes(1);
+    expect(platform.applyWindowTheme).toHaveBeenLastCalledWith({ surface: themes.mint.surface, text: themes.mint.text });
     await controller.saveTheme('mint');
     expect(saveTheme).toHaveBeenCalledTimes(1);
     await controller.saveTheme('sky');
     expect(controller.snapshot().theme).toBe('mint');
     expect(controller.snapshot().error?.code).toBe('STORAGE');
+    controller.dispose();
+  });
+
+  it('keeps the saved theme and shows a non-blocking notice when native sync fails', async () => {
+    const applyWindowTheme = vi.fn(async () => { throw new Error('DWM unavailable'); });
+    const platform = port({ applyWindowTheme });
+    const controller = new Controller(platform);
+    await controller.initialize();
+    await controller.saveTheme('mint');
+    expect(controller.snapshot().theme).toBe('mint');
+    expect(controller.snapshot().notice).toBe('主题已应用，但窗口标题栏暂未同步。');
+    expect(applyWindowTheme).toHaveBeenCalledTimes(2);
     controller.dispose();
   });
 
@@ -217,6 +232,7 @@ describe('Controller configuration settings', () => {
     expect(platform.restoreConfigDefault).toHaveBeenCalledWith('theme');
     expect(getTheme).toHaveBeenCalledTimes(2);
     expect(controller.snapshot().theme).toBe('mint');
+    expect(platform.applyWindowTheme).toHaveBeenCalledTimes(2);
     controller.dispose();
   });
 });

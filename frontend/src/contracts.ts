@@ -7,6 +7,11 @@ export type ScheduleType = 'single' | 'daily' | 'weekly' | 'monthly';
 export type Lifecycle = 'running' | 'stopping' | 'stopped' | 'cleanup-failed';
 export type RecoveryStatus = 'idle' | 'running' | 'failed';
 
+export interface WindowThemeColors {
+  surface: string;
+  text: string;
+}
+
 export interface ScheduleDraft {
   title: string;
   notes: string;
@@ -164,6 +169,7 @@ export interface WailsPort {
   saveCloseBehavior(value: CloseBehavior): Promise<CloseBehavior>;
   getTheme(): Promise<Theme>;
   saveTheme(value: Theme): Promise<Theme>;
+  applyWindowTheme(colors: WindowThemeColors): Promise<void>;
   getLogLevel(): Promise<LogLevelSettings>;
   saveLogLevel(value: LogLevel): Promise<LogLevelSettings>;
   getStorageDirectories(): Promise<StorageDirectories>;
