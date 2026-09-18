@@ -27,7 +27,7 @@
 - 预读发现旧 revision 时返回 STALE_REVISION，不调用更新端口；存储事务仍承担最终并发守卫。非法规则或合并后的日期/端点校验失败均不得写入。
 - `ScheduleDTO.until_date_local` 在单条读取、创建/更新响应和列表中均返回 `YYYY-MM-DD` 或 null；JSON 创建/更新边界都保留 cron 和 until_unix 的存在性。更新时缺失截止字段保持原值，显式 null 清空截止日期。
 - `ScheduleDTO.month_end_policy` 在单条读取、创建/更新响应和列表中返回 `clamp` 或 null；该字段由后端根据 cron 生成，创建/更新请求不接收该字段。
-- 重复更新先合并完整定义，再依据新 cron 通过领域校验生成或清空 `month_end_policy`；日/周/月之间可互换，cron 未修改时策略保持不变。单次/重复类型转换不属于该编辑流程。
+- 重复创建、更新和预览先通过领域规范化 cron；周规则支持多个星期并以升序去重后写入和返回。重复更新再依据规范化后的新 cron 通过领域校验生成或清空 `month_end_policy`；日/周/月之间可互换，cron 未修改时策略保持不变。单次/重复类型转换不属于该编辑流程。
 
 - ListOccurrences 只读取一次 Clock.Snapshot，校验 [from_unix,to_unix) 与查询上界，并通过 generation 绑定的游标分页；查询不得调用实例或提醒写入能力。
 - `PreviewChangeRequest` 用 `operation` 区分布局：新建、整组编辑和整组恢复使用顶层 `schedule_id/expected_revision`，单次操作额外携带 `original_date`；编辑载荷复用正式请求字段，缺失、非法或多余载荷都返回 VALIDATION。

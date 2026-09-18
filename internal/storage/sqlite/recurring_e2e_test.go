@@ -249,6 +249,76 @@ func TestOptionalCutoffJSONSQLiteLifecycle(t *testing.T) {
 	}
 }
 
+// TestMultiWeekdayJSONSQLiteLifecycle 验证多星期规则的 JSON 创建、重开、展开和更新规范化。
+func TestMultiWeekdayJSONSQLiteLifecycle(t *testing.T) {
+	ctx := context.Background()
+	loc := time.UTC
+	first := time.Date(2026, 9, 14, 9, 0, 0, 0, loc)
+	clock := &recurringE2EClock{snapshot: domain.TimeSnapshot{Now: first.Add(-time.Hour), Location: loc}}
+	path := filepath.Join(t.TempDir(), "multi-weekday.db")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, err := OpenStore(ctx, path, testBackupDir(path), logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	service := app.NewService(store, clock)
+	until := first.AddDate(0, 0, 8)
+	create, err := app.DecodeCreateSchedule([]byte(fmt.Sprintf(`{"title":"multi","start_unix":%d,"end_unix":%d,"cron":"0 9 * * 5,1,3,3","until_unix":%d}`, first.Unix(), first.Add(time.Hour).Unix(), until.Unix())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.CreateSchedule(ctx, create)
+	if err != nil || created.Cron == nil || *created.Cron != "0 9 * * 1,3,5" {
+		t.Fatalf("created = %+v, %v", created, err)
+	}
+	id := domain.ScheduleID(created.ID)
+	stored, err := store.GetSchedule(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	occurrences, err := domain.Expand(stored, first, until.AddDate(0, 0, 1), loc)
+	if err != nil || len(occurrences) != 4 {
+		t.Fatalf("multi weekday expansion = %+v, %v", occurrences, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenStore(ctx, path, testBackupDir(path), logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service = app.NewService(store, clock)
+	reopened, err := store.GetSchedule(ctx, id)
+	if err != nil || reopened.Cron == nil || *reopened.Cron != "0 9 * * 1,3,5" {
+		t.Fatalf("reopened = %+v, %v", reopened, err)
+	}
+	updateCron := "0 9 * * 6,2,4,2"
+	update, err := app.DecodeUpdateSchedule([]byte(fmt.Sprintf(`{"cron":%q,"expected_revision":%d}`, updateCron, reopened.Revision)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.UpdateSchedule(ctx, id, update)
+	if err != nil || updated.Cron == nil || *updated.Cron != "0 9 * * 2,4,6" {
+		t.Fatalf("updated = %+v, %v", updated, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenStore(ctx, path, testBackupDir(path), logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := store.GetSchedule(ctx, id)
+	if err != nil || final.Cron == nil || *final.Cron != "0 9 * * 2,4,6" {
+		t.Fatalf("final = %+v, %v", final, err)
+	}
+}
+
 // TestMonthlyJSONSQLiteLifecycle 验证月规则创建、整组编辑、重开和无副作用计算的一致性。
 func TestMonthlyJSONSQLiteLifecycle(t *testing.T) {
 	ctx := context.Background()

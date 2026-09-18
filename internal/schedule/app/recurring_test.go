@@ -89,6 +89,28 @@ func TestServiceMonthlyCreate(t *testing.T) {
 	}
 }
 
+// TestServiceMultiWeekdayLifecycle 验证创建和更新都返回稳定的多星期 cron。
+func TestServiceMultiWeekdayLifecycle(t *testing.T) {
+	s, clock, request := recurringFixture()
+	cron := "0 9 * * 5,1,3,3"
+	request.Cron = &cron
+	created, err := NewService(s, clock).CreateSchedule(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Cron == nil || *created.Cron != "0 9 * * 1,3,5" {
+		t.Fatalf("created cron = %v", created.Cron)
+	}
+	s.getResult, s.updateResult = s.created, s.created
+	unsorted := "0 9 * * 6,2,4,2"
+	if _, err := NewService(s, clock).UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), UpdateScheduleRequest{Cron: &unsorted, ExpectedRevision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if s.updated.Cron == nil || *s.updated.Cron != "0 9 * * 2,4,6" {
+		t.Fatalf("updated cron = %v", s.updated.Cron)
+	}
+}
+
 // TestServiceRecurringCreateRejectsBeforeWrite 验证非法规则和单次携带重复字段均零写入。
 func TestServiceRecurringCreateRejectsBeforeWrite(t *testing.T) {
 	for _, name := range []string{"bad cron", "null cron", "single cutoff", "null cutoff", "cutoff before first"} {
