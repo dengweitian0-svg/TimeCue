@@ -31,6 +31,7 @@
 - 数据库连接、事务和 rows 的关闭错误不得静默吞掉；扫描错误与 rows 关闭错误同时发生时必须保留两者；`Store` 必须接收调用方注入的非 nil logger，不得回退到全局默认 logger；`Store.Close` 的资源所有权由 `Store` 持有，调用方负责调用并处理返回错误。
 
 - generation.go 为进程内日程事实版本提供查询和递增能力；成功提交的定义、例外和整组状态变化递增，幂等和回滚不递增，重启使用新的初始值。
+- `scheduler_recovery_checkpoint` 是 `id=1` 的单例恢复进度表；`reminder_attempt_store.go` 的 `RecoveryStore` 实现必须把批量 Claim/reclaim 与结果/checkpoint 事务分开，结果和 checkpoint 不能跨批次或跨外部通知共享长事务。
 - occurrence_query_store.go 按日程 ID 游标批量读取定义及例外快照，复用统一扫描逻辑，不生成或持久化发生实例。
 - reminder_attempt_store.go 以稳定发生身份原子 claim 和终态回写提醒尝试。
 - 版本 6 为 reminder_attempts 增加 (schedule_id, occurrence_local) 唯一身份和 claimed → submitted|failed|skipped 状态守卫；claim 与结果回写均为独立事务，回写失败不得覆盖或删除 claimed。

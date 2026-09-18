@@ -22,13 +22,13 @@ func openRawTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// TestMigrateCreatesInitialSchema 验证新库创建版本表和三张业务表。
+// TestMigrateCreatesInitialSchema 验证新库创建版本表、业务表和恢复 checkpoint 表。
 func TestMigrateCreatesInitialSchema(t *testing.T) {
 	db := openRawTestDB(t)
 	if err := migrate(context.Background(), db); err != nil {
 		t.Fatalf("migrate() error = %v", err)
 	}
-	for _, table := range []string{"schema_migrations", "schedules", "occurrence_overrides", "reminder_attempts"} {
+	for _, table := range []string{"schema_migrations", "schedules", "occurrence_overrides", "reminder_attempts", "scheduler_recovery_checkpoint"} {
 		var exists bool
 		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)", table).Scan(&exists); err != nil {
 			t.Fatalf("inspect table %q error = %v", table, err)
@@ -53,8 +53,8 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations error = %v", err)
 	}
-	if count != 7 {
-		t.Fatalf("migration count = %d, want 7", count)
+	if count != 8 {
+		t.Fatalf("migration count = %d, want 8", count)
 	}
 }
 
@@ -68,8 +68,8 @@ func TestMigrationVersionIsRecorded(t *testing.T) {
 	if err := db.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("read migration version error = %v", err)
 	}
-	if version != 7 {
-		t.Fatalf("version = %d, want 7", version)
+	if version != 8 {
+		t.Fatalf("version = %d, want 8", version)
 	}
 }
 
@@ -122,8 +122,8 @@ func TestReminderProcessingMigrationPreservesNullAndIsIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations error = %v", err)
 	}
-	if count != 7 {
-		t.Fatalf("migration count after repeat = %d, want 7", count)
+	if count != 8 {
+		t.Fatalf("migration count after repeat = %d, want 8", count)
 	}
 }
 
@@ -188,6 +188,27 @@ func TestMigrateRejectsNewerVersion(t *testing.T) {
 	}
 	if err := migrate(context.Background(), db); err == nil {
 		t.Fatal("migrate() error = nil for newer schema version")
+	}
+}
+
+// TestSchedulerRecoveryCheckpointIsSingleton 验证 checkpoint 只能存在 id=1 的一行。
+func TestSchedulerRecoveryCheckpointIsSingleton(t *testing.T) {
+	db := openRawTestDB(t)
+	if err := migrate(context.Background(), db); err != nil {
+		t.Fatalf("migrate() error = %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO scheduler_recovery_checkpoint(id, checkpoint_unix, updated_at_utc) VALUES (1, 10, '2026-01-01T00:00:00Z')"); err != nil {
+		t.Fatalf("insert checkpoint error = %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO scheduler_recovery_checkpoint(id, checkpoint_unix, updated_at_utc) VALUES (2, 20, '2026-01-01T00:00:00Z')"); err == nil {
+		t.Fatal("checkpoint id=2 insert error = nil")
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM scheduler_recovery_checkpoint").Scan(&count); err != nil {
+		t.Fatalf("count checkpoint rows error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("checkpoint row count = %d, want 1", count)
 	}
 }
 

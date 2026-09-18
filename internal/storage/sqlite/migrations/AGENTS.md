@@ -16,3 +16,4 @@
 - 例外快照使用 `(schedule_id, occurrence_local)` 唯一；`open=1` 必须保存实际开始、正时长、标题和备注的完整组，`open=0` 可保留全空或完整快照供取消/恢复使用，禁止部分快照。
 - 提醒尝试使用 `(schedule_id, occurrence_local)` 唯一；状态只允许 `claimed`、`submitted`、`failed`、`skipped`，且已占用记录只能推进一次到三个终态。
 - `007_reminder_processing.sql` 只追加可空 `reminder_attempts.processed_at_utc` 和 `submitted + NULL` 的局部查询索引；不回填旧记录、不保存正文快照，也不把处理状态绑定到发送状态触发器。
+- `008_scheduler_recovery.sql` 只新增 `id=1` 的 `scheduler_recovery_checkpoint` 单例表，保存恢复 checkpoint 秒数和 UTC 审计时间；不得新增 occurrence 实例表或把恢复子状态持久化到数据库。

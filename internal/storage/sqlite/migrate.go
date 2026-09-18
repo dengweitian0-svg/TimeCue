@@ -29,6 +29,9 @@ var reminderAttemptsMigrationSQL string
 //go:embed migrations/007_reminder_processing.sql
 var reminderProcessingMigrationSQL string
 
+//go:embed migrations/008_scheduler_recovery.sql
+var schedulerRecoveryMigrationSQL string
+
 // migration 描述一个带版本号的 SQL 迁移。
 type migration struct {
 	version int
@@ -43,6 +46,7 @@ var migrations = []migration{
 	{version: 5, sql: scheduleOpenInvariantMigrationSQL},
 	{version: 6, sql: reminderAttemptsMigrationSQL},
 	{version: 7, sql: reminderProcessingMigrationSQL},
+	{version: 8, sql: schedulerRecoveryMigrationSQL},
 }
 
 // migrate 执行尚未应用的数据库迁移。
