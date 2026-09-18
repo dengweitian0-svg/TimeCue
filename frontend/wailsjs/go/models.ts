@@ -465,22 +465,6 @@ export namespace runtime {
 	        this.behavior = source["behavior"];
 	    }
 	}
-	export class LogLevelDTO {
-	    effective_level: string;
-	    saved_level: string;
-	    restart_required: boolean;
-
-	    static createFrom(source: any = {}) {
-	        return new LogLevelDTO(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.effective_level = source["effective_level"];
-	        this.saved_level = source["saved_level"];
-	        this.restart_required = source["restart_required"];
-	    }
-	}
 	export class DeleteScheduleDTO {
 	    title: string;
 	
@@ -555,6 +539,46 @@ export namespace runtime {
 		    return a;
 		}
 	}
+	export class LogLevelDTO {
+	    effective_level: string;
+	    saved_level: string;
+	    restart_required: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new LogLevelDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.effective_level = source["effective_level"];
+	        this.saved_level = source["saved_level"];
+	        this.restart_required = source["restart_required"];
+	    }
+	}
+	export class RestoreConfigDefaultRequest {
+	    property: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RestoreConfigDefaultRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.property = source["property"];
+	    }
+	}
+	export class SaveLogLevelRequest {
+	    level: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SaveLogLevelRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.level = source["level"];
+	    }
+	}
 	export class SaveStorageDirectoryRequest {
 	    kind: string;
 	    path: string;
@@ -569,28 +593,16 @@ export namespace runtime {
 	        this.path = source["path"];
 	    }
 	}
-	export class SaveLogLevelRequest {
-	    level: string;
-
+	export class SaveThemeRequest {
+	    theme: string;
+	
 	    static createFrom(source: any = {}) {
-	        return new SaveLogLevelRequest(source);
+	        return new SaveThemeRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.level = source["level"];
-	    }
-	}
-	export class RestoreConfigDefaultRequest {
-	    property: string;
-
-	    static createFrom(source: any = {}) {
-	        return new RestoreConfigDefaultRequest(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.property = source["property"];
+	        this.theme = source["theme"];
 	    }
 	}
 	export class StorageDirectoryDTO {
@@ -643,6 +655,18 @@ export namespace runtime {
 		    return a;
 		}
 	}
+	
+	export class ThemeDTO {
+	    theme: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ThemeDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.theme = source["theme"];
+	    }
+	}
 
 }
-

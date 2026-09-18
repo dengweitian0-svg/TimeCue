@@ -15,26 +15,44 @@ type WailsBindings struct {
 	application *DesktopApplication
 }
 
-// StorageDirectoryError 标记目录设置边界错误，并保留底层原因供日志和测试检查。
-type StorageDirectoryError struct {
+// ConfigPersistenceError 标记配置持久化边界错误，并保留底层原因供日志和测试检查。
+type ConfigPersistenceError struct {
 	Operation string
+	Property  string
 	Kind      string
 	Cause     error
 }
 
-// Error 返回带操作和目录类型上下文的目录设置错误。
-func (e *StorageDirectoryError) Error() string {
+// StorageDirectoryError 是旧目录设置错误名的兼容别名。
+type StorageDirectoryError = ConfigPersistenceError
+
+// Error 返回带操作和配置属性上下文的配置持久化错误。
+func (e *ConfigPersistenceError) Error() string {
 	if e == nil {
 		return "<nil>"
 	}
 	if e.Cause == nil {
-		return fmt.Sprintf("%s (%s)", e.Operation, e.Kind)
+		context := e.Property
+		if context == "" {
+			context = e.Kind
+		}
+		if context == "" {
+			return e.Operation
+		}
+		return fmt.Sprintf("%s (%s)", e.Operation, context)
 	}
-	return fmt.Sprintf("%s (%s): %v", e.Operation, e.Kind, e.Cause)
+	context := e.Property
+	if context == "" {
+		context = e.Kind
+	}
+	if context == "" {
+		return fmt.Sprintf("%s: %v", e.Operation, e.Cause)
+	}
+	return fmt.Sprintf("%s (%s): %v", e.Operation, context, e.Cause)
 }
 
 // Unwrap 返回目录设置的底层原因，保持正式错误链路。
-func (e *StorageDirectoryError) Unwrap() error {
+func (e *ConfigPersistenceError) Unwrap() error {
 	if e == nil {
 		return nil
 	}
@@ -223,6 +241,14 @@ func (b *WailsBindings) GetLogLevel() (LogLevelDTO, error) {
 	return b.application.GetLogLevel()
 }
 
+// GetTheme 返回当前生效的应用主题。
+func (b *WailsBindings) GetTheme() (ThemeDTO, error) {
+	if err := b.validate(); err != nil {
+		return ThemeDTO{}, err
+	}
+	return b.application.GetTheme()
+}
+
 // SaveLogLevel 校验并持久化日志级别配置。
 func (b *WailsBindings) SaveLogLevel(request SaveLogLevelRequest) (LogLevelDTO, error) {
 	if err := b.validate(); err != nil {
@@ -236,6 +262,21 @@ func (b *WailsBindings) SaveLogLevel(request SaveLogLevelRequest) (LogLevelDTO, 
 		return LogLevelDTO{}, err
 	}
 	return b.application.SaveLogLevel(ctx, request)
+}
+
+// SaveTheme 校验并持久化应用主题，保存成功后立即返回新的主题。
+func (b *WailsBindings) SaveTheme(request SaveThemeRequest) (ThemeDTO, error) {
+	if err := b.validate(); err != nil {
+		return ThemeDTO{}, err
+	}
+	if err := b.application.ensureWritable(); err != nil {
+		return ThemeDTO{}, err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return ThemeDTO{}, err
+	}
+	return b.application.SaveTheme(ctx, request)
 }
 
 // RestoreConfigDefault 将受限配置属性恢复为 defaults.yaml 中的默认值。
@@ -336,12 +377,24 @@ func (a *DesktopApplication) ensureWritable() error {
 	return nil
 }
 
-// newStorageOperationError 创建不向前端泄露底层路径细节的目录设置错误。
-func (a *DesktopApplication) newStorageOperationError(operation, kind string, cause error) error {
-	return &StorageDirectoryError{Operation: operation, Kind: kind, Cause: cause}
+// newConfigPersistenceError 创建不向前端泄露底层路径细节的配置持久化错误。
+func (a *DesktopApplication) newConfigPersistenceError(operation, property string, cause error) error {
+	return &ConfigPersistenceError{Operation: operation, Property: property, Cause: cause}
 }
 
-// storageOperationError 记录目录设置最终失败并返回保留 cause 的错误。
+// configPersistenceError 记录配置持久化最终失败并返回保留 cause 的错误。
+func (a *DesktopApplication) configPersistenceError(operation, property string, cause error) error {
+	err := a.newConfigPersistenceError(operation, property, cause)
+	a.recordError(err)
+	return err
+}
+
+// newStorageOperationError 保留目录设置调用点的兼容辅助函数。
+func (a *DesktopApplication) newStorageOperationError(operation, kind string, cause error) error {
+	return &ConfigPersistenceError{Operation: operation, Kind: kind, Cause: cause}
+}
+
+// storageOperationError 保留目录设置调用点的兼容辅助函数。
 func (a *DesktopApplication) storageOperationError(operation, kind string, cause error) error {
 	err := a.newStorageOperationError(operation, kind, cause)
 	a.recordError(err)
@@ -370,9 +423,9 @@ func FormatError(err error) ErrorDTO {
 		return ErrorDTO{Code: "INTERNAL", Message: "internal error"}
 	}
 	result := ErrorDTO{Code: "INTERNAL", Message: "internal error"}
-	var storageDirectoryErr *StorageDirectoryError
-	if errors.As(err, &storageDirectoryErr) {
-		return ErrorDTO{Code: "STORAGE", Message: "目录设置未完成，请检查目录和配置文件权限。"}
+	var configPersistenceErr *ConfigPersistenceError
+	if errors.As(err, &configPersistenceErr) {
+		return ErrorDTO{Code: "STORAGE", Message: "配置保存未完成，请检查配置文件权限。"}
 	}
 	var businessErr *domain.Error
 	if errors.As(err, &businessErr) {

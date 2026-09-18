@@ -109,9 +109,19 @@ type LogLevelDTO struct {
 	RestartRequired bool   `json:"restart_required"`
 }
 
+// ThemeDTO 返回当前应用主题的稳定 JSON 视图。
+type ThemeDTO struct {
+	Theme string `json:"theme"`
+}
+
 // SaveLogLevelRequest 描述一次日志级别保存请求。
 type SaveLogLevelRequest struct {
 	Level string `json:"level"`
+}
+
+// SaveThemeRequest 描述一次主题保存请求。
+type SaveThemeRequest struct {
+	Theme string `json:"theme"`
 }
 
 // RestoreConfigDefaultRequest 描述一次受限配置属性恢复默认请求。
@@ -890,6 +900,19 @@ func (a *DesktopApplication) GetLogLevel() (LogLevelDTO, error) {
 	return logLevelDTO(a.effectiveLogLevel, a.config.Log.Level)
 }
 
+// GetTheme 返回当前生效的应用主题。
+func (a *DesktopApplication) GetTheme() (ThemeDTO, error) {
+	if a == nil {
+		return ThemeDTO{}, errors.New("desktop application is nil")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.config == nil || a.service == nil {
+		return ThemeDTO{}, errors.New("desktop application is not assembled")
+	}
+	return ThemeDTO{Theme: string(a.config.Theme)}, nil
+}
+
 // SaveLogLevel 保存日志级别；当前日志器保持原级别，重启后加载新值。
 func (a *DesktopApplication) SaveLogLevel(ctx context.Context, request SaveLogLevelRequest) (LogLevelDTO, error) {
 	if a == nil {
@@ -914,7 +937,7 @@ func (a *DesktopApplication) SaveLogLevel(ctx context.Context, request SaveLogLe
 		return LogLevelDTO{}, errors.New("runtime config is not configured")
 	}
 	if err := a.config.SaveLogLevel(request.Level); err != nil {
-		wrapped := a.newStorageOperationError("save log level", request.Level, err)
+		wrapped := a.newConfigPersistenceError("save log level", "log.level", err)
 		a.lastError = wrapped
 		logger := a.logger
 		a.mu.Unlock()
@@ -931,6 +954,48 @@ func (a *DesktopApplication) SaveLogLevel(ctx context.Context, request SaveLogLe
 	}
 	if logger != nil {
 		logger.Info("log level configuration saved", "operation", "save_log_level", "restart_required", result.RestartRequired)
+	}
+	return result, nil
+}
+
+// SaveTheme 保存应用主题；只有配置原子替换成功后才更新运行时内存主题。
+func (a *DesktopApplication) SaveTheme(ctx context.Context, request SaveThemeRequest) (ThemeDTO, error) {
+	if a == nil {
+		return ThemeDTO{}, errors.New("desktop application is nil")
+	}
+	if err := a.ensureWritable(); err != nil {
+		return ThemeDTO{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return ThemeDTO{}, err
+	}
+	a.mu.Lock()
+	if a.state != DesktopStateRunning {
+		a.mu.Unlock()
+		return ThemeDTO{}, domain.NewRuntimeStopping()
+	}
+	if a.config == nil {
+		a.mu.Unlock()
+		return ThemeDTO{}, errors.New("runtime config is not configured")
+	}
+	if err := a.config.SaveTheme(config.Theme(request.Theme)); err != nil {
+		wrapped := a.newConfigPersistenceError("save theme", "theme", err)
+		a.lastError = wrapped
+		logger := a.logger
+		a.mu.Unlock()
+		if logger != nil {
+			logger.Error("theme configuration save failed", "operation", "save_theme", "error", wrapped)
+		}
+		return ThemeDTO{}, wrapped
+	}
+	result := ThemeDTO{Theme: string(a.config.Theme)}
+	logger := a.logger
+	a.mu.Unlock()
+	if logger != nil {
+		logger.Info("theme configuration saved", "operation", "save_theme", "theme", result.Theme)
 	}
 	return result, nil
 }
@@ -959,7 +1024,7 @@ func (a *DesktopApplication) RestoreConfigDefault(ctx context.Context, property 
 		return errors.New("runtime config is not configured")
 	}
 	if err := a.config.RestoreDefault(config.ConfigProperty(property)); err != nil {
-		wrapped := a.newStorageOperationError("restore config default", property, err)
+		wrapped := a.newConfigPersistenceError("restore config default", property, err)
 		a.lastError = wrapped
 		logger := a.logger
 		a.mu.Unlock()
@@ -992,7 +1057,7 @@ func (a *DesktopApplication) SaveStorageDirectory(ctx context.Context, request S
 	}
 	kind, err := parseStorageDirectoryKind(request.Kind)
 	if err != nil {
-		return StorageDirectoryDTO{}, a.storageOperationError("validate storage directory kind", request.Kind, err)
+		return StorageDirectoryDTO{}, a.configPersistenceError("validate storage directory kind", request.Kind, err)
 	}
 	a.mu.Lock()
 	access := a.deps.DirectoryAccess
@@ -1006,11 +1071,11 @@ func (a *DesktopApplication) SaveStorageDirectory(ctx context.Context, request S
 		return StorageDirectoryDTO{}, errors.New("runtime config is not configured")
 	}
 	if access == nil {
-		return StorageDirectoryDTO{}, a.storageOperationError("validate storage directory", string(kind), errors.New("directory access is not configured"))
+		return StorageDirectoryDTO{}, a.configPersistenceError("validate storage directory", string(kind), errors.New("directory access is not configured"))
 	}
 	normalized, err := access.ValidateDirectory(ctx, request.Path)
 	if err != nil {
-		return StorageDirectoryDTO{}, a.storageOperationError("validate storage directory", string(kind), err)
+		return StorageDirectoryDTO{}, a.configPersistenceError("validate storage directory", string(kind), err)
 	}
 	if err := ctx.Err(); err != nil {
 		return StorageDirectoryDTO{}, err
@@ -1026,7 +1091,7 @@ func (a *DesktopApplication) SaveStorageDirectory(ctx context.Context, request S
 		return StorageDirectoryDTO{}, errors.New("runtime config is not configured")
 	}
 	if err := a.config.SaveStorageDirectory(kind, normalized); err != nil {
-		wrapped := a.newStorageOperationError("save storage directory", string(kind), err)
+		wrapped := a.newConfigPersistenceError("save storage directory", string(kind), err)
 		a.lastError = wrapped
 		logger := a.logger
 		a.mu.Unlock()
@@ -1055,7 +1120,7 @@ func (a *DesktopApplication) ChooseStorageDirectory(ctx context.Context, kindVal
 	}
 	kind, err := parseStorageDirectoryKind(kindValue)
 	if err != nil {
-		return "", a.storageOperationError("choose storage directory", kindValue, err)
+		return "", a.configPersistenceError("choose storage directory", kindValue, err)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -1072,7 +1137,7 @@ func (a *DesktopApplication) ChooseStorageDirectory(ctx context.Context, kindVal
 		return "", errors.New("runtime config is not configured")
 	}
 	if chooser == nil {
-		return "", a.storageOperationError("choose storage directory", string(kind), errors.New("directory chooser is not configured"))
+		return "", a.configPersistenceError("choose storage directory", string(kind), errors.New("directory chooser is not configured"))
 	}
 	directory, err := storageDirectoryDTO(*configValue, kind)
 	if err != nil {
@@ -1088,7 +1153,7 @@ func (a *DesktopApplication) ChooseStorageDirectory(ctx context.Context, kindVal
 	}
 	selected, err := chooser.ChooseDirectory(ctx, title, defaultDirectory)
 	if err != nil {
-		return "", a.storageOperationError("choose storage directory", string(kind), err)
+		return "", a.configPersistenceError("choose storage directory", string(kind), err)
 	}
 	if selected == "" {
 		return "", nil
