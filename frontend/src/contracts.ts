@@ -154,6 +154,10 @@ export interface ScheduleHiddenListener {
   (event: ScheduleHidden): void;
 }
 
+export interface PendingRemindersChangedListener {
+  (): void;
+}
+
 export interface WailsPort {
   listSchedules(request?: ScheduleListRequest): Promise<SchedulePage>;
   getSchedule(id: string): Promise<Schedule>;
@@ -180,6 +184,7 @@ export interface WailsPort {
   retryCleanup(): Promise<void>;
   subscribeActivation(listener: ActivationListener): () => void;
   subscribeScheduleHidden(listener: ScheduleHiddenListener): () => void;
+  subscribePendingRemindersChanged(listener: PendingRemindersChangedListener): () => void;
 }
 
 export interface AppPort extends WailsPort {

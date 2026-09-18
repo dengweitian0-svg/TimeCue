@@ -23,12 +23,13 @@
 
 ## 通知页面状态与边界
 
-通知平台和页面之间有四个可观察边界，不能互相替代：
+通知平台和页面之间有五个可观察边界，不能互相替代：
 
 1. **通知端口接收**：#14 的 `ActivationSource` 接收系统激活事实，runtime 为事件分配单调 `sequence`，前端通过 `FrontendReady(last_sequence)` 完成就绪握手。
 2. **系统实际显示**：Windows Toast 是否成功提交、是否出现在通知中心，必须由平台适配器和 Windows 冒烟观察记录；前端 fake 通知器测试只证明应用端口调用，不代表系统显示。
 3. **点击定位**：点击事件携带 `schedule_id + original_date` 稳定身份。前端按 sequence 去重、切换到“待处理提醒”页并重新读取详情；查看、切换和激活都不自动确认。前端尚未就绪时只保留最新激活，退出后的残留通知不触发冷启动。
-4. **确认持久化**：当前消息的确认按钮调用 `ConfirmReminder`，由 Service、MutationCoordinator 和 SQLite 事务提交；提交成功后才刷新待处理列表。重复点击被前端和后端共同保护，失败保留消息和详情以便重试。
+4. **列表变化刷新**：普通提醒在 `submitted` 状态成功持久化后，runtime 发出 `pending_reminders_changed`；Controller 在后台刷新待处理列表第一页，不切换页面、不读取详情、不自动确认。事件只是数据库事实的即时投影，查询失败仍保留现有列表和错误状态。
+5. **确认持久化**：当前消息的确认按钮调用 `ConfirmReminder`，由 Service、MutationCoordinator 和 SQLite 事务提交；提交成功后才刷新待处理列表。重复点击被前端和后端共同保护，失败保留消息和详情以便重试。
 
 待处理列表使用不透明游标；收到 `STALE_CURSOR` 时控制器自动回到第一页。详情状态 `pending`、`confirmed`、`missing` 和 `not_processable` 必须分别呈现；只有 `pending` 允许确认，内容不可用的已投递提醒仍可确认，但页面不得伪造正文。相同实际开始时间的提醒按稳定身份切换，确认成功后优先定位同刻下一条。
 

@@ -6,13 +6,43 @@ import { themes } from '../src/themes';
 const page: SchedulePage = { items: [], nextCursor: '', limit: 20 };
 
 /** 为控制器提供不涉及浏览器或平台实现的最小端口。 */
-function port(overrides: Partial<AppPort> = {}): AppPort & { emit: (value: Activation) => void; emitRecovery: (value: RecoveryEvent) => void; emitScheduleHidden: (value: ScheduleHidden) => void } {
+function port(overrides: Partial<AppPort> = {}): AppPort & { emit: (value: Activation) => void; emitRecovery: (value: RecoveryEvent) => void; emitScheduleHidden: (value: ScheduleHidden) => void; emitPendingRemindersChanged: () => void } {
   let listener: ((value: Activation) => void) | undefined;
   let recoveryListener: ((value: RecoveryEvent) => void) | undefined;
   let scheduleHiddenListener: ((value: ScheduleHidden) => void) | undefined;
-  const base: AppPort & { emit: (value: Activation) => void; emitRecovery: (value: RecoveryEvent) => void; emitScheduleHidden: (value: ScheduleHidden) => void } = {
-    listSchedules: vi.fn(async () => page), getSchedule: vi.fn(), getScheduleTimeBounds: vi.fn(async () => ({ min: '2026-09-16T00:00', startMaxExclusive: '2027-09-16T00:00', endMaxInclusive: '2027-09-16T00:00' })), listPendingReminders: vi.fn(async () => ({ items: [], nextCursor: '', limit: 20 })), getReminderDetail: vi.fn(), confirmReminder: vi.fn(),
-    createSchedule: vi.fn(), deleteSchedule: vi.fn(), getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const })), getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const }, closeBehavior: 'tray' as const, activation: null })), getCloseBehavior: vi.fn(async () => 'tray' as const), saveCloseBehavior: vi.fn(), getTheme: vi.fn(async () => 'peach' as const), saveTheme: vi.fn(async (value: 'peach' | 'mint' | 'sky' | 'lavender') => value), applyWindowTheme: vi.fn(async () => undefined), getLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), getStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs' as const, effectivePath: 'C:/TimeCue/logs', savedPath: 'C:/TimeCue/logs', restartRequired: false }, backups: { kind: 'backups' as const, effectivePath: 'C:/TimeCue/backups', savedPath: 'C:/TimeCue/backups', restartRequired: false } })), chooseDirectory: vi.fn(async () => null), saveStorageDirectory: vi.fn(), saveLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), restoreConfigDefault: vi.fn(async () => undefined), frontendReady: vi.fn(async () => null), retryCleanup: vi.fn(), subscribeActivation: vi.fn(value => { listener = value; return () => { listener = undefined; }; }), subscribeScheduleHidden: vi.fn(value => { scheduleHiddenListener = value; return () => { scheduleHiddenListener = undefined; }; }), subscribeRecovery: vi.fn(value => { recoveryListener = value; return () => { recoveryListener = undefined; }; }), emit: value => listener?.(value), emitScheduleHidden: value => scheduleHiddenListener?.(value), emitRecovery: value => recoveryListener?.(value),
+  let pendingRemindersChangedListener: (() => void) | undefined;
+  const base: AppPort & { emit: (value: Activation) => void; emitRecovery: (value: RecoveryEvent) => void; emitScheduleHidden: (value: ScheduleHidden) => void; emitPendingRemindersChanged: () => void } = {
+    listSchedules: vi.fn(async () => page),
+    getSchedule: vi.fn(),
+    getScheduleTimeBounds: vi.fn(async () => ({ min: '2026-09-16T00:00', startMaxExclusive: '2027-09-16T00:00', endMaxInclusive: '2027-09-16T00:00' })),
+    listPendingReminders: vi.fn(async () => ({ items: [], nextCursor: '', limit: 20 })),
+    getReminderDetail: vi.fn(),
+    confirmReminder: vi.fn(),
+    createSchedule: vi.fn(),
+    deleteSchedule: vi.fn(),
+    getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const })),
+    getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const }, closeBehavior: 'tray' as const, activation: null })),
+    getCloseBehavior: vi.fn(async () => 'tray' as const),
+    saveCloseBehavior: vi.fn(),
+    getTheme: vi.fn(async () => 'peach' as const),
+    saveTheme: vi.fn(async (value: 'peach' | 'mint' | 'sky' | 'lavender') => value),
+    applyWindowTheme: vi.fn(async () => undefined),
+    getLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })),
+    getStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs' as const, effectivePath: 'C:/TimeCue/logs', savedPath: 'C:/TimeCue/logs', restartRequired: false }, backups: { kind: 'backups' as const, effectivePath: 'C:/TimeCue/backups', savedPath: 'C:/TimeCue/backups', restartRequired: false } })),
+    chooseDirectory: vi.fn(async () => null),
+    saveStorageDirectory: vi.fn(),
+    saveLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })),
+    restoreConfigDefault: vi.fn(async () => undefined),
+    frontendReady: vi.fn(async () => null),
+    retryCleanup: vi.fn(),
+    subscribeActivation: vi.fn(value => { listener = value; return () => { listener = undefined; }; }),
+    subscribeScheduleHidden: vi.fn(value => { scheduleHiddenListener = value; return () => { scheduleHiddenListener = undefined; }; }),
+    subscribePendingRemindersChanged: vi.fn(value => { pendingRemindersChangedListener = value; return () => { pendingRemindersChangedListener = undefined; }; }),
+    subscribeRecovery: vi.fn(value => { recoveryListener = value; return () => { recoveryListener = undefined; }; }),
+    emit: value => listener?.(value),
+    emitScheduleHidden: value => scheduleHiddenListener?.(value),
+    emitPendingRemindersChanged: () => pendingRemindersChangedListener?.(),
+    emitRecovery: value => recoveryListener?.(value),
   };
   return { ...base, ...overrides, emit: base.emit };
 }
@@ -152,6 +182,62 @@ describe('Controller recovery events', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(platform.listPendingReminders).toHaveBeenCalledTimes(callsBefore + 1);
     expect(controller.snapshot().runtime?.recoveryStatus).toBe('idle');
+    controller.dispose();
+  });
+});
+
+describe('Controller pending reminder change events', () => {
+  it('refreshes in the background and preserves the current page and selected detail', async () => {
+    const current = detail('1');
+    const next = detail('2');
+    let calls = 0;
+    const listPendingReminders = vi.fn(async () => {
+      calls++;
+      return calls <= 2 ? { items: [current], nextCursor: '', limit: 20 } : { items: [current, next], nextCursor: '', limit: 20 };
+    });
+    const platform = port({ listPendingReminders, getReminderDetail: vi.fn(async () => current) });
+    const controller = new Controller(platform);
+    await controller.initialize();
+    controller.setPage('reminders');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    controller.selectReminder(current);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const callsBeforeEvent = calls;
+
+    platform.emitPendingRemindersChanged();
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(calls).toBe(callsBeforeEvent + 1);
+    expect(controller.snapshot().page).toBe('reminders');
+    expect(controller.snapshot().reminders.items.map(item => item.scheduleId)).toEqual(['1', '2']);
+    expect(controller.snapshot().activeReminder).toEqual({ scheduleId: '1', originalDate: current.originalDate });
+    expect(controller.snapshot().reminderDetail?.scheduleId).toBe('1');
+    controller.dispose();
+  });
+
+  it('refreshes while another page is visible and ignores an older response', async () => {
+    const stale = deferred<ReminderPage>();
+    const latest = detail('9');
+    let calls = 0;
+    const listPendingReminders = vi.fn(async () => {
+      calls++;
+      if (calls === 1) return { items: [], nextCursor: '', limit: 20 };
+      if (calls === 2) return stale.promise;
+      return { items: [latest], nextCursor: '', limit: 20 };
+    });
+    const platform = port({ listPendingReminders });
+    const controller = new Controller(platform);
+    await controller.initialize();
+
+    platform.emitPendingRemindersChanged();
+    platform.emitPendingRemindersChanged();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    stale.resolve({ items: [detail('stale')], nextCursor: '', limit: 20 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(controller.snapshot().page).toBe('schedules');
+    expect(controller.snapshot().reminders.items.map(item => item.scheduleId)).toEqual(['9']);
+    expect(calls).toBe(3);
     controller.dispose();
   });
 });
