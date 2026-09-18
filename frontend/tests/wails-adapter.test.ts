@@ -47,6 +47,14 @@ describe('WailsAdapter', () => {
     expect(error.fields).toEqual({ start: '时间范围无效。', end: '时间范围无效。' });
   });
 
+  it('replaces unreadable Wails object errors with a stable message', () => {
+    for (const value of [{ data: '[object Object]' }, new Error('[object Object]'), {}, { data: 'object' }]) {
+      const error = toScheduleError(value);
+      expect(error.code).toBe('STORAGE');
+      expect(error.message).toBe('操作未完成，请重试。');
+    }
+  });
+
   it('converts snake_case DTOs and keeps int64 IDs lossless', async () => {
     const port = bindings(); const adapter = new WailsAdapter(port);
     const page = await adapter.listSchedules({ limit: 20, cursor: 'previous' });

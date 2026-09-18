@@ -170,6 +170,15 @@ describe('Controller configuration settings', () => {
     controller.dispose();
   });
 
+  it('keeps a readable error when a Wails operation rejects an object', async () => {
+    const platform = port({ saveTheme: vi.fn(async () => { throw { data: '[object Object]' }; }) });
+    const controller = new Controller(platform);
+    await controller.initialize();
+    await controller.saveTheme('mint');
+    expect(controller.snapshot().error?.message).toBe('操作未完成，请重试。');
+    controller.dispose();
+  });
+
   it('refreshes the theme when restoring its default', async () => {
     const getTheme = vi.fn<() => Promise<'peach' | 'mint' | 'sky' | 'lavender'>>(async () => 'mint');
     const platform = port({ getTheme });
