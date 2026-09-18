@@ -80,8 +80,10 @@ type fakeTrayShell struct {
 	mu       sync.Mutex
 	adds     int
 	deletes  int
+	menus    int
 	menu     uint16
 	menuErr  error
+	menuFunc func(windows.Handle) (uint16, error)
 	tooltips []string
 }
 
@@ -103,10 +105,15 @@ func (f *fakeTrayShell) Delete(windows.Handle) error {
 }
 
 // ShowMenu 返回测试指定的唯一菜单命令。
-func (f *fakeTrayShell) ShowMenu(windows.Handle) (uint16, error) {
+func (f *fakeTrayShell) ShowMenu(window windows.Handle) (uint16, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.menu, f.menuErr
+	f.menus++
+	menu, menuErr, menuFunc := f.menu, f.menuErr, f.menuFunc
+	f.mu.Unlock()
+	if menuFunc != nil {
+		return menuFunc(window)
+	}
+	return menu, menuErr
 }
 
 // TestWindowsTrayDispatchesOnlyOpenAndExit 验证图标交互只产生两个正式回调。
@@ -140,6 +147,37 @@ func TestWindowsTrayDispatchesOnlyOpenAndExit(t *testing.T) {
 	defer mu.Unlock()
 	if opened != 2 || exited != 1 {
 		t.Fatalf("callbacks = open %d, exit %d; want open 2, exit 1", opened, exited)
+	}
+}
+
+// TestWindowsTraySuppressesDuplicateContextMenu 验证同一次右键操作的嵌套菜单消息只打开一次菜单。
+func TestWindowsTraySuppressesDuplicateContextMenu(t *testing.T) {
+	thread := &fakeTrayThread{window: 42}
+	shell := &fakeTrayShell{menu: trayCommandOpen}
+	tray := newWindowsTray(thread, false, shell, "TimeCue")
+	opened := 0
+	if err := tray.Start(context.Background(), platform.TrayCallbacks{
+		OnOpen: func() { opened++ },
+		OnExit: func() {},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	shell.menuFunc = func(windows.Handle) (uint16, error) {
+		if err := thread.dispatch(trayCallbackMessage, wmContextMenu); err != nil {
+			t.Fatalf("duplicate context menu dispatch error = %v", err)
+		}
+		return trayCommandOpen, nil
+	}
+	if err := thread.dispatch(trayCallbackMessage, wmRightButtonUp); err != nil {
+		t.Fatalf("initial tray menu dispatch error = %v", err)
+	}
+	if opened != 1 {
+		t.Fatalf("open callbacks = %d, want 1", opened)
+	}
+	shell.mu.Lock()
+	defer shell.mu.Unlock()
+	if shell.menus != 1 {
+		t.Fatalf("shown menus = %d, want 1", shell.menus)
 	}
 }
 

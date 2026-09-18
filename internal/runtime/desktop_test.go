@@ -1,12 +1,14 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -285,6 +287,52 @@ func TestTrayExitReturnsBeforeTrayClose(t *testing.T) {
 	waitForDesktopCondition(t, func() bool {
 		return application.GetDesktopStatus().State == DesktopStateStopped && host.QuitCalls() == 1 && tray.Closed
 	})
+}
+
+// TestTrayExitClosesResourcesWhenNotificationCleanupFails 验证通知清理失败不会阻断托盘正式退出。
+func TestTrayExitClosesResourcesWhenNotificationCleanupFails(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	activation := platform.NewFakeActivationSource(1)
+	environment := platform.NewFakeEnvironmentEventSource(1)
+	tray := &platform.FakeTrayPort{}
+	notifications := &platform.FakeNotificationCenter{CleanupFunc: func(context.Context) error { return errors.New("notification history unavailable") }}
+	location := time.FixedZone("CST", 8*60*60)
+	application, cancel := newRunningDesktopTestApplication(t, DesktopDependencies{
+		Host:          host,
+		Activation:    activation,
+		Environment:   environment,
+		Tray:          tray,
+		Notifications: notifications,
+		Clock: desktopTestClock{snapshot: domain.TimeSnapshot{
+			Now:      time.Date(2026, 1, 1, 8, 0, 0, 0, location),
+			Location: location,
+		}},
+	})
+	defer cancel()
+	var logs bytes.Buffer
+	application.mu.Lock()
+	application.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	application.mu.Unlock()
+
+	tray.InvokeExit()
+	waitForDesktopCondition(t, func() bool {
+		return application.GetDesktopStatus().State == DesktopStateStopped && host.QuitCalls() == 1
+	})
+	if !activation.Closed || !environment.Closed || !tray.Closed || !notifications.Closed {
+		t.Fatalf("resource closure = activation:%t environment:%t tray:%t notifications:%t, want all closed", activation.Closed, environment.Closed, tray.Closed, notifications.Closed)
+	}
+	if notifications.CleanupCount != 1 {
+		t.Fatalf("notification cleanup count = %d, want 1", notifications.CleanupCount)
+	}
+	if count := strings.Count(logs.String(), "notification history cleanup failed before exit"); count != 1 {
+		t.Fatalf("notification cleanup warning count = %d, want 1; logs = %s", count, logs.String())
+	}
+	if !strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("notification cleanup failure was not logged at WARN: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), "desktop runtime error") {
+		t.Fatalf("notification cleanup failure was logged as a runtime error: %s", logs.String())
+	}
 }
 
 // TestStopCancelsEnvironmentForwarderBeforeCoordinatorStop 验证 Stop 先取消环境转发，避免等待协调锁形成阻塞环。
@@ -869,24 +917,33 @@ func TestScheduleHiddenEventHandshakeAndDelivery(t *testing.T) {
 	}
 }
 
-// TestStopCleanupFailureIsRetryable 验证通知清理失败会停在 CleanupFailed，成功重试后请求宿主退出。
-func TestStopCleanupFailureIsRetryable(t *testing.T) {
+// TestStopFromHostResourceCloseFailureIsRetryable 验证宿主关闭失败会停在 CleanupFailed，成功重试后请求宿主退出。
+func TestStopFromHostResourceCloseFailureIsRetryable(t *testing.T) {
 	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
 	var mu sync.Mutex
-	cleanupCalls := 0
-	wantErr := errors.New("notification cleanup failed")
-	notifications := &platform.FakeNotificationCenter{CleanupFunc: func(context.Context) error {
+	closeCalls := 0
+	wantErr := errors.New("tray close failed")
+	tray := &platform.FakeTrayPort{CloseFunc: func() error {
 		mu.Lock()
 		defer mu.Unlock()
-		cleanupCalls++
-		if cleanupCalls == 1 {
+		closeCalls++
+		if closeCalls == 1 {
 			return wantErr
 		}
 		return nil
 	}}
-	application, cancel := newDesktopTestApplication(t, host, notifications)
+	location := time.FixedZone("CST", 8*60*60)
+	application, cancel := newRunningDesktopTestApplication(t, DesktopDependencies{
+		Host:          host,
+		Tray:          tray,
+		Notifications: &platform.FakeNotificationCenter{},
+		Clock: desktopTestClock{snapshot: domain.TimeSnapshot{
+			Now:      time.Date(2026, 1, 1, 8, 0, 0, 0, location),
+			Location: location,
+		}},
+	})
 	defer cancel()
-	if err := application.Stop(context.Background()); !errors.Is(err, wantErr) {
+	if err := application.StopFromHost(context.Background()); !errors.Is(err, wantErr) {
 		t.Fatalf("Stop() error = %v, want cleanup error", err)
 	}
 	if status := application.GetDesktopStatus(); status.State != DesktopStateCleanupFailed {
@@ -897,6 +954,30 @@ func TestStopCleanupFailureIsRetryable(t *testing.T) {
 	}
 	if status := application.GetDesktopStatus(); status.State != DesktopStateStopped {
 		t.Fatalf("state after retry = %q, want stopped", status.State)
+	}
+	if host.QuitCalls() != 1 {
+		t.Fatalf("host Quit count = %d, want 1", host.QuitCalls())
+	}
+}
+
+// TestStopRequestsHostQuitDespiteTrayCloseFailure 验证托盘退出不会因托盘关闭错误遗留主窗口。
+func TestStopRequestsHostQuitDespiteTrayCloseFailure(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	wantErr := errors.New("tray close failed")
+	tray := &platform.FakeTrayPort{CloseFunc: func() error { return wantErr }}
+	location := time.FixedZone("CST", 8*60*60)
+	application, cancel := newRunningDesktopTestApplication(t, DesktopDependencies{
+		Host:          host,
+		Tray:          tray,
+		Notifications: &platform.FakeNotificationCenter{},
+		Clock: desktopTestClock{snapshot: domain.TimeSnapshot{
+			Now:      time.Date(2026, 1, 1, 8, 0, 0, 0, location),
+			Location: location,
+		}},
+	})
+	defer cancel()
+	if err := application.Stop(context.Background()); !errors.Is(err, wantErr) {
+		t.Fatalf("Stop() error = %v, want tray close error", err)
 	}
 	if host.QuitCalls() != 1 {
 		t.Fatalf("host Quit count = %d, want 1", host.QuitCalls())

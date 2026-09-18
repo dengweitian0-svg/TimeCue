@@ -15,6 +15,8 @@ import (
 
 const toastNotificationManagerClass = "Windows.UI.Notifications.ToastNotificationManager"
 
+const notificationHistoryNotFoundHRESULT = uintptr(0x80070490)
+
 // WinRTNotificationHistoryCleaner 清除当前桌面应用的 Windows Toast 历史，不参与发送和激活。
 type WinRTNotificationHistoryCleaner struct{}
 
@@ -57,10 +59,16 @@ func (c *WinRTNotificationHistoryCleaner) Clear(ctx context.Context) error {
 		return fmt.Errorf("get notification history: %w", err)
 	}
 	defer history.Release()
-	if err := history.clear(); err != nil {
+	if err := history.clear(); err != nil && !isNotificationHistoryNotFound(err) {
 		return fmt.Errorf("clear current notification history: %w", err)
 	}
 	return nil
+}
+
+// isNotificationHistoryNotFound 判断清理目标不存在是否为可接受的幂等结果。
+func isNotificationHistoryNotFound(err error) bool {
+	var oleErr *ole.OleError
+	return errors.As(err, &oleErr) && oleErr.Code() == notificationHistoryNotFoundHRESULT
 }
 
 // toastNotificationManagerStatics 是 WinRT 静态工厂的最小 ABI 视图。

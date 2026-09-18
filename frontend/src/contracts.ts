@@ -192,9 +192,18 @@ export function toScheduleError(value: unknown): ScheduleError {
   if (value instanceof ScheduleError) return value;
   const payload = unwrapError(value);
   const code = isScheduleCode(payload.code) ? payload.code : 'STORAGE';
-  const fields = toFieldMessages(payload.fields, typeof payload.message === 'string' ? payload.message : '请检查此字段。');
+  const message = readableErrorMessage(payload.message);
+  const fields = toFieldMessages(payload.fields, message);
   const bounds = isRecord(payload.bounds) ? payload.bounds as unknown as ScheduleBounds : undefined;
-  return new ScheduleError(code, typeof payload.message === 'string' ? payload.message : '操作未完成，请重试。', fields, bounds);
+  return new ScheduleError(code, message, fields, bounds);
+}
+
+/** 将 Wails 的对象字符串和空文本收敛为用户可执行的稳定提示。 */
+function readableErrorMessage(value: unknown): string {
+  if (typeof value !== 'string') return '操作未完成，请重试。';
+  const message = value.trim();
+  if (!message || message.toLowerCase() === 'object' || message === '[object Object]') return '操作未完成，请重试。';
+  return message;
 }
 
 /** 把后端字段名数组转为表单可显示的字段错误，同时兼容端口直接返回的映射。 */

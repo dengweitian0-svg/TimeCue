@@ -784,12 +784,10 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 			}
 		}
 	}
-	if stopErr == nil {
-		stopErr = errors.Join(stopErr, a.deps.Notifications.Cleanup(ctx))
-	}
-	if stopErr == nil {
-		stopErr = errors.Join(stopErr, closeEnvironment(a.deps.Environment), closeActivation(a.deps.Activation), closeTray(a.deps.Tray), closeNotifications(a.deps.Notifications))
-	}
+	// 通知历史只是退出前的尽力清理；失败不能让托盘退出遗留可操作窗口或后台资源。
+	a.cleanupNotificationHistory(ctx)
+	// 即使前置停止步骤失败，也要继续尝试关闭全部桌面资源，避免资源所有权停在半退出状态。
+	stopErr = errors.Join(stopErr, closeEnvironment(a.deps.Environment), closeActivation(a.deps.Activation), closeTray(a.deps.Tray), closeNotifications(a.deps.Notifications))
 
 	a.mu.Lock()
 	a.cleanupError = stopErr
@@ -801,15 +799,14 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 	}
 	close(done)
 	a.mu.Unlock()
-	if stopErr != nil {
-		return stopErr
-	}
+	// 托盘退出是终止命令；即使个别桌面资源报告关闭错误，也必须请求宿主关闭窗口，
+	// 让进程退出回收剩余的 OS 资源，而不是留下半退出的可操作界面。
 	if requestQuit && a.deps.Host != nil {
 		if err := a.deps.Host.Quit(ctx); err != nil {
-			return fmt.Errorf("quit desktop host: %w", err)
+			stopErr = errors.Join(stopErr, fmt.Errorf("quit desktop host: %w", err))
 		}
 	}
-	return nil
+	return stopErr
 }
 
 // recordError 保存最近一次运行时错误，供状态查询和日志边界使用。
@@ -823,6 +820,21 @@ func (a *DesktopApplication) recordError(err error) {
 	a.mu.Unlock()
 	if logger != nil {
 		logger.Error("desktop runtime error", "error", err)
+	}
+}
+
+// cleanupNotificationHistory 尝试删除系统中的 TimeCue 通知，但失败只作为退出告警。
+func (a *DesktopApplication) cleanupNotificationHistory(ctx context.Context) {
+	if a == nil || a.deps.Notifications == nil {
+		return
+	}
+	if err := a.deps.Notifications.Cleanup(ctx); err != nil {
+		a.mu.Lock()
+		logger := a.logger
+		a.mu.Unlock()
+		if logger != nil {
+			logger.Warn("notification history cleanup failed before exit", "operation", "clear_notification_history", "error", err)
+		}
 	}
 }
 
