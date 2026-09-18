@@ -21,4 +21,4 @@
 - Windows 验收必须分开记录四件事：通知端口接收、系统实际显示、点击定位/现有窗口激活、确认持久化。fake 平台测试只能证明端口和状态转换，不能替代 Windows 通知中心观察；构建前还需执行前端检查、Go 检查及 `wails build -platform windows/amd64 -webview2 embed`。
 - `GetStorageDirectories` 返回每类目录的 `effective_path`、`saved_path` 和 `restart_required`；effective 来自启动时冻结的 `ResolvedPaths`，saved 来自 `config.yaml`。`SaveStorageDirectory` 仅在 `running` 状态执行，成功后明确提示重启生效，失败不覆盖前端输入或当前生效值。
 - 激活事件使用单调 sequence 和 `FrontendReady(last_sequence)` 握手；前端未就绪时只保留最新激活，发送失败不得静默丢弃。
-- 停止必须先使 scheduler/协调器进入 `stopping`，再取消并等待 scheduler。系统通知历史清理是退出前的尽力操作：失败只记录一次可定位告警，不能阻断事件源、托盘、通知资源和宿主窗口的关闭；仅其他桌面资源关闭失败进入 `cleanup_failed` 并允许 `RetryCleanup`。启动后的前端状态只以 SQLite 与调度恢复结果为准，遗留 Toast 不构成提醒事实。runtime 不关闭 bootstrap Store。
+- 停止必须先使 scheduler/协调器进入 `stopping`，再取消并等待 scheduler。系统通知历史清理是退出前的尽力操作：失败只记录一次可定位告警，不能阻断事件源、托盘、通知资源和宿主窗口的关闭；托盘退出即使其他桌面资源关闭失败也必须请求宿主关闭窗口，避免遗留半退出界面。非终止路径的资源关闭失败进入 `cleanup_failed` 并允许 `RetryCleanup`。启动后的前端状态只以 SQLite 与调度恢复结果为准，遗留 Toast 不构成提醒事实。runtime 不关闭 bootstrap Store。

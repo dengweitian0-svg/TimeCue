@@ -917,8 +917,8 @@ func TestScheduleHiddenEventHandshakeAndDelivery(t *testing.T) {
 	}
 }
 
-// TestStopResourceCloseFailureIsRetryable 验证资源关闭失败会停在 CleanupFailed，成功重试后请求宿主退出。
-func TestStopResourceCloseFailureIsRetryable(t *testing.T) {
+// TestStopFromHostResourceCloseFailureIsRetryable 验证宿主关闭失败会停在 CleanupFailed，成功重试后请求宿主退出。
+func TestStopFromHostResourceCloseFailureIsRetryable(t *testing.T) {
 	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
 	var mu sync.Mutex
 	closeCalls := 0
@@ -943,7 +943,7 @@ func TestStopResourceCloseFailureIsRetryable(t *testing.T) {
 		}},
 	})
 	defer cancel()
-	if err := application.Stop(context.Background()); !errors.Is(err, wantErr) {
+	if err := application.StopFromHost(context.Background()); !errors.Is(err, wantErr) {
 		t.Fatalf("Stop() error = %v, want cleanup error", err)
 	}
 	if status := application.GetDesktopStatus(); status.State != DesktopStateCleanupFailed {
@@ -954,6 +954,30 @@ func TestStopResourceCloseFailureIsRetryable(t *testing.T) {
 	}
 	if status := application.GetDesktopStatus(); status.State != DesktopStateStopped {
 		t.Fatalf("state after retry = %q, want stopped", status.State)
+	}
+	if host.QuitCalls() != 1 {
+		t.Fatalf("host Quit count = %d, want 1", host.QuitCalls())
+	}
+}
+
+// TestStopRequestsHostQuitDespiteTrayCloseFailure 验证托盘退出不会因托盘关闭错误遗留主窗口。
+func TestStopRequestsHostQuitDespiteTrayCloseFailure(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	wantErr := errors.New("tray close failed")
+	tray := &platform.FakeTrayPort{CloseFunc: func() error { return wantErr }}
+	location := time.FixedZone("CST", 8*60*60)
+	application, cancel := newRunningDesktopTestApplication(t, DesktopDependencies{
+		Host:          host,
+		Tray:          tray,
+		Notifications: &platform.FakeNotificationCenter{},
+		Clock: desktopTestClock{snapshot: domain.TimeSnapshot{
+			Now:      time.Date(2026, 1, 1, 8, 0, 0, 0, location),
+			Location: location,
+		}},
+	})
+	defer cancel()
+	if err := application.Stop(context.Background()); !errors.Is(err, wantErr) {
+		t.Fatalf("Stop() error = %v, want tray close error", err)
 	}
 	if host.QuitCalls() != 1 {
 		t.Fatalf("host Quit count = %d, want 1", host.QuitCalls())

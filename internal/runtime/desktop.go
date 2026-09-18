@@ -799,15 +799,14 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 	}
 	close(done)
 	a.mu.Unlock()
-	if stopErr != nil {
-		return stopErr
-	}
+	// 托盘退出是终止命令；即使个别桌面资源报告关闭错误，也必须请求宿主关闭窗口，
+	// 让进程退出回收剩余的 OS 资源，而不是留下半退出的可操作界面。
 	if requestQuit && a.deps.Host != nil {
 		if err := a.deps.Host.Quit(ctx); err != nil {
-			return fmt.Errorf("quit desktop host: %w", err)
+			stopErr = errors.Join(stopErr, fmt.Errorf("quit desktop host: %w", err))
 		}
 	}
-	return nil
+	return stopErr
 }
 
 // recordError 保存最近一次运行时错误，供状态查询和日志边界使用。

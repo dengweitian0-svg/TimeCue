@@ -74,6 +74,7 @@ type WindowsTray struct {
 	window    windows.Handle
 	started   bool
 	closed    bool
+	menuOpen  bool
 	inflight  sync.WaitGroup
 }
 
@@ -207,6 +208,20 @@ func (t *WindowsTray) handleMessage(message uint32, _, lParam uintptr) error {
 	case wmLeftButtonDblClk:
 		callbacks.OnOpen()
 	case wmRightButtonUp, wmContextMenu:
+		// 同一次右键操作可能在 TrackPopupMenu 的嵌套消息循环中同时送达两种消息；
+		// 只允许一个菜单存在，避免第二次调用返回 Popup menu already active。
+		t.mu.Lock()
+		if t.menuOpen {
+			t.mu.Unlock()
+			return nil
+		}
+		t.menuOpen = true
+		t.mu.Unlock()
+		defer func() {
+			t.mu.Lock()
+			t.menuOpen = false
+			t.mu.Unlock()
+		}()
 		command, err := t.shell.ShowMenu(window)
 		if err != nil {
 			return fmt.Errorf("show tray menu: %w", err)
