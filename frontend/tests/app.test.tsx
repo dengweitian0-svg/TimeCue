@@ -142,6 +142,29 @@ describe('App', () => {
     host.remove();
   });
 
+  it('refreshes pending reminders when entering the page from navigation', async () => {
+    const latest: ReminderDetail = { scheduleId: '7', originalDate: '2026-09-16', attemptedAtUtc: '2026-09-16T02:00:00Z', startUnix: 1799964000, endUnix: 1799964900, title: '最新提醒', notes: 'notes', contentStatus: 'available', status: 'pending', processedAtUtc: null };
+    let calls = 0;
+    const platform = port({ listPendingReminders: vi.fn(async () => { calls++; return calls === 1 ? { items: [], nextCursor: '', limit: 20 } : { items: [latest], nextCursor: '', limit: 20 }; }) });
+    const controller = new Controller(platform);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    root.render(<App controller={controller} />);
+    await flushRender();
+
+    expect(platform.listPendingReminders).toHaveBeenCalledTimes(1);
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('待处理提醒'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+
+    expect(platform.listPendingReminders).toHaveBeenCalledTimes(2);
+    expect(host.textContent).toContain('最新提醒');
+    expect(host.querySelector('button.reminder-card')).not.toBeNull();
+    root.unmount();
+    controller.dispose();
+    host.remove();
+  });
+
   it('shows unavailable reminder content without inventing a body', async () => {
     const unavailable: ReminderDetail = { scheduleId: '7', originalDate: '2026-09-16', attemptedAtUtc: '2026-09-16T02:00:00Z', startUnix: null, endUnix: null, title: null, notes: null, contentStatus: 'unavailable', status: 'pending', processedAtUtc: null };
     const reminders: ReminderPage = { items: [unavailable], nextCursor: '', limit: 20 };
