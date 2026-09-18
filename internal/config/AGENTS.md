@@ -16,6 +16,8 @@
 - `ResolvedPaths` 是后续启动编排和存储初始化使用的受控路径视图；普通加载/解析不创建目录，目录设置保存用例单独允许通过 `ValidateDirectoryPath` 创建并验证用户指定目录，但不执行应用生命周期。
 - `ResolvedPaths` 只暴露可执行文件旁的 `ConfigPath`、固定数据库路径和日志/备份实际路径；不存在独立的 `preferences.yaml` 配置来源。
 - `Config.SaveCloseBehavior`、`Config.SaveLogLevel` 和 `Config.RestoreDefault` 均写入 `ConfigPath`；恢复默认只更新指定属性，不自动物化其他默认值。
+- `Theme` 只允许 `peach`、`mint`、`sky`、`lavender` 四个小写值；默认值来自 `defaults.yaml` 的顶层 `theme: peach`，用户配置缺少该字段时沿用默认基线，显式非法值必须拒绝启动。
+- `Config.SaveTheme` 和主题恢复默认通过现有同目录临时文件、同步、原子替换流程更新顶层 `theme`；未知顶层字段保留，文件替换成功前不得更新内存主题。
 - 配置保存先写入同目录临时文件并完成 `Sync`，再替换目标文件；替换成功前不得更新内存值。Windows 目标存在时必须使用支持替换的原生语义，不能先删除旧文件。
 - `Config.SaveStorageDirectory` 只允许日志和备份两类目录：日志写回 `log.path` 并保留原文件名，备份写回 `backup.dir`；配置文件不存在时只创建被保存的属性，不复制完整默认文件。保存按同目录临时文件、写入、`Sync`、关闭、原子替换执行，任何失败都保留旧文件、旧内存保存值和当前 `ResolvedPaths`。
 - 目录输入必须规范化为绝对物理路径；缺失目录可创建，并必须通过临时文件写入、同步和删除验证。Windows 目录句柄解析符号链接、junction、大小写和 UNC 别名，避免同一物理目录被识别为不同目录。

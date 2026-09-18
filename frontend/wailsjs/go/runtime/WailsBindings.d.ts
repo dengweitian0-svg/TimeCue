@@ -29,16 +29,20 @@ export function GetScheduleTimeBounds():Promise<app.TimeBoundsDTO>;
 
 export function GetStorageDirectories():Promise<runtime.StorageDirectoriesDTO>;
 
+export function GetTheme():Promise<runtime.ThemeDTO>;
+
 export function ListPendingReminders(arg1:app.ListPendingRemindersRequest):Promise<app.ListPendingRemindersResponse>;
 
 export function ListSchedules(arg1:app.ListSchedulesRequest):Promise<app.ListSchedulesResponse>;
 
-export function RetryCleanup():Promise<runtime.DesktopStatusDTO>;
-
 export function RestoreConfigDefault(arg1:runtime.RestoreConfigDefaultRequest):Promise<void>;
+
+export function RetryCleanup():Promise<runtime.DesktopStatusDTO>;
 
 export function SaveCloseBehavior(arg1:runtime.CloseBehaviorDTO):Promise<void>;
 
 export function SaveLogLevel(arg1:runtime.SaveLogLevelRequest):Promise<runtime.LogLevelDTO>;
 
 export function SaveStorageDirectory(arg1:runtime.SaveStorageDirectoryRequest):Promise<runtime.StorageDirectoryDTO>;
+
+export function SaveTheme(arg1:runtime.SaveThemeRequest):Promise<runtime.ThemeDTO>;

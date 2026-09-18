@@ -4,7 +4,8 @@ import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
 import { Controller } from '../src/controller';
-import type { AppPort, ReminderDetail, ReminderPage, ScheduleBounds, SchedulePage } from '../src/contracts';
+import { themes } from '../src/themes';
+import type { AppPort, ReminderDetail, ReminderPage, ScheduleBounds, SchedulePage, Theme } from '../src/contracts';
 
 const page: SchedulePage = { items: [], nextCursor: '', limit: 20 };
 const bounds: ScheduleBounds = {
@@ -27,6 +28,8 @@ function port(overrides: Partial<AppPort> = {}): AppPort {
     getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true })),
     getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true }, closeBehavior: 'tray' as const, activation: null })),
     getCloseBehavior: vi.fn(async () => 'tray' as const),
+    getTheme: vi.fn(async () => 'peach' as const),
+    saveTheme: vi.fn(async (value: 'peach' | 'mint' | 'sky' | 'lavender') => value),
     getLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })),
     getStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs' as const, effectivePath: 'C:/TimeCue/logs', savedPath: 'C:/TimeCue/logs', restartRequired: false }, backups: { kind: 'backups' as const, effectivePath: 'C:/TimeCue/backups', savedPath: 'C:/TimeCue/backups', restartRequired: false } })),
     chooseDirectory: vi.fn(async () => null),
@@ -44,6 +47,7 @@ function port(overrides: Partial<AppPort> = {}): AppPort {
 
 /** 等待 React 完成一次异步渲染提交。 */
 async function flushRender(): Promise<void> {
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
   await new Promise<void>(resolve => setTimeout(resolve, 0));
 }
 
@@ -136,4 +140,89 @@ describe('App', () => {
     controller.dispose();
     host.remove();
   });
+
+  it('renders all four theme cards with keyboard-friendly pressed states', async () => {
+    const platform = port();
+    const controller = new Controller(platform);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    root.render(<App controller={controller} />);
+    await flushRender();
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('设置'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+    const cards = [...host.querySelectorAll<HTMLButtonElement>('.theme-card')];
+    expect(cards.map(card => card.getAttribute('aria-label'))).toEqual(['奶油桃', '薄荷绿', '晴空蓝', '薰衣草紫']);
+    expect(cards.every(card => card.tagName === 'BUTTON' && card.tabIndex >= 0 && card.getAttribute('aria-pressed') !== null)).toBe(true);
+    expect(cards.filter(card => card.getAttribute('aria-pressed') === 'true')).toHaveLength(1);
+    root.unmount();
+    controller.dispose();
+    host.remove();
+  });
+
+  it('applies a selected theme only after the save promise resolves', async () => {
+    let resolveSave!: (value: Theme) => void;
+    const saveTheme = vi.fn(() => new Promise<Theme>(resolve => { resolveSave = resolve; }));
+    const platform = port({ saveTheme });
+    const controller = new Controller(platform);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    root.render(<App controller={controller} />);
+    await flushRender();
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('设置'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+    const mint = host.querySelector<HTMLButtonElement>('[aria-label="薄荷绿"]')!;
+    mint.click();
+    await flushRender();
+    expect(saveTheme).toHaveBeenCalledWith('mint');
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="奶油桃"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="薄荷绿"]')?.getAttribute('aria-pressed')).toBe('false');
+    resolveSave('mint');
+    await flushRender();
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="薄荷绿"]')?.getAttribute('aria-pressed')).toBe('true');
+    root.unmount();
+    controller.dispose();
+    host.remove();
+  });
+
+  it('keeps the original theme and shows an error when saving fails', async () => {
+    const platform = port({ saveTheme: vi.fn(async () => { throw { data: JSON.stringify({ code: 'STORAGE', message: '主题保存失败' }) }; }) });
+    const controller = new Controller(platform);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    root.render(<App controller={controller} />);
+    await flushRender();
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('设置'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+    host.querySelector<HTMLButtonElement>('[aria-label="晴空蓝"]')?.click();
+    await flushRender();
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="奶油桃"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="晴空蓝"]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(host.textContent).toContain('主题保存失败');
+    root.unmount();
+    controller.dispose();
+    host.remove();
+  });
+
+  it('keeps theme text and feedback colors above the AA contrast threshold', () => {
+    for (const theme of Object.values(themes)) {
+      expect(contrast(theme.text, theme.bg)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.muted, theme.bg)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.error, theme.errorBg)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.success, theme.successBg)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
 });
+
+/** 计算两个十六进制颜色的 WCAG 相对对比度。 */
+function contrast(foreground: string, background: string): number {
+  const luminance = (hex: string): number => {
+    const channels = [0, 2, 4].map(index => Number.parseInt(hex.slice(index + 1, index + 3), 16) / 255).map(channel => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const light = Math.max(luminance(foreground), luminance(background));
+  const dark = Math.min(luminance(foreground), luminance(background));
+  return (light + 0.05) / (dark + 0.05);
+}

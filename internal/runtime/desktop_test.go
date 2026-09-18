@@ -72,6 +72,7 @@ func newRunningDesktopTestApplicationWithStore(t *testing.T, dependencies Deskto
 		Log:           config.LogConfig{Level: "info", Path: filepath.Join(root, "logs", "timecue.log")},
 		Backup:        config.BackupConfig{Dir: filepath.Join(root, "backups")},
 		Window:        config.WindowConfig{CloseBehavior: config.CloseBehaviorTray},
+		Theme:         config.ThemePeach,
 		ResolvedPaths: config.ResolvedPaths{ConfigPath: filepath.Join(root, "config.yaml"), DatabasePath: filepath.Join(root, "data", "timecue.db"), LogPath: filepath.Join(root, "logs", "timecue.log"), BackupDir: filepath.Join(root, "backups")},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -479,6 +480,58 @@ func TestConfigBindingsExposeLogLevelAndRestoreDefault(t *testing.T) {
 	}
 	if err := binding.RestoreConfigDefault(RestoreConfigDefaultRequest{Property: "app.version"}); err == nil {
 		t.Fatal("RestoreConfigDefault() error = nil, want invalid property error")
+	}
+}
+
+// TestConfigBindingsExposeThemeAndPersistenceFailures 验证主题读取、保存、失败回滚和恢复默认。
+func TestConfigBindingsExposeThemeAndPersistenceFailures(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	application, cancel := newDesktopTestApplication(t, host, nil)
+	defer cancel()
+	binding := application.Bindings()
+
+	initial, err := binding.GetTheme()
+	if err != nil || initial.Theme != string(config.ThemePeach) {
+		t.Fatalf("GetTheme() = %+v, error = %v, want peach", initial, err)
+	}
+	saved, err := binding.SaveTheme(SaveThemeRequest{Theme: string(config.ThemeMint)})
+	if err != nil || saved.Theme != string(config.ThemeMint) {
+		t.Fatalf("SaveTheme() = %+v, error = %v, want mint", saved, err)
+	}
+
+	application.mu.Lock()
+	oldPath := application.config.ResolvedPaths.ConfigPath
+	application.config.ResolvedPaths.ConfigPath = filepath.Join(t.TempDir(), "missing", "config.yaml")
+	application.mu.Unlock()
+	_, err = binding.SaveTheme(SaveThemeRequest{Theme: string(config.ThemeSky)})
+	var persistenceErr *ConfigPersistenceError
+	if !errors.As(err, &persistenceErr) || FormatError(err).Code != "STORAGE" {
+		t.Fatalf("SaveTheme() failure = %v, formatted = %+v, want ConfigPersistenceError/STORAGE", err, FormatError(err))
+	}
+	afterFailure, err := binding.GetTheme()
+	if err != nil || afterFailure.Theme != string(config.ThemeMint) {
+		t.Fatalf("GetTheme() after failed save = %+v, error = %v, want old mint", afterFailure, err)
+	}
+
+	application.mu.Lock()
+	application.config.ResolvedPaths.ConfigPath = filepath.Join(t.TempDir(), "config.yaml")
+	application.mu.Unlock()
+	if err := binding.RestoreConfigDefault(RestoreConfigDefaultRequest{Property: string(config.ConfigPropertyTheme)}); err != nil {
+		t.Fatalf("RestoreConfigDefault(theme) error = %v", err)
+	}
+	restored, err := binding.GetTheme()
+	if err != nil || restored.Theme != string(config.ThemePeach) {
+		t.Fatalf("GetTheme() after restore = %+v, error = %v, want peach", restored, err)
+	}
+
+	application.mu.Lock()
+	application.config.ResolvedPaths.ConfigPath = oldPath
+	application.mu.Unlock()
+	if err := application.StopFromHost(context.Background()); err != nil {
+		t.Fatalf("StopFromHost() error = %v", err)
+	}
+	if _, err := binding.SaveTheme(SaveThemeRequest{Theme: string(config.ThemeLavender)}); err == nil || FormatError(err).Code != string(domain.RuntimeStopping) {
+		t.Fatalf("SaveTheme() after stop = %v, formatted = %+v, want RUNTIME_STOPPING", err, FormatError(err))
 	}
 }
 

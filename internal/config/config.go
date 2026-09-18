@@ -25,6 +25,7 @@ type Config struct {
 	Log           LogConfig     `mapstructure:"log"`
 	Backup        BackupConfig  `mapstructure:"backup"`
 	Window        WindowConfig  `mapstructure:"window"`
+	Theme         Theme         `mapstructure:"theme"`
 	ResolvedPaths ResolvedPaths `mapstructure:"-"`
 }
 
@@ -78,6 +79,20 @@ type WindowConfig struct {
 	CloseBehavior CloseBehavior `mapstructure:"close_behavior"`
 }
 
+// Theme 表示应用窗口支持的受控配色主题。
+type Theme string
+
+const (
+	// ThemePeach 表示默认的奶油桃主题。
+	ThemePeach Theme = "peach"
+	// ThemeMint 表示薄荷绿主题。
+	ThemeMint Theme = "mint"
+	// ThemeSky 表示晴空蓝主题。
+	ThemeSky Theme = "sky"
+	// ThemeLavender 表示薰衣草紫主题。
+	ThemeLavender Theme = "lavender"
+)
+
 // ConfigProperty 标识允许由用户编辑或恢复默认的配置属性。
 type ConfigProperty string
 
@@ -90,6 +105,8 @@ const (
 	ConfigPropertyBackupDir ConfigProperty = "backup.dir"
 	// ConfigPropertyWindowCloseBehavior 表示窗口关闭行为配置。
 	ConfigPropertyWindowCloseBehavior ConfigProperty = "window.close_behavior"
+	// ConfigPropertyTheme 表示应用主题配置。
+	ConfigPropertyTheme ConfigProperty = "theme"
 )
 
 // ResolvedPaths 保存启动时解析出的实际文件系统路径。
@@ -134,6 +151,9 @@ func loadFromDirectory(baseDir string) (Config, error) {
 	if _, statErr := os.Stat(configPath); statErr == nil {
 		document, err := readConfigDocument(configPath)
 		if err != nil {
+			return Config{}, err
+		}
+		if err := validateConfigDocumentTheme(document); err != nil {
 			return Config{}, err
 		}
 		if err := v.MergeConfigMap(document); err != nil {
@@ -219,7 +239,33 @@ func (c Config) Validate() error {
 	if err := c.Window.Validate(); err != nil {
 		return err
 	}
+	if err := c.Theme.Validate(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// Validate 校验主题枚举；空值仅作为手工构造 Config 的零值默认值。
+func (t Theme) Validate() error {
+	if t == "" {
+		return nil
+	}
+	return validateTheme(t)
+}
+
+// validateTheme 严格校验主题只能是四个公开的小写值之一。
+func validateTheme(theme Theme) error {
+	switch theme {
+	case ThemePeach, ThemeMint, ThemeSky, ThemeLavender:
+		return nil
+	default:
+		return fmt.Errorf("invalid theme %q: want peach, mint, sky, or lavender", theme)
+	}
+}
+
+// validateExplicitTheme 拒绝保存请求中的空主题和非公开主题值。
+func validateExplicitTheme(theme Theme) error {
+	return validateTheme(theme)
 }
 
 // Validate 校验窗口关闭行为；空值仅作为手工构造 Config 的零值默认值。
@@ -328,6 +374,19 @@ func (c *Config) SaveLogLevel(level string) error {
 	})
 }
 
+// SaveTheme 原子保存主题到 config.yaml，并在保存成功后更新内存配置。
+func (c *Config) SaveTheme(theme Theme) error {
+	if c == nil {
+		return errors.New("save theme: config must not be nil")
+	}
+	if err := validateExplicitTheme(theme); err != nil {
+		return fmt.Errorf("save theme: %w", err)
+	}
+	return c.saveConfigValue("save theme", "", "theme", string(theme), func() {
+		c.Theme = theme
+	})
+}
+
 // RestoreDefault 将指定配置属性的默认值显式写回 config.yaml。
 func (c *Config) RestoreDefault(property ConfigProperty) error {
 	if c == nil {
@@ -356,6 +415,9 @@ func (c *Config) RestoreDefault(property ConfigProperty) error {
 	case ConfigPropertyWindowCloseBehavior:
 		section, key, value = "window", "close_behavior", string(defaults.Window.CloseBehavior)
 		update = func() { c.Window.CloseBehavior = defaults.Window.CloseBehavior }
+	case ConfigPropertyTheme:
+		section, key, value = "", "theme", string(defaults.Theme)
+		update = func() { c.Theme = defaults.Theme }
 	}
 	return c.saveConfigValue("restore config default", section, key, value, update)
 }
@@ -363,7 +425,7 @@ func (c *Config) RestoreDefault(property ConfigProperty) error {
 // validateConfigProperty 限定恢复默认操作只能作用于公开的配置属性。
 func validateConfigProperty(property ConfigProperty) error {
 	switch property {
-	case ConfigPropertyLogLevel, ConfigPropertyLogPath, ConfigPropertyBackupDir, ConfigPropertyWindowCloseBehavior:
+	case ConfigPropertyLogLevel, ConfigPropertyLogPath, ConfigPropertyBackupDir, ConfigPropertyWindowCloseBehavior, ConfigPropertyTheme:
 		return nil
 	default:
 		return fmt.Errorf("invalid config property %q", property)
@@ -535,6 +597,10 @@ func readConfigDocument(path string) (map[string]any, error) {
 
 // setConfigDocumentValue 只修改目标配置节中的一个字段，不覆盖未知字段。
 func setConfigDocumentValue(document map[string]any, section, key, value, path string) error {
+	if section == "" {
+		document[key] = value
+		return nil
+	}
 	fields, ok := document[section]
 	if !ok {
 		fields = make(map[string]any)
@@ -545,6 +611,22 @@ func setConfigDocumentValue(document map[string]any, section, key, value, path s
 		return fmt.Errorf("invalid config file %q: %s must be a mapping", path, section)
 	}
 	mapping[key] = value
+	return nil
+}
+
+// validateConfigDocumentTheme 校验用户配置中显式出现的主题，缺失字段交给默认基线补全。
+func validateConfigDocumentTheme(document map[string]any) error {
+	value, ok := document["theme"]
+	if !ok {
+		return nil
+	}
+	theme, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("invalid theme %v: want peach, mint, sky, or lavender", value)
+	}
+	if err := validateExplicitTheme(Theme(theme)); err != nil {
+		return err
+	}
 	return nil
 }
 

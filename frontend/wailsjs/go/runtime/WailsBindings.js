@@ -54,6 +54,10 @@ export function GetStorageDirectories() {
   return window['go']['runtime']['WailsBindings']['GetStorageDirectories']();
 }
 
+export function GetTheme() {
+  return window['go']['runtime']['WailsBindings']['GetTheme']();
+}
+
 export function ListPendingReminders(arg1) {
   return window['go']['runtime']['WailsBindings']['ListPendingReminders'](arg1);
 }
@@ -62,12 +66,12 @@ export function ListSchedules(arg1) {
   return window['go']['runtime']['WailsBindings']['ListSchedules'](arg1);
 }
 
-export function RetryCleanup() {
-  return window['go']['runtime']['WailsBindings']['RetryCleanup']();
-}
-
 export function RestoreConfigDefault(arg1) {
   return window['go']['runtime']['WailsBindings']['RestoreConfigDefault'](arg1);
+}
+
+export function RetryCleanup() {
+  return window['go']['runtime']['WailsBindings']['RetryCleanup']();
 }
 
 export function SaveCloseBehavior(arg1) {
@@ -80,4 +84,8 @@ export function SaveLogLevel(arg1) {
 
 export function SaveStorageDirectory(arg1) {
   return window['go']['runtime']['WailsBindings']['SaveStorageDirectory'](arg1);
+}
+
+export function SaveTheme(arg1) {
+  return window['go']['runtime']['WailsBindings']['SaveTheme'](arg1);
 }
