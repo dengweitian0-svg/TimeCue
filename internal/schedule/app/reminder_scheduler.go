@@ -12,6 +12,8 @@ import (
 
 const reminderDeliveryWindow = 5 * time.Second
 
+const reminderSchedulerEventBuffer = 64
+
 // ReminderSourceStore 合并调度器所需的批量源读取和单日程一致读取能力。
 type ReminderSourceStore interface {
 	OccurrenceQueryStore
@@ -37,6 +39,7 @@ type ReminderScheduler struct {
 	notificationKilled bool
 	recoveryEventMu    sync.RWMutex
 	recoveryHandler    RecoveryEventHandler
+	events             chan ReminderSchedulerEvent
 }
 
 // reminderCandidateBatch 保存候选发生、其日程 revision 和读取时的调度 epoch。
@@ -79,7 +82,16 @@ func NewReminderScheduler(store ReminderSourceStore, attempts ReminderAttemptSto
 		timerFactory: timerFactory, logger: logger, coordinator: coordinator,
 		status:     SchedulerStatus{Available: true, Epoch: coordinator.Epoch(), State: coordinator.State(), RecoveryStatus: RecoveryStatusIdle},
 		candidates: make(map[domain.ScheduleID]reminderCandidateBatch),
+		events:     make(chan ReminderSchedulerEvent, reminderSchedulerEventBuffer),
 	}
+}
+
+// Events 返回调度器产生的应用事件流；调用方只能读取，不能关闭或写入。
+func (s *ReminderScheduler) Events() ReminderSchedulerEvents {
+	if s == nil {
+		return nil
+	}
+	return s.events
 }
 
 // SetRecoveryEventHandler 设置 runtime 接收恢复状态事件的回调。
@@ -556,6 +568,9 @@ func (s *ReminderScheduler) processDue(ctx context.Context, candidate reminderCa
 		if writeErr := s.writeReminderStatus(ctx, occurrence.Identity(), ReminderAttemptSubmitted); writeErr != nil {
 			return writeErr
 		}
+		if source.Schedule.Cron == nil {
+			s.emitEvent(ReminderSchedulerEvent{Type: ReminderSchedulerEventScheduleHidden, ScheduleID: occurrence.ScheduleID})
+		}
 		submitted++
 	}
 	s.logger.Info("reminder batch processed", "schedule_id", candidate.batch.Occurrences[0].ScheduleID, "batch_unix", candidate.batch.Occurrences[0].StartLocal.Unix(), "submitted", submitted, "failed", failed, "skipped", skipped)
@@ -568,6 +583,19 @@ func (s *ReminderScheduler) writeReminderStatus(ctx context.Context, identity do
 		return fmt.Errorf("write reminder %s result %d/%s: %w", status, identity.ScheduleID, identity.OriginalDate, err)
 	}
 	return nil
+}
+
+// emitEvent 在提醒状态事务成功后输出 UI 投影事件；投递失败只记录日志，不影响调度推进。
+func (s *ReminderScheduler) emitEvent(event ReminderSchedulerEvent) {
+	if s == nil || s.events == nil {
+		return
+	}
+	select {
+	case s.events <- event:
+	default:
+		// UI 事件不是持久化事实，避免慢或失效的消费者阻塞提醒调度；列表查询仍会按数据库事实修正。
+		s.logger.Warn("reminder scheduler event buffer full", "event", event.Type, "schedule_id", event.ScheduleID)
+	}
 }
 
 // advanceCandidateLocked 只推进调度游标，不创建提醒事实；删除或关闭日程会从 map 中移除。

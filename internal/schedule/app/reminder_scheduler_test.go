@@ -83,6 +83,13 @@ type schedulerTestAttempts struct {
 	outcomes map[domain.OccurrenceIdentity]ReminderAttemptStatus
 }
 
+// status 返回测试中已持久化的提醒终态，供事件发生顺序断言使用。
+func (s *schedulerTestAttempts) status(identity domain.OccurrenceIdentity) ReminderAttemptStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.outcomes[identity]
+}
+
 // ClaimReminderAttempt 记录测试占用并拒绝重复身份。
 func (s *schedulerTestAttempts) ClaimReminderAttempt(_ context.Context, identity domain.OccurrenceIdentity, _ time.Time) (bool, error) {
 	s.mu.Lock()
@@ -103,14 +110,18 @@ func (s *schedulerTestAttempts) SetReminderAttemptStatus(_ context.Context, iden
 }
 
 type schedulerTestNotifier struct {
-	mu    sync.Mutex
-	items []ReminderNotification
+	mu             sync.Mutex
+	items          []ReminderNotification
+	failScheduleID domain.ScheduleID
 }
 
 // Submit 记录测试通知。
 func (s *schedulerTestNotifier) Submit(_ context.Context, notification ReminderNotification) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if notification.Identity.ScheduleID == s.failScheduleID {
+		return errors.New("forced notification failure")
+	}
 	s.items = append(s.items, notification)
 	return nil
 }
@@ -185,5 +196,77 @@ func TestReminderSchedulerUsesOneTimerAndProcessesSameTimeBatch(t *testing.T) {
 	}
 	if len(attempts.outcomes) != 2 {
 		t.Fatalf("outcomes = %+v", attempts.outcomes)
+	}
+	for index := 0; index < 2; index++ {
+		select {
+		case event := <-scheduler.Events():
+			if event.Type != ReminderSchedulerEventScheduleHidden || event.ScheduleID <= 0 {
+				t.Fatalf("scheduler event = %+v", event)
+			}
+			identity := domain.OccurrenceIdentity{ScheduleID: event.ScheduleID, OriginalDate: "2026-01-01"}
+			if attempts.status(identity) != ReminderAttemptSubmitted {
+				t.Fatalf("event %d/%s observed before submitted persistence: status=%q", event.ScheduleID, identity.OriginalDate, attempts.status(identity))
+			}
+		case <-time.After(time.Second):
+			t.Fatal("scheduler did not emit hidden event")
+		}
+	}
+}
+
+// TestReminderSchedulerEmitsHiddenOnlyForSubmittedSingle 验证重复、失败和单次提交的事件边界。
+func TestReminderSchedulerEmitsHiddenOnlyForSubmittedSingle(t *testing.T) {
+	location := time.FixedZone("CST", 8*60*60)
+	start := time.Date(2026, 1, 1, 9, 0, 0, 0, location)
+	cron := "0 9 * * *"
+	until := "2026-01-02"
+	sources := &schedulerTestSources{items: []OccurrenceSourceDTO{
+		{Schedule: domain.Schedule{ID: 1, Open: true, FirstStartLocal: start, OriginalStartLocal: start, DurationMinutes: 10}},
+		{Schedule: domain.Schedule{ID: 2, Open: true, Cron: &cron, UntilDateLocal: &until, FirstStartLocal: start, OriginalStartLocal: start, DurationMinutes: 10}},
+	}}
+	clock := &schedulerTestClock{snapshot: domain.TimeSnapshot{Now: start.Add(-time.Minute), Location: location}}
+	attempts := &schedulerTestAttempts{claimed: make(map[domain.OccurrenceIdentity]bool), outcomes: make(map[domain.OccurrenceIdentity]ReminderAttemptStatus)}
+	notifier := &schedulerTestNotifier{failScheduleID: 2}
+	timer := &schedulerTestTimer{ch: make(chan time.Time, 1)}
+	scheduler := NewReminderScheduler(sources, attempts, notifier, clock, func(time.Duration) Timer { return timer }, discardReminderLogger{}, NewMutationCoordinator())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- scheduler.Run(ctx) }()
+	select {
+	case <-time.After(2 * time.Second):
+		t.Fatal("scheduler did not start")
+	case <-time.After(time.Millisecond):
+	}
+	clock.setNow(start)
+	timer.ch <- start
+	deadline := time.After(2 * time.Second)
+	for {
+		attempts.mu.Lock()
+		count := len(attempts.outcomes)
+		attempts.mu.Unlock()
+		if count == 2 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("reminder outcomes = %v", attempts.outcomes)
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	select {
+	case event := <-scheduler.Events():
+		if event.ScheduleID != 1 || event.Type != ReminderSchedulerEventScheduleHidden {
+			t.Fatalf("hidden event = %+v, want single schedule 1", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("single submitted reminder did not emit hidden event")
+	}
+	select {
+	case event := <-scheduler.Events():
+		t.Fatalf("unexpected event for recurring/failed reminder: %+v", event)
+	default:
 	}
 }

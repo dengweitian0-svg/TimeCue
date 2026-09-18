@@ -552,6 +552,100 @@ func TestListSchedulesPaginatesWithoutDuplicates(t *testing.T) {
 	}
 }
 
+// TestListSchedulesHidesSubmittedSingleSchedules 验证列表只隐藏当前单次身份已提交的日程。
+func TestListSchedulesHidesSubmittedSingleSchedules(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	location := time.FixedZone("UTC+8", 8*60*60)
+	attemptedAt := time.Date(2026, 1, 2, 2, 0, 0, 0, time.UTC)
+
+	create := func(candidate domain.ScheduleCandidate) domain.Schedule {
+		t.Helper()
+		created, err := store.CreateSchedule(ctx, candidate)
+		if err != nil {
+			t.Fatalf("CreateSchedule(%q) error = %v", candidate.Title, err)
+		}
+		return created
+	}
+	insertAttempt := func(scheduleID domain.ScheduleID, originalDate string, status app.ReminderAttemptStatus, processedAt *time.Time) {
+		t.Helper()
+		insertReminderAttemptTestRow(t, store, scheduleID, originalDate, status, attemptedAt, processedAt)
+	}
+
+	submittedSingle := create(createTestSchedule())
+	processedAt := attemptedAt.Add(time.Minute)
+	insertAttempt(submittedSingle.ID, "2026-01-02", app.ReminderAttemptSubmitted, &processedAt)
+
+	claimedSingleCandidate := createTestSchedule()
+	claimedSingleCandidate.Title = "claimed single"
+	claimedSingleCandidate.FirstStartLocal = time.Date(2026, 1, 3, 10, 0, 0, 0, location)
+	claimedSingleCandidate.OriginalStartLocal = claimedSingleCandidate.FirstStartLocal
+	claimedSingle := create(claimedSingleCandidate)
+	insertAttempt(claimedSingle.ID, "2026-01-03", app.ReminderAttemptClaimed, nil)
+
+	failedSingleCandidate := createTestSchedule()
+	failedSingleCandidate.Title = "failed single"
+	failedSingleCandidate.FirstStartLocal = time.Date(2026, 1, 4, 10, 0, 0, 0, location)
+	failedSingleCandidate.OriginalStartLocal = failedSingleCandidate.FirstStartLocal
+	failedSingle := create(failedSingleCandidate)
+	insertAttempt(failedSingle.ID, "2026-01-04", app.ReminderAttemptFailed, nil)
+
+	skippedSingleCandidate := createTestSchedule()
+	skippedSingleCandidate.Title = "skipped single"
+	skippedSingleCandidate.FirstStartLocal = time.Date(2026, 1, 5, 10, 0, 0, 0, location)
+	skippedSingleCandidate.OriginalStartLocal = skippedSingleCandidate.FirstStartLocal
+	skippedSingle := create(skippedSingleCandidate)
+	insertAttempt(skippedSingle.ID, "2026-01-05", app.ReminderAttemptSkipped, nil)
+
+	historicalSingleCandidate := createTestSchedule()
+	historicalSingleCandidate.Title = "historical attempt"
+	historicalSingleCandidate.FirstStartLocal = time.Date(2026, 1, 6, 10, 0, 0, 0, location)
+	historicalSingleCandidate.OriginalStartLocal = historicalSingleCandidate.FirstStartLocal
+	historicalSingle := create(historicalSingleCandidate)
+	insertAttempt(historicalSingle.ID, "2026-01-05", app.ReminderAttemptSubmitted, nil)
+
+	cron := "0 10 * * *"
+	until := "2026-01-31"
+	recurringCandidate := createTestSchedule()
+	recurringCandidate.Title = "recurring submitted"
+	recurringCandidate.Cron = &cron
+	recurringCandidate.UntilDateLocal = &until
+	recurring := create(recurringCandidate)
+	insertAttempt(recurring.ID, "2026-01-02", app.ReminderAttemptSubmitted, nil)
+
+	result, err := store.ListSchedules(ctx, app.ListSchedulesRequest{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListSchedules() error = %v", err)
+	}
+	var listed []int64
+	listed = append(listed, result.Items[0].ID, result.Items[1].ID)
+	for result.NextCursor != "" {
+		result, err = store.ListSchedules(ctx, app.ListSchedulesRequest{Limit: 2, Cursor: result.NextCursor})
+		if err != nil {
+			t.Fatalf("ListSchedules(next page) error = %v", err)
+		}
+		for _, item := range result.Items {
+			listed = append(listed, item.ID)
+		}
+	}
+	want := []int64{int64(claimedSingle.ID), int64(failedSingle.ID), int64(skippedSingle.ID), int64(historicalSingle.ID), int64(recurring.ID)}
+	if len(listed) != len(want) {
+		t.Fatalf("listed IDs = %v, want %v", listed, want)
+	}
+	for index, id := range listed {
+		if id != want[index] {
+			t.Fatalf("listed IDs = %v, want %v", listed, want)
+		}
+	}
+
+	if _, err := store.GetSchedule(ctx, submittedSingle.ID); err != nil {
+		t.Fatalf("GetSchedule(hidden) error = %v", err)
+	}
+	if _, err := store.GetReminderAttempt(ctx, domain.OccurrenceIdentity{ScheduleID: submittedSingle.ID, OriginalDate: "2026-01-02"}); err != nil {
+		t.Fatalf("GetReminderAttempt(hidden) error = %v", err)
+	}
+}
+
 // TestListSchedulesIncludesHistoricalRecords 验证列表不会因日程已在历史时间而丢弃记录。
 func TestListSchedulesIncludesHistoricalRecords(t *testing.T) {
 	store := openTestStore(t)

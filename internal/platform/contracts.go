@@ -120,7 +120,13 @@ type NotificationCenter interface {
 
 // 窗口和前端事件名由运行时统一使用，避免各平台适配器私自发明 IPC 名称。
 const (
-	FrontendEventActivation    = "activation"
-	FrontendEventRuntimeStatus = "runtime_status"
-	FrontendEventRecovery      = "reminder_recovery"
+	FrontendEventActivation     = "activation"
+	FrontendEventRuntimeStatus  = "runtime_status"
+	FrontendEventRecovery       = "reminder_recovery"
+	FrontendEventScheduleHidden = "schedule_hidden"
 )
+
+// ScheduleHiddenEvent 是前端隐藏日程所需的最小边界载荷。
+type ScheduleHiddenEvent struct {
+	ScheduleID int64 `json:"schedule_id"`
+}

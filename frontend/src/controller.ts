@@ -1,4 +1,4 @@
-import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type RecoveryEvent, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type SchedulePage, type StorageDirectories, type StorageDirectory } from './contracts';
+import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type RecoveryEvent, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type ScheduleHidden, type SchedulePage, type StorageDirectories, type StorageDirectory } from './contracts';
 import { draftRequest, emptyDraft } from './schedule-model';
 
 export type Page = 'schedules' | 'reminders' | 'settings';
@@ -46,6 +46,7 @@ export class Controller {
   private state: AppState = { page: 'schedules', schedules: initialPage, reminders: initialReminderPage, reminderLoading: true, reminderDetailLoading: false, reminderConfirming: false, reminderError: null, activeReminder: null, reminderDetail: null, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', logLevel: { effectiveLevel: 'info', savedLevel: 'info', restartRequired: false }, storageDirectories: null, activation: null };
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeActivation: () => void;
+  private readonly unsubscribeScheduleHidden: () => void;
   private readonly unsubscribeRecovery: () => void;
   private disposed = false;
   private lastSequence = 0;
@@ -53,9 +54,10 @@ export class Controller {
   private reminderReadVersion = 0;
   private reminderDetailVersion = 0;
   private reminderActionVersion = 0;
+  private readonly hiddenScheduleIDs = new Set<string>();
 
   /** 注入窄平台端口，并从构造时开始接收激活事件。 */
-  constructor(public readonly port: AppPort) { this.unsubscribeActivation = port.subscribeActivation(this.onActivation); this.unsubscribeRecovery = port.subscribeRecovery?.(this.onRecovery) ?? (() => undefined); }
+  constructor(public readonly port: AppPort) { this.unsubscribeActivation = port.subscribeActivation(this.onActivation); this.unsubscribeScheduleHidden = port.subscribeScheduleHidden(this.onScheduleHidden); this.unsubscribeRecovery = port.subscribeRecovery?.(this.onRecovery) ?? (() => undefined); }
 
   /** 返回稳定快照供 React 的 useSyncExternalStore 使用。 */
   snapshot = (): AppState => this.state;
@@ -64,7 +66,7 @@ export class Controller {
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
 
   /** 释放事件订阅和端口资源。 */
-  dispose(): void { this.disposed = true; this.unsubscribeActivation(); this.unsubscribeRecovery(); this.port.dispose?.(); this.listeners.clear(); }
+  dispose(): void { this.disposed = true; this.unsubscribeActivation(); this.unsubscribeScheduleHidden(); this.unsubscribeRecovery(); this.port.dispose?.(); this.listeners.clear(); }
 
   /** 初始化窗口状态、日程列表、提醒列表和前端激活握手。 */
   async initialize(): Promise<void> {
@@ -77,7 +79,8 @@ export class Controller {
       const initialActivation = desktop.activation && desktop.activation.sequence > this.lastSequence ? desktop.activation : null;
       this.lastSequence = Math.max(this.lastSequence, desktop.activation?.sequence ?? 0);
       if (this.reminderReadVersion === initialReminderVersion) this.update({ reminders, reminderLoading: false });
-      this.update({ runtime: runtime ?? desktop.runtime, activation: desktop.activation, schedules, bounds, closeBehavior, logLevel, storageDirectories, loading: false });
+      const visibleSchedules = this.filterHiddenSchedules(schedules);
+      this.update({ runtime: runtime ?? desktop.runtime, activation: desktop.activation, schedules: visibleSchedules, bounds, closeBehavior, logLevel, storageDirectories, loading: false });
       if (initialActivation) void this.activateReminder(initialActivation);
       if (pendingError && this.reminderReadVersion === initialReminderVersion) this.failReminder(pendingError, false);
       const pendingActivation = await this.port.frontendReady(this.lastSequence);
@@ -204,7 +207,7 @@ export class Controller {
     try {
       const current = missing ? null : await this.port.getSchedule(item.id);
       const schedules = await this.port.listSchedules({ limit: this.state.schedules.limit });
-      if (!this.disposed) this.update({ deleting: current, schedules, notice: current ? '已读取最新内容，请重新核对后再删除。' : '列表已刷新，这条日程已不存在。' });
+      if (!this.disposed) this.update({ deleting: current, schedules: this.filterHiddenSchedules(schedules), notice: current ? '已读取最新内容，请重新核对后再删除。' : '列表已刷新，这条日程已不存在。' });
     } catch (error) { if (!this.disposed) this.fail(error); }
     finally { if (!this.disposed) this.update({ busy: false }); }
   }
@@ -212,12 +215,12 @@ export class Controller {
   /** 重新读取日程列表和边界，避免迟到响应覆盖较新的操作。 */
   async refreshSchedules(): Promise<void> {
     const version = ++this.readVersion; this.update({ loading: true });
-    try { const [schedules, bounds] = await Promise.all([this.port.listSchedules({ limit: this.state.schedules.limit }), this.port.getScheduleTimeBounds()]); if (version === this.readVersion && !this.disposed) this.update({ schedules, bounds, loading: false, error: null }); }
+    try { const [schedules, bounds] = await Promise.all([this.port.listSchedules({ limit: this.state.schedules.limit }), this.port.getScheduleTimeBounds()]); if (version === this.readVersion && !this.disposed) this.update({ schedules: this.filterHiddenSchedules(schedules), bounds, loading: false, error: null }); }
     catch (error) { if (version === this.readVersion && !this.disposed) { this.fail(error); this.update({ loading: false }); } }
   }
 
   /** 加载下一页日程，保留后端返回的分页元数据。 */
-  async nextPage(): Promise<void> { const current = this.state.schedules; if (this.state.busy || !current.nextCursor) return; const page = await this.port.listSchedules({ limit: current.limit, cursor: current.nextCursor }); if (!this.disposed) this.update({ schedules: { ...page, items: [...current.items, ...page.items] } }); }
+  async nextPage(): Promise<void> { const current = this.state.schedules; if (this.state.busy || !current.nextCursor) return; const version = ++this.readVersion; try { const page = await this.port.listSchedules({ limit: current.limit, cursor: current.nextCursor }); if (!this.disposed && version === this.readVersion) this.update({ schedules: { ...page, items: [...current.items, ...this.filterHiddenSchedules(page).items] } }); } catch (error) { if (!this.disposed && version === this.readVersion) this.fail(error); } }
 
   /** 重新取得动态单次日程边界。 */
   async refreshBounds(): Promise<void> { try { this.update({ bounds: await this.port.getScheduleTimeBounds() }); } catch (error) { if (!this.disposed) this.fail(error); } }
@@ -309,6 +312,17 @@ export class Controller {
     this.update({ runtime, notice: event.status === 'failed' ? '提醒恢复未完成，请检查日志。' : this.state.notice });
     if (event.status === 'idle') void this.refreshReminders();
   };
+
+  /** 收到提交成功事件后只从本地日程投影移除目标，并使旧列表响应失效。 */
+  private onScheduleHidden = (event: ScheduleHidden): void => {
+    if (this.disposed) return;
+    this.hiddenScheduleIDs.add(event.scheduleId);
+    this.readVersion++;
+    this.update({ schedules: { ...this.state.schedules, items: this.state.schedules.items.filter(item => item.id !== event.scheduleId) }, loading: false });
+  };
+
+  /** 按事件记录过滤列表响应，保护握手/刷新交错期间的本地隐藏事实。 */
+  private filterHiddenSchedules(page: SchedulePage): SchedulePage { return { ...page, items: page.items.filter(item => !this.hiddenScheduleIDs.has(item.id)) }; }
 
   /** 处理前端未就绪后补发的激活，分别刷新列表和稳定身份详情。 */
   private async activateReminder(activation: Activation): Promise<void> {
