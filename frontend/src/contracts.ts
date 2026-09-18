@@ -134,6 +134,14 @@ export interface ActivationListener {
   (activation: Activation): void;
 }
 
+export interface ScheduleHidden {
+  scheduleId: string;
+}
+
+export interface ScheduleHiddenListener {
+  (event: ScheduleHidden): void;
+}
+
 export interface WailsPort {
   listSchedules(request?: ScheduleListRequest): Promise<SchedulePage>;
   getSchedule(id: string): Promise<Schedule>;
@@ -156,6 +164,7 @@ export interface WailsPort {
   frontendReady(lastSequence: number): Promise<Activation | null>;
   retryCleanup(): Promise<void>;
   subscribeActivation(listener: ActivationListener): () => void;
+  subscribeScheduleHidden(listener: ScheduleHiddenListener): () => void;
 }
 
 export interface AppPort extends WailsPort {

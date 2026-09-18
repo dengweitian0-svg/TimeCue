@@ -763,6 +763,59 @@ func TestActivationHandshakeKeepsLatestPendingEvent(t *testing.T) {
 	}
 }
 
+// TestScheduleHiddenEventHandshakeAndDelivery 验证前端握手前暂存、按 ID 去重、就绪后即时发送和停止丢弃。
+func TestScheduleHiddenEventHandshakeAndDelivery(t *testing.T) {
+	frontend := &platform.FakeFrontendEvents{}
+	application := &DesktopApplication{
+		deps:                  DesktopDependencies{Frontend: frontend},
+		state:                 DesktopStateRunning,
+		runtimeContext:        context.Background(),
+		pendingScheduleHidden: make(map[domain.ScheduleID]struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan app.ReminderSchedulerEvent, 4)
+	go application.forwardScheduleHiddenEvents(ctx, events)
+	event := app.ReminderSchedulerEvent{Type: app.ReminderSchedulerEventScheduleHidden, ScheduleID: 7}
+	events <- event
+	events <- event
+	waitForDesktopCondition(t, func() bool {
+		application.mu.Lock()
+		defer application.mu.Unlock()
+		return len(application.pendingScheduleHidden) == 1
+	})
+	if frontend.EventCount() != 0 {
+		t.Fatalf("frontend events before ready = %d, want 0", frontend.EventCount())
+	}
+	if _, err := application.FrontendReady(context.Background(), FrontendReadyRequest{}); err != nil {
+		t.Fatalf("FrontendReady() error = %v", err)
+	}
+	if frontend.EventCount() != 1 {
+		t.Fatalf("frontend events after ready = %d, want one deduplicated event", frontend.EventCount())
+	}
+	if payload, ok := frontend.Events[0].Payload.(platform.ScheduleHiddenEvent); !ok || payload.ScheduleID != 7 {
+		t.Fatalf("hidden event payload = %#v", frontend.Events[0].Payload)
+	}
+
+	events <- app.ReminderSchedulerEvent{Type: app.ReminderSchedulerEventScheduleHidden, ScheduleID: 8}
+	waitForDesktopCondition(t, func() bool { return frontend.EventCount() == 2 })
+	if payload, ok := frontend.Events[1].Payload.(platform.ScheduleHiddenEvent); !ok || payload.ScheduleID != 8 {
+		t.Fatalf("immediate hidden event payload = %#v", frontend.Events[1].Payload)
+	}
+
+	frontend.EmitFunc = func(context.Context, string, any) error { return errors.New("frontend unavailable") }
+	events <- app.ReminderSchedulerEvent{Type: app.ReminderSchedulerEventScheduleHidden, ScheduleID: 9}
+	waitForDesktopCondition(t, func() bool { return frontend.EventCount() == 3 })
+	application.mu.Lock()
+	application.state = DesktopStateStopping
+	application.mu.Unlock()
+	events <- app.ReminderSchedulerEvent{Type: app.ReminderSchedulerEventScheduleHidden, ScheduleID: 10}
+	time.Sleep(10 * time.Millisecond)
+	if frontend.EventCount() != 3 {
+		t.Fatalf("frontend events after stopping = %d, want unchanged", frontend.EventCount())
+	}
+}
+
 // TestStopCleanupFailureIsRetryable 验证通知清理失败会停在 CleanupFailed，成功重试后请求宿主退出。
 func TestStopCleanupFailureIsRetryable(t *testing.T) {
 	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}

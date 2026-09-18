@@ -91,6 +91,24 @@ type ReminderAttemptStore interface {
 	SetReminderAttemptStatus(context.Context, domain.OccurrenceIdentity, ReminderAttemptStatus) error
 }
 
+// ReminderSchedulerEventType 表示调度器向运行时输出的应用事件类型。
+type ReminderSchedulerEventType string
+
+const (
+	// ReminderSchedulerEventScheduleHidden 表示单次提醒提交成功后应从日程列表隐藏。
+	ReminderSchedulerEventScheduleHidden ReminderSchedulerEventType = "schedule_hidden"
+)
+
+// ReminderSchedulerEvent 是调度器输出给运行时的最小事件视图。
+// 事件只暴露日程身份，不携带提醒正文或存储细节。
+type ReminderSchedulerEvent struct {
+	Type       ReminderSchedulerEventType
+	ScheduleID domain.ScheduleID
+}
+
+// ReminderSchedulerEvents 是调度器应用事件的只读通道。
+type ReminderSchedulerEvents <-chan ReminderSchedulerEvent
+
 // ReminderAttemptRecord 是提醒处理查询所需的持久化尝试视图。
 type ReminderAttemptRecord struct {
 	ID             int64

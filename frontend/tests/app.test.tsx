@@ -37,6 +37,7 @@ function port(overrides: Partial<AppPort> = {}): AppPort {
     frontendReady: vi.fn(async () => null),
     retryCleanup: vi.fn(),
     subscribeActivation: vi.fn(() => () => undefined),
+    subscribeScheduleHidden: vi.fn(() => () => undefined),
   };
   return { ...base, ...overrides };
 }

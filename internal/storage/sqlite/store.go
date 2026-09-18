@@ -409,10 +409,17 @@ func (s *Store) ListSchedules(ctx context.Context, request app.ListSchedulesRequ
 		return app.ListSchedulesResponse{}, err
 	}
 
+	// 过滤必须在数据库层完成：ID 游标只依赖可见结果的顺序，应用层扫描会
+	// 破坏 LIMIT + 1 的分页边界并可能跳过后续仍可见的日程。
 	query := "SELECT " + scheduleColumns + " FROM schedules"
+	query += " WHERE NOT (cron IS NULL AND EXISTS (" +
+		"SELECT 1 FROM reminder_attempts " +
+		"WHERE reminder_attempts.schedule_id = schedules.id " +
+		"AND reminder_attempts.occurrence_local = substr(schedules.original_start_local, 1, 10) " +
+		"AND reminder_attempts.status = 'submitted'))"
 	args := make([]any, 0, 2)
 	if cursorID != 0 {
-		query += " WHERE id > ?"
+		query += " AND id > ?"
 		args = append(args, int64(cursorID))
 	}
 	query += " ORDER BY id ASC LIMIT ?"

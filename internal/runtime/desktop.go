@@ -164,20 +164,21 @@ type DesktopApplication struct {
 	eventCancel          context.CancelFunc
 	environmentForwarder sync.WaitGroup
 
-	state              DesktopLifecycleState
-	cleanupError       error
-	resourcesClosed    bool
-	lastError          error
-	runtimeContext     context.Context
-	domReady           bool
-	starting           bool
-	startupDone        chan struct{}
-	startupCancel      context.CancelFunc
-	stopDone           chan struct{}
-	activationSequence uint64
-	latestActivation   *ActivationDTO
-	frontendReady      bool
-	latestRecovery     *app.RecoveryEvent
+	state                 DesktopLifecycleState
+	cleanupError          error
+	resourcesClosed       bool
+	lastError             error
+	runtimeContext        context.Context
+	domReady              bool
+	starting              bool
+	startupDone           chan struct{}
+	startupCancel         context.CancelFunc
+	stopDone              chan struct{}
+	activationSequence    uint64
+	latestActivation      *ActivationDTO
+	frontendReady         bool
+	latestRecovery        *app.RecoveryEvent
+	pendingScheduleHidden map[domain.ScheduleID]struct{}
 }
 
 // NewDesktopApplication 创建尚未组装 Store 的桌面运行单元。
@@ -337,10 +338,8 @@ func (a *DesktopApplication) OnDomReady(ctx context.Context) error {
 	a.schedulerDone = schedulerDone
 	a.schedulerJoined = false
 	a.mu.Unlock()
-	go func() {
-		// scheduler 是唯一的提醒循环；其他 goroutine 只负责转发外部事件。
-		schedulerDone <- scheduler.Run(runCtx)
-	}()
+	// 先建立 scheduler 事件转发器，再启动唯一调度循环，避免提交成功事件
+	// 在运行时尚未开始消费时发生生产者竞态。
 	a.startEventForwarders(runCtx)
 	a.mu.Lock()
 	startupCancelled := runCtx.Err() != nil
@@ -348,6 +347,10 @@ func (a *DesktopApplication) OnDomReady(ctx context.Context) error {
 		a.state = DesktopStateRunning
 	}
 	a.mu.Unlock()
+	go func() {
+		// scheduler 是唯一的提醒循环；其他 goroutine 只负责转发外部事件。
+		schedulerDone <- scheduler.Run(runCtx)
+	}()
 	a.finishStartup()
 	return nil
 }
@@ -376,6 +379,7 @@ func (a *DesktopApplication) assemble(cfg config.Config, logger *slog.Logger, st
 	a.service = service
 	a.scheduler = scheduler
 	a.bindings = &WailsBindings{application: a}
+	a.pendingScheduleHidden = make(map[domain.ScheduleID]struct{})
 	a.resourcesClosed = false
 	return nil
 }
@@ -436,6 +440,9 @@ func (a *DesktopApplication) finishStartup() {
 
 // startEventForwarders 将平台事实回流至调度器，并保持失败可观察。
 func (a *DesktopApplication) startEventForwarders(ctx context.Context) {
+	if a.scheduler != nil {
+		go a.forwardScheduleHiddenEvents(ctx, a.scheduler.Events())
+	}
 	if a.deps.Activation != nil {
 		go a.forwardActivations(ctx, a.deps.Activation.Events())
 	}
@@ -445,6 +452,21 @@ func (a *DesktopApplication) startEventForwarders(ctx context.Context) {
 			defer a.environmentForwarder.Done()
 			a.forwardEnvironmentEvents(ctx, a.deps.Environment.Events())
 		}()
+	}
+}
+
+// forwardScheduleHiddenEvents 把调度器应用事件转成前端边界事件。
+func (a *DesktopApplication) forwardScheduleHiddenEvents(ctx context.Context, events app.ReminderSchedulerEvents) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			a.publishScheduleHidden(event)
+		}
 	}
 }
 
@@ -541,8 +563,22 @@ func (a *DesktopApplication) FrontendReady(ctx context.Context, request Frontend
 	a.frontendReady = true
 	latest := cloneActivationDTO(a.latestActivation)
 	latestRecovery := cloneRecoveryEvent(a.latestRecovery)
+	pendingHidden := make([]domain.ScheduleID, 0, len(a.pendingScheduleHidden))
+	for scheduleID := range a.pendingScheduleHidden {
+		pendingHidden = append(pendingHidden, scheduleID)
+	}
+	a.pendingScheduleHidden = make(map[domain.ScheduleID]struct{})
+	deliverHidden := a.state == DesktopStateRunning || a.starting
 	frontend := a.deps.Frontend
 	a.mu.Unlock()
+	if deliverHidden && frontend != nil {
+		for _, scheduleID := range pendingHidden {
+			if err := frontend.Emit(ctx, platform.FrontendEventScheduleHidden, platform.ScheduleHiddenEvent{ScheduleID: int64(scheduleID)}); err != nil {
+				// 隐藏事件只是数据库事实的即时投影，发送失败不能阻断调度或回滚已提交状态。
+				a.recordError(err)
+			}
+		}
+	}
 	if frontend != nil && latestRecovery != nil {
 		if err := frontend.Emit(ctx, platform.FrontendEventRecovery, *latestRecovery); err != nil {
 			a.recordError(err)
@@ -577,6 +613,35 @@ func (a *DesktopApplication) publishRecoveryEvent(event app.RecoveryEvent) {
 		return
 	}
 	if err := frontend.Emit(ctx, platform.FrontendEventRecovery, event); err != nil {
+		a.recordError(err)
+	}
+}
+
+// publishScheduleHidden 在前端握手前按 ID 暂存事件，握手后即时发送；发送失败只记录错误。
+func (a *DesktopApplication) publishScheduleHidden(event app.ReminderSchedulerEvent) {
+	if a == nil || event.Type != app.ReminderSchedulerEventScheduleHidden || event.ScheduleID <= 0 {
+		return
+	}
+	a.mu.Lock()
+	if a.state == DesktopStateStopping || a.state == DesktopStateStopped || a.state == DesktopStateCleanupFailed {
+		a.mu.Unlock()
+		return
+	}
+	frontend := a.deps.Frontend
+	ctx := a.runtimeContext
+	if !a.frontendReady {
+		if a.pendingScheduleHidden == nil {
+			a.pendingScheduleHidden = make(map[domain.ScheduleID]struct{})
+		}
+		a.pendingScheduleHidden[event.ScheduleID] = struct{}{}
+		a.mu.Unlock()
+		return
+	}
+	a.mu.Unlock()
+	if frontend == nil || ctx == nil {
+		return
+	}
+	if err := frontend.Emit(ctx, platform.FrontendEventScheduleHidden, platform.ScheduleHiddenEvent{ScheduleID: int64(event.ScheduleID)}); err != nil {
 		a.recordError(err)
 	}
 }
