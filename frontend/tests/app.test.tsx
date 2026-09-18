@@ -101,6 +101,35 @@ describe('App', () => {
     host.remove();
   });
 
+  it('keeps recurring required marks with their field labels', async () => {
+    const platform = port();
+    const controller = new Controller(platform);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    root.render(<App controller={controller} />);
+    await flushRender();
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('添加日程'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+
+    for (const type of ['每天', '每周', '每月']) {
+      [...host.querySelectorAll('button')].find(button => button.textContent === type)?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await flushRender();
+
+      const selectFields = [...host.querySelectorAll<HTMLLabelElement>('.recurring-fields .select-field')];
+      const fieldLabels = selectFields.map(field => field.querySelector('.field-label'));
+      expect(fieldLabels.map(label => label?.textContent?.trim())).toEqual(type === '每月' ? ['小时 *', '分钟 *', '每月日期 *'] : ['小时 *', '分钟 *']);
+      expect(fieldLabels.every(label => label?.querySelector('.required-mark') !== null)).toBe(true);
+      expect(host.querySelector('input[type="number"]')?.parentElement?.querySelector('.required-mark')).not.toBeNull();
+      expect(host.querySelectorAll('.recurring-fields .required-mark')).toHaveLength(type === '每天' ? 3 : 4);
+      expect(host.querySelector('.recurring-fields legend .required-mark') !== null).toBe(type === '每周');
+    }
+
+    root.unmount();
+    controller.dispose();
+    host.remove();
+  });
+
   it('renders configuration controls without a database path input', async () => {
     const platform = port();
     const controller = new Controller(platform);
