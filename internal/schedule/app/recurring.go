@@ -13,12 +13,16 @@ func prepareRecurringUpdate(snapshot domain.TimeSnapshot, existing domain.Schedu
 	}
 	merged := existing
 	if request.Cron != nil {
-		rule, err := domain.ParseCron(*request.Cron)
+		normalizedCron, err := domain.NormalizeCron(*request.Cron)
 		if err != nil {
 			return err
 		}
-		merged.Cron = request.Cron
-		candidate.Cron, candidate.CronPresent = request.Cron, true
+		rule, err := domain.ParseCron(normalizedCron)
+		if err != nil {
+			return err
+		}
+		merged.Cron = &normalizedCron
+		candidate.Cron, candidate.CronPresent = &normalizedCron, true
 		candidate.MonthEndPolicyPresent = true
 		if rule.DayOfMonth != nil {
 			policy := domain.MonthEndPolicyClamp
@@ -29,23 +33,25 @@ func prepareRecurringUpdate(snapshot domain.TimeSnapshot, existing domain.Schedu
 			candidate.MonthEndPolicy = nil
 		}
 	}
-	if request.UntilUnix != nil {
-		date, err := recurringUntilDate(snapshot.Location, *request.UntilUnix)
-		if err != nil {
-			return err
-		}
-		merged.UntilDateLocal, candidate.UntilDateLocal = &date, &date
+	if request.UntilUnixPresent || request.UntilUnix != nil {
 		candidate.UntilDateLocalPresent = true
-	}
-	if merged.UntilDateLocal == nil {
-		return domain.NewValidation("recurring cutoff is required", "until_unix")
+		if request.UntilUnix != nil {
+			date, err := recurringUntilDate(snapshot.Location, *request.UntilUnix)
+			if err != nil {
+				return err
+			}
+			merged.UntilDateLocal, candidate.UntilDateLocal = &date, &date
+		} else {
+			merged.UntilDateLocal = nil
+			candidate.UntilDateLocal = nil
+		}
 	}
 	if request.StartUnix != nil || request.EndUnix != nil {
 		start, end, err := deriveUpdateEndpoints(existing, request.StartUnix, request.EndUnix)
 		if err != nil {
 			return err
 		}
-		validated, err := domain.ValidateRecurring(snapshot, start, end, *merged.Cron, *merged.UntilDateLocal)
+		validated, err := domain.ValidateRecurring(snapshot, start, end, *merged.Cron, merged.UntilDateLocal)
 		if err != nil {
 			return err
 		}

@@ -57,6 +57,20 @@ func TestServiceRecurringCreate(t *testing.T) {
 	}
 }
 
+// TestServiceRecurringCreateWithoutCutoff 验证重复创建省略截止日期后仍写入无限期定义。
+func TestServiceRecurringCreateWithoutCutoff(t *testing.T) {
+	s, clock, request := recurringFixture()
+	request.UntilUnix = nil
+	request.UntilUnixPresent = false
+	got, err := NewService(s, clock).CreateSchedule(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cron == nil || got.UntilDateLocal != nil || s.createCalls != 1 {
+		t.Fatalf("created = %+v, calls = %d", got, s.createCalls)
+	}
+}
+
 // TestServiceMonthlyCreate 验证创建月规则时策略由领域候选自动带出。
 func TestServiceMonthlyCreate(t *testing.T) {
 	s, clock, request := recurringFixture()
@@ -75,17 +89,37 @@ func TestServiceMonthlyCreate(t *testing.T) {
 	}
 }
 
-// TestServiceRecurringCreateRejectsBeforeWrite 验证非法规则、缺失截止和单次携带重复字段均零写入。
+// TestServiceMultiWeekdayLifecycle 验证创建和更新都返回稳定的多星期 cron。
+func TestServiceMultiWeekdayLifecycle(t *testing.T) {
+	s, clock, request := recurringFixture()
+	cron := "0 9 * * 5,1,3,3"
+	request.Cron = &cron
+	created, err := NewService(s, clock).CreateSchedule(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Cron == nil || *created.Cron != "0 9 * * 1,3,5" {
+		t.Fatalf("created cron = %v", created.Cron)
+	}
+	s.getResult, s.updateResult = s.created, s.created
+	unsorted := "0 9 * * 6,2,4,2"
+	if _, err := NewService(s, clock).UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), UpdateScheduleRequest{Cron: &unsorted, ExpectedRevision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if s.updated.Cron == nil || *s.updated.Cron != "0 9 * * 2,4,6" {
+		t.Fatalf("updated cron = %v", s.updated.Cron)
+	}
+}
+
+// TestServiceRecurringCreateRejectsBeforeWrite 验证非法规则和单次携带重复字段均零写入。
 func TestServiceRecurringCreateRejectsBeforeWrite(t *testing.T) {
-	for _, name := range []string{"bad cron", "missing until", "null cron", "single cutoff", "null cutoff", "cutoff before first"} {
+	for _, name := range []string{"bad cron", "null cron", "single cutoff", "null cutoff", "cutoff before first"} {
 		t.Run(name, func(t *testing.T) {
 			s, clock, request := recurringFixture()
 			switch name {
 			case "bad cron":
 				value := "*/5 * * * *"
 				request.Cron = &value
-			case "missing until":
-				request.UntilUnix = nil
 			case "null cron":
 				request.Cron = nil
 				request.CronPresent = true
@@ -163,9 +197,9 @@ func TestServiceRecurringPolicyChangesWithCron(t *testing.T) {
 	}
 }
 
-// TestServiceRecurringUpdateRejectsBeforeWrite 验证非法合并状态、清空字段和旧版本不调用写端口。
+// TestServiceRecurringUpdateRejectsBeforeWrite 验证非法合并状态和旧版本不调用写端口。
 func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
-	for _, name := range []string{"bad cron", "clear until", "old revision", "early cutoff", "start after cutoff", "single cutoff"} {
+	for _, name := range []string{"bad cron", "old revision", "early cutoff", "start after cutoff", "single cutoff"} {
 		t.Run(name, func(t *testing.T) {
 			s, clock, create := recurringFixture()
 			service := NewService(s, clock)
@@ -179,8 +213,6 @@ func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
 			switch name {
 			case "bad cron":
 				cron = "0 9 * * 7"
-			case "clear until":
-				request.UntilUnixPresent = true
 			case "old revision":
 				s.getResult.Revision = 2
 				want = domain.StaleRevision
@@ -204,6 +236,23 @@ func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
 				t.Fatal("stale request read clock")
 			}
 		})
+	}
+}
+
+// TestServiceRecurringUpdateClearsCutoff 验证更新显式携带 null 截止字段时清空原值。
+func TestServiceRecurringUpdateClearsCutoff(t *testing.T) {
+	s, clock, create := recurringFixture()
+	service := NewService(s, clock)
+	if _, err := service.CreateSchedule(context.Background(), create); err != nil {
+		t.Fatal(err)
+	}
+	s.getResult, s.updateResult = s.created, s.created
+	_, err := service.UpdateSchedule(context.Background(), s.created.ID, UpdateScheduleRequest{UntilUnixPresent: true, ExpectedRevision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.updated.UntilDateLocalPresent || s.updated.UntilDateLocal != nil {
+		t.Fatalf("clear cutoff patch = %+v", s.updated)
 	}
 }
 

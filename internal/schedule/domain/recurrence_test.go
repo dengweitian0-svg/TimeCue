@@ -29,16 +29,39 @@ func recurrenceSchedule(cron, until string, first time.Time) Schedule {
 	return schedule
 }
 
-// TestParseCronStrict 验证仅支持每日和每周的严格五字段规则。
+// TestParseCronStrict 验证仅支持每日、每周和每月的严格五字段规则。
 func TestParseCronStrict(t *testing.T) {
-	for _, value := range []string{"0 0 * * *", "59 23 * * 0", "30 9 * * 6", "  05\t09 * * *  ", "0 9 1 * *", "0 9 29 * *", "0 9 30 * *", "0 9 31 * *"} {
+	for _, value := range []string{"0 0 * * *", "59 23 * * 0", "30 9 * * 6", "0 9 * * 1,3,5", "  05\t09 * * *  ", "0 9 1 * *", "0 9 29 * *", "0 9 30 * *", "0 9 31 * *"} {
 		if _, err := ParseCron(value); err != nil {
 			t.Errorf("%q: %v", value, err)
 		}
 	}
-	for _, value := range []string{"", "0 9 * *", "0 0 9 * * *", "* 9 * * *", "0 * * * *", "60 9 * * *", "0 24 * * *", "0 9 0 * *", "0 9 32 * *", "0 9 1 * 0", "0 9 * 1 *", "0 9 * * 7", "0 9 * * MON", "0 9 * * 1-5", "0 9 * * 1,2", "0 9 1-2 * *", "0 9 1,2 * *", "0 9 */2 * *", "*/5 9 * * *", "+1 9 * * *", "-1 9 * * *", "1.0 9 * * *", "@daily", "0 9 * * ?"} {
+	for _, value := range []string{"", "0 9 * *", "0 0 9 * * *", "* 9 * * *", "0 * * * *", "60 9 * * *", "0 24 * * *", "0 9 0 * *", "0 9 32 * *", "0 9 1 * 0", "0 9 * 1 *", "0 9 * * 7", "0 9 * * MON", "0 9 * * 1-5", "0 9 * * 1,,3", "0 9 * * ,1", "0 9 * * 1,7", "0 9 * * ", "0 9 1-2 * *", "0 9 1,2 * *", "0 9 */2 * *", "*/5 9 * * *", "+1 9 * * *", "-1 9 * * *", "1.0 9 * * *", "@daily", "0 9 * * ?"} {
 		if _, err := ParseCron(value); err == nil {
 			t.Errorf("accepted %q", value)
+		}
+	}
+}
+
+// TestParseCronNormalizesWeekdays 验证多星期列表升序去重且单星期保持兼容。
+func TestParseCronNormalizesWeekdays(t *testing.T) {
+	rule, err := ParseCron("0 9 * * 5,1,3,3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := rule.Weekdays, []time.Weekday{time.Monday, time.Wednesday, time.Friday}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("weekdays = %v, want %v", got, want)
+	}
+	for _, tc := range []struct {
+		input, want string
+	}{
+		{"0 9 * * 5,1,3,3", "0 9 * * 1,3,5"},
+		{"0 9 * * 1", "0 9 * * 1"},
+		{"05 09 * * *", "5 9 * * *"},
+	} {
+		got, err := NormalizeCron(tc.input)
+		if err != nil || got != tc.want {
+			t.Errorf("NormalizeCron(%q) = %q, %v; want %q", tc.input, got, err, tc.want)
 		}
 	}
 }
@@ -139,7 +162,7 @@ func TestValidateRecurring(t *testing.T) {
 	start := time.Date(2026, 9, 12, 23, 0, 0, 0, loc)
 	snapshot := TimeSnapshot{Now: start.AddDate(1, 0, 0), Location: loc}
 	until := "2026-09-12"
-	c, err := ValidateRecurring(snapshot, start.Unix(), start.Add(2*time.Hour).Unix(), "0 23 * * *", until)
+	c, err := ValidateRecurring(snapshot, start.Unix(), start.Add(2*time.Hour).Unix(), "0 23 * * *", &until)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,11 +180,11 @@ func TestValidateRecurring(t *testing.T) {
 		{start.Unix(), start.Unix() + 60, until, "bad"},
 		{math.MinInt64 / 60 * 60, math.MaxInt64 / 60 * 60, until, "0 23 * * *"},
 	} {
-		if _, err := ValidateRecurring(snapshot, tc.start, tc.end, tc.cron, tc.until); err == nil {
+		if _, err := ValidateRecurring(snapshot, tc.start, tc.end, tc.cron, &tc.until); err == nil {
 			t.Errorf("accepted %+v", tc)
 		}
 	}
-	if _, err := ValidateRecurring(TimeSnapshot{}, start.Unix(), start.Unix()+60, "0 23 * * *", until); err == nil {
+	if _, err := ValidateRecurring(TimeSnapshot{}, start.Unix(), start.Unix()+60, "0 23 * * *", &until); err == nil {
 		t.Fatal("accepted nil location")
 	}
 	s := recurrenceSchedule("0 23 * * *", "2026-09-12", start)
@@ -172,6 +195,79 @@ func TestValidateRecurring(t *testing.T) {
 	s.UntilDateLocal = &badDate
 	if _, _, err := NextStart(s, start, loc); err == nil {
 		t.Fatal("accepted invalid calendar date")
+	}
+}
+
+// TestRecurringWithoutCutoff 验证 nil 截止日期创建候选并保持无限期计算。
+func TestRecurringWithoutCutoff(t *testing.T) {
+	loc := time.FixedZone("UTC+8", 8*3600)
+	first := time.Date(2026, 9, 12, 9, 0, 0, 0, loc)
+	snapshot := TimeSnapshot{Now: first.Add(-time.Hour), Location: loc}
+	candidate, err := ValidateRecurring(snapshot, first.Unix(), first.Add(time.Hour).Unix(), "0 9 * * *", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.UntilDateLocal != nil {
+		t.Fatalf("candidate cutoff = %v, want nil", candidate.UntilDateLocal)
+	}
+
+	schedule := Schedule{
+		ID:              8,
+		Cron:            candidate.Cron,
+		UntilDateLocal:  candidate.UntilDateLocal,
+		MonthEndPolicy:  candidate.MonthEndPolicy,
+		Open:            candidate.Open,
+		FirstStartLocal: candidate.FirstStartLocal,
+		DurationMinutes: candidate.DurationMinutes,
+	}
+	next, ok, err := NextBase(schedule, first.AddDate(1, 0, 0), loc)
+	if err != nil || !ok || !next.StartLocal.Equal(time.Date(2027, 9, 13, 9, 0, 0, 0, loc)) {
+		t.Fatalf("infinite next = %+v, %v, %v", next, ok, err)
+	}
+}
+
+// TestRecurringWithoutCutoffRecomputesAfterReload 验证重新加载定义后仍可从任意时间重算无限期重复。
+func TestRecurringWithoutCutoffRecomputesAfterReload(t *testing.T) {
+	loc := time.UTC
+	first := time.Date(2026, 1, 1, 9, 0, 0, 0, loc)
+	cron := "0 9 * * *"
+	persisted := Schedule{ID: 12, Cron: &cron, FirstStartLocal: first, DurationMinutes: 30, Open: true}
+	reloaded := persisted
+
+	occurrences, err := Expand(reloaded, time.Date(2030, 6, 1, 0, 0, 0, 0, loc), time.Date(2030, 6, 4, 0, 0, 0, 0, loc), loc)
+	if err != nil || len(occurrences) != 3 {
+		t.Fatalf("reloaded expansion = %+v, %v", occurrences, err)
+	}
+	for index, occurrence := range occurrences {
+		want := time.Date(2030, 6, 1+index, 9, 0, 0, 0, loc)
+		if !occurrence.StartLocal.Equal(want) {
+			t.Errorf("occurrence %d = %v, want %v", index, occurrence.StartLocal, want)
+		}
+	}
+}
+
+// TestMultipleWeekdaysExpandAcrossWeeks 验证多星期规则跨周展开并为每个计划日保留稳定身份。
+func TestMultipleWeekdaysExpandAcrossWeeks(t *testing.T) {
+	loc := time.UTC
+	first := time.Date(2026, 9, 14, 9, 0, 0, 0, loc)
+	until := "2026-09-22"
+	schedule := recurrenceSchedule("0 9 * * 1,3,5", until, first)
+
+	occurrences, err := Expand(schedule, first, time.Date(2026, 9, 23, 0, 0, 0, 0, loc), loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDates := []string{"2026-09-14", "2026-09-16", "2026-09-18", "2026-09-21"}
+	if len(occurrences) != len(wantDates) {
+		t.Fatalf("occurrences = %+v, want %v", occurrences, wantDates)
+	}
+	for index, occurrence := range occurrences {
+		if occurrence.OriginalDate != wantDates[index] || occurrence.StartLocal.Format(time.DateOnly) != wantDates[index] {
+			t.Errorf("occurrence %d = %+v, want date %s", index, occurrence, wantDates[index])
+		}
+	}
+	if next, ok, err := NextBase(schedule, occurrences[1].StartLocal, loc); err != nil || !ok || next.OriginalDate != "2026-09-18" {
+		t.Fatalf("next multi-weekday occurrence = %+v, %v, %v", next, ok, err)
 	}
 }
 

@@ -14,6 +14,12 @@ export interface ScheduleDraft {
   end: string;
   type: ScheduleType;
   until: string;
+  effectiveDate: string;
+  hour: string;
+  minute: string;
+  weekdays: number[];
+  monthDay: string;
+  durationMinutes: string;
 }
 
 export interface CreateScheduleRequest {
@@ -51,7 +57,7 @@ export interface SchedulePage {
 
 export interface ScheduleListRequest { limit: number; cursor?: string }
 
-export type ScheduleField = 'title' | 'start' | 'end' | 'type' | 'until';
+export type ScheduleField = 'title' | 'start' | 'end' | 'type' | 'until' | 'effectiveDate' | 'hour' | 'minute' | 'weekdays' | 'monthDay' | 'durationMinutes';
 
 export interface RuntimeStatus {
   visibility: 'visible' | 'hidden' | 'minimized';

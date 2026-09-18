@@ -125,6 +125,10 @@ legend { margin-bottom: 8px; }
 .type-options { display: flex; flex-wrap: wrap; gap: 8px; }
 .type-option { min-height: 40px; padding: 0 15px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .type-option.selected { color: var(--accent); background: var(--soft); border-color: var(--accent); font-weight: 700; }
+.weekday-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.weekday-option { min-width: 44px; min-height: 44px; padding: 0 12px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.weekday-option.selected { color: var(--accent); background: var(--soft); border-color: var(--accent); font-weight: 700; }
+.recurring-fields { display: grid; gap: 18px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 5px; }
 .dialog-backdrop { position: fixed; z-index: 3; inset: 0; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--text) 48%, transparent); }

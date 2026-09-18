@@ -90,6 +90,13 @@ func TestRecurringStoreReopenAndUpdate(t *testing.T) {
 	want.Revision++
 	want.UpdatedAtUTC = updated.UpdatedAtUTC
 	assertSameSchedule(t, updated, want)
+	cleared, err := s.UpdateSchedule(ctx, updated.ID, domain.ScheduleUpdateCandidate{UntilDateLocalPresent: true, ExpectedRevision: updated.Revision, UpdatedAtUTC: updated.UpdatedAtUTC.Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.UntilDateLocal != nil {
+		t.Fatalf("cleared cutoff = %v, want nil", cleared.UntilDateLocal)
+	}
 	list, err := s.ListSchedules(ctx, app.ListSchedulesRequest{})
 	if err != nil || len(list.Items) != 1 || *list.Items[0].Cron != *got.Cron {
 		t.Fatalf("list = %+v %v", list, err)
