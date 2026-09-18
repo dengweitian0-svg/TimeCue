@@ -1,13 +1,15 @@
-import { useEffect, useState, useSyncExternalStore, type FormEvent } from 'react';
-import { ScheduleError, type AppPort, type CloseBehavior, type LogLevel, type LogLevelSettings, type ReminderDetail, type Schedule, type ScheduleField, type ScheduleType, type StorageDirectories, type StorageDirectory } from './contracts';
+import { useEffect, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
+import { ScheduleError, type AppPort, type CloseBehavior, type LogLevel, type LogLevelSettings, type ReminderDetail, type Schedule, type ScheduleField, type ScheduleType, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
 import { Controller, groupReminders } from './controller';
 import { draftRequest, localMinute, scheduleSummary, scheduleTypes } from './schedule-model';
+import { themeOrder, themeStyle, themes } from './themes';
 
 /** 生产桌面页面只呈现日程、关闭偏好、运行状态和激活结果。 */
 export function App({ controller }: { controller: Controller }) {
   const state = useSyncExternalStore(controller.subscribe, controller.snapshot);
   useEffect(() => { void controller.initialize(); return () => controller.dispose(); }, [controller]);
-  return <div className="app-shell">
+  if (state.themeLoading) return <ThemeLoadingShell theme={state.theme} />;
+  return <div className="app-shell" data-theme={state.theme} style={themeStyle(state.theme) as CSSProperties}>
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">◷</span><span>TimeCue</span></div>
       <p className="sidebar-label">工作台</p>
@@ -22,9 +24,14 @@ export function App({ controller }: { controller: Controller }) {
       <header className="topbar"><div><p className="kicker">TIME CUE / DESKTOP</p><p className="today">今天，按自己的节奏来</p></div><span className="status-dot" aria-label="应用在线" /></header>
       {state.error && <ErrorBanner error={state.error} />}
       {state.notice && <NoticeToast controller={controller} message={state.notice} />}
-      {state.page === 'settings' ? <Settings controller={controller} closeBehavior={state.closeBehavior} logLevel={state.logLevel} storageDirectories={state.storageDirectories} busy={state.busy} /> : state.page === 'reminders' ? <Reminders controller={controller} state={state} /> : <Schedules controller={controller} state={state} />}
+      {state.page === 'settings' ? <Settings controller={controller} theme={state.theme} closeBehavior={state.closeBehavior} logLevel={state.logLevel} storageDirectories={state.storageDirectories} busy={state.busy} /> : state.page === 'reminders' ? <Reminders controller={controller} state={state} /> : <Schedules controller={controller} state={state} />}
     </main>
   </div>;
+}
+
+/** 主题尚未读取完成时显示稳定的奶油桃加载壳，避免未确认的配色闪烁。 */
+function ThemeLoadingShell({ theme }: { theme: Theme }) {
+  return <div className="app-shell theme-loading-shell" style={themeStyle(theme) as CSSProperties} aria-busy="true"><main className="main-content"><div className="theme-loading-content"><span className="brand-mark">◷</span><p className="kicker">TIME CUE / DESKTOP</p><div className="loading-card"><span /><span /><span /></div><p>正在读取外观设置…</p></div></main></div>;
 }
 
 /** 页面导航按钮只改变前端视图，不直接接触后端状态。 */
@@ -122,16 +129,28 @@ function FieldError({ error, name }: { error: ScheduleError | null; name: Schedu
 function DeleteDialog({ controller, item, busy, error }: { controller: Controller; item: Schedule; busy: boolean; error: ScheduleError | null }) { const recovery = error?.code === 'STALE_REVISION' || error?.code === 'NOT_FOUND'; return <div className="dialog-backdrop" role="presentation"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title"><p className="kicker">DELETE SCHEDULE</p><h2 id="delete-title">{recovery ? '日程状态已变化' : '删除这条日程？'}</h2><p><strong>{item.title}</strong></p><p className="dialog-copy">{recovery ? error?.message : '删除后无法恢复，也不会再产生这条日程的提醒。'}</p><div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => controller.cancelDelete()}>保留日程</button>{recovery ? <button className="primary-button" disabled={busy} onClick={() => void controller.recoverDelete()}>{error?.code === 'NOT_FOUND' ? '刷新列表' : '查看最新内容'}</button> : <button className="danger-button" disabled={busy} onClick={() => void controller.confirmDelete()}>永久删除</button>}</div></section></div>; }
 
 /** 设置页面呈现四类用户配置、显式恢复默认操作和清理重试入口。 */
-function Settings({ controller, closeBehavior, logLevel, storageDirectories, busy }: { controller: Controller; closeBehavior: CloseBehavior; logLevel: LogLevelSettings; storageDirectories: StorageDirectories | null; busy: boolean }) {
+function Settings({ controller, theme, closeBehavior, logLevel, storageDirectories, busy }: { controller: Controller; theme: Theme; closeBehavior: CloseBehavior; logLevel: LogLevelSettings; storageDirectories: StorageDirectories | null; busy: boolean }) {
   const [choice, setChoice] = useState(closeBehavior);
   const [level, setLevel] = useState<LogLevel>(logLevel.savedLevel);
   useEffect(() => setChoice(closeBehavior), [closeBehavior]);
   useEffect(() => setLevel(logLevel.savedLevel), [logLevel.savedLevel]);
   const state = controller.snapshot();
   return <section className="page-section"><div className="page-heading"><div><p className="kicker">PREFERENCES</p><h1>设置</h1><p>让 TimeCue 按你的习惯，安静陪伴。</p></div></div>
+    <AppearanceSettings controller={controller} theme={theme} busy={busy} />
     <section className="settings-card"><p className="card-eyebrow">窗口行为</p><h2>关闭窗口时</h2><p className="card-copy">选择点击右上角关闭按钮后的行为。</p><div className="preference-options"><Preference value="tray" choice={choice} busy={busy} onChange={setChoice} title="隐藏到托盘" copy="窗口收起，后台提醒继续。" /><Preference value="exit" choice={choice} busy={busy} onChange={setChoice} title="退出应用" copy="停止提醒并清理已投递通知。" /></div><div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => void controller.restoreConfigDefault('window.close_behavior')}>恢复默认</button><button className="primary-button" disabled={busy || choice === closeBehavior} onClick={() => void controller.saveCloseBehavior(choice)}>保存偏好</button></div></section>
     <section className="settings-card settings-card-spaced"><p className="card-eyebrow">日志级别</p><h2>记录详细程度</h2><p className="card-copy">保存后重启应用生效，当前日志器不会立即切换。</p><label className="select-field" htmlFor="log-level">日志级别<select id="log-level" value={level} disabled={busy} onChange={event => setLevel(event.target.value as LogLevel)}><option value="debug">Debug · 最详细</option><option value="info">Info · 常规</option><option value="warn">Warn · 警告</option><option value="error">Error · 错误</option></select></label><div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => void controller.restoreConfigDefault('log.level')}>恢复默认</button><button className="primary-button" disabled={busy || level === logLevel.savedLevel} onClick={() => void controller.saveLogLevel(level)}>保存级别</button></div>{logLevel.restartRequired && <p className="directory-result">已保存级别与当前生效级别不同，重启后生效。</p>}</section>
     <div className="settings-subheading"><p className="card-eyebrow">存储位置</p><h2>日志与备份</h2><p>保存后重启应用生效，旧目录中的文件会保留。</p></div>{storageDirectories ? <><StorageDirectoryCard controller={controller} directory={storageDirectories.logs} busy={busy} /><StorageDirectoryCard controller={controller} directory={storageDirectories.backups} busy={busy} /></> : <LoadingCard />}{state.runtime?.lifecycle === 'cleanup-failed' && <section className="settings-card warning-card"><p className="card-eyebrow">运行状态</p><h2>通知清理未完成</h2><p className="card-copy">应用仍然可用，可以重试清理系统通知。</p><button className="secondary-button" disabled={busy} onClick={() => void controller.retryCleanup()}>重试清理</button></section>}</section>;
+}
+
+/** 展示四套主题预览，并将点击动作交给 Controller 的保存状态机。 */
+function AppearanceSettings({ controller, theme, busy }: { controller: Controller; theme: Theme; busy: boolean }) {
+  return <section className="settings-card appearance-card" aria-labelledby="appearance-title"><p className="card-eyebrow">外观</p><h2 id="appearance-title">选择主题</h2><p className="card-copy">点击主题卡片即可保存并立即应用。</p><div className="theme-options" role="group" aria-label="颜色主题">{themeOrder.map(value => <ThemeCard key={value} theme={value} selected={theme === value} busy={busy} onSelect={() => void controller.saveTheme(value)} />)}</div></section>;
+}
+
+/** 单个主题选项使用原生按钮保证鼠标、键盘和辅助技术行为一致。 */
+function ThemeCard({ theme, selected, busy, onSelect }: { theme: Theme; selected: boolean; busy: boolean; onSelect: () => void }) {
+  const palette = themes[theme];
+  return <button type="button" className={`theme-card${selected ? ' selected' : ''}`} aria-label={palette.name} aria-pressed={selected} disabled={busy} onClick={onSelect}><span className="theme-preview" style={themeStyle(theme) as CSSProperties} aria-hidden="true"><span className="theme-preview-sidebar" /><span className="theme-preview-content"><span /><b /><i /></span></span><span className="theme-card-copy"><strong>{palette.name}</strong><small>{selected ? '当前使用' : '点击切换'}</small></span><span className="theme-card-check" aria-hidden="true">{selected ? '✓' : ''}</span></button>;
 }
 
 /** 单项关闭行为选择。 */

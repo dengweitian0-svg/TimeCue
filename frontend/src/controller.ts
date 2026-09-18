@@ -90,7 +90,10 @@ export class Controller {
       const pendingActivation = await this.port.frontendReady(this.lastSequence);
       if (pendingActivation) this.onActivation(pendingActivation);
     } catch (error) {
-      if (!this.disposed) this.fail(error);
+      if (!this.disposed) {
+        this.update({ themeLoading: false, loading: false });
+        this.fail(error);
+      }
     }
   }
 
@@ -268,7 +271,7 @@ export class Controller {
       await this.port.restoreConfigDefault(property);
       const [closeBehavior, theme, logLevel, storageDirectories] = await Promise.all([this.port.getCloseBehavior(), this.port.getTheme(), this.port.getLogLevel(), this.port.getStorageDirectories()]);
       if (!this.disposed) {
-        const notice = property === 'window.close_behavior' ? '窗口关闭行为已恢复默认。' : '配置已恢复默认，重启后生效。';
+        const notice = property === 'window.close_behavior' ? '窗口关闭行为已恢复默认。' : property === 'theme' ? '主题已恢复默认。' : '配置已恢复默认，重启后生效。';
         this.update({ closeBehavior, theme, themeLoading: false, logLevel, storageDirectories, notice });
       }
     } catch (error) {
