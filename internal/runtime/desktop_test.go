@@ -583,6 +583,49 @@ func TestConfigBindingsExposeThemeAndPersistenceFailures(t *testing.T) {
 	}
 }
 
+// TestApplyWindowThemeBindingValidatesAndDelegates 验证原生标题栏颜色校验、转换和错误传播。
+func TestApplyWindowThemeBindingValidatesAndDelegates(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	theme := &platform.FakeWindowThemeController{}
+	location := time.FixedZone("CST", 8*60*60)
+	application, cancel := newRunningDesktopTestApplication(t, DesktopDependencies{
+		Host:          host,
+		WindowTheme:   theme,
+		Notifications: &platform.FakeNotificationCenter{},
+		Clock:         desktopTestClock{snapshot: domain.TimeSnapshot{Now: time.Date(2026, 1, 1, 8, 0, 0, 0, location), Location: location}},
+	})
+	defer cancel()
+
+	request := ApplyWindowThemeRequest{Surface: "#326D55", Text: "#293F35"}
+	if err := application.Bindings().ApplyWindowTheme(request); err != nil {
+		t.Fatalf("ApplyWindowTheme() error = %v", err)
+	}
+	colors := theme.AppliedColors()
+	wantColors := platform.WindowThemeColors{TitleBar: platform.RGBColor{R: 0x32, G: 0x6d, B: 0x55}, TitleText: platform.RGBColor{R: 0x29, G: 0x3f, B: 0x35}}
+	if len(colors) != 1 || colors[0] != wantColors {
+		t.Fatalf("applied colors = %+v, want converted mint colors %+v", colors, wantColors)
+	}
+
+	for _, invalid := range []ApplyWindowThemeRequest{
+		{Surface: "#326D5", Text: "#293F35"},
+		{Surface: "#GG6D55", Text: "#293F35"},
+		{Surface: "#326D55", Text: "transparent"},
+	} {
+		if err := application.Bindings().ApplyWindowTheme(invalid); err == nil {
+			t.Fatalf("ApplyWindowTheme(%+v) error = nil, want validation error", invalid)
+		}
+	}
+	if theme.Calls() != 1 {
+		t.Fatalf("theme Apply() calls = %d, want invalid requests not delegated", theme.Calls())
+	}
+
+	wantErr := errors.New("DWM unavailable")
+	theme.ApplyFunc = func(context.Context, platform.WindowThemeColors) error { return wantErr }
+	if err := application.Bindings().ApplyWindowTheme(request); !errors.Is(err, wantErr) {
+		t.Fatalf("ApplyWindowTheme() native error = %v, want %v", err, wantErr)
+	}
+}
+
 // TestReminderQueryBindingsUseSQLiteStore 验证提醒查询绑定复用运行时 Service 和真实 SQLite 状态。
 func TestReminderQueryBindingsUseSQLiteStore(t *testing.T) {
 	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}

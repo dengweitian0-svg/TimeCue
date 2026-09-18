@@ -13,6 +13,7 @@
 - `DesktopDependencies` 通过 `platform.DirectoryAccess` 和 `platform.DirectoryChooser` 接入目录设置；Runtime 绑定只协调验证和配置保存，不直接操作配置文件或替换 bootstrap 持有的 logger、SQLite Store。
 - `WailsBindings` 是平台无关的强类型边界，所有前端输出必须带 `json` tag；写入继续经过 Service/Coordinator，停止阶段返回 `RUNTIME_STOPPING`。
 - 配置绑定通过 `GetLogLevel`、`SaveLogLevel`、`GetTheme`、`SaveTheme` 和 `RestoreConfigDefault` 暴露受限配置属性；日志级别、日志路径和备份路径保存后重启生效，窗口关闭行为和主题保存后立即生效。Runtime 不直接操作 YAML 文件，统一调用 `config.Config` 的正式保存转换。
+- `ApplyWindowTheme` 只接收前端传来的 `surface/text` 语义颜色，负责格式校验、RGB 转换和调用 `platform.WindowThemeController`；原生标题栏同步失败记录一次可恢复 `WARN` 并返回前端，不修改已保存主题。
 - 配置文件写入失败统一包装为 `ConfigPersistenceError`，必须保留 cause 链并由 `ErrorFormatter` 映射为 `STORAGE`；不要让前端依赖底层文件路径或具体存储错误类型。
 - Issue #31 的提醒边界由 `ListPendingReminders`、`GetReminderDetail(schedule_id, original_date)` 和 `ConfirmReminder(schedule_id, original_date)` 组成。查询只读当前事实；详情正文不可重建时必须返回可观察状态和可空正文，不得从当前空值伪造历史内容。确认必须经过唯一 Service、MutationCoordinator 和 SQLite 事务，只有事务提交成功后才允许前端移除待处理项。
 - Issue #49 的恢复状态通过 `SchedulerStatus.RecoveryStatus` 和 `FrontendEventRecovery` 独立暴露；前端未 ready 时 runtime 必须保留最新恢复事件，前端 ready 后补发，恢复完成事件只能发生在最终 checkpoint 提交成功之后。
