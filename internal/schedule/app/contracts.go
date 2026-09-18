@@ -97,10 +97,12 @@ type ReminderSchedulerEventType string
 const (
 	// ReminderSchedulerEventScheduleHidden 表示单次提醒提交成功后应从日程列表隐藏。
 	ReminderSchedulerEventScheduleHidden ReminderSchedulerEventType = "schedule_hidden"
+	// ReminderSchedulerEventPendingRemindersChanged 表示待处理提醒列表事实已发生变化。
+	ReminderSchedulerEventPendingRemindersChanged ReminderSchedulerEventType = "pending_reminders_changed"
 )
 
 // ReminderSchedulerEvent 是调度器输出给运行时的最小事件视图。
-// 事件只暴露日程身份，不携带提醒正文或存储细节。
+// 事件只暴露 UI 投影所需的最小信息，不携带提醒正文或存储细节。
 type ReminderSchedulerEvent struct {
 	Type       ReminderSchedulerEventType
 	ScheduleID domain.ScheduleID
