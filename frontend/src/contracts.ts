@@ -4,6 +4,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type ConfigProperty = 'log.level' | 'log.path' | 'backup.dir' | 'window.close_behavior';
 export type ScheduleType = 'single' | 'daily' | 'weekly' | 'monthly';
 export type Lifecycle = 'running' | 'stopping' | 'stopped' | 'cleanup-failed';
+export type RecoveryStatus = 'idle' | 'running' | 'failed';
 
 export interface ScheduleDraft {
   title: string;
@@ -55,6 +56,12 @@ export interface RuntimeStatus {
   visibility: 'visible' | 'hidden' | 'minimized';
   lifecycle: Lifecycle;
   ready: boolean;
+  recoveryStatus?: RecoveryStatus;
+}
+
+export interface RecoveryEvent {
+  status: RecoveryStatus;
+  errorCode?: string;
 }
 
 export interface Activation {
@@ -153,6 +160,7 @@ export interface WailsPort {
 
 export interface AppPort extends WailsPort {
   dispose?(): void;
+  subscribeRecovery?(listener: (event: RecoveryEvent) => void): () => void;
 }
 
 export class ScheduleError extends Error {

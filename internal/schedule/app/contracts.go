@@ -100,6 +100,94 @@ type ReminderAttemptRecord struct {
 	ProcessedAtUTC *time.Time
 }
 
+// RecoveryStatus 表示 scheduler 冷启动恢复子状态，不替换 RuntimeState。
+type RecoveryStatus string
+
+const (
+	RecoveryStatusIdle    RecoveryStatus = "idle"
+	RecoveryStatusRunning RecoveryStatus = "running"
+	RecoveryStatusFailed  RecoveryStatus = "failed"
+)
+
+// RecoveryCandidateMode 区分新 occurrence Claim 与遗留 claimed 重占用。
+type RecoveryCandidateMode string
+
+const (
+	RecoveryCandidateNew     RecoveryCandidateMode = "new"
+	RecoveryCandidateReclaim RecoveryCandidateMode = "reclaim"
+)
+
+// RecoveryCheckpoint 是数据库 checkpoint 的受控视图。
+type RecoveryCheckpoint struct {
+	Exists         bool
+	CheckpointUnix int64
+	UpdatedAtUTC   time.Time
+}
+
+// RecoveryAttemptListRequest 表示恢复用提醒尝试的 ID keyset 分页请求。
+type RecoveryAttemptListRequest struct {
+	AfterID int64
+	Limit   int
+}
+
+// RecoveryAttemptListResponse 是一批恢复需要判断的提醒尝试记录。
+type RecoveryAttemptListResponse struct {
+	Items      []ReminderAttemptRecord
+	NextCursor int64
+}
+
+// RecoveryCandidate 保存已经由领域事实重建的恢复 occurrence。
+type RecoveryCandidate struct {
+	Occurrence domain.Occurrence
+	Mode       RecoveryCandidateMode
+	Revision   int64
+}
+
+// RecoveryBatch 是按发生时间排序且受数量上限约束的一批恢复候选。
+type RecoveryBatch struct {
+	Candidates        []RecoveryCandidate
+	CheckpointUnix    int64
+	RecoveryUntilUnix int64
+}
+
+// RecoveryClaimResult 表示批量 Claim 或 reclaim 后实际获得发送机会的身份。
+type RecoveryClaimResult struct {
+	Identity domain.OccurrenceIdentity
+	Mode     RecoveryCandidateMode
+}
+
+// RecoveryBatchResult 是外部通知提交后需要写回的单条终态。
+type RecoveryBatchResult struct {
+	Identity domain.OccurrenceIdentity
+	Status   ReminderAttemptStatus
+}
+
+// RecoveryBatchCommit 是事务 B 的结果和 checkpoint 提交视图。
+type RecoveryBatchCommit struct {
+	Results        []RecoveryBatchResult
+	CheckpointUnix int64
+	UpdatedAtUTC   time.Time
+}
+
+// RecoveryStore 定义冷启动恢复所需的 checkpoint、批量 Claim 和批量提交端口。
+// 它与普通提醒端口分离，使恢复专属重占用动作不会扩大普通发送语义。
+type RecoveryStore interface {
+	GetSchedulerRecoveryCheckpoint(context.Context) (RecoveryCheckpoint, error)
+	ListReminderAttemptsForRecovery(context.Context, RecoveryAttemptListRequest) (RecoveryAttemptListResponse, error)
+	ClaimRecoveryBatch(context.Context, []domain.OccurrenceIdentity, time.Time) ([]RecoveryClaimResult, error)
+	CommitRecoveryBatch(context.Context, RecoveryBatchCommit) error
+}
+
+// RecoveryEvent 是 scheduler 向 runtime/frontend 暴露的恢复状态事件。
+// ErrorCode 只携带稳定分类，不暴露底层存储或通知错误细节。
+type RecoveryEvent struct {
+	Status    RecoveryStatus `json:"status"`
+	ErrorCode string         `json:"error_code,omitzero"`
+}
+
+// RecoveryEventHandler 接收恢复开始、完成或失败事件。
+type RecoveryEventHandler func(RecoveryEvent)
+
 // ListPendingReminderAttemptsRequest 表示按数据库记录 ID 分页读取待处理尝试。
 // 它是存储内部游标，不等同于对外按发生时间排序的不透明游标。
 type ListPendingReminderAttemptsRequest struct {
@@ -177,10 +265,11 @@ type RuntimeEvent struct {
 
 // SchedulerStatus 是调度器运行状态的受控视图。
 type SchedulerStatus struct {
-	Available bool         `json:"available"`
-	LastError string       `json:"last_error"`
-	Epoch     uint64       `json:"epoch"`
-	State     RuntimeState `json:"state"`
+	Available      bool           `json:"available"`
+	LastError      string         `json:"last_error"`
+	Epoch          uint64         `json:"epoch"`
+	State          RuntimeState   `json:"state"`
+	RecoveryStatus RecoveryStatus `json:"recovery_status"`
 }
 
 // CreateScheduleRequest 表示创建单次或重复日程的输入，端点表示首次发生。

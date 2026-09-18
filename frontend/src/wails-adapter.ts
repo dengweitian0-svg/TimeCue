@@ -1,4 +1,4 @@
-import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory } from './contracts';
+import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, RecoveryEvent, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory } from './contracts';
 import * as generatedBindings from '../wailsjs/go/runtime/WailsBindings';
 import { EventsOn as generatedEventsOn } from '../wailsjs/runtime/runtime';
 
@@ -30,18 +30,21 @@ export interface BindingsPort {
 export type EventsOn = (name: string, listener: (...args: unknown[]) => void) => void | (() => void);
 
 export const ACTIVATION_EVENT = 'activation';
+export const RECOVERY_EVENT = 'reminder_recovery';
 
 /** 将 Wails 生成模块包成生产前端需要的类型安全端口。 */
 export class WailsAdapter implements AppPort {
   private readonly activationListeners = new Set<ActivationListener>();
+  private readonly recoveryListeners = new Set<(event: RecoveryEvent) => void>();
   private readonly unsubscribeEvents: (() => void) | null;
+  private unsubscribeRecoveryEvents: (() => void) | null = null;
 
-  constructor(private readonly bindings: BindingsPort, eventsOn?: EventsOn) {
+  constructor(private readonly bindings: BindingsPort, private readonly eventsOn?: EventsOn) {
     this.unsubscribeEvents = eventsOn ? normalizeUnsubscribe(eventsOn(ACTIVATION_EVENT, (...args) => this.onActivation(args))) : null;
   }
 
   /** 释放事件监听，避免热更新或窗口重建后重复接收激活。 */
-  dispose(): void { this.unsubscribeEvents?.(); this.activationListeners.clear(); }
+  dispose(): void { this.unsubscribeEvents?.(); this.unsubscribeRecoveryEvents?.(); this.activationListeners.clear(); this.recoveryListeners.clear(); }
 
   /** 注册激活监听并返回可重复调用的取消函数。 */
   subscribeActivation(listener: ActivationListener): () => void {
@@ -49,11 +52,29 @@ export class WailsAdapter implements AppPort {
     return () => this.activationListeners.delete(listener);
   }
 
+  /** 注册冷启动恢复状态监听，完成事件由控制器触发待处理列表刷新。 */
+  subscribeRecovery(listener: (event: RecoveryEvent) => void): () => void {
+    if (this.recoveryListeners.size === 0 && this.eventsOn) {
+      this.unsubscribeRecoveryEvents = normalizeUnsubscribe(this.eventsOn(RECOVERY_EVENT, (...args) => this.onRecovery(args)));
+    }
+    this.recoveryListeners.add(listener);
+    return () => this.recoveryListeners.delete(listener);
+  }
+
   /** 将 Wails 事件参数转换为稳定的 sequence/target 结构。 */
   private onActivation(args: unknown[]): void {
     const activation = toActivation(args.length === 1 ? args[0] : args);
     if (!activation) return;
     for (const listener of this.activationListeners) listener(activation);
+  }
+
+  /** 将 Wails 恢复事件转换为受控的前端状态枚举。 */
+  private onRecovery(args: unknown[]): void {
+    const item = asRecord(args.length === 1 ? args[0] : args);
+    const status = read(item, 'status', 'Status');
+    if (status !== 'idle' && status !== 'running' && status !== 'failed') return;
+    const event: RecoveryEvent = { status, errorCode: typeof read(item, 'error_code', 'errorCode', 'ErrorCode') === 'string' ? String(read(item, 'error_code', 'errorCode', 'ErrorCode')) : undefined };
+    for (const listener of this.recoveryListeners) listener(event);
   }
 
   /** 读取分页日程，并把后端 int64 ID 转为 UI string。 */
@@ -261,7 +282,8 @@ function nullableUnix(value: unknown): number | null { const number = asNumber(v
 function toRuntime(value: unknown): RuntimeStatus {
   const item = asRecord(value);
   const lifecycle = read(item, 'lifecycle', 'Lifecycle', 'state', 'State');
-  return { visibility: enumValue(read(item, 'visibility', 'Visibility'), ['visible', 'hidden', 'minimized'], 'visible'), lifecycle: enumValue(lifecycle === 'cleanup_failed' ? 'cleanup-failed' : lifecycle, ['running', 'stopping', 'stopped', 'cleanup-failed'], 'running'), ready: Boolean(read(item, 'ready', 'Ready', 'frontend_ready', 'FrontendReady')) } as RuntimeStatus;
+  const recovery = read(item, 'recovery_status', 'recoveryStatus', 'RecoveryStatus');
+  return { visibility: enumValue(read(item, 'visibility', 'Visibility'), ['visible', 'hidden', 'minimized'], 'visible'), lifecycle: enumValue(lifecycle === 'cleanup_failed' ? 'cleanup-failed' : lifecycle, ['running', 'stopping', 'stopped', 'cleanup-failed'], 'running'), ready: Boolean(read(item, 'ready', 'Ready', 'frontend_ready', 'FrontendReady')), recoveryStatus: enumValue(recovery, ['idle', 'running', 'failed'], 'idle') } as RuntimeStatus;
 }
 
 /** 从后端枚举中选择受支持的值，并为损坏状态提供安全回退。 */

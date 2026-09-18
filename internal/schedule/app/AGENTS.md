@@ -39,6 +39,8 @@
 - 创建、整组编辑、单次编辑、整组恢复和单次恢复必须在事务提交成功后才返回结果；提交后的 `conflict` 必须重新读取已提交事实并在同一 generation 上计算，不得复用预览或预读结果。冲突是正常结果，不阻止保存或恢复；提交失败仍按原事务语义返回错误且不产生事实变更。取消整组和取消单次不产生发生，不返回冲突结果。
 
 - `MutationCoordinator` 统一拥有运行时状态、`epoch` 和唤醒信号；状态只允许 `running`、`suspended`、`stopping`，生命周期事件通过 `RuntimeEvent` 进入协调器。`suspend`、`resume`、`clock_changed` 和 `stop` 的有效状态变化必须使旧提醒候选失效，重复状态事件保持幂等。
+- 冷启动恢复通过 `RecoveryStore`、`RecoveryBatch` 和 `RecoveryEvent` 窄契约接入唯一 `ReminderScheduler` goroutine；恢复只在启动固定 `recovery_until` 内按最多 50 条批次运行，`RecoveryStatus` 独立于 `RuntimeState`，不能把恢复状态写入日程或替换生命周期状态。
+- 恢复批次必须按“Claim/reclaim → 外部 Submit → 结果与 checkpoint 提交”顺序执行；批次级存储失败停止恢复，`claimed` 重试只允许由冷启动恢复端口执行，普通调度仍沿既有 5 秒窗口。
 - `ReminderScheduler.ApplyRuntimeEvent` 是生命周期事件进入提醒派发的唯一应用边界：暂停或停止清空候选并关闭派发资格，恢复和时钟变化从当前环境严格向后重建，不补发过去发生。到期回调还必须检查 `TimeSnapshot` 的环境异常事实，异常时拒绝发送并重建。
 - 提醒调度始终只维护一个全局最近计时器和每个日程一个最早候选；候选携带日程 revision 与 runtime epoch，通知提交使用可取消 context。`reminder_attempts` 的稳定发生身份负责持久化去重，发送结果只回写 `submitted`、`failed` 或 `skipped`。
 - 所有正式业务写入必须通过 `MutationCoordinator.BeginMutation` 取得准入；`stopping` 之后返回 `RUNTIME_STOPPING`，查询和只读预览不经过该准入，也不依据提醒派发状态改变结果。

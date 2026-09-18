@@ -14,6 +14,7 @@
 - `WailsBindings` 是平台无关的强类型边界，所有前端输出必须带 `json` tag；写入继续经过 Service/Coordinator，停止阶段返回 `RUNTIME_STOPPING`。
 - 配置绑定通过 `GetLogLevel`、`SaveLogLevel` 和 `RestoreConfigDefault` 暴露受限配置属性；日志级别、日志路径和备份路径保存后重启生效，窗口关闭行为保存后立即生效。Runtime 不直接操作 YAML 文件，统一调用 `config.Config` 的正式保存转换。
 - Issue #31 的提醒边界由 `ListPendingReminders`、`GetReminderDetail(schedule_id, original_date)` 和 `ConfirmReminder(schedule_id, original_date)` 组成。查询只读当前事实；详情正文不可重建时必须返回可观察状态和可空正文，不得从当前空值伪造历史内容。确认必须经过唯一 Service、MutationCoordinator 和 SQLite 事务，只有事务提交成功后才允许前端移除待处理项。
+- Issue #49 的恢复状态通过 `SchedulerStatus.RecoveryStatus` 和 `FrontendEventRecovery` 独立暴露；前端未 ready 时 runtime 必须保留最新恢复事件，前端 ready 后补发，恢复完成事件只能发生在最终 checkpoint 提交成功之后。
 - 提醒状态转换保持单向：`submitted + processed_at_utc IS NULL → pending → confirmed`；缺失、`claimed`、`failed`、`skipped` 等状态分别映射为 `missing` 或 `not_processable`，不能被确认绑定伪装成成功。重复确认返回首次处理时间且不产生第二次写入；目标不存在、不可处理、底层失败和 `stopping` 必须保留现有错误分类及 `ErrorFormatter` 行为。
 - 通知页面的稳定身份是 `schedule_id + original_date`，不是列表索引或标题。前端通过 `sequence` 去重、通过 `FrontendReady(last_sequence)` 接收前端未就绪期间保留的最新激活；激活只负责显示、切页和定位，不自动确认。逐条 Toast、退出后不冷启动、不自动确认和确认后优先同刻下一条是 Issue #31 的固定决定。
 - Windows 验收必须分开记录四件事：通知端口接收、系统实际显示、点击定位/现有窗口激活、确认持久化。fake 平台测试只能证明端口和状态转换，不能替代 Windows 通知中心观察；构建前还需执行前端检查、Go 检查及 `wails build -platform windows/amd64 -webview2 embed`。

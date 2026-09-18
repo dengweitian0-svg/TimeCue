@@ -122,4 +122,5 @@ type NotificationCenter interface {
 const (
 	FrontendEventActivation    = "activation"
 	FrontendEventRuntimeStatus = "runtime_status"
+	FrontendEventRecovery      = "reminder_recovery"
 )

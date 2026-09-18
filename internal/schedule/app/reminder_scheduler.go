@@ -35,6 +35,8 @@ type ReminderScheduler struct {
 	notificationMu     sync.Mutex
 	notificationCancel context.CancelFunc
 	notificationKilled bool
+	recoveryEventMu    sync.RWMutex
+	recoveryHandler    RecoveryEventHandler
 }
 
 // reminderCandidateBatch 保存候选发生、其日程 revision 和读取时的调度 epoch。
@@ -75,9 +77,19 @@ func NewReminderScheduler(store ReminderSourceStore, attempts ReminderAttemptSto
 	return &ReminderScheduler{
 		store: store, attempts: attempts, notifier: notifier, clock: clock,
 		timerFactory: timerFactory, logger: logger, coordinator: coordinator,
-		status:     SchedulerStatus{Available: true, Epoch: coordinator.Epoch(), State: coordinator.State()},
+		status:     SchedulerStatus{Available: true, Epoch: coordinator.Epoch(), State: coordinator.State(), RecoveryStatus: RecoveryStatusIdle},
 		candidates: make(map[domain.ScheduleID]reminderCandidateBatch),
 	}
+}
+
+// SetRecoveryEventHandler 设置 runtime 接收恢复状态事件的回调。
+func (s *ReminderScheduler) SetRecoveryEventHandler(handler RecoveryEventHandler) {
+	if s == nil {
+		return
+	}
+	s.recoveryEventMu.Lock()
+	s.recoveryHandler = handler
+	s.recoveryEventMu.Unlock()
 }
 
 // GetRuntimeStatus 返回当前可用性、最近错误和失效 epoch。
@@ -90,6 +102,9 @@ func (s *ReminderScheduler) GetRuntimeStatus() SchedulerStatus {
 	s.mu.RUnlock()
 	status.Epoch = s.coordinator.Epoch()
 	status.State = s.coordinator.State()
+	if status.RecoveryStatus == "" {
+		status.RecoveryStatus = RecoveryStatusIdle
+	}
 	return status
 }
 
@@ -140,6 +155,18 @@ func (s *ReminderScheduler) Run(ctx context.Context) error {
 		s.markUnavailable(err)
 		return err
 	}
+	var recovery *recoveryRunner
+	startupSnapshot, snapshotErr := s.clock.Snapshot(ctx)
+	if snapshotErr != nil {
+		s.markUnavailable(fmt.Errorf("snapshot recovery startup time: %w", snapshotErr))
+	} else if _, ok := s.recoveryStore(); ok {
+		s.logger.Info("reminder recovery started", "recovery_until", startupSnapshot.Now.Unix())
+		s.setRecoveryStatus(RecoveryStatusRunning)
+		recovery, snapshotErr = s.prepareRecovery(ctx, startupSnapshot)
+		if snapshotErr != nil {
+			s.markRecoveryFailed(snapshotErr)
+		}
+	}
 	if err := s.refresh(ctx); err != nil {
 		s.markUnavailable(err)
 	}
@@ -150,7 +177,58 @@ func (s *ReminderScheduler) Run(ctx context.Context) error {
 			if timer != nil {
 				timer.Stop()
 			}
-			return err
+			return s.finishRun(ctx, err)
+		}
+		if recovery != nil {
+			if handled, dueErr := s.processDueCandidateDuringRecovery(ctx); handled {
+				if dueErr != nil {
+					s.markUnavailable(dueErr)
+				}
+				continue
+			}
+			if s.coordinator.State() != RuntimeStateRunning {
+				if s.coordinator.State() == RuntimeStateSuspended {
+					s.logger.Debug("reminder recovery stopped by suspend")
+				}
+				recovery = nil
+				s.setRecoveryStatusWithoutEvent(RecoveryStatusIdle)
+				continue
+			}
+			recoveryErr := s.processRecoveryBatch(ctx, recovery)
+			if recoveryErr == nil {
+				if recovery.next >= len(recovery.batches) {
+					s.completeRecovery(recovery)
+					recovery = nil
+				}
+				continue
+			}
+			if ctx.Err() != nil {
+				return s.finishRun(ctx, ctx.Err())
+			}
+			if errors.Is(recoveryErr, errRecoveryRestart) {
+				latestSnapshot, latestErr := s.clock.Snapshot(ctx)
+				if latestErr != nil {
+					s.markRecoveryFailed(fmt.Errorf("snapshot recovery restart time: %w", latestErr))
+					recovery = nil
+					continue
+				}
+				restarted, restartErr := s.prepareRecovery(ctx, latestSnapshot)
+				if restartErr != nil {
+					s.markRecoveryFailed(restartErr)
+					recovery = nil
+					continue
+				}
+				recovery = restarted
+				continue
+			}
+			if errors.Is(recoveryErr, errRecoveryStopped) {
+				recovery = nil
+				s.setRecoveryStatusWithoutEvent(RecoveryStatusIdle)
+				continue
+			}
+			s.markRecoveryFailed(recoveryErr)
+			recovery = nil
+			continue
 		}
 		if s.coordinator.State() != RuntimeStateRunning {
 			if timer != nil {
@@ -158,13 +236,13 @@ func (s *ReminderScheduler) Run(ctx context.Context) error {
 				timer = nil
 			}
 			if err := waitForReminderWake(ctx, s.coordinator.Wake()); err != nil {
-				return err
+				return s.finishRun(ctx, err)
 			}
 			continue
 		}
 		if !s.GetRuntimeStatus().Available {
 			if err := waitForReminderWake(ctx, s.coordinator.Wake()); err != nil {
-				return err
+				return s.finishRun(ctx, err)
 			}
 			if s.coordinator.State() == RuntimeStateRunning {
 				if err := s.refresh(ctx); err != nil {
@@ -186,7 +264,7 @@ func (s *ReminderScheduler) Run(ctx context.Context) error {
 				timer = nil
 			}
 			if err := waitForReminderWake(ctx, s.coordinator.Wake()); err != nil {
-				return err
+				return s.finishRun(ctx, err)
 			}
 			if err := s.refresh(ctx); err != nil {
 				s.markUnavailable(err)
@@ -207,7 +285,7 @@ func (s *ReminderScheduler) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return s.finishRun(ctx, ctx.Err())
 		case <-s.coordinator.Wake():
 			timer.Stop()
 			timer = nil
@@ -224,6 +302,25 @@ func (s *ReminderScheduler) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// processDueCandidateDuringRecovery 让已到期的普通提醒在恢复批次之间获得调度机会。
+func (s *ReminderScheduler) processDueCandidateDuringRecovery(ctx context.Context) (bool, error) {
+	if s == nil || !s.GetRuntimeStatus().Available || s.coordinator.State() != RuntimeStateRunning {
+		return false, nil
+	}
+	candidate, ok := s.nextCandidate()
+	if !ok || len(candidate.batch.Occurrences) == 0 {
+		return false, nil
+	}
+	snapshot, err := s.clock.Snapshot(ctx)
+	if err != nil {
+		return true, fmt.Errorf("snapshot ordinary reminder during recovery: %w", err)
+	}
+	if candidate.batch.Occurrences[0].StartLocal.After(snapshot.Now) {
+		return false, nil
+	}
+	return true, s.processDue(ctx, candidate)
 }
 
 // validate 检查调度循环启动所需的所有窄端口。
@@ -284,7 +381,9 @@ func (s *ReminderScheduler) refreshLocked(ctx context.Context, snapshot domain.T
 	s.mu.Lock()
 	s.candidates = updated
 	s.status.Available = true
-	s.status.LastError = ""
+	if s.status.RecoveryStatus != RecoveryStatusFailed {
+		s.status.LastError = ""
+	}
 	s.status.Epoch = s.coordinator.epoch
 	s.status.State = s.coordinator.state
 	s.mu.Unlock()
@@ -520,7 +619,9 @@ func (s *ReminderScheduler) clearCandidates() {
 func (s *ReminderScheduler) clearCandidatesLocked() {
 	s.candidates = make(map[domain.ScheduleID]reminderCandidateBatch)
 	s.status.Available = false
-	s.status.LastError = ""
+	if s.status.RecoveryStatus != RecoveryStatusFailed {
+		s.status.LastError = ""
+	}
 	s.status.State = s.coordinator.state
 	s.status.Epoch = s.coordinator.epoch
 }
@@ -579,6 +680,91 @@ func (s *ReminderScheduler) markUnavailable(err error) {
 	s.status.State = s.coordinator.State()
 	s.mu.Unlock()
 	s.logger.Error("reminder scheduler unavailable", "error", err)
+}
+
+// setRecoveryStatus 更新恢复内存状态并发送对应的受控事件。
+func (s *ReminderScheduler) setRecoveryStatus(status RecoveryStatus) {
+	s.setRecoveryStatusEvent(status, "")
+}
+
+// setRecoveryStatusWithoutEvent 更新恢复状态但不触发前端刷新事件。
+func (s *ReminderScheduler) setRecoveryStatusWithoutEvent(status RecoveryStatus) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.status.RecoveryStatus = status
+	s.mu.Unlock()
+}
+
+// setRecoveryStatusEvent 写入恢复状态并把稳定错误分类交给 runtime。
+func (s *ReminderScheduler) setRecoveryStatusEvent(status RecoveryStatus, errorCode string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.status.RecoveryStatus = status
+	s.mu.Unlock()
+	s.recoveryEventMu.RLock()
+	handler := s.recoveryHandler
+	s.recoveryEventMu.RUnlock()
+	if handler != nil {
+		handler(RecoveryEvent{Status: status, ErrorCode: errorCode})
+	}
+}
+
+// completeRecovery 记录最终 checkpoint 已提交，并发出唯一完成事件。
+func (s *ReminderScheduler) completeRecovery(runner *recoveryRunner) {
+	if s == nil || runner == nil {
+		return
+	}
+	s.logger.Info("reminder recovery completed", "batches", len(runner.batches), "recovery_until", runner.recoveryUntilUnix)
+	if !runner.hasWork {
+		s.setRecoveryStatusWithoutEvent(RecoveryStatusIdle)
+		return
+	}
+	s.setRecoveryStatusEvent(RecoveryStatusIdle, "")
+}
+
+// markRecoveryFailed 暴露批次级恢复失败，同时保留底层错误给日志和状态查询。
+func (s *ReminderScheduler) markRecoveryFailed(err error) {
+	if s == nil || err == nil {
+		return
+	}
+	s.mu.Lock()
+	s.status.RecoveryStatus = RecoveryStatusFailed
+	s.status.Available = true
+	s.status.LastError = err.Error()
+	s.status.Epoch = s.coordinator.Epoch()
+	s.status.State = s.coordinator.State()
+	s.mu.Unlock()
+	s.logger.Error("reminder recovery failed", "error", err)
+	s.setRecoveryStatusEvent(RecoveryStatusFailed, "RECOVERY_FAILED")
+}
+
+// finishRun 在 scheduler 因主动取消退出时，仅在恢复完成后推进关停 checkpoint。
+func (s *ReminderScheduler) finishRun(ctx context.Context, runErr error) error {
+	if s == nil || !errors.Is(runErr, context.Canceled) {
+		return runErr
+	}
+	if s.GetRuntimeStatus().RecoveryStatus != RecoveryStatusIdle {
+		return runErr
+	}
+	store, ok := s.recoveryStore()
+	if !ok {
+		return runErr
+	}
+	shutdownCtx := context.WithoutCancel(ctx)
+	snapshot, err := s.clock.Snapshot(shutdownCtx)
+	if err != nil {
+		return errors.Join(runErr, fmt.Errorf("snapshot shutdown recovery time: %w", err))
+	}
+	if err := store.CommitRecoveryBatch(shutdownCtx, RecoveryBatchCommit{CheckpointUnix: snapshot.Now.Unix(), UpdatedAtUTC: snapshot.Now.UTC()}); err != nil {
+		s.logger.Error("persist shutdown recovery checkpoint failed", "error", err)
+		return errors.Join(runErr, fmt.Errorf("persist shutdown recovery checkpoint: %w", err))
+	}
+	s.logger.Info("shutdown recovery checkpoint persisted", "checkpoint_unix", snapshot.Now.Unix())
+	return runErr
 }
 
 // sameOccurrenceTime 比较稳定身份对应的实际区间，防止只校验身份而误发改期前候选。

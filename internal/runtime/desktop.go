@@ -71,6 +71,7 @@ type DesktopStatusDTO struct {
 	LastError          string                `json:"last_error,omitzero"`
 	ActivationSequence uint64                `json:"activation_sequence"`
 	FrontendReady      bool                  `json:"frontend_ready"`
+	RecoveryStatus     app.RecoveryStatus    `json:"recovery_status"`
 }
 
 // ActivationTargetDTO 是前端边界使用的稳定发生身份视图。
@@ -176,6 +177,7 @@ type DesktopApplication struct {
 	activationSequence uint64
 	latestActivation   *ActivationDTO
 	frontendReady      bool
+	latestRecovery     *app.RecoveryEvent
 }
 
 // NewDesktopApplication 创建尚未组装 Store 的桌面运行单元。
@@ -366,6 +368,7 @@ func (a *DesktopApplication) assemble(cfg config.Config, logger *slog.Logger, st
 	coordinator := app.NewMutationCoordinator()
 	service := app.NewServiceWithCoordinator(store, a.deps.Clock, coordinator)
 	scheduler := app.NewReminderScheduler(store, store, a.deps.Notifications, a.deps.Clock, a.deps.TimerFactory, logger, coordinator)
+	scheduler.SetRecoveryEventHandler(a.publishRecoveryEvent)
 	a.config = &cfg
 	a.effectiveLogLevel = cfg.Log.Level
 	a.logger = logger
@@ -537,8 +540,15 @@ func (a *DesktopApplication) FrontendReady(ctx context.Context, request Frontend
 	a.mu.Lock()
 	a.frontendReady = true
 	latest := cloneActivationDTO(a.latestActivation)
+	latestRecovery := cloneRecoveryEvent(a.latestRecovery)
 	frontend := a.deps.Frontend
 	a.mu.Unlock()
+	if frontend != nil && latestRecovery != nil {
+		if err := frontend.Emit(ctx, platform.FrontendEventRecovery, *latestRecovery); err != nil {
+			a.recordError(err)
+			return FrontendReadyResponse{}, fmt.Errorf("emit pending recovery event: %w", err)
+		}
+	}
 	if latest == nil || latest.Sequence <= request.LastSequence || frontend == nil {
 		return FrontendReadyResponse{}, nil
 	}
@@ -547,6 +557,28 @@ func (a *DesktopApplication) FrontendReady(ctx context.Context, request Frontend
 		return FrontendReadyResponse{}, fmt.Errorf("emit pending activation: %w", err)
 	}
 	return FrontendReadyResponse{Activation: latest}, nil
+}
+
+// publishRecoveryEvent 转发恢复状态；前端未 ready 时只保留完成或失败事件，running 状态由状态查询补足。
+func (a *DesktopApplication) publishRecoveryEvent(event app.RecoveryEvent) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	copyEvent := event
+	frontend := a.deps.Frontend
+	ready := a.frontendReady
+	ctx := a.runtimeContext
+	if !ready && event.Status != app.RecoveryStatusRunning {
+		a.latestRecovery = &copyEvent
+	}
+	a.mu.Unlock()
+	if !ready || frontend == nil || ctx == nil {
+		return
+	}
+	if err := frontend.Emit(ctx, platform.FrontendEventRecovery, event); err != nil {
+		a.recordError(err)
+	}
 }
 
 // onTrayOpen 将托盘打开动作转换为窗口显示和激活。
@@ -744,13 +776,23 @@ func (a *DesktopApplication) GetDesktopStatus() DesktopStatusDTO {
 		return DesktopStatusDTO{}
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	status := DesktopStatusDTO{State: a.state, ActivationSequence: a.activationSequence, FrontendReady: a.frontendReady}
-	if a.cleanupError != nil {
-		status.CleanupError = a.cleanupError.Error()
+	state := a.state
+	activationSequence := a.activationSequence
+	frontendReady := a.frontendReady
+	scheduler := a.scheduler
+	cleanupError := a.cleanupError
+	lastError := a.lastError
+	a.mu.Unlock()
+	recoveryStatus := app.RecoveryStatusIdle
+	if scheduler != nil {
+		recoveryStatus = scheduler.GetRuntimeStatus().RecoveryStatus
 	}
-	if a.lastError != nil {
-		status.LastError = a.lastError.Error()
+	status := DesktopStatusDTO{State: state, ActivationSequence: activationSequence, FrontendReady: frontendReady, RecoveryStatus: recoveryStatus}
+	if cleanupError != nil {
+		status.CleanupError = cleanupError.Error()
+	}
+	if lastError != nil {
+		status.LastError = lastError.Error()
 	}
 	return status
 }
@@ -1121,5 +1163,14 @@ func cloneActivationDTO(value *ActivationDTO) *ActivationDTO {
 		target := *value.Target
 		clone.Target = &target
 	}
+	return &clone
+}
+
+// cloneRecoveryEvent 复制恢复事件，避免运行时内部状态指针泄露到前端边界。
+func cloneRecoveryEvent(value *app.RecoveryEvent) *app.RecoveryEvent {
+	if value == nil {
+		return nil
+	}
+	clone := *value
 	return &clone
 }
