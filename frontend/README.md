@@ -1,8 +1,10 @@
 # TimeCue 生产前端
 
-这是 Wails 桌面应用使用的 React + TypeScript 前端。生产页面接入日程创建、列表/游标分页、删除、关闭偏好、日志/备份目录设置、运行状态清理重试、待处理提醒、逐条确认和激活握手；原型控制台和主题持久化不属于此入口。
+这是 Wails 桌面应用使用的 React + TypeScript 前端。生产页面接入日程创建、列表/游标分页、删除、关闭偏好、四套主题、日志/备份目录设置、运行状态清理重试、待处理提醒、逐条确认和激活握手；主题由 runtime 通过 YAML 配置端口提供，生产页面不使用浏览器本地存储。
 
 `src/wails-adapter.ts` 的 `WailsAdapter` 只依赖可注入的 `BindingsPort`。生产入口通过静态导入接入 `wailsjs/go/runtime/WailsBindings` 和 `wailsjs/runtime/runtime`，并用显式包装把生成 DTO 收敛到页面端口；单元测试仍通过端口注入完成，不伪造生成模块。
+
+主题的四套语义颜色集中在 `src/themes.ts`，Controller 在初始化时读取主题，在保存成功后才更新状态；读取失败回退奶油桃并显示错误，保存失败保留旧主题。设置页使用 `ConfigProperty` 的 `theme` 恢复默认，主题切换和页面样式在 C4 中完成。
 
 创建和删除 mutation 使用 `JSON.stringify` payload，以保留后端 JSON 字段存在性；查询、偏好、提醒确认和 `FrontendReady` 使用 snake_case DTO。提醒查询绑定为 `ListPendingReminders`、`GetReminderDetail(schedule_id, original_date)` 和 `ConfirmReminder(schedule_id, original_date)`；前端内部把 Go `int64` 稳定身份呈现为 string，超出 JavaScript 安全整数范围的调用会明确失败。提醒正文由当前日程事实重建，`title`、`notes`、时间和处理时间均按可空字段转换，内容不可用时不会用空字符串伪造正文。
 

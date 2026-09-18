@@ -1,4 +1,4 @@
-import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type RecoveryEvent, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type ScheduleHidden, type SchedulePage, type StorageDirectories, type StorageDirectory } from './contracts';
+import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type RecoveryEvent, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type ScheduleHidden, type SchedulePage, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
 import { draftRequest, emptyDraft } from './schedule-model';
 
 export type Page = 'schedules' | 'reminders' | 'settings';
@@ -21,6 +21,8 @@ export interface AppState {
   notice: string;
   runtime: RuntimeStatus | null;
   closeBehavior: CloseBehavior;
+  theme: Theme;
+  themeLoading: boolean;
   logLevel: LogLevelSettings;
   storageDirectories: StorageDirectories | null;
   activation: Activation | null;
@@ -43,7 +45,7 @@ export function groupReminders(items: ReminderDetail[], active: ReminderIdentity
 
 /** 编排生产前端的日程、偏好、运行状态和激活用例，不拥有后端持久状态。 */
 export class Controller {
-  private state: AppState = { page: 'schedules', schedules: initialPage, reminders: initialReminderPage, reminderLoading: true, reminderDetailLoading: false, reminderConfirming: false, reminderError: null, activeReminder: null, reminderDetail: null, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', logLevel: { effectiveLevel: 'info', savedLevel: 'info', restartRequired: false }, storageDirectories: null, activation: null };
+  private state: AppState = { page: 'schedules', schedules: initialPage, reminders: initialReminderPage, reminderLoading: true, reminderDetailLoading: false, reminderConfirming: false, reminderError: null, activeReminder: null, reminderDetail: null, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', theme: 'peach', themeLoading: true, logLevel: { effectiveLevel: 'info', savedLevel: 'info', restartRequired: false }, storageDirectories: null, activation: null };
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeActivation: () => void;
   private readonly unsubscribeScheduleHidden: () => void;
@@ -72,15 +74,17 @@ export class Controller {
   async initialize(): Promise<void> {
     try {
       let pendingError: unknown;
+      let themeError: ScheduleError | null = null;
       const initialReminderVersion = this.reminderReadVersion;
       const initialPending = this.port.listPendingReminders({ limit: initialReminderPage.limit }).catch(error => { pendingError = error; return initialReminderPage; });
-      const [desktop, schedules, bounds, closeBehavior, logLevel, storageDirectories, runtime, reminders] = await Promise.all([this.port.getDesktopStatus(), this.port.listSchedules(), this.port.getScheduleTimeBounds(), this.port.getCloseBehavior(), this.port.getLogLevel(), this.port.getStorageDirectories(), this.port.getRuntimeStatus(), initialPending]);
+      const initialTheme = this.port.getTheme().catch(error => { themeError = toScheduleError(error); return 'peach' as Theme; });
+      const [desktop, schedules, bounds, closeBehavior, theme, logLevel, storageDirectories, runtime, reminders] = await Promise.all([this.port.getDesktopStatus(), this.port.listSchedules(), this.port.getScheduleTimeBounds(), this.port.getCloseBehavior(), initialTheme, this.port.getLogLevel(), this.port.getStorageDirectories(), this.port.getRuntimeStatus(), initialPending]);
       if (this.disposed) return;
       const initialActivation = desktop.activation && desktop.activation.sequence > this.lastSequence ? desktop.activation : null;
       this.lastSequence = Math.max(this.lastSequence, desktop.activation?.sequence ?? 0);
       if (this.reminderReadVersion === initialReminderVersion) this.update({ reminders, reminderLoading: false });
       const visibleSchedules = this.filterHiddenSchedules(schedules);
-      this.update({ runtime: runtime ?? desktop.runtime, activation: desktop.activation, schedules: visibleSchedules, bounds, closeBehavior, logLevel, storageDirectories, loading: false });
+      this.update({ runtime: runtime ?? desktop.runtime, activation: desktop.activation, schedules: visibleSchedules, bounds, closeBehavior, theme, themeLoading: false, logLevel, storageDirectories, loading: false, error: themeError });
       if (initialActivation) void this.activateReminder(initialActivation);
       if (pendingError && this.reminderReadVersion === initialReminderVersion) this.failReminder(pendingError, false);
       const pendingActivation = await this.port.frontendReady(this.lastSequence);
@@ -228,6 +232,20 @@ export class Controller {
   /** 读取关闭行为；保存失败不改变本地已生效值。 */
   async saveCloseBehavior(value: CloseBehavior): Promise<void> { if (this.state.busy) return; this.update({ busy: true, error: null, notice: '' }); try { const saved = await this.port.saveCloseBehavior(value); if (!this.disposed) this.update({ closeBehavior: saved, notice: '关闭偏好已保存。' }); } catch (error) { if (!this.disposed) this.fail(error); } finally { if (!this.disposed) this.update({ busy: false }); } }
 
+  /** 保存主题；重复选择不触发端口调用，失败时保留旧主题。 */
+  async saveTheme(value: Theme): Promise<void> {
+    if (this.state.busy || value === this.state.theme) return;
+    this.update({ busy: true, error: null, notice: '' });
+    try {
+      const saved = await this.port.saveTheme(value);
+      if (!this.disposed) this.update({ theme: saved, themeLoading: false, notice: '主题已保存。' });
+    } catch (error) {
+      if (!this.disposed) this.fail(error);
+    } finally {
+      if (!this.disposed) this.update({ busy: false });
+    }
+  }
+
   /** 保存日志级别；保存成功但重启前继续使用当前生效级别。 */
   async saveLogLevel(value: LogLevel): Promise<void> {
     if (this.state.busy) return;
@@ -248,10 +266,10 @@ export class Controller {
     this.update({ busy: true, error: null, notice: '' });
     try {
       await this.port.restoreConfigDefault(property);
-      const [closeBehavior, logLevel, storageDirectories] = await Promise.all([this.port.getCloseBehavior(), this.port.getLogLevel(), this.port.getStorageDirectories()]);
+      const [closeBehavior, theme, logLevel, storageDirectories] = await Promise.all([this.port.getCloseBehavior(), this.port.getTheme(), this.port.getLogLevel(), this.port.getStorageDirectories()]);
       if (!this.disposed) {
         const notice = property === 'window.close_behavior' ? '窗口关闭行为已恢复默认。' : '配置已恢复默认，重启后生效。';
-        this.update({ closeBehavior, logLevel, storageDirectories, notice });
+        this.update({ closeBehavior, theme, themeLoading: false, logLevel, storageDirectories, notice });
       }
     } catch (error) {
       if (!this.disposed) this.fail(error);

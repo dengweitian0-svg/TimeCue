@@ -11,7 +11,7 @@ function port(overrides: Partial<AppPort> = {}): AppPort & { emit: (value: Activ
   let scheduleHiddenListener: ((value: ScheduleHidden) => void) | undefined;
   const base: AppPort & { emit: (value: Activation) => void; emitRecovery: (value: RecoveryEvent) => void; emitScheduleHidden: (value: ScheduleHidden) => void } = {
     listSchedules: vi.fn(async () => page), getSchedule: vi.fn(), getScheduleTimeBounds: vi.fn(async () => ({ min: '2026-09-16T00:00', startMaxExclusive: '2027-09-16T00:00', endMaxInclusive: '2027-09-16T00:00' })), listPendingReminders: vi.fn(async () => ({ items: [], nextCursor: '', limit: 20 })), getReminderDetail: vi.fn(), confirmReminder: vi.fn(),
-    createSchedule: vi.fn(), deleteSchedule: vi.fn(), getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const })), getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const }, closeBehavior: 'tray' as const, activation: null })), getCloseBehavior: vi.fn(async () => 'tray' as const), saveCloseBehavior: vi.fn(), getLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), getStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs' as const, effectivePath: 'C:/TimeCue/logs', savedPath: 'C:/TimeCue/logs', restartRequired: false }, backups: { kind: 'backups' as const, effectivePath: 'C:/TimeCue/backups', savedPath: 'C:/TimeCue/backups', restartRequired: false } })), chooseDirectory: vi.fn(async () => null), saveStorageDirectory: vi.fn(), saveLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), restoreConfigDefault: vi.fn(async () => undefined), frontendReady: vi.fn(async () => null), retryCleanup: vi.fn(), subscribeActivation: vi.fn(value => { listener = value; return () => { listener = undefined; }; }), subscribeScheduleHidden: vi.fn(value => { scheduleHiddenListener = value; return () => { scheduleHiddenListener = undefined; }; }), subscribeRecovery: vi.fn(value => { recoveryListener = value; return () => { recoveryListener = undefined; }; }), emit: value => listener?.(value), emitScheduleHidden: value => scheduleHiddenListener?.(value), emitRecovery: value => recoveryListener?.(value),
+    createSchedule: vi.fn(), deleteSchedule: vi.fn(), getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const })), getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const }, closeBehavior: 'tray' as const, activation: null })), getCloseBehavior: vi.fn(async () => 'tray' as const), saveCloseBehavior: vi.fn(), getTheme: vi.fn(async () => 'peach' as const), saveTheme: vi.fn(async (value: 'peach' | 'mint' | 'sky' | 'lavender') => value), getLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), getStorageDirectories: vi.fn(async () => ({ logs: { kind: 'logs' as const, effectivePath: 'C:/TimeCue/logs', savedPath: 'C:/TimeCue/logs', restartRequired: false }, backups: { kind: 'backups' as const, effectivePath: 'C:/TimeCue/backups', savedPath: 'C:/TimeCue/backups', restartRequired: false } })), chooseDirectory: vi.fn(async () => null), saveStorageDirectory: vi.fn(), saveLogLevel: vi.fn(async () => ({ effectiveLevel: 'info' as const, savedLevel: 'info' as const, restartRequired: false })), restoreConfigDefault: vi.fn(async () => undefined), frontendReady: vi.fn(async () => null), retryCleanup: vi.fn(), subscribeActivation: vi.fn(value => { listener = value; return () => { listener = undefined; }; }), subscribeScheduleHidden: vi.fn(value => { scheduleHiddenListener = value; return () => { scheduleHiddenListener = undefined; }; }), subscribeRecovery: vi.fn(value => { recoveryListener = value; return () => { recoveryListener = undefined; }; }), emit: value => listener?.(value), emitScheduleHidden: value => scheduleHiddenListener?.(value), emitRecovery: value => recoveryListener?.(value),
   };
   return { ...base, ...overrides, emit: base.emit };
 }
@@ -136,6 +136,49 @@ describe('Controller configuration settings', () => {
     await controller.restoreConfigDefault('log.level');
     expect(platform.restoreConfigDefault).toHaveBeenCalledWith('log.level');
     expect(platform.getLogLevel).toHaveBeenCalledTimes(2);
+    controller.dispose();
+  });
+
+  it('reads the theme during initialization, saves on change, and keeps the old value on failure', async () => {
+    const saveTheme = vi.fn(async (value: 'peach' | 'mint' | 'sky' | 'lavender') => {
+      if (value === 'sky') throw { data: JSON.stringify({ code: 'STORAGE', message: '主题保存失败' }) };
+      return value;
+    });
+    const platform = port({ getTheme: vi.fn(async () => 'peach' as const), saveTheme });
+    const controller = new Controller(platform);
+    await controller.initialize();
+    expect(controller.snapshot().theme).toBe('peach');
+    expect(controller.snapshot().themeLoading).toBe(false);
+    await controller.saveTheme('mint');
+    expect(controller.snapshot().theme).toBe('mint');
+    expect(saveTheme).toHaveBeenCalledTimes(1);
+    await controller.saveTheme('mint');
+    expect(saveTheme).toHaveBeenCalledTimes(1);
+    await controller.saveTheme('sky');
+    expect(controller.snapshot().theme).toBe('mint');
+    expect(controller.snapshot().error?.code).toBe('STORAGE');
+    controller.dispose();
+  });
+
+  it('falls back to peach and keeps the initialization error when theme loading fails', async () => {
+    const platform = port({ getTheme: vi.fn(async () => { throw { data: JSON.stringify({ code: 'STORAGE', message: '读取主题失败' }) }; }) });
+    const controller = new Controller(platform);
+    await controller.initialize();
+    expect(controller.snapshot().theme).toBe('peach');
+    expect(controller.snapshot().themeLoading).toBe(false);
+    expect(controller.snapshot().error?.message).toBe('读取主题失败');
+    controller.dispose();
+  });
+
+  it('refreshes the theme when restoring its default', async () => {
+    const getTheme = vi.fn<() => Promise<'peach' | 'mint' | 'sky' | 'lavender'>>(async () => 'mint');
+    const platform = port({ getTheme });
+    const controller = new Controller(platform);
+    await controller.initialize();
+    await controller.restoreConfigDefault('theme');
+    expect(platform.restoreConfigDefault).toHaveBeenCalledWith('theme');
+    expect(getTheme).toHaveBeenCalledTimes(2);
+    expect(controller.snapshot().theme).toBe('mint');
     controller.dispose();
   });
 });

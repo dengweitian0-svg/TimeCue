@@ -1,7 +1,8 @@
 export type CloseBehavior = 'tray' | 'exit';
 export type DirectoryKind = 'logs' | 'backups';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-export type ConfigProperty = 'log.level' | 'log.path' | 'backup.dir' | 'window.close_behavior';
+export type Theme = 'peach' | 'mint' | 'sky' | 'lavender';
+export type ConfigProperty = 'log.level' | 'log.path' | 'backup.dir' | 'window.close_behavior' | 'theme';
 export type ScheduleType = 'single' | 'daily' | 'weekly' | 'monthly';
 export type Lifecycle = 'running' | 'stopping' | 'stopped' | 'cleanup-failed';
 export type RecoveryStatus = 'idle' | 'running' | 'failed';
@@ -155,6 +156,8 @@ export interface WailsPort {
   getDesktopStatus(): Promise<FrontendStatus>;
   getCloseBehavior(): Promise<CloseBehavior>;
   saveCloseBehavior(value: CloseBehavior): Promise<CloseBehavior>;
+  getTheme(): Promise<Theme>;
+  saveTheme(value: Theme): Promise<Theme>;
   getLogLevel(): Promise<LogLevelSettings>;
   saveLogLevel(value: LogLevel): Promise<LogLevelSettings>;
   getStorageDirectories(): Promise<StorageDirectories>;

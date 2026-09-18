@@ -1,4 +1,4 @@
-import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, RecoveryEvent, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleHidden, ScheduleHiddenListener, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory } from './contracts';
+import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, RecoveryEvent, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleHidden, ScheduleHiddenListener, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory, Theme } from './contracts';
 import * as generatedBindings from '../wailsjs/go/runtime/WailsBindings';
 import { EventsOn as generatedEventsOn } from '../wailsjs/runtime/runtime';
 
@@ -16,6 +16,8 @@ export interface BindingsPort {
   GetDesktopStatus(): Promise<unknown>;
   GetCloseBehavior(): Promise<unknown>;
   SaveCloseBehavior(request: { behavior: CloseBehavior }): Promise<unknown>;
+  GetTheme(): Promise<unknown>;
+  SaveTheme(request: { theme: Theme }): Promise<unknown>;
   GetLogLevel(): Promise<unknown>;
   SaveLogLevel(request: { level: LogLevel }): Promise<unknown>;
   GetStorageDirectories(): Promise<unknown>;
@@ -147,6 +149,12 @@ export class WailsAdapter implements AppPort {
   /** 保存关闭行为，并只接受两个产品枚举。 */
   async saveCloseBehavior(value: CloseBehavior): Promise<CloseBehavior> { await this.bindings.SaveCloseBehavior({ behavior: value }); return value; }
 
+  /** 读取后端当前主题并转换为受控前端枚举。 */
+  async getTheme(): Promise<Theme> { return toTheme(read(asRecord(await this.bindings.GetTheme()), 'theme', 'Theme')); }
+
+  /** 保存主题并只返回后端确认成功后的主题。 */
+  async saveTheme(value: Theme): Promise<Theme> { const raw = await this.bindings.SaveTheme({ theme: value }); return toTheme(read(asRecord(raw), 'theme', 'Theme')); }
+
   /** 读取日志级别当前生效值与保存值。 */
   async getLogLevel(): Promise<LogLevelSettings> { return toLogLevel(await this.bindings.GetLogLevel()); }
 
@@ -190,6 +198,8 @@ export async function createWailsAdapter(): Promise<WailsAdapter> {
     GetDesktopStatus: generatedBindings.GetDesktopStatus,
     GetCloseBehavior: generatedBindings.GetCloseBehavior,
     SaveCloseBehavior: generatedBindings.SaveCloseBehavior,
+    GetTheme: generatedBindings.GetTheme,
+    SaveTheme: generatedBindings.SaveTheme,
     GetLogLevel: generatedBindings.GetLogLevel,
     SaveLogLevel: generatedBindings.SaveLogLevel,
     GetStorageDirectories: generatedBindings.GetStorageDirectories,
@@ -351,6 +361,11 @@ function toLogLevel(value: unknown): LogLevelSettings {
 
 /** 只接受 tray/exit，防止平台数据污染界面状态。 */
 function toCloseBehavior(value: unknown): CloseBehavior { return value === 'exit' ? 'exit' : 'tray'; }
+
+/** 只接受四个产品主题，防止损坏的边界数据污染页面状态。 */
+function toTheme(value: unknown): Theme {
+  return enumValue(value, ['peach', 'mint', 'sky', 'lavender'], 'peach');
+}
 
 /** 读取激活目标，忽略无效序号和空目标。 */
 function toActivation(value: unknown): Activation | null {
