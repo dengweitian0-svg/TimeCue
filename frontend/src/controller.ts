@@ -1,5 +1,6 @@
 import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type RecoveryEvent, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type ScheduleHidden, type SchedulePage, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
 import { changeDraftType, draftRequest, emptyDraft } from './schedule-model';
+import { windowThemeColors } from './themes';
 
 export type Page = 'schedules' | 'reminders' | 'settings';
 export interface AppState {
@@ -85,6 +86,8 @@ export class Controller {
       if (this.reminderReadVersion === initialReminderVersion) this.update({ reminders, reminderLoading: false });
       const visibleSchedules = this.filterHiddenSchedules(schedules);
       this.update({ runtime: runtime ?? desktop.runtime, activation: desktop.activation, schedules: visibleSchedules, bounds, closeBehavior, theme, themeLoading: false, logLevel, storageDirectories, loading: false, error: themeError });
+      await this.syncWindowTheme(theme);
+      if (this.disposed) return;
       if (initialActivation) void this.activateReminder(initialActivation);
       if (pendingError && this.reminderReadVersion === initialReminderVersion) this.failReminder(pendingError, false);
       const pendingActivation = await this.port.frontendReady(this.lastSequence);
@@ -251,7 +254,10 @@ export class Controller {
     this.update({ busy: true, error: null, notice: '' });
     try {
       const saved = await this.port.saveTheme(value);
-      if (!this.disposed) this.update({ theme: saved, themeLoading: false, notice: '主题已保存。' });
+      if (!this.disposed) {
+        this.update({ theme: saved, themeLoading: false, notice: '主题已保存。' });
+        await this.syncWindowTheme(saved);
+      }
     } catch (error) {
       if (!this.disposed) this.fail(error);
     } finally {
@@ -283,6 +289,7 @@ export class Controller {
       if (!this.disposed) {
         const notice = property === 'window.close_behavior' ? '窗口关闭行为已恢复默认。' : property === 'theme' ? '主题已恢复默认。' : '配置已恢复默认，重启后生效。';
         this.update({ closeBehavior, theme, themeLoading: false, logLevel, storageDirectories, notice });
+        if (property === 'theme') await this.syncWindowTheme(theme);
       }
     } catch (error) {
       if (!this.disposed) this.fail(error);
@@ -377,6 +384,15 @@ export class Controller {
 
   /** 统一状态变更通知。 */
   private update(patch: Partial<AppState>): void { if (this.disposed) return; this.state = { ...this.state, ...patch }; for (const listener of this.listeners) listener(); }
+
+  /** 同步原生标题栏；失败只提示用户，不回滚已经保存并应用的页面主题。 */
+  private async syncWindowTheme(theme: Theme): Promise<void> {
+    try {
+      await this.port.applyWindowTheme(windowThemeColors(theme));
+    } catch {
+      if (!this.disposed) this.update({ notice: '主题已应用，但窗口标题栏暂未同步。' });
+    }
+  }
 
   /** 将平台拒绝值转换成可绑定字段的错误。 */
   private fail(error: unknown): void { const failure = toScheduleError(error); this.update({ error: failure, notice: '' }); }
