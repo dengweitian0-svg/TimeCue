@@ -32,8 +32,9 @@ function NavButton({ active, children, onClick }: { active: boolean; children: s
 
 /** 展示运行状态和清理失败的恢复入口。 */
 function RuntimeChip({ runtime }: { runtime: AppState['runtime'] }) {
-  const label = !runtime ? '正在连接' : runtime.lifecycle === 'cleanup-failed' ? '需要清理' : runtime.lifecycle === 'running' ? '后台提醒运行中' : runtime.lifecycle === 'stopping' ? '正在停止' : '已停止';
-  return <div className={`runtime-chip ${runtime?.lifecycle === 'cleanup-failed' ? 'warning' : ''}`}><span className="pulse" />{label}</div>;
+  const label = !runtime ? '正在连接' : runtime.recoveryStatus === 'running' ? '正在恢复提醒' : runtime.recoveryStatus === 'failed' ? '提醒恢复失败' : runtime.lifecycle === 'cleanup-failed' ? '需要清理' : runtime.lifecycle === 'running' ? '后台提醒运行中' : runtime.lifecycle === 'stopping' ? '正在停止' : '已停止';
+  const warning = runtime?.lifecycle === 'cleanup-failed' || runtime?.recoveryStatus === 'failed';
+  return <div className={`runtime-chip ${warning ? 'warning' : ''}`}><span className="pulse" />{label}</div>;
 }
 
 /** 在页面中央显示业务结果，并在五秒后自动清除。 */

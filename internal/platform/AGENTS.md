@@ -2,6 +2,7 @@
 
 - 本目录根包只定义桌面边界的跨平台窄契约和测试 fake，不实现 Wails、Win32、Toast、托盘、配置或 Runtime 组装；具体目录文件系统适配放在 `filesystem` 子包。
 - `DesktopHost` 负责主循环和退出请求；`WindowController` 只负责窗口动作；`FrontendEvents` 只发送受控边界事件。
+- `FrontendEventRecovery` 只承载 `app.RecoveryEvent` 的稳定状态和错误分类；平台适配器不得把 SQLite 错误、通知正文或底层 cause 放入恢复事件。
 - `DirectoryAccess` 负责验证、创建和规范化用户目录；`DirectoryChooser` 只负责打开平台目录选择器，取消以空路径表示。具体文件系统实现位于 `platform/filesystem`，Wails 对话框适配位于 `platform/wailshost`；Runtime 通过窄端口使用它们。
 - `ActivationSource` 和 `EnvironmentEventSource` 只能把外部事实作为事件输出。激活目标复用 `schedule/domain.OccurrenceIdentity`，不得新增重复身份模型或直接修改领域状态。
 - `TrayPort`、事件源和 `NotificationCenter` 的创建方拥有关闭责任；`Close` 必须释放自身资源并保持幂等，不能关闭 bootstrap 所拥有的 Store、日志或实例锁。

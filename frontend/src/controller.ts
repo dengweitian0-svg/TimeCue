@@ -1,4 +1,4 @@
-import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type SchedulePage, type StorageDirectories, type StorageDirectory } from './contracts';
+import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type RecoveryEvent, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type SchedulePage, type StorageDirectories, type StorageDirectory } from './contracts';
 import { draftRequest, emptyDraft } from './schedule-model';
 
 export type Page = 'schedules' | 'reminders' | 'settings';
@@ -46,6 +46,7 @@ export class Controller {
   private state: AppState = { page: 'schedules', schedules: initialPage, reminders: initialReminderPage, reminderLoading: true, reminderDetailLoading: false, reminderConfirming: false, reminderError: null, activeReminder: null, reminderDetail: null, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', logLevel: { effectiveLevel: 'info', savedLevel: 'info', restartRequired: false }, storageDirectories: null, activation: null };
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeActivation: () => void;
+  private readonly unsubscribeRecovery: () => void;
   private disposed = false;
   private lastSequence = 0;
   private readVersion = 0;
@@ -54,7 +55,7 @@ export class Controller {
   private reminderActionVersion = 0;
 
   /** 注入窄平台端口，并从构造时开始接收激活事件。 */
-  constructor(public readonly port: AppPort) { this.unsubscribeActivation = port.subscribeActivation(this.onActivation); }
+  constructor(public readonly port: AppPort) { this.unsubscribeActivation = port.subscribeActivation(this.onActivation); this.unsubscribeRecovery = port.subscribeRecovery?.(this.onRecovery) ?? (() => undefined); }
 
   /** 返回稳定快照供 React 的 useSyncExternalStore 使用。 */
   snapshot = (): AppState => this.state;
@@ -63,20 +64,24 @@ export class Controller {
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
 
   /** 释放事件订阅和端口资源。 */
-  dispose(): void { this.disposed = true; this.unsubscribeActivation(); this.port.dispose?.(); this.listeners.clear(); }
+  dispose(): void { this.disposed = true; this.unsubscribeActivation(); this.unsubscribeRecovery(); this.port.dispose?.(); this.listeners.clear(); }
 
   /** 初始化窗口状态、日程列表、提醒列表和前端激活握手。 */
   async initialize(): Promise<void> {
     try {
-      const [desktop, schedules, bounds, closeBehavior, logLevel, storageDirectories] = await Promise.all([this.port.getDesktopStatus(), this.port.listSchedules(), this.port.getScheduleTimeBounds(), this.port.getCloseBehavior(), this.port.getLogLevel(), this.port.getStorageDirectories()]);
+      let pendingError: unknown;
+      const initialReminderVersion = this.reminderReadVersion;
+      const initialPending = this.port.listPendingReminders({ limit: initialReminderPage.limit }).catch(error => { pendingError = error; return initialReminderPage; });
+      const [desktop, schedules, bounds, closeBehavior, logLevel, storageDirectories, runtime, reminders] = await Promise.all([this.port.getDesktopStatus(), this.port.listSchedules(), this.port.getScheduleTimeBounds(), this.port.getCloseBehavior(), this.port.getLogLevel(), this.port.getStorageDirectories(), this.port.getRuntimeStatus(), initialPending]);
       if (this.disposed) return;
       const initialActivation = desktop.activation && desktop.activation.sequence > this.lastSequence ? desktop.activation : null;
       this.lastSequence = Math.max(this.lastSequence, desktop.activation?.sequence ?? 0);
-      this.update({ runtime: desktop.runtime, activation: desktop.activation, schedules, bounds, closeBehavior, logLevel, storageDirectories, loading: false });
+      if (this.reminderReadVersion === initialReminderVersion) this.update({ reminders, reminderLoading: false });
+      this.update({ runtime: runtime ?? desktop.runtime, activation: desktop.activation, schedules, bounds, closeBehavior, logLevel, storageDirectories, loading: false });
       if (initialActivation) void this.activateReminder(initialActivation);
-      await this.refreshReminders();
-      const pending = await this.port.frontendReady(this.lastSequence);
-      if (pending) this.onActivation(pending);
+      if (pendingError && this.reminderReadVersion === initialReminderVersion) this.failReminder(pendingError, false);
+      const pendingActivation = await this.port.frontendReady(this.lastSequence);
+      if (pendingActivation) this.onActivation(pendingActivation);
     } catch (error) {
       if (!this.disposed) this.fail(error);
     }
@@ -295,6 +300,14 @@ export class Controller {
     this.reminderActionVersion++;
     this.update({ activation, page: 'reminders', activeReminder: activation.targetId ? { scheduleId: activation.targetId, originalDate: activation.originalDate } : null, reminderDetail: null, reminderDetailLoading: Boolean(activation.targetId), reminderConfirming: false, reminderError: null, notice: '' });
     if (activation.targetId) void this.activateReminder(activation);
+  };
+
+  /** 接收恢复子状态；完成事件重新读取待处理列表，失败时保留已有列表。 */
+  private onRecovery = (event: RecoveryEvent): void => {
+    if (this.disposed) return;
+    const runtime = this.state.runtime ? { ...this.state.runtime, recoveryStatus: event.status } : { visibility: 'visible' as const, lifecycle: 'running' as const, ready: false, recoveryStatus: event.status };
+    this.update({ runtime, notice: event.status === 'failed' ? '提醒恢复未完成，请检查日志。' : this.state.notice });
+    if (event.status === 'idle') void this.refreshReminders();
   };
 
   /** 处理前端未就绪后补发的激活，分别刷新列表和稳定身份详情。 */
