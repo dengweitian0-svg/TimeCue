@@ -11,3 +11,5 @@ backup:
 
 window:
   close_behavior: tray
+
+theme: peach

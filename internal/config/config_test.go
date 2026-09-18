@@ -29,6 +29,9 @@ func TestLoadUsesEmbeddedDefaults(t *testing.T) {
 	if cfg.Window.CloseBehavior != CloseBehaviorTray {
 		t.Fatalf("Window.CloseBehavior = %q, want tray", cfg.Window.CloseBehavior)
 	}
+	if cfg.Theme != ThemePeach {
+		t.Fatalf("Theme = %q, want peach", cfg.Theme)
+	}
 	if cfg.ResolvedPaths.DatabasePath != filepath.Join(os.Getenv("LOCALAPPDATA"), "TimeCue", "timecue.db") {
 		t.Fatalf("DatabasePath = %q, want fixed LOCALAPPDATA path", cfg.ResolvedPaths.DatabasePath)
 	}
@@ -40,6 +43,129 @@ func TestLoadUsesEmbeddedDefaults(t *testing.T) {
 	}
 	if cfg.ResolvedPaths.BackupDir != filepath.Join(dir, "backups") {
 		t.Fatalf("BackupDir = %q, want executable-relative path", cfg.ResolvedPaths.BackupDir)
+	}
+}
+
+// TestLoadThemesUsesDefaultAndRejectsInvalidValues 验证主题缺省、合法覆盖和非法配置拒绝。
+func TestLoadThemesUsesDefaultAndRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name      string
+		contents  string
+		wantTheme Theme
+		wantError bool
+	}{
+		{name: "missing uses peach", contents: "window:\n  close_behavior: tray\n", wantTheme: ThemePeach},
+		{name: "mint override", contents: "theme: mint\n", wantTheme: ThemeMint},
+		{name: "sky override", contents: "theme: sky\n", wantTheme: ThemeSky},
+		{name: "lavender override", contents: "theme: lavender\n", wantTheme: ThemeLavender},
+		{name: "uppercase rejected", contents: "theme: PEACH\n", wantError: true},
+		{name: "unknown rejected", contents: "theme: forest\n", wantError: true},
+		{name: "empty rejected", contents: "theme: \n", wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+			if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(tt.contents), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			cfg, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("loadFromExecutable() error = nil, want invalid theme error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("loadFromExecutable() error = %v", err)
+			}
+			if cfg.Theme != tt.wantTheme {
+				t.Fatalf("Theme = %q, want %q", cfg.Theme, tt.wantTheme)
+			}
+		})
+	}
+}
+
+// TestSaveThemePreservesUnknownFieldsAndUpdatesMemory 验证主题写入顶层字段并保留未知配置。
+func TestSaveThemePreservesUnknownFieldsAndUpdatesMemory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("theme: peach\nfuture:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("loadFromExecutable() error = %v", err)
+	}
+	if err := cfg.SaveTheme(ThemeMint); err != nil {
+		t.Fatalf("SaveTheme() error = %v", err)
+	}
+	if cfg.Theme != ThemeMint {
+		t.Fatalf("Theme = %q, want mint", cfg.Theme)
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	text := string(contents)
+	if !strings.Contains(text, "theme: mint") || !strings.Contains(text, "future:") || !strings.Contains(text, "enabled: true") {
+		t.Fatalf("saved config = %q, want theme and unknown field", text)
+	}
+}
+
+// TestSaveThemeFailurePreservesFileAndMemory 验证原子替换失败时旧文件和内存主题均不变化。
+func TestSaveThemeFailurePreservesFileAndMemory(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	original := []byte("theme: peach\nfuture: keep\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg := Config{Theme: ThemePeach, ResolvedPaths: ResolvedPaths{ConfigPath: configPath}}
+	wantErr := errors.New("injected replace failure")
+	originalReplacer := replaceConfigFile
+	t.Cleanup(func() { replaceConfigFile = originalReplacer })
+	replaceConfigFile = func(string, string) error { return wantErr }
+	if err := cfg.SaveTheme(ThemeMint); !errors.Is(err, wantErr) {
+		t.Fatalf("SaveTheme() error = %v, want injected replace failure", err)
+	}
+	if cfg.Theme != ThemePeach {
+		t.Fatalf("Theme = %q, want old peach value", cfg.Theme)
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read original config: %v", err)
+	}
+	if string(contents) != string(original) {
+		t.Fatalf("config after failed replacement = %q, want %q", contents, original)
+	}
+}
+
+// TestRestoreThemeDefault 验证显式恢复主题默认值只更新顶层主题字段。
+func TestRestoreThemeDefault(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("theme: lavender\nfuture: keep\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := loadFromExecutable(filepath.Join(dir, "timecue.exe"))
+	if err != nil {
+		t.Fatalf("loadFromExecutable() error = %v", err)
+	}
+	if err := cfg.RestoreDefault(ConfigPropertyTheme); err != nil {
+		t.Fatalf("RestoreDefault(theme) error = %v", err)
+	}
+	if cfg.Theme != ThemePeach {
+		t.Fatalf("Theme = %q, want peach", cfg.Theme)
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(contents), "theme: peach") || !strings.Contains(string(contents), "future: keep") {
+		t.Fatalf("restored config = %q, want theme default and unknown field", contents)
 	}
 }
 
