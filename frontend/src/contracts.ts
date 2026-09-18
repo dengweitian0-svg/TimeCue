@@ -8,7 +8,7 @@ export type Lifecycle = 'running' | 'stopping' | 'stopped' | 'cleanup-failed';
 export type RecoveryStatus = 'idle' | 'running' | 'failed';
 
 export interface WindowThemeColors {
-  surface: string;
+  background: string;
   text: string;
 }
 

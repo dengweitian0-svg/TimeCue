@@ -128,8 +128,8 @@ type SaveThemeRequest struct {
 
 // ApplyWindowThemeRequest 描述前端传递给原生窗口的语义颜色。
 type ApplyWindowThemeRequest struct {
-	Surface string `json:"surface"`
-	Text    string `json:"text"`
+	Background string `json:"background"`
+	Text       string `json:"text"`
 }
 
 // RestoreConfigDefaultRequest 描述一次受限配置属性恢复默认请求。
@@ -933,7 +933,7 @@ func (a *DesktopApplication) GetTheme() (ThemeDTO, error) {
 	return ThemeDTO{Theme: string(a.config.Theme)}, nil
 }
 
-// ApplyWindowTheme 将前端主题的 surface/text 颜色应用到原生窗口标题栏。
+// ApplyWindowTheme 将前端主题的 background/text 颜色应用到原生窗口标题栏。
 // 标题栏是非关键桌面副作用，平台失败会被记录并返回给前端，但不改变配置状态。
 func (a *DesktopApplication) ApplyWindowTheme(ctx context.Context, request ApplyWindowThemeRequest) error {
 	if a == nil {
@@ -971,7 +971,7 @@ func (a *DesktopApplication) ApplyWindowTheme(ctx context.Context, request Apply
 
 // windowThemeColorsFromRequest 严格解析前端传入的两个不透明十六进制颜色。
 func windowThemeColorsFromRequest(request ApplyWindowThemeRequest) (platform.WindowThemeColors, error) {
-	titleBar, err := parseWindowThemeColor("surface", request.Surface)
+	titleBar, err := parseWindowThemeColor("background", request.Background)
 	if err != nil {
 		return platform.WindowThemeColors{}, err
 	}

@@ -596,20 +596,20 @@ func TestApplyWindowThemeBindingValidatesAndDelegates(t *testing.T) {
 	})
 	defer cancel()
 
-	request := ApplyWindowThemeRequest{Surface: "#326D55", Text: "#293F35"}
+	request := ApplyWindowThemeRequest{Background: "#F2F9F3", Text: "#293F35"}
 	if err := application.Bindings().ApplyWindowTheme(request); err != nil {
 		t.Fatalf("ApplyWindowTheme() error = %v", err)
 	}
 	colors := theme.AppliedColors()
-	wantColors := platform.WindowThemeColors{TitleBar: platform.RGBColor{R: 0x32, G: 0x6d, B: 0x55}, TitleText: platform.RGBColor{R: 0x29, G: 0x3f, B: 0x35}}
+	wantColors := platform.WindowThemeColors{TitleBar: platform.RGBColor{R: 0xf2, G: 0xf9, B: 0xf3}, TitleText: platform.RGBColor{R: 0x29, G: 0x3f, B: 0x35}}
 	if len(colors) != 1 || colors[0] != wantColors {
 		t.Fatalf("applied colors = %+v, want converted mint colors %+v", colors, wantColors)
 	}
 
 	for _, invalid := range []ApplyWindowThemeRequest{
-		{Surface: "#326D5", Text: "#293F35"},
-		{Surface: "#GG6D55", Text: "#293F35"},
-		{Surface: "#326D55", Text: "transparent"},
+		{Background: "#F2F9F", Text: "#293F35"},
+		{Background: "#GGF9F3", Text: "#293F35"},
+		{Background: "#F2F9F3", Text: "transparent"},
 	} {
 		if err := application.Bindings().ApplyWindowTheme(invalid); err == nil {
 			t.Fatalf("ApplyWindowTheme(%+v) error = nil, want validation error", invalid)

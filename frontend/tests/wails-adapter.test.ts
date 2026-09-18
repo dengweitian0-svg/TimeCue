@@ -72,8 +72,8 @@ describe('WailsAdapter', () => {
     await expect(adapter.getTheme()).resolves.toBe('peach');
     await expect(adapter.saveTheme('mint')).resolves.toBe('mint');
     expect(port.SaveTheme).toHaveBeenCalledWith({ theme: 'mint' });
-    await adapter.applyWindowTheme({ surface: '#FCFEFB', text: '#293F35' });
-    expect(port.ApplyWindowTheme).toHaveBeenCalledWith({ surface: '#FCFEFB', text: '#293F35' });
+    await adapter.applyWindowTheme({ background: '#F2F9F3', text: '#293F35' });
+    expect(port.ApplyWindowTheme).toHaveBeenCalledWith({ background: '#F2F9F3', text: '#293F35' });
     await expect(adapter.getLogLevel()).resolves.toEqual({ effectiveLevel: 'info', savedLevel: 'info', restartRequired: false });
     await expect(adapter.saveLogLevel('debug')).resolves.toEqual({ effectiveLevel: 'info', savedLevel: 'debug', restartRequired: true });
     expect(port.SaveLogLevel).toHaveBeenCalledWith({ level: 'debug' });

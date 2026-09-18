@@ -179,11 +179,11 @@ describe('Controller configuration settings', () => {
     await controller.initialize();
     expect(controller.snapshot().theme).toBe('peach');
     expect(controller.snapshot().themeLoading).toBe(false);
-    expect(platform.applyWindowTheme).toHaveBeenCalledWith({ surface: themes.peach.surface, text: themes.peach.text });
+    expect(platform.applyWindowTheme).toHaveBeenCalledWith({ background: themes.peach.bg, text: themes.peach.text });
     await controller.saveTheme('mint');
     expect(controller.snapshot().theme).toBe('mint');
     expect(saveTheme).toHaveBeenCalledTimes(1);
-    expect(platform.applyWindowTheme).toHaveBeenLastCalledWith({ surface: themes.mint.surface, text: themes.mint.text });
+    expect(platform.applyWindowTheme).toHaveBeenLastCalledWith({ background: themes.mint.bg, text: themes.mint.text });
     await controller.saveTheme('mint');
     expect(saveTheme).toHaveBeenCalledTimes(1);
     await controller.saveTheme('sky');

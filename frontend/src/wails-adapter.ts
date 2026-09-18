@@ -156,7 +156,7 @@ export class WailsAdapter implements AppPort {
   /** 保存主题并只返回后端确认成功后的主题。 */
   async saveTheme(value: Theme): Promise<Theme> { const raw = await this.bindings.SaveTheme({ theme: value }); return toTheme(read(asRecord(raw), 'theme', 'Theme')); }
 
-  /** 将前端主题的原生标题栏颜色交给 Wails 平台端口。 */
+  /** 将前端主题的窗口背景和文字颜色交给 Wails 平台端口。 */
   async applyWindowTheme(colors: WindowThemeColors): Promise<void> { await this.bindings.ApplyWindowTheme(colors); }
 
   /** 读取日志级别当前生效值与保存值。 */

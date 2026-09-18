@@ -80,5 +80,5 @@ export function themeStyle(theme: Theme): Record<string, string> {
 
 /** 从当前主题提取原生标题栏所需的最小语义颜色集合。 */
 export function windowThemeColors(theme: Theme): WindowThemeColors {
-  return { surface: themes[theme].surface, text: themes[theme].text };
+  return { background: themes[theme].bg, text: themes[theme].text };
 }
