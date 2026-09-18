@@ -784,12 +784,10 @@ func (a *DesktopApplication) stop(ctx context.Context, requestQuit bool) error {
 			}
 		}
 	}
-	if stopErr == nil {
-		stopErr = errors.Join(stopErr, a.deps.Notifications.Cleanup(ctx))
-	}
-	if stopErr == nil {
-		stopErr = errors.Join(stopErr, closeEnvironment(a.deps.Environment), closeActivation(a.deps.Activation), closeTray(a.deps.Tray), closeNotifications(a.deps.Notifications))
-	}
+	// 通知历史只是退出前的尽力清理；失败不能让托盘退出遗留可操作窗口或后台资源。
+	a.cleanupNotificationHistory(ctx)
+	// 即使前置停止步骤失败，也要继续尝试关闭全部桌面资源，避免资源所有权停在半退出状态。
+	stopErr = errors.Join(stopErr, closeEnvironment(a.deps.Environment), closeActivation(a.deps.Activation), closeTray(a.deps.Tray), closeNotifications(a.deps.Notifications))
 
 	a.mu.Lock()
 	a.cleanupError = stopErr
@@ -823,6 +821,21 @@ func (a *DesktopApplication) recordError(err error) {
 	a.mu.Unlock()
 	if logger != nil {
 		logger.Error("desktop runtime error", "error", err)
+	}
+}
+
+// cleanupNotificationHistory 尝试删除系统中的 TimeCue 通知，但失败只作为退出告警。
+func (a *DesktopApplication) cleanupNotificationHistory(ctx context.Context) {
+	if a == nil || a.deps.Notifications == nil {
+		return
+	}
+	if err := a.deps.Notifications.Cleanup(ctx); err != nil {
+		a.mu.Lock()
+		logger := a.logger
+		a.mu.Unlock()
+		if logger != nil {
+			logger.Warn("notification history cleanup failed before exit", "operation", "clear_notification_history", "error", err)
+		}
 	}
 }
 
