@@ -97,8 +97,13 @@ export class Controller {
     }
   }
 
-  /** 切换页面并清除上一页的短暂提示。 */
-  setPage(page: Page): void { if (!this.state.busy) this.update({ page, error: null, notice: '' }); }
+  /** 切换页面并清除上一页的短暂提示；首次进入待处理提醒时读取最新列表。 */
+  setPage(page: Page): void {
+    if (this.state.busy) return;
+    const enteringReminders = this.state.page !== 'reminders' && page === 'reminders';
+    this.update({ page, error: null, notice: '' });
+    if (enteringReminders) void this.refreshReminders();
+  }
 
   /** 按消息内容清除中央 Toast，避免旧消息的定时器误清除新消息。 */
   clearNotice(expected?: string): void { if (expected !== undefined && this.state.notice !== expected) return; this.update({ notice: '' }); }

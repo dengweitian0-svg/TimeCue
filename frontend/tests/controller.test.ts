@@ -68,6 +68,35 @@ describe('Controller activation handshake', () => {
   });
 });
 
+describe('Controller reminder navigation', () => {
+  it('refreshes reminders once when entering the page and again after leaving it', async () => {
+    const refreshed: ReminderPage = { items: [detail('7')], nextCursor: '', limit: 20 };
+    let calls = 0;
+    const listPendingReminders = vi.fn(async () => {
+      calls++;
+      return calls === 1 ? { items: [], nextCursor: '', limit: 20 } : refreshed;
+    });
+    const platform = port({ listPendingReminders });
+    const controller = new Controller(platform);
+    await controller.initialize();
+
+    controller.setPage('reminders');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(listPendingReminders).toHaveBeenCalledTimes(2);
+    expect(controller.snapshot().reminders.items.map(item => item.scheduleId)).toEqual(['7']);
+
+    controller.setPage('reminders');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(listPendingReminders).toHaveBeenCalledTimes(2);
+
+    controller.setPage('schedules');
+    controller.setPage('reminders');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(listPendingReminders).toHaveBeenCalledTimes(3);
+    controller.dispose();
+  });
+});
+
 describe('Controller schedule hidden events', () => {
   const schedule = (id: string): import('../src/contracts').Schedule => ({ id, title: `日程 ${id}`, notes: '', firstStartLocal: '2026-09-16T10:00:00+08:00', durationMinutes: 30, cron: null, untilDateLocal: null, monthEndPolicy: null, revision: 1 });
 
