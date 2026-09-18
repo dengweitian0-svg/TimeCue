@@ -45,7 +45,7 @@ func prepareRecurringUpdate(snapshot domain.TimeSnapshot, existing domain.Schedu
 		if err != nil {
 			return err
 		}
-		validated, err := domain.ValidateRecurring(snapshot, start, end, *merged.Cron, *merged.UntilDateLocal)
+		validated, err := domain.ValidateRecurring(snapshot, start, end, *merged.Cron, merged.UntilDateLocal)
 		if err != nil {
 			return err
 		}
