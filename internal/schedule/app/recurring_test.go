@@ -207,8 +207,8 @@ func TestServiceRecurringUpdateRejectsBeforeWrite(t *testing.T) {
 	}
 }
 
-// TestServiceRecurringToSingleSelectsNearestValidOccurrence 验证重复转单次选择最近有效发生并恢复暂停组。
-func TestServiceRecurringToSingleSelectsNearestValidOccurrence(t *testing.T) {
+// TestServiceRecurringToSingleRejectsBeforeReads 验证重复转单次在读取时钟和例外前被拒绝。
+func TestServiceRecurringToSingleRejectsBeforeReads(t *testing.T) {
 	location := time.FixedZone("UTC+8", 8*60*60)
 	now := time.Date(2026, 9, 12, 12, 0, 0, 0, location)
 	cron := "0 9 * * *"
@@ -219,21 +219,14 @@ func TestServiceRecurringToSingleSelectsNearestValidOccurrence(t *testing.T) {
 		StartLocal: time.Date(2026, 9, 13, 11, 0, 0, 0, location), DurationMinutes: 60,
 		Title: "moved", Open: true, SnapshotPresent: true}
 	store := &fakeStore{getResult: existing, updateResult: existing, overrides: []domain.OccurrenceOverride{move}}
-	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+	clock := &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}}
+	service := NewService(store, clock)
 	_, err := service.UpdateSchedule(context.Background(), existing.ID, UpdateScheduleRequest{
 		CronPresent: true, ExpectedRevision: existing.Revision,
 	})
-	if err != nil {
-		t.Fatalf("UpdateSchedule() error = %v", err)
-	}
-	candidate := store.updated
-	if store.updateCalls != 1 || !candidate.CronPresent || candidate.Cron != nil || candidate.UntilDateLocal != nil || !candidate.UntilDateLocalPresent {
-		t.Fatalf("conversion candidate = %+v, calls = %d", candidate, store.updateCalls)
-	}
-	if candidate.Open == nil || !*candidate.Open || candidate.OriginalStartLocal == nil ||
-		candidate.OriginalStartLocal.Format(time.DateOnly) != move.OriginalDate || candidate.FirstStartLocal == nil ||
-		!candidate.FirstStartLocal.Equal(move.StartLocal) || candidate.DurationMinutes == nil || *candidate.DurationMinutes != move.DurationMinutes {
-		t.Fatalf("single target candidate = %+v", candidate)
+	assertRecurringCode(t, err, domain.Validation)
+	if store.updateCalls != 0 || store.overrideListCalls != 0 || clock.calls != 0 {
+		t.Fatalf("conversion read/write calls = update %d, overrides %d, clock %d", store.updateCalls, store.overrideListCalls, clock.calls)
 	}
 }
 
@@ -270,8 +263,8 @@ func TestServiceSingleToRecurringRequiresCutoff(t *testing.T) {
 	}
 }
 
-// TestServiceSingleToRecurringCarriesRequiredDefinition 验证单次转重复在同一更新入口生成完整重复定义候选。
-func TestServiceSingleToRecurringCarriesRequiredDefinition(t *testing.T) {
+// TestServiceSingleToRecurringRejectsBeforeReads 验证单次转重复在读取时钟前被拒绝。
+func TestServiceSingleToRecurringRejectsBeforeReads(t *testing.T) {
 	location := time.UTC
 	now := time.Date(2026, 9, 12, 8, 0, 0, 0, location)
 	start := now.Add(time.Hour)
@@ -279,17 +272,14 @@ func TestServiceSingleToRecurringCarriesRequiredDefinition(t *testing.T) {
 	cron := "0 9 * * *"
 	until := now.AddDate(0, 0, 7).Unix()
 	store := &fakeStore{getResult: existing, updateResult: existing}
-	service := NewService(store, &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}})
+	clock := &fakeClock{snapshot: domain.TimeSnapshot{Now: now, Location: location}}
+	service := NewService(store, clock)
 	_, err := service.UpdateSchedule(context.Background(), existing.ID, UpdateScheduleRequest{
 		Cron: &cron, UntilUnix: &until, ExpectedRevision: existing.Revision,
 	})
-	if err != nil {
-		t.Fatalf("UpdateSchedule() error = %v", err)
-	}
-	candidate := store.updated
-	if store.updateCalls != 1 || candidate.Cron == nil || *candidate.Cron != cron || !candidate.CronPresent ||
-		candidate.UntilDateLocal == nil || !candidate.UntilDateLocalPresent || candidate.Open == nil || !*candidate.Open {
-		t.Fatalf("recurring conversion candidate = %+v", candidate)
+	assertRecurringCode(t, err, domain.Validation)
+	if store.updateCalls != 0 || clock.calls != 0 {
+		t.Fatalf("conversion read/write calls = update %d, clock %d", store.updateCalls, clock.calls)
 	}
 }
 

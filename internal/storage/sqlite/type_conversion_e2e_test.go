@@ -2,6 +2,10 @@ package sqlite
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,10 +16,12 @@ import (
 // conversionClock 为跨层转换测试提供可变但每次只返回一个环境快照的时钟。
 type conversionClock struct {
 	snapshot domain.TimeSnapshot
+	calls    int
 }
 
 // Snapshot 返回当前测试环境快照。
 func (c *conversionClock) Snapshot(context.Context) (domain.TimeSnapshot, error) {
+	c.calls++
 	return c.snapshot, nil
 }
 
@@ -23,6 +29,16 @@ func (c *conversionClock) Snapshot(context.Context) (domain.TimeSnapshot, error)
 func conversionService(t *testing.T, store *Store, clock *conversionClock, coordinator *app.MutationCoordinator) *app.Service {
 	t.Helper()
 	return app.NewServiceWithCoordinator(store, clock, coordinator)
+}
+
+// openConversionStore 打开重启回归所需的真实 SQLite Store，并统一使用测试日志器。
+func openConversionStore(t *testing.T, path string) *Store {
+	t.Helper()
+	store, err := OpenStore(context.Background(), path, testBackupDir(path), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("OpenStore(%s) error = %v", path, err)
+	}
+	return store
 }
 
 // insertConversionFacts 写入测试所需的取消例外、移动例外和提醒终态事实。
@@ -61,8 +77,19 @@ func countConversionRows(t *testing.T, store *Store, table string, scheduleID do
 	return count
 }
 
-// TestScheduleTypeConversionLifecycle 验证真实 SQLite 中带例外和提醒事实的类型来回转换生命周期。
-func TestScheduleTypeConversionLifecycle(t *testing.T) {
+// assertConversionFactsUnchanged 验证类型拒绝没有改变日程定义或关联事实。
+func assertConversionFactsUnchanged(t *testing.T, store *Store, before, after domain.Schedule) {
+	t.Helper()
+	assertSameSchedule(t, after, before)
+	for _, table := range []string{"occurrence_overrides", "reminder_attempts"} {
+		if countConversionRows(t, store, table, before.ID) != 3 {
+			t.Fatalf("rejected conversion changed %s", table)
+		}
+	}
+}
+
+// TestScheduleTypeConversionRejectedByApplication 验证应用层在读取时钟和写入前拒绝重复转单次。
+func TestScheduleTypeConversionRejectedByApplication(t *testing.T) {
 	store := openTestStore(t)
 	location := time.UTC
 	clock := &conversionClock{snapshot: domain.TimeSnapshot{Now: time.Date(2026, 1, 1, 8, 0, 0, 0, location), Location: location}}
@@ -79,67 +106,118 @@ func TestScheduleTypeConversionLifecycle(t *testing.T) {
 		t.Fatalf("CreateSchedule() error = %v", err)
 	}
 	insertConversionFacts(t, store, domain.ScheduleID(created.ID), location)
-	// 第二个日程提供一个已提交的冲突事实，转换响应不能只使用预读结果。
-	otherStart := time.Date(2026, 1, 3, 12, 0, 0, 0, location).Unix()
-	otherEnd := time.Date(2026, 1, 3, 13, 0, 0, 0, location).Unix()
-	if _, err := service.CreateSchedule(context.Background(), app.CreateScheduleRequest{Title: "other", StartUnix: &otherStart, EndUnix: &otherEnd}); err != nil {
-		t.Fatalf("CreateSchedule(other) error = %v", err)
+	before, err := store.GetSchedule(context.Background(), domain.ScheduleID(created.ID))
+	if err != nil {
+		t.Fatalf("GetSchedule(before) error = %v", err)
 	}
-
 	beforeEpoch := coordinator.Epoch()
-	converted, err := service.UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), app.UpdateScheduleRequest{
+	clock.calls = 0
+	_, err = service.UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), app.UpdateScheduleRequest{
 		CronPresent: true, ExpectedRevision: created.Revision,
 	})
+	assertConversionValidation(t, err)
+	if clock.calls != 0 || coordinator.Epoch() != beforeEpoch {
+		t.Fatalf("rejected conversion side effects: clock=%d, epoch %d -> %d", clock.calls, beforeEpoch, coordinator.Epoch())
+	}
+	after, err := store.GetSchedule(context.Background(), domain.ScheduleID(created.ID))
 	if err != nil {
-		t.Fatalf("recurring to single error = %v", err)
+		t.Fatalf("GetSchedule(after) error = %v", err)
 	}
-	if converted.Cron != nil || !converted.Open || converted.FirstStartLocal != "2026-01-03T12:00:00Z" ||
-		converted.PreservedOverrideCount != 3 || coordinator.Epoch() != beforeEpoch+1 {
-		t.Fatalf("converted schedule = %+v, epoch %d -> %d", converted, beforeEpoch, coordinator.Epoch())
-	}
-	if converted.Conflict == nil || !converted.Conflict.Checked || len(converted.Conflict.Conflicts) == 0 {
-		t.Fatalf("converted conflict = %+v", converted.Conflict)
-	}
-	source, err := store.GetOccurrenceSource(context.Background(), domain.ScheduleID(created.ID))
-	if err != nil {
-		t.Fatalf("GetOccurrenceSource() error = %v", err)
-	}
-	occurrences, err := domain.ExpandMergedOccurrences(source.Schedule, source.Overrides,
-		time.Date(2026, 1, 1, 0, 0, 0, 0, location), time.Date(2026, 1, 5, 0, 0, 0, 0, location), location)
-	if err != nil || len(occurrences) != 1 || occurrences[0].OriginalDate != "2026-01-03" || occurrences[0].StartLocal.Hour() != 12 {
-		t.Fatalf("single occurrences = %+v, error = %v", occurrences, err)
-	}
-	if countConversionRows(t, store, "occurrence_overrides", domain.ScheduleID(created.ID)) != 3 || countConversionRows(t, store, "reminder_attempts", domain.ScheduleID(created.ID)) != 3 {
-		t.Fatal("conversion dropped related facts")
-	}
-	for _, date := range []string{"2026-01-01", "2026-01-02", "2026-01-03"} {
-		claimed, err := store.ClaimReminderAttempt(context.Background(), domain.OccurrenceIdentity{ScheduleID: domain.ScheduleID(created.ID), OriginalDate: date}, clock.snapshot.Now)
-		if err != nil || claimed {
-			t.Fatalf("ClaimReminderAttempt(%s) = %v, %v; existing terminal fact was resent", date, claimed, err)
-		}
-	}
+	assertConversionFactsUnchanged(t, store, before, after)
+}
 
-	backCron := "0 9 * * *"
-	backUntil := time.Date(2026, 1, 15, 12, 0, 0, 0, location).Unix()
-	back, err := service.UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), app.UpdateScheduleRequest{
-		Cron: &backCron, UntilUnix: &backUntil, ExpectedRevision: converted.Revision,
-	})
+// TestScheduleTypeConversionRejectedBothDirections 验证单次转重复也在读取时钟和写入前被拒绝。
+func TestScheduleTypeConversionRejectedBothDirections(t *testing.T) {
+	store := openTestStore(t)
+	location := time.UTC
+	clock := &conversionClock{snapshot: domain.TimeSnapshot{Now: time.Date(2026, 1, 1, 8, 0, 0, 0, location), Location: location}}
+	coordinator := app.NewMutationCoordinator()
+	service := conversionService(t, store, clock, coordinator)
+	start := time.Date(2026, 1, 1, 9, 0, 0, 0, location).Unix()
+	end := time.Date(2026, 1, 1, 10, 0, 0, 0, location).Unix()
+	created, err := service.CreateSchedule(context.Background(), app.CreateScheduleRequest{Title: "single", StartUnix: &start, EndUnix: &end})
 	if err != nil {
-		t.Fatalf("single to recurring error = %v", err)
+		t.Fatalf("CreateSchedule() error = %v", err)
 	}
-	if back.Cron == nil || *back.Cron != backCron || back.UntilDateLocal == nil || *back.UntilDateLocal != "2026-01-15" || !back.Open {
-		t.Fatalf("recurring schedule after round trip = %+v", back)
+	insertConversionFacts(t, store, domain.ScheduleID(created.ID), location)
+	before, err := store.GetSchedule(context.Background(), domain.ScheduleID(created.ID))
+	if err != nil {
+		t.Fatalf("GetSchedule(before) error = %v", err)
 	}
-	if countConversionRows(t, store, "occurrence_overrides", domain.ScheduleID(created.ID)) != 3 || countConversionRows(t, store, "reminder_attempts", domain.ScheduleID(created.ID)) != 3 {
-		t.Fatal("round trip dropped related facts")
+	beforeGeneration, err := store.QueryGeneration(context.Background())
+	if err != nil {
+		t.Fatalf("QueryGeneration(before) error = %v", err)
 	}
-	if back.Conflict == nil || !back.Conflict.Checked {
-		t.Fatalf("round trip conflict = %+v", back.Conflict)
+	cron := "0 9 * * *"
+	until := time.Date(2026, 1, 3, 12, 0, 0, 0, location).Unix()
+	beforeEpoch := coordinator.Epoch()
+	clock.calls = 0
+	_, err = service.UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), app.UpdateScheduleRequest{Cron: &cron, UntilUnix: &until, ExpectedRevision: created.Revision})
+	assertConversionValidation(t, err)
+	if clock.calls != 0 || coordinator.Epoch() != beforeEpoch {
+		t.Fatalf("rejected conversion side effects: clock=%d, epoch %d -> %d", clock.calls, beforeEpoch, coordinator.Epoch())
+	}
+	got, err := store.GetSchedule(context.Background(), domain.ScheduleID(created.ID))
+	if err != nil {
+		t.Fatalf("GetSchedule() after rejected conversion error = %v", err)
+	}
+	assertConversionFactsUnchanged(t, store, before, got)
+	afterGeneration, err := store.QueryGeneration(context.Background())
+	if err != nil || afterGeneration != beforeGeneration {
+		t.Fatalf("generation = %d, error = %v; want %d", afterGeneration, err, beforeGeneration)
 	}
 }
 
-// TestScheduleTypeConversionWithoutCandidateDoesNotWrite 验证过期定义转换失败时原日程保持不变且无关联副作用。
-func TestScheduleTypeConversionWithoutCandidateDoesNotWrite(t *testing.T) {
+// TestScheduleTypeConversionKeepsErrorPriority 验证缺失日程和旧 revision 优先于类型拒绝。
+func TestScheduleTypeConversionKeepsErrorPriority(t *testing.T) {
+	store := openTestStore(t)
+	location := time.UTC
+	clock := &conversionClock{snapshot: domain.TimeSnapshot{Now: time.Date(2026, 1, 1, 8, 0, 0, 0, location), Location: location}}
+	coordinator := app.NewMutationCoordinator()
+	service := conversionService(t, store, clock, coordinator)
+	cron := "0 9 * * *"
+	start := time.Date(2026, 1, 1, 9, 0, 0, 0, location).Unix()
+	end := time.Date(2026, 1, 1, 10, 0, 0, 0, location).Unix()
+	until := time.Date(2026, 1, 10, 12, 0, 0, 0, location).Unix()
+	created, err := service.CreateSchedule(context.Background(), app.CreateScheduleRequest{
+		Title: "priority", StartUnix: &start, EndUnix: &end, Cron: &cron, UntilUnix: &until,
+	})
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+
+	clock.calls = 0
+	_, err = service.UpdateSchedule(context.Background(), 9999, app.UpdateScheduleRequest{CronPresent: true, ExpectedRevision: 1})
+	var missingErr *domain.Error
+	if !errors.As(err, &missingErr) || missingErr.Code != domain.NotFound {
+		t.Fatalf("missing schedule error = %#v, want not found", err)
+	}
+	if clock.calls != 0 {
+		t.Fatalf("missing schedule read clock %d times", clock.calls)
+	}
+
+	advancedTitle := "advanced"
+	if _, err := store.UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), domain.ScheduleUpdateCandidate{
+		Title: &advancedTitle, ExpectedRevision: created.Revision, UpdatedAtUTC: time.Date(2026, 1, 1, 8, 1, 0, 0, location),
+	}); err != nil {
+		t.Fatalf("advance revision error = %v", err)
+	}
+	beforeEpoch := coordinator.Epoch()
+	clock.calls = 0
+	_, err = service.UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), app.UpdateScheduleRequest{
+		CronPresent: true, ExpectedRevision: created.Revision,
+	})
+	var staleErr *domain.Error
+	if !errors.As(err, &staleErr) || staleErr.Code != domain.StaleRevision {
+		t.Fatalf("stale conversion error = %#v, want stale revision", err)
+	}
+	if clock.calls != 0 || coordinator.Epoch() != beforeEpoch {
+		t.Fatalf("stale conversion side effects: clock=%d, epoch %d -> %d", clock.calls, beforeEpoch, coordinator.Epoch())
+	}
+}
+
+// TestScheduleSameTypeEditStillSucceeds 验证禁止类型转换后同类型编辑仍提交并保留关联事实。
+func TestScheduleSameTypeEditStillSucceeds(t *testing.T) {
 	store := openTestStore(t)
 	location := time.UTC
 	clock := &conversionClock{snapshot: domain.TimeSnapshot{Now: time.Date(2026, 1, 1, 8, 0, 0, 0, location), Location: location}}
@@ -147,34 +225,126 @@ func TestScheduleTypeConversionWithoutCandidateDoesNotWrite(t *testing.T) {
 	cron := "0 9 * * *"
 	start := time.Date(2026, 1, 1, 9, 0, 0, 0, location).Unix()
 	end := time.Date(2026, 1, 1, 10, 0, 0, 0, location).Unix()
-	until := time.Date(2026, 1, 3, 12, 0, 0, 0, location).Unix()
-	created, err := service.CreateSchedule(context.Background(), app.CreateScheduleRequest{Title: "expired", StartUnix: &start, EndUnix: &end, Cron: &cron, UntilUnix: &until})
+	until := time.Date(2026, 1, 10, 12, 0, 0, 0, location).Unix()
+	created, err := service.CreateSchedule(context.Background(), app.CreateScheduleRequest{
+		Title: "same type", StartUnix: &start, EndUnix: &end, Cron: &cron, UntilUnix: &until,
+	})
 	if err != nil {
 		t.Fatalf("CreateSchedule() error = %v", err)
 	}
-	clock.snapshot.Now = time.Date(2026, 1, 4, 8, 0, 0, 0, location)
-	if _, err := service.UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), app.UpdateScheduleRequest{CronPresent: true, ExpectedRevision: created.Revision}); err == nil {
-		t.Fatal("expired conversion error = nil")
-	}
-	got, err := store.GetSchedule(context.Background(), domain.ScheduleID(created.ID))
+	insertConversionFacts(t, store, domain.ScheduleID(created.ID), location)
+	beforeGeneration, err := store.QueryGeneration(context.Background())
 	if err != nil {
-		t.Fatalf("GetSchedule() after rejected conversion error = %v", err)
+		t.Fatalf("QueryGeneration(before) error = %v", err)
 	}
-	if got.Cron == nil || got.Revision != created.Revision || got.UntilDateLocal == nil || *got.UntilDateLocal != "2026-01-03" {
-		t.Fatalf("rejected conversion changed schedule = %+v", got)
-	}
-	clock.snapshot.Now = time.Date(2026, 1, 1, 8, 0, 0, 0, location)
-	converted, err := service.UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), app.UpdateScheduleRequest{CronPresent: true, ExpectedRevision: created.Revision})
+	notes := "same type edit"
+	updated, err := service.UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), app.UpdateScheduleRequest{
+		Notes: &notes, ExpectedRevision: created.Revision,
+	})
 	if err != nil {
-		t.Fatalf("conversion without exceptions error = %v", err)
+		t.Fatalf("same-type UpdateSchedule() error = %v", err)
 	}
-	if converted.Cron != nil || converted.PreservedOverrideCount != 0 || countConversionRows(t, store, "occurrence_overrides", domain.ScheduleID(created.ID)) != 0 || countConversionRows(t, store, "reminder_attempts", domain.ScheduleID(created.ID)) != 0 {
-		t.Fatalf("conversion without exceptions = %+v", converted)
+	if updated.Notes != notes || updated.Revision != created.Revision+1 || updated.PreservedOverrideCount != 3 {
+		t.Fatalf("same-type update = %+v", updated)
 	}
-	backCron := "0 9 * * *"
-	backUntil := time.Date(2026, 1, 5, 12, 0, 0, 0, location).Unix()
-	if _, err := service.UpdateSchedule(context.Background(), domain.ScheduleID(created.ID), app.UpdateScheduleRequest{Cron: &backCron, UntilUnix: &backUntil, ExpectedRevision: converted.Revision}); err != nil {
-		t.Fatalf("round trip without exceptions error = %v", err)
+	afterGeneration, err := store.QueryGeneration(context.Background())
+	if err != nil || afterGeneration <= beforeGeneration {
+		t.Fatalf("generation = %d, error = %v; want greater than %d", afterGeneration, err, beforeGeneration)
+	}
+	if countConversionRows(t, store, "occurrence_overrides", domain.ScheduleID(created.ID)) != 3 || countConversionRows(t, store, "reminder_attempts", domain.ScheduleID(created.ID)) != 3 {
+		t.Fatal("same-type edit changed related facts")
+	}
+}
+
+// TestScheduleFactsReadableAfterRestart 验证两类日程、例外和提醒历史在数据库重启后仍可读取。
+func TestScheduleFactsReadableAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "restart.db")
+	store := openConversionStore(t, path)
+	closed := false
+	defer func() {
+		if !closed {
+			if err := store.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+
+	location := time.FixedZone("UTC+8", 8*60*60)
+	cron := "0 10 * * *"
+	until := "2026-02-02"
+	recurringCandidate := createTestSchedule()
+	recurringCandidate.Title = "restart recurring"
+	recurringCandidate.Cron = &cron
+	recurringCandidate.UntilDateLocal = &until
+	recurring, err := store.CreateSchedule(ctx, recurringCandidate)
+	if err != nil {
+		t.Fatalf("CreateSchedule(recurring) error = %v", err)
+	}
+	singleCandidate := createTestSchedule()
+	singleCandidate.Title = "restart single"
+	single, err := store.CreateSchedule(ctx, singleCandidate)
+	if err != nil {
+		t.Fatalf("CreateSchedule(single) error = %v", err)
+	}
+	insertConversionFacts(t, store, recurring.ID, location)
+	insertConversionFacts(t, store, single.ID, location)
+	if err := store.Close(); err != nil {
+		t.Fatalf("Store.Close() error = %v", err)
+	}
+	closed = true
+
+	reopened := openConversionStore(t, path)
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	for _, expected := range []struct {
+		id        domain.ScheduleID
+		recurring bool
+	}{
+		{id: recurring.ID, recurring: true},
+		{id: single.ID, recurring: false},
+	} {
+		got, err := reopened.GetSchedule(ctx, expected.id)
+		if err != nil {
+			t.Fatalf("GetSchedule(%d) after restart error = %v", expected.id, err)
+		}
+		if got.IsRecurring() != expected.recurring {
+			t.Fatalf("schedule %d recurring = %v, want %v", expected.id, got.IsRecurring(), expected.recurring)
+		}
+		overrides, err := reopened.ListOccurrenceOverrides(ctx, expected.id)
+		if err != nil || len(overrides) != 3 {
+			t.Fatalf("schedule %d overrides = %d, error = %v", expected.id, len(overrides), err)
+		}
+		source, err := reopened.GetOccurrenceSource(ctx, expected.id)
+		if err != nil || len(source.Overrides) != 3 || source.Schedule.IsRecurring() != expected.recurring {
+			t.Fatalf("schedule %d source = %+v, error = %v", expected.id, source, err)
+		}
+		for _, fact := range []struct {
+			date   string
+			status app.ReminderAttemptStatus
+		}{
+			{date: "2026-01-01", status: app.ReminderAttemptSubmitted},
+			{date: "2026-01-02", status: app.ReminderAttemptFailed},
+			{date: "2026-01-03", status: app.ReminderAttemptSkipped},
+		} {
+			record, err := reopened.GetReminderAttempt(ctx, domain.OccurrenceIdentity{ScheduleID: expected.id, OriginalDate: fact.date})
+			if err != nil || record.Status != fact.status {
+				t.Fatalf("schedule %d reminder %s = %+v, error = %v", expected.id, fact.date, record, err)
+			}
+		}
+	}
+}
+
+// assertConversionValidation 检查类型转换返回统一的应用层校验错误。
+func assertConversionValidation(t *testing.T, err error) {
+	t.Helper()
+	var businessErr *domain.Error
+	if !errors.As(err, &businessErr) || businessErr.Code != domain.Validation ||
+		len(businessErr.Fields) != 1 || businessErr.Fields[0] != "cron" {
+		t.Fatalf("conversion error = %#v, want VALIDATION on cron", err)
 	}
 }
 

@@ -146,38 +146,26 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		err = fmt.Errorf("select schedule %d for update: %w", id, err)
 		return domain.Schedule{}, err
 	}
-	// 事务内重新判断目标类型，防止预读后并发变化导致类型或截止字段被错误覆盖。
+	if existing.Revision != candidate.ExpectedRevision {
+		err = domain.NewStaleRevision("schedule revision is stale", "expected_revision")
+		return domain.Schedule{}, err
+	}
+	// 事务内重新判断目标类型，防止预读后并发变化绕过应用层类型边界。
 	targetRecurring := existing.IsRecurring()
 	if cronPresent {
 		targetRecurring = candidate.Cron != nil
 	}
-	if !existing.IsRecurring() && (!targetRecurring && untilPresent || targetRecurring && (!untilPresent || candidate.UntilDateLocal == nil)) {
-		err = domain.NewValidation("single to recurring conversion requires cron and until date", "cron", "until_date_local")
+	if existing.IsRecurring() != targetRecurring {
+		err = domain.NewValidation("schedule type conversion is not supported", "cron")
+		return domain.Schedule{}, err
+	}
+	if existing.IsRecurring() && untilPresent && candidate.UntilDateLocal == nil {
+		err = domain.NewValidation("recurring cutoff cannot be cleared", "until_date_local")
 		return domain.Schedule{}, err
 	}
 	if !existing.IsRecurring() && cronPresent && candidate.Cron == nil {
 		err = domain.NewValidation("single schedule cron cannot be cleared", "cron")
 		return domain.Schedule{}, err
-	}
-	if existing.IsRecurring() && !targetRecurring && candidate.UntilDateLocal != nil {
-		err = domain.NewValidation("single conversion cannot carry a cutoff", "until_date_local")
-		return domain.Schedule{}, err
-	}
-	if existing.IsRecurring() && targetRecurring && untilPresent && candidate.UntilDateLocal == nil {
-		err = domain.NewValidation("recurring cutoff cannot be cleared", "until_date_local")
-		return domain.Schedule{}, err
-	}
-	if existing.IsRecurring() && !targetRecurring {
-		// 类型落到单次后这些重复字段不再适用，即使调用方省略显式清空标记也不能残留。
-		candidate.UntilDateLocal = nil
-		candidate.UntilDateLocalPresent = true
-		candidate.MonthEndPolicy = nil
-		candidate.MonthEndPolicyPresent = true
-		if candidate.Open == nil {
-			open := true
-			candidate.Open = &open
-			candidate.OpenPresent = true
-		}
 	}
 	if !existing.IsRecurring() && !cronPresent && untilPresent {
 		err = domain.NewValidation("single schedule cannot carry recurrence fields", "cron", "until_date_local")
@@ -187,11 +175,6 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 		err = domain.NewValidation("single schedule must remain open", "open")
 		return domain.Schedule{}, err
 	}
-	if existing.Revision != candidate.ExpectedRevision {
-		err = domain.NewStaleRevision("schedule revision is stale", "expected_revision")
-		return domain.Schedule{}, err
-	}
-
 	setClauses := make([]string, 0, 10)
 	args := make([]any, 0, 12)
 	if candidate.Title != nil {
@@ -289,9 +272,7 @@ func (s *Store) UpdateSchedule(ctx context.Context, id domain.ScheduleID, candid
 	}
 	s.bumpGeneration()
 	if s.logger != nil {
-		beforeType := scheduleType(existing)
-		afterType := scheduleType(schedule)
-		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision, "month_end_policy", schedule.MonthEndPolicy, "schedule_type_before", beforeType, "schedule_type_after", afterType, "type_conversion", beforeType != afterType)
+		s.logger.Info("schedule updated", "schedule_id", schedule.ID, "revision", schedule.Revision, "month_end_policy", schedule.MonthEndPolicy, "schedule_type", scheduleType(schedule))
 	}
 	return schedule, nil
 }

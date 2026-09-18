@@ -235,12 +235,13 @@ func TestUpdateScheduleRollsBackOnFailure(t *testing.T) {
 	}
 }
 
-// TestUpdateScheduleConvertsRecurringToSingle 验证跨类型字段和暂停恢复在同一事务中提交，并保留关联事实。
-func TestUpdateScheduleConvertsRecurringToSingle(t *testing.T) {
+// TestUpdateScheduleRejectsRecurringConversionWithoutWrite 验证重复转单次不更新定义、版本、generation 或关联事实。
+func TestUpdateScheduleRejectsRecurringConversionWithoutWrite(t *testing.T) {
 	store := openTestStore(t)
+	ctx := context.Background()
 	cron := "0 10 * * *"
 	until := "2026-01-31"
-	created, err := store.CreateSchedule(context.Background(), domain.ScheduleCandidate{
+	created, err := store.CreateSchedule(ctx, domain.ScheduleCandidate{
 		Title: "recurring", Cron: &cron, UntilDateLocal: &until, Open: false,
 		FirstStartLocal:    time.Date(2026, 1, 2, 10, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60)),
 		OriginalStartLocal: time.Date(2026, 1, 2, 10, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60)),
@@ -254,22 +255,36 @@ func TestUpdateScheduleConvertsRecurringToSingle(t *testing.T) {
 		INSERT INTO reminder_attempts(schedule_id, occurrence_local, attempted_at_utc, status) VALUES (?, '2026-01-02', '2026-01-02T02:00:00Z', 'submitted');`, created.ID, created.ID); err != nil {
 		t.Fatalf("insert related records error = %v", err)
 	}
+	before, err := store.GetSchedule(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule(before) error = %v", err)
+	}
+	beforeGeneration, err := store.QueryGeneration(ctx)
+	if err != nil {
+		t.Fatalf("QueryGeneration(before) error = %v", err)
+	}
 	first := time.Date(2026, 1, 10, 12, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
 	anchor := time.Date(2026, 1, 9, 12, 0, 0, 0, first.Location())
 	duration := 90
 	open := true
-	updated, err := store.UpdateSchedule(context.Background(), created.ID, domain.ScheduleUpdateCandidate{
+	_, err = store.UpdateSchedule(ctx, created.ID, domain.ScheduleUpdateCandidate{
 		CronPresent: true, UntilDateLocalPresent: true, MonthEndPolicyPresent: true,
 		FirstStartLocal: &first, OriginalStartLocal: &anchor, DurationMinutes: &duration,
 		Open: &open, OpenPresent: true, ExpectedRevision: created.Revision,
 		UpdatedAtUTC: time.Date(2026, 1, 10, 4, 0, 0, 0, time.UTC),
 	})
-	if err != nil {
-		t.Fatalf("UpdateSchedule() error = %v", err)
+	var businessErr *domain.Error
+	if !errors.As(err, &businessErr) || businessErr.Code != domain.Validation || len(businessErr.Fields) != 1 || businessErr.Fields[0] != "cron" {
+		t.Fatalf("UpdateSchedule() error = %#v, want validation on cron", err)
 	}
-	if updated.Cron != nil || updated.UntilDateLocal != nil || updated.MonthEndPolicy != nil || !updated.Open ||
-		!updated.FirstStartLocal.Equal(first) || !updated.OriginalStartLocal.Equal(anchor) || updated.DurationMinutes != duration || updated.Revision != created.Revision+1 {
-		t.Fatalf("converted schedule = %#v", updated)
+	after, err := store.GetSchedule(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule(after) error = %v", err)
+	}
+	assertSameSchedule(t, after, before)
+	afterGeneration, err := store.QueryGeneration(ctx)
+	if err != nil || afterGeneration != beforeGeneration {
+		t.Fatalf("generation = %d, error = %v; want %d", afterGeneration, err, beforeGeneration)
 	}
 	for _, table := range []string{"occurrence_overrides", "reminder_attempts"} {
 		var count int
@@ -282,8 +297,8 @@ func TestUpdateScheduleConvertsRecurringToSingle(t *testing.T) {
 	}
 }
 
-// TestUpdateScheduleRejectsRecurringConversionWithoutCutoff 验证存储层继续守住单次转重复的必填字段。
-func TestUpdateScheduleRejectsRecurringConversionWithoutCutoff(t *testing.T) {
+// TestUpdateScheduleRejectsSingleConversionWithoutCutoff 验证缺少截止日期也不能绕过单次/重复类型边界。
+func TestUpdateScheduleRejectsSingleConversionWithoutCutoff(t *testing.T) {
 	store := openTestStore(t)
 	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
 	if err != nil {
@@ -294,35 +309,50 @@ func TestUpdateScheduleRejectsRecurringConversionWithoutCutoff(t *testing.T) {
 		Cron: &cron, CronPresent: true, ExpectedRevision: created.Revision,
 	})
 	var businessErr *domain.Error
-	if !errors.As(err, &businessErr) || businessErr.Code != domain.Validation {
-		t.Fatalf("error = %#v, want validation", err)
+	if !errors.As(err, &businessErr) || businessErr.Code != domain.Validation || len(businessErr.Fields) != 1 || businessErr.Fields[0] != "cron" {
+		t.Fatalf("error = %#v, want validation on cron", err)
 	}
 }
 
-// TestUpdateScheduleConvertsSingleToRecurring 验证单次转重复写入 cron/截止日期并保留身份锚点。
-func TestUpdateScheduleConvertsSingleToRecurring(t *testing.T) {
+// TestUpdateScheduleRejectsSingleConversionWithoutWrite 验证单次转重复不更新定义、版本或 generation。
+func TestUpdateScheduleRejectsSingleConversionWithoutWrite(t *testing.T) {
 	store := openTestStore(t)
-	created, err := store.CreateSchedule(context.Background(), createTestSchedule())
+	ctx := context.Background()
+	created, err := store.CreateSchedule(ctx, createTestSchedule())
 	if err != nil {
 		t.Fatalf("CreateSchedule() error = %v", err)
 	}
+	before, err := store.GetSchedule(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule(before) error = %v", err)
+	}
+	beforeGeneration, err := store.QueryGeneration(ctx)
+	if err != nil {
+		t.Fatalf("QueryGeneration(before) error = %v", err)
+	}
 	cron := "0 9 * * *"
 	until := "2026-01-31"
-	updated, err := store.UpdateSchedule(context.Background(), created.ID, domain.ScheduleUpdateCandidate{
+	_, err = store.UpdateSchedule(ctx, created.ID, domain.ScheduleUpdateCandidate{
 		Cron: &cron, CronPresent: true, UntilDateLocal: &until, UntilDateLocalPresent: true,
 		ExpectedRevision: created.Revision, UpdatedAtUTC: created.UpdatedAtUTC.Add(time.Hour),
 	})
-	if err != nil {
-		t.Fatalf("UpdateSchedule() error = %v", err)
+	var businessErr *domain.Error
+	if !errors.As(err, &businessErr) || businessErr.Code != domain.Validation || len(businessErr.Fields) != 1 || businessErr.Fields[0] != "cron" {
+		t.Fatalf("UpdateSchedule() error = %#v, want validation on cron", err)
 	}
-	if updated.Cron == nil || *updated.Cron != cron || updated.UntilDateLocal == nil || *updated.UntilDateLocal != until ||
-		!updated.Open || !updated.OriginalStartLocal.Equal(created.OriginalStartLocal) || updated.Revision != created.Revision+1 {
-		t.Fatalf("converted schedule = %#v", updated)
+	after, err := store.GetSchedule(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule(after) error = %v", err)
+	}
+	assertSameSchedule(t, after, before)
+	afterGeneration, err := store.QueryGeneration(ctx)
+	if err != nil || afterGeneration != beforeGeneration {
+		t.Fatalf("generation = %d, error = %v; want %d", afterGeneration, err, beforeGeneration)
 	}
 }
 
-// TestUpdateScheduleConversionRollsBackOnReadbackFailure 验证类型转换回读失败时定义和关联事实均保持原样。
-func TestUpdateScheduleConversionRollsBackOnReadbackFailure(t *testing.T) {
+// TestUpdateScheduleSameTypeRollsBackOnReadbackFailure 验证同类型更新回读失败时定义和关联事实均保持原样。
+func TestUpdateScheduleSameTypeRollsBackOnReadbackFailure(t *testing.T) {
 	store := openTestStore(t)
 	cron := "0 10 * * *"
 	until := "2026-01-31"
@@ -337,15 +367,14 @@ func TestUpdateScheduleConversionRollsBackOnReadbackFailure(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`
 		INSERT INTO occurrence_overrides(schedule_id, occurrence_local, open) VALUES (?, '2026-01-02', 0);
-		CREATE TRIGGER remove_schedule_after_conversion
+		CREATE TRIGGER remove_schedule_after_update
 		AFTER UPDATE ON schedules
 		BEGIN DELETE FROM schedules WHERE id = NEW.id; END;`, created.ID); err != nil {
 		t.Fatalf("prepare rollback trigger error = %v", err)
 	}
-	open := true
+	title := "updated title"
 	_, err = store.UpdateSchedule(context.Background(), created.ID, domain.ScheduleUpdateCandidate{
-		CronPresent: true, UntilDateLocalPresent: true, MonthEndPolicyPresent: true,
-		Open: &open, OpenPresent: true, ExpectedRevision: created.Revision,
+		Title: &title, ExpectedRevision: created.Revision,
 		UpdatedAtUTC: created.UpdatedAtUTC.Add(time.Hour),
 	})
 	if err == nil {
@@ -355,7 +384,7 @@ func TestUpdateScheduleConversionRollsBackOnReadbackFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSchedule() after rollback error = %v", err)
 	}
-	if got.Cron == nil || got.UntilDateLocal == nil || got.Open || got.Revision != created.Revision {
+	if got.Cron == nil || got.UntilDateLocal == nil || got.Open || got.Title != created.Title || got.Revision != created.Revision {
 		t.Fatalf("rolled-back schedule = %#v", got)
 	}
 	var overrides int

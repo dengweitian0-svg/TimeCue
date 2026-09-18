@@ -66,6 +66,9 @@ func (s *Service) PreviewChange(ctx context.Context, request PreviewChangeReques
 	if s.clock == nil {
 		return ChangePreviewDTO{}, errors.New("schedule clock is not configured")
 	}
+	if err := s.preflightPreviewScheduleUpdate(ctx, request); err != nil {
+		return ChangePreviewDTO{}, err
+	}
 	snapshot, err := s.clock.Snapshot(ctx)
 	if err != nil {
 		return ChangePreviewDTO{}, fmt.Errorf("snapshot current time: %w", err)
@@ -86,6 +89,25 @@ func (s *Service) PreviewChange(ctx context.Context, request PreviewChangeReques
 		Checked:   conflict.Checked,
 		HasMore:   detection.HasMore,
 	}, nil
+}
+
+// preflightPreviewScheduleUpdate 在预览读取时钟前复用正式更新的版本和类型边界。
+// 只有结构足够完整的整组更新进入此预检，其余请求交给统一解析流程返回原有错误优先级。
+func (s *Service) preflightPreviewScheduleUpdate(ctx context.Context, request PreviewChangeRequest) error {
+	if strings.TrimSpace(request.Operation) != ChangeOperationUpdateSchedule ||
+		request.ScheduleUpdate == nil || request.OccurrenceUpdate != nil ||
+		request.OccurrenceAction != nil || request.ScheduleAction != nil ||
+		request.OriginalDatePresent || !request.ScheduleIDPresent || request.ScheduleID <= 0 ||
+		!request.ExpectedRevisionPresent || request.ExpectedRevision <= 0 {
+		return nil
+	}
+	existing, err := s.previewSchedule(ctx, domain.ScheduleID(request.ScheduleID))
+	if err != nil {
+		return err
+	}
+	payload := *request.ScheduleUpdate
+	payload.ExpectedRevision = request.ExpectedRevision
+	return validateScheduleUpdateTarget(existing, payload)
 }
 
 // resolveChangeOperation 校验操作类型和必要载荷，并计算变更后的日程投影。
@@ -170,14 +192,7 @@ func (s *Service) resolvePreviewScheduleUpdate(ctx context.Context, snapshot dom
 	if err != nil {
 		return changeOperation{}, err
 	}
-	var overrides []domain.OccurrenceOverride
-	if isRecurringToSingle(existing, payload) {
-		overrides, err = s.previewScheduleOverrides(ctx, id)
-		if err != nil {
-			return changeOperation{}, err
-		}
-	}
-	candidate, post, err := prepareScheduleUpdate(snapshot, existing, payload, overrides)
+	candidate, post, err := prepareScheduleUpdate(snapshot, existing, payload)
 	if err != nil {
 		return changeOperation{}, err
 	}
@@ -185,36 +200,6 @@ func (s *Service) resolvePreviewScheduleUpdate(ctx context.Context, snapshot dom
 		operation: ChangeOperationUpdateSchedule, scheduleID: id,
 		post: post, overlay: true, closed: !post.Open, candidateSchedule: &candidate,
 	}, nil
-}
-
-// previewScheduleOverrides 通过查询源读取类型转换所需的例外快照，不触碰任何写端口。
-func (s *Service) previewScheduleOverrides(ctx context.Context, id domain.ScheduleID) ([]domain.OccurrenceOverride, error) {
-	queryStore, ok := s.store.(OccurrenceQueryStore)
-	if !ok {
-		return nil, errors.New("schedule store does not support occurrence queries for type conversion")
-	}
-	var cursor domain.ScheduleID
-	for {
-		batch, err := queryStore.ListOccurrenceSources(ctx, ListOccurrenceSourcesRequest{
-			AfterScheduleID: cursor, Limit: occurrenceSourceBatchLimit,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("list occurrence sources for schedule %d: %w", id, err)
-		}
-		for _, source := range batch.Items {
-			if source.Schedule.ID == id {
-				return source.Overrides, nil
-			}
-		}
-		if batch.NextCursor == 0 {
-			break
-		}
-		if batch.NextCursor <= cursor {
-			return nil, errors.New("occurrence source cursor did not advance")
-		}
-		cursor = batch.NextCursor
-	}
-	return nil, domain.NewNotFound("schedule was not found")
 }
 
 // resolvePreviewScheduleRestore 校验整组恢复，并把变更后的定义投影为重新开放。
