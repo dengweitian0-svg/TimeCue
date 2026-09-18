@@ -919,7 +919,7 @@ func TestScheduleHiddenEventHandshakeAndDelivery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	events := make(chan app.ReminderSchedulerEvent, 4)
-	go application.forwardScheduleHiddenEvents(ctx, events)
+	go application.forwardReminderEvents(ctx, events)
 	event := app.ReminderSchedulerEvent{Type: app.ReminderSchedulerEventScheduleHidden, ScheduleID: 7}
 	events <- event
 	events <- event
@@ -954,6 +954,62 @@ func TestScheduleHiddenEventHandshakeAndDelivery(t *testing.T) {
 	application.state = DesktopStateStopping
 	application.mu.Unlock()
 	events <- app.ReminderSchedulerEvent{Type: app.ReminderSchedulerEventScheduleHidden, ScheduleID: 10}
+	time.Sleep(10 * time.Millisecond)
+	if frontend.EventCount() != 3 {
+		t.Fatalf("frontend events after stopping = %d, want unchanged", frontend.EventCount())
+	}
+}
+
+// TestPendingRemindersChangedEventHandshakeAndDelivery 验证列表变化信号在前端握手前合并、就绪后发送且不阻塞停止。
+func TestPendingRemindersChangedEventHandshakeAndDelivery(t *testing.T) {
+	frontend := &platform.FakeFrontendEvents{}
+	application := &DesktopApplication{
+		deps:                  DesktopDependencies{Frontend: frontend},
+		state:                 DesktopStateRunning,
+		runtimeContext:        context.Background(),
+		pendingScheduleHidden: make(map[domain.ScheduleID]struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan app.ReminderSchedulerEvent, 4)
+	go application.forwardReminderEvents(ctx, events)
+	event := app.ReminderSchedulerEvent{Type: app.ReminderSchedulerEventPendingRemindersChanged}
+	events <- event
+	events <- event
+	waitForDesktopCondition(t, func() bool {
+		application.mu.Lock()
+		defer application.mu.Unlock()
+		return application.pendingRemindersChanged
+	})
+	if frontend.EventCount() != 0 {
+		t.Fatalf("frontend events before ready = %d, want 0", frontend.EventCount())
+	}
+	if _, err := application.FrontendReady(context.Background(), FrontendReadyRequest{}); err != nil {
+		t.Fatalf("FrontendReady() error = %v", err)
+	}
+	if frontend.EventCount() != 1 {
+		t.Fatalf("frontend events after ready = %d, want one deduplicated event", frontend.EventCount())
+	}
+	if frontend.Events[0].Name != platform.FrontendEventPendingRemindersChanged {
+		t.Fatalf("frontend event name = %q", frontend.Events[0].Name)
+	}
+	if _, ok := frontend.Events[0].Payload.(platform.PendingRemindersChangedEvent); !ok {
+		t.Fatalf("pending reminders changed payload = %#v", frontend.Events[0].Payload)
+	}
+
+	events <- event
+	waitForDesktopCondition(t, func() bool { return frontend.EventCount() == 2 })
+	if frontend.Events[1].Name != platform.FrontendEventPendingRemindersChanged {
+		t.Fatalf("immediate frontend event name = %q", frontend.Events[1].Name)
+	}
+
+	frontend.EmitFunc = func(context.Context, string, any) error { return errors.New("frontend unavailable") }
+	events <- event
+	waitForDesktopCondition(t, func() bool { return frontend.EventCount() == 3 })
+	application.mu.Lock()
+	application.state = DesktopStateStopping
+	application.mu.Unlock()
+	events <- event
 	time.Sleep(10 * time.Millisecond)
 	if frontend.EventCount() != 3 {
 		t.Fatalf("frontend events after stopping = %d, want unchanged", frontend.EventCount())

@@ -182,21 +182,22 @@ type DesktopApplication struct {
 	eventCancel          context.CancelFunc
 	environmentForwarder sync.WaitGroup
 
-	state                 DesktopLifecycleState
-	cleanupError          error
-	resourcesClosed       bool
-	lastError             error
-	runtimeContext        context.Context
-	domReady              bool
-	starting              bool
-	startupDone           chan struct{}
-	startupCancel         context.CancelFunc
-	stopDone              chan struct{}
-	activationSequence    uint64
-	latestActivation      *ActivationDTO
-	frontendReady         bool
-	latestRecovery        *app.RecoveryEvent
-	pendingScheduleHidden map[domain.ScheduleID]struct{}
+	state                   DesktopLifecycleState
+	cleanupError            error
+	resourcesClosed         bool
+	lastError               error
+	runtimeContext          context.Context
+	domReady                bool
+	starting                bool
+	startupDone             chan struct{}
+	startupCancel           context.CancelFunc
+	stopDone                chan struct{}
+	activationSequence      uint64
+	latestActivation        *ActivationDTO
+	frontendReady           bool
+	latestRecovery          *app.RecoveryEvent
+	pendingScheduleHidden   map[domain.ScheduleID]struct{}
+	pendingRemindersChanged bool
 }
 
 // NewDesktopApplication 创建尚未组装 Store 的桌面运行单元。
@@ -398,6 +399,7 @@ func (a *DesktopApplication) assemble(cfg config.Config, logger *slog.Logger, st
 	a.scheduler = scheduler
 	a.bindings = &WailsBindings{application: a}
 	a.pendingScheduleHidden = make(map[domain.ScheduleID]struct{})
+	a.pendingRemindersChanged = false
 	a.resourcesClosed = false
 	return nil
 }
@@ -459,7 +461,7 @@ func (a *DesktopApplication) finishStartup() {
 // startEventForwarders 将平台事实回流至调度器，并保持失败可观察。
 func (a *DesktopApplication) startEventForwarders(ctx context.Context) {
 	if a.scheduler != nil {
-		go a.forwardScheduleHiddenEvents(ctx, a.scheduler.Events())
+		go a.forwardReminderEvents(ctx, a.scheduler.Events())
 	}
 	if a.deps.Activation != nil {
 		go a.forwardActivations(ctx, a.deps.Activation.Events())
@@ -473,8 +475,8 @@ func (a *DesktopApplication) startEventForwarders(ctx context.Context) {
 	}
 }
 
-// forwardScheduleHiddenEvents 把调度器应用事件转成前端边界事件。
-func (a *DesktopApplication) forwardScheduleHiddenEvents(ctx context.Context, events app.ReminderSchedulerEvents) {
+// forwardReminderEvents 把调度器应用事件转成前端边界事件。
+func (a *DesktopApplication) forwardReminderEvents(ctx context.Context, events app.ReminderSchedulerEvents) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -483,7 +485,12 @@ func (a *DesktopApplication) forwardScheduleHiddenEvents(ctx context.Context, ev
 			if !ok {
 				return
 			}
-			a.publishScheduleHidden(event)
+			switch event.Type {
+			case app.ReminderSchedulerEventScheduleHidden:
+				a.publishScheduleHidden(event)
+			case app.ReminderSchedulerEventPendingRemindersChanged:
+				a.publishPendingRemindersChanged(event)
+			}
 		}
 	}
 }
@@ -586,6 +593,8 @@ func (a *DesktopApplication) FrontendReady(ctx context.Context, request Frontend
 		pendingHidden = append(pendingHidden, scheduleID)
 	}
 	a.pendingScheduleHidden = make(map[domain.ScheduleID]struct{})
+	pendingRemindersChanged := a.pendingRemindersChanged
+	a.pendingRemindersChanged = false
 	deliverHidden := a.state == DesktopStateRunning || a.starting
 	frontend := a.deps.Frontend
 	a.mu.Unlock()
@@ -595,6 +604,12 @@ func (a *DesktopApplication) FrontendReady(ctx context.Context, request Frontend
 				// 隐藏事件只是数据库事实的即时投影，发送失败不能阻断调度或回滚已提交状态。
 				a.recordError(err)
 			}
+		}
+	}
+	if deliverHidden && pendingRemindersChanged && frontend != nil {
+		if err := frontend.Emit(ctx, platform.FrontendEventPendingRemindersChanged, platform.PendingRemindersChangedEvent{}); err != nil {
+			// 列表变化事件只是数据库事实的即时投影，发送失败不能阻断调度或回滚已提交状态。
+			a.recordError(err)
 		}
 	}
 	if frontend != nil && latestRecovery != nil {
@@ -660,6 +675,32 @@ func (a *DesktopApplication) publishScheduleHidden(event app.ReminderSchedulerEv
 		return
 	}
 	if err := frontend.Emit(ctx, platform.FrontendEventScheduleHidden, platform.ScheduleHiddenEvent{ScheduleID: int64(event.ScheduleID)}); err != nil {
+		a.recordError(err)
+	}
+}
+
+// publishPendingRemindersChanged 在前端握手前合并列表变化，握手后即时发送无状态刷新信号。
+func (a *DesktopApplication) publishPendingRemindersChanged(event app.ReminderSchedulerEvent) {
+	if a == nil || event.Type != app.ReminderSchedulerEventPendingRemindersChanged {
+		return
+	}
+	a.mu.Lock()
+	if a.state == DesktopStateStopping || a.state == DesktopStateStopped || a.state == DesktopStateCleanupFailed {
+		a.mu.Unlock()
+		return
+	}
+	frontend := a.deps.Frontend
+	ctx := a.runtimeContext
+	if !a.frontendReady {
+		a.pendingRemindersChanged = true
+		a.mu.Unlock()
+		return
+	}
+	a.mu.Unlock()
+	if frontend == nil || ctx == nil {
+		return
+	}
+	if err := frontend.Emit(ctx, platform.FrontendEventPendingRemindersChanged, platform.PendingRemindersChangedEvent{}); err != nil {
 		a.recordError(err)
 	}
 }

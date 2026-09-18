@@ -17,6 +17,7 @@
 - 配置文件写入失败统一包装为 `ConfigPersistenceError`，必须保留 cause 链并由 `ErrorFormatter` 映射为 `STORAGE`；不要让前端依赖底层文件路径或具体存储错误类型。
 - Issue #31 的提醒边界由 `ListPendingReminders`、`GetReminderDetail(schedule_id, original_date)` 和 `ConfirmReminder(schedule_id, original_date)` 组成。查询只读当前事实；详情正文不可重建时必须返回可观察状态和可空正文，不得从当前空值伪造历史内容。确认必须经过唯一 Service、MutationCoordinator 和 SQLite 事务，只有事务提交成功后才允许前端移除待处理项。
 - Issue #49 的恢复状态通过 `SchedulerStatus.RecoveryStatus` 和 `FrontendEventRecovery` 独立暴露；前端未 ready 时 runtime 必须保留最新恢复事件，前端 ready 后补发，恢复完成事件只能发生在最终 checkpoint 提交成功之后。
+- 普通提醒成功提交后通过 `FrontendEventPendingRemindersChanged` 通知前端重新读取待处理列表；前端未 ready 时 runtime 只缓存一个变化标记，事件是数据库事实的可丢弃 UI 投影，不得阻塞调度或改变生命周期。
 - 提醒状态转换保持单向：`submitted + processed_at_utc IS NULL → pending → confirmed`；缺失、`claimed`、`failed`、`skipped` 等状态分别映射为 `missing` 或 `not_processable`，不能被确认绑定伪装成成功。重复确认返回首次处理时间且不产生第二次写入；目标不存在、不可处理、底层失败和 `stopping` 必须保留现有错误分类及 `ErrorFormatter` 行为。
 - 通知页面的稳定身份是 `schedule_id + original_date`，不是列表索引或标题。前端通过 `sequence` 去重、通过 `FrontendReady(last_sequence)` 接收前端未就绪期间保留的最新激活；激活只负责显示、切页和定位，不自动确认。逐条 Toast、退出后不冷启动、不自动确认和确认后优先同刻下一条是 Issue #31 的固定决定。
 - Windows 验收必须分开记录四件事：通知端口接收、系统实际显示、点击定位/现有窗口激活、确认持久化。fake 平台测试只能证明端口和状态转换，不能替代 Windows 通知中心观察；构建前还需执行前端检查、Go 检查及 `wails build -platform windows/amd64 -webview2 embed`。
