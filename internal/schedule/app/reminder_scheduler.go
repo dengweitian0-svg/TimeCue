@@ -573,6 +573,11 @@ func (s *ReminderScheduler) processDue(ctx context.Context, candidate reminderCa
 		}
 		submitted++
 	}
+	if submitted > 0 {
+		// 所有 submitted 状态已经成功回写后再通知 UI，保证列表查询以数据库事实为准；
+		// 一个候选批次只发送一次信号，避免同刻多条提醒放大前端刷新请求。
+		s.emitEvent(ReminderSchedulerEvent{Type: ReminderSchedulerEventPendingRemindersChanged})
+	}
 	s.logger.Info("reminder batch processed", "schedule_id", candidate.batch.Occurrences[0].ScheduleID, "batch_unix", candidate.batch.Occurrences[0].StartLocal.Unix(), "submitted", submitted, "failed", failed, "skipped", skipped)
 	return s.advanceCandidateLocked(source, candidate, snapshot.Location)
 }

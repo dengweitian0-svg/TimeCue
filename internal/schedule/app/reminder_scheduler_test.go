@@ -197,24 +197,46 @@ func TestReminderSchedulerUsesOneTimerAndProcessesSameTimeBatch(t *testing.T) {
 	if len(attempts.outcomes) != 2 {
 		t.Fatalf("outcomes = %+v", attempts.outcomes)
 	}
-	for index := 0; index < 2; index++ {
+	hiddenEvents := 0
+	changedEvents := 0
+	for index := 0; index < 4; index++ {
 		select {
 		case event := <-scheduler.Events():
-			if event.Type != ReminderSchedulerEventScheduleHidden || event.ScheduleID <= 0 {
-				t.Fatalf("scheduler event = %+v", event)
-			}
-			identity := domain.OccurrenceIdentity{ScheduleID: event.ScheduleID, OriginalDate: "2026-01-01"}
-			if attempts.status(identity) != ReminderAttemptSubmitted {
-				t.Fatalf("event %d/%s observed before submitted persistence: status=%q", event.ScheduleID, identity.OriginalDate, attempts.status(identity))
+			switch event.Type {
+			case ReminderSchedulerEventScheduleHidden:
+				if event.ScheduleID <= 0 {
+					t.Fatalf("hidden event = %+v", event)
+				}
+				identity := domain.OccurrenceIdentity{ScheduleID: event.ScheduleID, OriginalDate: "2026-01-01"}
+				if attempts.status(identity) != ReminderAttemptSubmitted {
+					t.Fatalf("hidden event %d/%s observed before submitted persistence: status=%q", event.ScheduleID, identity.OriginalDate, attempts.status(identity))
+				}
+				hiddenEvents++
+			case ReminderSchedulerEventPendingRemindersChanged:
+				if event.ScheduleID != 0 {
+					t.Fatalf("pending reminders changed event = %+v", event)
+				}
+				for scheduleID := domain.ScheduleID(1); scheduleID <= 2; scheduleID++ {
+					identity := domain.OccurrenceIdentity{ScheduleID: scheduleID, OriginalDate: "2026-01-01"}
+					if attempts.status(identity) != ReminderAttemptSubmitted {
+						t.Fatalf("pending event observed before submitted persistence for %d/%s: status=%q", scheduleID, identity.OriginalDate, attempts.status(identity))
+					}
+				}
+				changedEvents++
+			default:
+				t.Fatalf("unexpected scheduler event = %+v", event)
 			}
 		case <-time.After(time.Second):
-			t.Fatal("scheduler did not emit hidden event")
+			t.Fatal("scheduler did not emit all submission events")
 		}
+	}
+	if hiddenEvents != 2 || changedEvents != 2 {
+		t.Fatalf("scheduler event counts = hidden:%d changed:%d, want hidden:2 changed:2", hiddenEvents, changedEvents)
 	}
 }
 
-// TestReminderSchedulerEmitsHiddenOnlyForSubmittedSingle 验证重复、失败和单次提交的事件边界。
-func TestReminderSchedulerEmitsHiddenOnlyForSubmittedSingle(t *testing.T) {
+// TestReminderSchedulerEmitsSubmissionEventsAfterSubmitted 验证重复、失败和单次提交的事件边界。
+func TestReminderSchedulerEmitsSubmissionEventsAfterSubmitted(t *testing.T) {
 	location := time.FixedZone("CST", 8*60*60)
 	start := time.Date(2026, 1, 1, 9, 0, 0, 0, location)
 	cron := "0 9 * * *"
@@ -256,13 +278,31 @@ func TestReminderSchedulerEmitsHiddenOnlyForSubmittedSingle(t *testing.T) {
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v", err)
 	}
-	select {
-	case event := <-scheduler.Events():
-		if event.ScheduleID != 1 || event.Type != ReminderSchedulerEventScheduleHidden {
-			t.Fatalf("hidden event = %+v, want single schedule 1", event)
+	hiddenSeen := false
+	changedSeen := false
+	for index := 0; index < 2; index++ {
+		select {
+		case event := <-scheduler.Events():
+			switch event.Type {
+			case ReminderSchedulerEventScheduleHidden:
+				if event.ScheduleID != 1 {
+					t.Fatalf("hidden event = %+v, want single schedule 1", event)
+				}
+				hiddenSeen = true
+			case ReminderSchedulerEventPendingRemindersChanged:
+				if event.ScheduleID != 0 {
+					t.Fatalf("pending reminders changed event = %+v", event)
+				}
+				changedSeen = true
+			default:
+				t.Fatalf("unexpected scheduler event = %+v", event)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("single submitted reminder did not emit all events")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("single submitted reminder did not emit hidden event")
+	}
+	if !hiddenSeen || !changedSeen {
+		t.Fatalf("submitted single events = hidden:%v changed:%v", hiddenSeen, changedSeen)
 	}
 	select {
 	case event := <-scheduler.Events():

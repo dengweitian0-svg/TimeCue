@@ -1,4 +1,4 @@
-import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, RecoveryEvent, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleHidden, ScheduleHiddenListener, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory, Theme, WindowThemeColors } from './contracts';
+import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, PendingRemindersChangedListener, RecoveryEvent, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleHidden, ScheduleHiddenListener, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory, Theme, WindowThemeColors } from './contracts';
 import * as generatedBindings from '../wailsjs/go/runtime/WailsBindings';
 import { EventsOn as generatedEventsOn } from '../wailsjs/runtime/runtime';
 
@@ -35,23 +35,27 @@ export type EventsOn = (name: string, listener: (...args: unknown[]) => void) =>
 export const ACTIVATION_EVENT = 'activation';
 export const RECOVERY_EVENT = 'reminder_recovery';
 export const SCHEDULE_HIDDEN_EVENT = 'schedule_hidden';
+export const PENDING_REMINDERS_CHANGED_EVENT = 'pending_reminders_changed';
 
 /** 将 Wails 生成模块包成生产前端需要的类型安全端口。 */
 export class WailsAdapter implements AppPort {
   private readonly activationListeners = new Set<ActivationListener>();
   private readonly scheduleHiddenListeners = new Set<ScheduleHiddenListener>();
+  private readonly pendingRemindersChangedListeners = new Set<PendingRemindersChangedListener>();
   private readonly recoveryListeners = new Set<(event: RecoveryEvent) => void>();
   private readonly unsubscribeEvents: (() => void) | null;
   private readonly unsubscribeScheduleHiddenEvents: (() => void) | null;
+  private readonly unsubscribePendingRemindersChangedEvents: (() => void) | null;
   private unsubscribeRecoveryEvents: (() => void) | null = null;
 
   constructor(private readonly bindings: BindingsPort, private readonly eventsOn?: EventsOn) {
     this.unsubscribeEvents = eventsOn ? normalizeUnsubscribe(eventsOn(ACTIVATION_EVENT, (...args) => this.onActivation(args))) : null;
     this.unsubscribeScheduleHiddenEvents = eventsOn ? normalizeUnsubscribe(eventsOn(SCHEDULE_HIDDEN_EVENT, (...args) => this.onScheduleHidden(args))) : null;
+    this.unsubscribePendingRemindersChangedEvents = eventsOn ? normalizeUnsubscribe(eventsOn(PENDING_REMINDERS_CHANGED_EVENT, (...args) => this.onPendingRemindersChanged(args))) : null;
   }
 
   /** 释放事件监听，避免热更新或窗口重建后重复接收激活。 */
-  dispose(): void { this.unsubscribeEvents?.(); this.unsubscribeScheduleHiddenEvents?.(); this.unsubscribeRecoveryEvents?.(); this.activationListeners.clear(); this.scheduleHiddenListeners.clear(); this.recoveryListeners.clear(); }
+  dispose(): void { this.unsubscribeEvents?.(); this.unsubscribeScheduleHiddenEvents?.(); this.unsubscribePendingRemindersChangedEvents?.(); this.unsubscribeRecoveryEvents?.(); this.activationListeners.clear(); this.scheduleHiddenListeners.clear(); this.pendingRemindersChangedListeners.clear(); this.recoveryListeners.clear(); }
 
   /** 注册激活监听并返回可重复调用的取消函数。 */
   subscribeActivation(listener: ActivationListener): () => void {
@@ -63,6 +67,12 @@ export class WailsAdapter implements AppPort {
   subscribeScheduleHidden(listener: ScheduleHiddenListener): () => void {
     this.scheduleHiddenListeners.add(listener);
     return () => this.scheduleHiddenListeners.delete(listener);
+  }
+
+  /** 注册待处理提醒列表变化监听，并返回取消函数。 */
+  subscribePendingRemindersChanged(listener: PendingRemindersChangedListener): () => void {
+    this.pendingRemindersChangedListeners.add(listener);
+    return () => this.pendingRemindersChangedListeners.delete(listener);
   }
 
   /** 注册冷启动恢复状态监听，完成事件由控制器触发待处理列表刷新。 */
@@ -90,6 +100,11 @@ export class WailsAdapter implements AppPort {
     } catch {
       // 损坏的边界事件不能污染当前列表状态，后续列表查询仍会按数据库事实修正。
     }
+  }
+
+  /** 转发无状态的待处理提醒列表变化信号，列表内容继续通过查询端口读取。 */
+  private onPendingRemindersChanged(_args: unknown[]): void {
+    for (const listener of this.pendingRemindersChangedListeners) listener();
   }
 
   /** 将 Wails 恢复事件转换为受控的前端状态枚举。 */

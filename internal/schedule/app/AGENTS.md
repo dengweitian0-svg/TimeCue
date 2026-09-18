@@ -43,6 +43,7 @@
 - 恢复批次必须按“Claim/reclaim → 外部 Submit → 结果与 checkpoint 提交”顺序执行；批次级存储失败停止恢复，`claimed` 重试只允许由冷启动恢复端口执行，普通调度仍沿既有 5 秒窗口。
 - `ReminderScheduler.ApplyRuntimeEvent` 是生命周期事件进入提醒派发的唯一应用边界：暂停或停止清空候选并关闭派发资格，恢复和时钟变化从当前环境严格向后重建，不补发过去发生。到期回调还必须检查 `TimeSnapshot` 的环境异常事实，异常时拒绝发送并重建。
 - 提醒调度始终只维护一个全局最近计时器和每个日程一个最早候选；候选携带日程 revision 与 runtime epoch，通知提交使用可取消 context。`reminder_attempts` 的稳定发生身份负责持久化去重，发送结果只回写 `submitted`、`failed` 或 `skipped`。
+- 每个候选批次中至少一条提醒成功回写为 `submitted` 后，调度器只发出一次 `pending_reminders_changed` 应用事件；事件是数据库事实的 UI 投影信号，不携带提醒正文，也不得早于状态回写。
 - 所有正式业务写入必须通过 `MutationCoordinator.BeginMutation` 取得准入；`stopping` 之后返回 `RUNTIME_STOPPING`，查询和只读预览不经过该准入，也不依据提醒派发状态改变结果。
 - 提醒发送状态与处理状态独立：`submitted` 只表示通知端口接收请求，`processed_at_utc` 只表示用户确认；应用层不得把二者合并为一个状态或让发送回写覆盖处理时间。
 - 待处理提醒不保存历史正文快照；列表和详情通过 `OccurrenceSourceReader` 读取当前日程及例外并调用 `domain.OccurrenceForIdentity` 重建。内容无法重建时返回 `content_status=unavailable`，仍保留稳定身份和尝试时间，不伪造标题、备注或时间。

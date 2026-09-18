@@ -50,6 +50,7 @@ export class Controller {
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeActivation: () => void;
   private readonly unsubscribeScheduleHidden: () => void;
+  private readonly unsubscribePendingRemindersChanged: () => void;
   private readonly unsubscribeRecovery: () => void;
   private disposed = false;
   private lastSequence = 0;
@@ -60,7 +61,7 @@ export class Controller {
   private readonly hiddenScheduleIDs = new Set<string>();
 
   /** 注入窄平台端口，并从构造时开始接收激活事件。 */
-  constructor(public readonly port: AppPort) { this.unsubscribeActivation = port.subscribeActivation(this.onActivation); this.unsubscribeScheduleHidden = port.subscribeScheduleHidden(this.onScheduleHidden); this.unsubscribeRecovery = port.subscribeRecovery?.(this.onRecovery) ?? (() => undefined); }
+  constructor(public readonly port: AppPort) { this.unsubscribeActivation = port.subscribeActivation(this.onActivation); this.unsubscribeScheduleHidden = port.subscribeScheduleHidden(this.onScheduleHidden); this.unsubscribePendingRemindersChanged = port.subscribePendingRemindersChanged(this.onPendingRemindersChanged); this.unsubscribeRecovery = port.subscribeRecovery?.(this.onRecovery) ?? (() => undefined); }
 
   /** 返回稳定快照供 React 的 useSyncExternalStore 使用。 */
   snapshot = (): AppState => this.state;
@@ -69,7 +70,7 @@ export class Controller {
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
 
   /** 释放事件订阅和端口资源。 */
-  dispose(): void { this.disposed = true; this.unsubscribeActivation(); this.unsubscribeScheduleHidden(); this.unsubscribeRecovery(); this.port.dispose?.(); this.listeners.clear(); }
+  dispose(): void { this.disposed = true; this.unsubscribeActivation(); this.unsubscribeScheduleHidden(); this.unsubscribePendingRemindersChanged(); this.unsubscribeRecovery(); this.port.dispose?.(); this.listeners.clear(); }
 
   /** 初始化窗口状态、日程列表、提醒列表和前端激活握手。 */
   async initialize(): Promise<void> {
@@ -354,6 +355,12 @@ export class Controller {
     const runtime = this.state.runtime ? { ...this.state.runtime, recoveryStatus: event.status } : { visibility: 'visible' as const, lifecycle: 'running' as const, ready: false, recoveryStatus: event.status };
     this.update({ runtime, notice: event.status === 'failed' ? '提醒恢复未完成，请检查日志。' : this.state.notice });
     if (event.status === 'idle') void this.refreshReminders();
+  };
+
+  /** 收到提醒提交成功信号后后台刷新第一页，不改变当前页面或选中详情。 */
+  private onPendingRemindersChanged = (): void => {
+    if (this.disposed) return;
+    void this.refreshReminders();
   };
 
   /** 收到提交成功事件后只从本地日程投影移除目标，并使旧列表响应失效。 */

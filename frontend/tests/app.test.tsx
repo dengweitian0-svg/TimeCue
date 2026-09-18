@@ -41,6 +41,7 @@ function port(overrides: Partial<AppPort> = {}): AppPort {
     retryCleanup: vi.fn(),
     subscribeActivation: vi.fn(() => () => undefined),
     subscribeScheduleHidden: vi.fn(() => () => undefined),
+    subscribePendingRemindersChanged: vi.fn(() => () => undefined),
   };
   return { ...base, ...overrides };
 }

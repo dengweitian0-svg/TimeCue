@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { toScheduleError } from '../src/contracts';
-import { ACTIVATION_EVENT, SCHEDULE_HIDDEN_EVENT, WailsAdapter, type BindingsPort, type EventsOn } from '../src/wails-adapter';
+import { ACTIVATION_EVENT, PENDING_REMINDERS_CHANGED_EVENT, SCHEDULE_HIDDEN_EVENT, WailsAdapter, type BindingsPort, type EventsOn } from '../src/wails-adapter';
 
 const scheduleDTO = { id: 42, title: '深呼吸', notes: '离开屏幕', first_start_local: '2026-09-16T10:00', duration_minutes: 15, cron: null, until_date_local: null, month_end_policy: null, revision: 3 };
 const reminderDTO = { schedule_id: '9223372036854775807', original_date: '2026-09-16', attempted_at_utc: '2026-09-16T02:00:00Z', start_unix: null, end_unix: null, title: null, notes: null, content_status: 'unavailable', status: 'pending', processed_at_utc: null };
@@ -104,16 +104,19 @@ describe('WailsAdapter', () => {
   it('converts generated activation events and removes listeners', async () => {
     const callbacks = new Map<string, (...args: unknown[]) => void>();
     const eventsOn: EventsOn = vi.fn((name, listener) => { callbacks.set(name, listener); return () => { callbacks.delete(name); }; });
-    const adapter = new WailsAdapter(bindings(), eventsOn); const listener = vi.fn(); const unsubscribe = adapter.subscribeActivation(listener); const hiddenListener = vi.fn(); const unsubscribeHidden = adapter.subscribeScheduleHidden(hiddenListener);
+    const adapter = new WailsAdapter(bindings(), eventsOn); const listener = vi.fn(); const unsubscribe = adapter.subscribeActivation(listener); const hiddenListener = vi.fn(); const unsubscribeHidden = adapter.subscribeScheduleHidden(hiddenListener); const pendingListener = vi.fn(); const unsubscribePending = adapter.subscribePendingRemindersChanged(pendingListener);
     callbacks.get(ACTIVATION_EVENT)?.({ sequence: 4, target: { schedule_id: '42', original_date: '2026-09-16' } });
     expect(listener).toHaveBeenCalledWith({ sequence: 4, targetId: '42', originalDate: '2026-09-16' });
     callbacks.get(SCHEDULE_HIDDEN_EVENT)?.({ schedule_id: '9223372036854775807' });
     expect(hiddenListener).toHaveBeenCalledWith({ scheduleId: '9223372036854775807' });
     callbacks.get(SCHEDULE_HIDDEN_EVENT)?.({ schedule_id: 43 });
     expect(hiddenListener).toHaveBeenCalledWith({ scheduleId: '43' });
-    unsubscribe(); unsubscribeHidden(); callbacks.get(ACTIVATION_EVENT)?.({ sequence: 5, target: { schedule_id: 43, original_date: '2026-09-17' } }); callbacks.get(SCHEDULE_HIDDEN_EVENT)?.({ schedule_id: 44 });
+    callbacks.get(PENDING_REMINDERS_CHANGED_EVENT)?.({});
+    expect(pendingListener).toHaveBeenCalledTimes(1);
+    unsubscribe(); unsubscribeHidden(); unsubscribePending(); callbacks.get(ACTIVATION_EVENT)?.({ sequence: 5, target: { schedule_id: 43, original_date: '2026-09-17' } }); callbacks.get(SCHEDULE_HIDDEN_EVENT)?.({ schedule_id: 44 }); callbacks.get(PENDING_REMINDERS_CHANGED_EVENT)?.({});
     expect(listener).toHaveBeenCalledTimes(1);
     expect(hiddenListener).toHaveBeenCalledTimes(2);
+    expect(pendingListener).toHaveBeenCalledTimes(1);
     adapter.dispose(); expect(callbacks.size).toBe(0);
   });
 });
