@@ -1,6 +1,7 @@
 # internal/platform/windows
 
 - 本目录负责 Windows 单实例守卫和跨进程激活适配，不进入 Wails、SQLite 或运行时业务流程。
+- 原生标题栏主题适配只通过 `platform.WindowThemeController` 暴露；Windows 实现负责 HWND/DWM 调用，非 Windows stub 只为跨平台编译保留窄契约，不承载主题配色或 UI 状态。
 - `WindowsInstanceBroker` 同时实现 `bootstrap.ExclusiveStartup` 与 `platform.ActivationSource`。主实例必须在 `Acquire` 返回成功前创建命名 Pipe listener；释放函数由 bootstrap 持有并负责最终关闭。
 - Mutex 与 Pipe 名称必须包含当前登录用户 SID。Pipe 使用显式 SDDL，只允许当前用户和 SYSTEM；不得依赖默认 ACL，也不得记录原始命令行或 Pipe payload。
 - Pipe 消息有固定大小上限，协议严格校验 kind、正整数 `schedule_id` 和 `YYYY-MM-DD` `original_date`。Toast 无主实例时返回明确的 `ErrActivationWithoutInstance`，调用方必须在进入数据库/UI 前结束进程。

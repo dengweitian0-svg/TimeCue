@@ -226,6 +226,51 @@ func (f *FakeWindowController) ActivateCalls() int {
 	return f.ActivateCount
 }
 
+// FakeWindowThemeController 是原生窗口主题端口的可控测试实现。
+type FakeWindowThemeController struct {
+	ApplyFunc func(context.Context, WindowThemeColors) error
+
+	mu         sync.Mutex
+	Applied    []WindowThemeColors
+	ApplyCount int
+}
+
+// Apply 记录标题栏配色并执行测试钩子。
+func (f *FakeWindowThemeController) Apply(ctx context.Context, colors WindowThemeColors) error {
+	if f == nil {
+		return errors.New("nil fake window theme controller")
+	}
+	f.mu.Lock()
+	f.Applied = append(f.Applied, colors)
+	f.ApplyCount++
+	hook := f.ApplyFunc
+	f.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, colors)
+	}
+	return nil
+}
+
+// Calls 返回标题栏主题应用次数，供并发测试安全读取。
+func (f *FakeWindowThemeController) Calls() int {
+	if f == nil {
+		return 0
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ApplyCount
+}
+
+// AppliedColors 返回已记录的标题栏配色快照。
+func (f *FakeWindowThemeController) AppliedColors() []WindowThemeColors {
+	if f == nil {
+		return nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]WindowThemeColors(nil), f.Applied...)
+}
+
 // FrontendEvent 记录一次发送给前端的事件及其边界载荷。
 type FrontendEvent struct {
 	Name    string
