@@ -1,5 +1,5 @@
 import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type RecoveryEvent, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type ScheduleHidden, type SchedulePage, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
-import { draftRequest, emptyDraft } from './schedule-model';
+import { changeDraftType, draftRequest, emptyDraft } from './schedule-model';
 
 export type Page = 'schedules' | 'reminders' | 'settings';
 export interface AppState {
@@ -168,11 +168,21 @@ export class Controller {
     }
   }
 
-  /** 进入创建页面并取得最新时间边界。 */
-  async beginCreate(): Promise<void> { if (this.state.busy) return; this.update({ page: 'schedules', draft: emptyDraft(), error: null, notice: '' }); if (!this.state.bounds) await this.refreshBounds(); }
+  /** 进入创建页面并用后端当前本地日期初始化重复日程的隐藏生效日期。 */
+  async beginCreate(): Promise<void> {
+    if (this.state.busy) return;
+    const initial = emptyDraft();
+    this.update({ page: 'schedules', draft: initial, error: null, notice: '' });
+    await this.refreshBounds();
+    const bounds = this.state.bounds;
+    if (bounds && this.state.draft === initial) this.update({ draft: { ...initial, effectiveDate: bounds.min.slice(0, 10) } });
+  }
 
   /** 更新未提交草稿，不让输入直接绕过后端端口。 */
   editDraft(patch: Partial<ScheduleDraft>): void { if (!this.state.busy && this.state.draft) this.update({ draft: { ...this.state.draft, ...patch }, error: null }); }
+
+  /** 切换日程类型并从现有端点或重复字段推导目标表单，保留其他草稿内容。 */
+  changeDraftType(type: ScheduleDraft['type']): void { if (!this.state.busy && this.state.draft) this.update({ draft: changeDraftType(this.state.draft, type), error: null }); }
 
   /** 取消创建并丢弃未提交草稿。 */
   cancelCreate(): void { if (!this.state.busy) this.update({ draft: null, error: null }); }

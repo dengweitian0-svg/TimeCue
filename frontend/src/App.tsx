@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
-import { ScheduleError, type AppPort, type CloseBehavior, type LogLevel, type LogLevelSettings, type ReminderDetail, type Schedule, type ScheduleField, type ScheduleType, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
+import { ScheduleError, type AppPort, type CloseBehavior, type LogLevel, type LogLevelSettings, type ReminderDetail, type Schedule, type ScheduleDraft, type ScheduleField, type ScheduleType, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
 import { Controller, groupReminders } from './controller';
 import { draftRequest, localMinute, scheduleSummary, scheduleTypes } from './schedule-model';
 import { themeOrder, themeStyle, themes } from './themes';
@@ -111,13 +111,36 @@ function ScheduleForm({ controller, state }: { controller: Controller; state: Ap
   return <form className="page-section create-form" onSubmit={submit} noValidate><div className="page-heading compact"><div><p className="kicker">NEW SCHEDULE</p><h1>添加日程</h1><p>把想做的事，轻轻记下来。</p></div><button type="button" className="text-button" onClick={() => controller.cancelCreate()}>取消</button></div>
     <div className="form-card"><label>标题 <span>*</span><input autoFocus value={draft.title} placeholder="例如：读完一本喜欢的书" {...field('title')} onChange={event => { setLocalError(null); controller.editDraft({ title: event.target.value }); }} /></label><FieldError error={error} name="title" />
       <label>备注 <small>选填</small><textarea value={draft.notes} placeholder="写点想提醒自己的话" onChange={event => controller.editDraft({ notes: event.target.value })} /></label>
-      <fieldset><legend>重复方式</legend><div className="type-options">{(Object.keys(scheduleTypes) as ScheduleType[]).map(type => <button type="button" key={type} className={`type-option ${draft.type === type ? 'selected' : ''}`} aria-pressed={draft.type === type} onClick={() => controller.editDraft({ type })}>{scheduleTypes[type]}</button>)}</div></fieldset><FieldError error={error} name="type" />
-      <div className="form-grid"><DateField label="开始时间" value={draft.start} error={error} name="start" min={state.bounds?.min} max={state.bounds ? localMinute(new Date(new Date(state.bounds.startMaxExclusive).getTime() - 60000)) : undefined} onChange={start => controller.editDraft({ start })} /><DateField label="结束时间" value={draft.end} error={error} name="end" min={draft.start || state.bounds?.min} max={state.bounds?.endMaxInclusive} onChange={end => controller.editDraft({ end })} /></div>
-      {draft.type !== 'single' && <DateField label="重复截止日期" dateOnly value={draft.until} error={error} name="until" min={draft.start.slice(0, 10)} onChange={until => controller.editDraft({ until })} />}
-      {state.bounds && draft.type === 'single' && <p className="field-hint">可选范围：{state.bounds.min.replace('T', ' ')} 起，结束不晚于 {state.bounds.endMaxInclusive.replace('T', ' ')}。</p>}
+      <fieldset><legend>重复方式</legend><div className="type-options">{(Object.keys(scheduleTypes) as ScheduleType[]).map(type => <button type="button" key={type} className={`type-option ${draft.type === type ? 'selected' : ''}`} aria-pressed={draft.type === type} onClick={() => controller.changeDraftType(type)}>{scheduleTypes[type]}</button>)}</div></fieldset><FieldError error={error} name="type" />
+      {draft.type === 'single' ? <><div className="form-grid"><DateField label="开始时间" value={draft.start} error={error} name="start" min={state.bounds?.min} max={state.bounds ? localMinute(new Date(new Date(state.bounds.startMaxExclusive).getTime() - 60000)) : undefined} onChange={start => controller.editDraft({ start })} /><DateField label="结束时间" value={draft.end} error={error} name="end" min={draft.start || state.bounds?.min} max={state.bounds?.endMaxInclusive} onChange={end => controller.editDraft({ end })} /></div>{state.bounds && <p className="field-hint">可选范围：{state.bounds.min.replace('T', ' ')} 起，结束不晚于 {state.bounds.endMaxInclusive.replace('T', ' ')}。</p>}</> : <RecurringFields controller={controller} draft={draft} error={error} />}
       <div className="form-actions"><button type="button" className="secondary-button" onClick={() => controller.cancelCreate()}>取消</button><button type="submit" className="primary-button" disabled={state.busy}>{state.busy ? '正在保存…' : '保存日程'}</button></div>
     </div></form>;
 }
+
+/** 按重复类型展示时间、持续时长和日期规则，不暴露单次端点或截止日期。 */
+function RecurringFields({ controller, draft, error }: { controller: Controller; draft: ScheduleDraft; error: ScheduleError | null }) {
+  const hours = Array.from({ length: 24 }, (_, index) => padOption(index));
+  const minutes = Array.from({ length: 60 }, (_, index) => padOption(index));
+  return <div className="recurring-fields"><input type="hidden" value={draft.effectiveDate} readOnly aria-label="重复生效日期" />
+    <div className="form-grid"><SelectField label="小时" name="hour" value={draft.hour} error={error} options={hours} onChange={hour => controller.editDraft({ hour })} /><SelectField label="分钟" name="minute" value={draft.minute} error={error} options={minutes} onChange={minute => controller.editDraft({ minute })} /></div>
+    {draft.type === 'weekly' && <WeekdayField controller={controller} draft={draft} error={error} />}
+    {draft.type === 'monthly' && <SelectField label="每月日期" name="monthDay" value={draft.monthDay} error={error} options={Array.from({ length: 31 }, (_, index) => String(index + 1))} onChange={monthDay => controller.editDraft({ monthDay })} />}
+    <label>持续分钟数 <span>*</span><input type="number" min="1" step="1" value={draft.durationMinutes} aria-invalid={Boolean(error?.fields.durationMinutes)} onChange={event => controller.editDraft({ durationMinutes: event.target.value })} />{error?.fields.durationMinutes && <span className="field-error">{error.fields.durationMinutes}</span>}</label>
+    <p className="field-hint">按当前本地日期（{draft.effectiveDate}）开始计算；如果今天的时间已过去，将从下一次匹配开始，不补发历史提醒。{draft.type === 'monthly' ? '短月没有该日期时取当月最后一天。' : ''}</p>
+  </div>;
+}
+
+/** 以按钮组呈现周一至周日多选，星期值直接对应 cron 的 0–6。 */
+function WeekdayField({ controller, draft, error }: { controller: Controller; draft: ScheduleDraft; error: ScheduleError | null }) {
+  const weekdays = [{ label: '一', value: 1 }, { label: '二', value: 2 }, { label: '三', value: 3 }, { label: '四', value: 4 }, { label: '五', value: 5 }, { label: '六', value: 6 }, { label: '日', value: 0 }];
+  return <fieldset><legend>星期 <span>*</span></legend><div className="weekday-options">{weekdays.map(({ label, value }) => { const selected = draft.weekdays.includes(value); return <button type="button" key={value} className={`weekday-option${selected ? ' selected' : ''}`} aria-pressed={selected} onClick={() => controller.editDraft({ weekdays: selected ? draft.weekdays.filter(day => day !== value) : [...draft.weekdays, value].sort((a, b) => a - b) })}>周{label}</button>; })}</div><FieldError error={error} name="weekdays" /></fieldset>;
+}
+
+/** 输出带两位数字的原生下拉选项。 */
+function padOption(value: number): string { return String(value).padStart(2, '0'); }
+
+/** 显示重复时间控件并关联结构化字段错误。 */
+function SelectField({ label, name, value, options, error, onChange }: { label: string; name: ScheduleField; value: string; options: string[]; error: ScheduleError | null; onChange: (value: string) => void }) { const message = error?.fields[name]; return <label className="select-field">{label} <span>*</span><select value={value} aria-invalid={Boolean(message)} onChange={event => onChange(event.target.value)}><option value="">请选择</option>{options.map(option => <option key={option} value={option}>{option}</option>)}</select>{message && <span className="field-error">{message}</span>}</label>; }
 
 /** 显示单个日期时间输入并关联结构化字段错误。 */
 function DateField({ label, name, value, min, max, dateOnly = false, error, onChange }: { label: string; name: ScheduleField; value: string; min?: string; max?: string; dateOnly?: boolean; error: ScheduleError | null; onChange: (value: string) => void }) { const message = error?.fields[name]; return <label>{label} <span>*</span><input type={dateOnly ? 'date' : 'datetime-local'} value={value} min={min?.slice(0, dateOnly ? 10 : 16)} max={max?.slice(0, dateOnly ? 10 : 16)} aria-invalid={Boolean(message)} aria-describedby={message ? `error-${name}` : undefined} onChange={event => onChange(event.target.value)} />{message && <span className="field-error" id={`error-${name}`}>{message}</span>}</label>; }

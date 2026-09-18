@@ -75,6 +75,32 @@ describe('App', () => {
     host.remove();
   });
 
+  it('renders type-specific recurring controls without single endpoints or cutoff', async () => {
+    const platform = port();
+    const controller = new Controller(platform);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    root.render(<App controller={controller} />);
+    await flushRender();
+    [...host.querySelectorAll('button')].find(button => button.textContent?.includes('添加日程'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+    [...host.querySelectorAll('button')].find(button => button.textContent === '每周')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushRender();
+
+    expect(host.querySelectorAll('input[type="datetime-local"], input[type="date"]')).toHaveLength(0);
+    expect((host.querySelector('input[aria-label="重复生效日期"]') as HTMLInputElement)?.value).toBe('2026-09-16');
+    expect(host.querySelectorAll('select')).toHaveLength(2);
+    expect(host.querySelector('input[type="number"]')?.getAttribute('value')).toBe('1');
+    expect(host.textContent).toContain('周一');
+    expect(host.textContent).toContain('周日');
+    expect(host.textContent).not.toContain('重复截止日期');
+
+    root.unmount();
+    controller.dispose();
+    host.remove();
+  });
+
   it('renders configuration controls without a database path input', async () => {
     const platform = port();
     const controller = new Controller(platform);
