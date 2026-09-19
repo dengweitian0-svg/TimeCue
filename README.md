@@ -174,18 +174,46 @@ Windows 桌面功能验收还应实际观察通知中心显示、通知点击后
 
 ```text
 .
-├── main.go                 # Windows 桌面入口
-├── frontend/               # React + TypeScript 页面
+├── main.go                     # Windows 桌面入口
+├── frontend/                   # React + TypeScript 页面
+│   ├── src/
+│   │   ├── app/                # 页面组装和前端状态投影
+│   │   ├── features/
+│   │   │   ├── reminders/      # 待处理提醒和确认
+│   │   │   ├── schedules/      # 日程列表、表单和日程模型
+│   │   │   └── settings/       # 设置页、主题和目录配置
+│   │   ├── shared/
+│   │   │   ├── components/     # 跨功能 UI 组件
+│   │   │   ├── contracts/      # 运行时和错误契约
+│   │   │   ├── fields/         # 通用表单字段
+│   │   │   └── ports/          # 前端应用端口
+│   │   ├── controller.ts       # 用例编排和页面状态管理
+│   │   ├── wails-adapter.ts    # Wails 绑定到前端端口的适配器
+│   │   ├── contracts.ts        # 前端契约统一导出
+│   │   ├── schedule-model.ts   # 日程表单转换和校验
+│   │   ├── themes.ts           # 主题语义颜色
+│   │   ├── styles.css          # 全局样式
+│   │   └── main.tsx            # 前端启动入口
+│   ├── tests/                  # Controller、页面和适配器测试
+│   ├── wailsjs/                # Wails 生成的绑定代码
+│   ├── index.html              # Vite HTML 入口
+│   ├── package.json            # npm 脚本和依赖
+│   ├── package-lock.json       # npm 依赖锁定
+│   ├── tsconfig.json           # TypeScript 配置
+│   └── vite.config.ts          # Vite 和 Vitest 配置
 ├── internal/
-│   ├── bootstrap/          # 启动、资源所有权和退出
-│   ├── config/             # YAML 配置和路径解析
-│   ├── log/                # slog JSONL 日志
-│   ├── platform/           # Windows 与桌面平台适配
-│   ├── runtime/            # 运行单元和 Wails 绑定
-│   ├── schedule/           # 领域、用例、调度和时钟
-│   ├── storage/sqlite/     # SQLite 实现和迁移
-│   └── utils/              # 错误分类和退出码
-├── build/                  # 构建资源
-└── wails.json              # Wails 项目配置
+│   ├── bootstrap/              # 启动、资源所有权和退出
+│   ├── config/                 # YAML 配置和路径解析
+│   ├── log/                    # slog JSONL 日志
+│   ├── platform/               # Windows 与桌面平台适配
+│   ├── runtime/                # 运行单元和 Wails 绑定
+│   ├── schedule/               # 领域、用例、调度和时钟
+│   ├── storage/sqlite/         # SQLite 实现和迁移
+│   └── utils/                  # 错误分类和退出码
+├── build/                      # 构建资源
+└── wails.json                  # Wails 项目配置
 ```
 
+## 贡献
+
+请阅读[贡献规范](docs/CONTRIBUTING.md)，其中包含分支策略、提交约定、Pull Request 流程和 CI 检查要求。
