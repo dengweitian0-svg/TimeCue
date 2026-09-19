@@ -11,6 +11,9 @@ export interface SettingsPort {
   saveLogLevel(value: LogLevel): Promise<LogLevelSettings>;
   getStorageDirectories(): Promise<StorageDirectories>;
   chooseDirectory(kind: DirectoryKind): Promise<string | null>;
-  saveStorageDirectory(kind: DirectoryKind, path: string): Promise<StorageDirectory>;
+  saveStorageDirectory(
+    kind: DirectoryKind,
+    path: string,
+  ): Promise<StorageDirectory>;
   restoreConfigDefault(property: ConfigProperty): Promise<void>;
 }

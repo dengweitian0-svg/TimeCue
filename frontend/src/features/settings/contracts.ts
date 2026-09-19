@@ -8,7 +8,12 @@ export type DirectoryKind = 'logs' | 'backups';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /** 可恢复默认值的配置属性。 */
-export type ConfigProperty = 'log.level' | 'log.path' | 'backup.dir' | 'window.close_behavior' | 'theme';
+export type ConfigProperty =
+  | 'log.level'
+  | 'log.path'
+  | 'backup.dir'
+  | 'window.close_behavior'
+  | 'theme';
 
 /** 支持的主题值。 */
 export type Theme = 'peach' | 'mint' | 'sky' | 'lavender';

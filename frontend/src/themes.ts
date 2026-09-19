@@ -75,7 +75,11 @@ export const themeOrder: Theme[] = ['peach', 'mint', 'sky', 'lavender'];
 
 /** 将语义颜色转换为页面共用的 CSS 自定义属性。 */
 export function themeStyle(theme: Theme): Record<string, string> {
-  return Object.fromEntries(Object.entries(themes[theme]).filter(([name]) => name !== 'name').map(([name, value]) => [`--${name}`, value]));
+  return Object.fromEntries(
+    Object.entries(themes[theme])
+      .filter(([name]) => name !== 'name')
+      .map(([name, value]) => [`--${name}`, value]),
+  );
 }
 
 /** 从当前主题提取原生标题栏所需的最小语义颜色集合。 */

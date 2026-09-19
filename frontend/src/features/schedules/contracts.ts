@@ -72,7 +72,18 @@ export interface ScheduleListRequest {
 }
 
 /** 创建表单中可以出现结构化错误的字段。 */
-export type ScheduleField = 'title' | 'start' | 'end' | 'type' | 'until' | 'effectiveDate' | 'hour' | 'minute' | 'weekdays' | 'monthDay' | 'durationMinutes';
+export type ScheduleField =
+  | 'title'
+  | 'start'
+  | 'end'
+  | 'type'
+  | 'until'
+  | 'effectiveDate'
+  | 'hour'
+  | 'minute'
+  | 'weekdays'
+  | 'monthDay'
+  | 'durationMinutes';
 
 /** 单次日程提交后从页面投影中隐藏的事件。 */
 export interface ScheduleHidden {
@@ -94,4 +105,5 @@ export interface ScheduleActionState {
 }
 
 /** 让日程字段错误在 feature 内保持明确的结构类型。 */
-export type ScheduleFieldErrors = Partial<Record<ScheduleField, string>> & FieldErrors;
+export type ScheduleFieldErrors = Partial<Record<ScheduleField, string>> &
+  FieldErrors;

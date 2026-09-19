@@ -9,7 +9,15 @@ export interface ErrorBounds {
 }
 
 /** 前端统一识别的业务错误码。 */
-export type ScheduleErrorCode = 'VALIDATION' | 'TIME_RANGE_EXCEEDED' | 'STALE_REVISION' | 'STALE_CURSOR' | 'REMINDER_NOT_PROCESSABLE' | 'NOT_FOUND' | 'STORAGE' | 'RUNTIME_STOPPING';
+export type ScheduleErrorCode =
+  | 'VALIDATION'
+  | 'TIME_RANGE_EXCEEDED'
+  | 'STALE_REVISION'
+  | 'STALE_CURSOR'
+  | 'REMINDER_NOT_PROCESSABLE'
+  | 'NOT_FOUND'
+  | 'STORAGE'
+  | 'RUNTIME_STOPPING';
 
 /** 将端口拒绝值转换后的稳定业务错误。 */
 export class ScheduleError extends Error {
@@ -31,7 +39,9 @@ export function toScheduleError(value: unknown): ScheduleError {
   const code = isScheduleCode(payload.code) ? payload.code : 'STORAGE';
   const message = readableErrorMessage(payload.message);
   const fields = toFieldMessages(payload.fields, message);
-  const bounds = isRecord(payload.bounds) ? payload.bounds as unknown as ErrorBounds : undefined;
+  const bounds = isRecord(payload.bounds)
+    ? (payload.bounds as unknown as ErrorBounds)
+    : undefined;
   return new ScheduleError(code, message, fields, bounds);
 }
 
@@ -39,7 +49,12 @@ export function toScheduleError(value: unknown): ScheduleError {
 function readableErrorMessage(value: unknown): string {
   if (typeof value !== 'string') return '操作未完成，请重试。';
   const message = value.trim();
-  if (!message || message.toLowerCase() === 'object' || message === '[object Object]') return '操作未完成，请重试。';
+  if (
+    !message ||
+    message.toLowerCase() === 'object' ||
+    message === '[object Object]'
+  )
+    return '操作未完成，请重试。';
   return message;
 }
 
@@ -56,7 +71,9 @@ function toFieldMessages(value: unknown, message: string): FieldErrors {
   if (isRecord(value)) {
     for (const [field, fieldMessage] of Object.entries(value)) {
       const name = mapBackendField(field);
-      if (name) result[name] = typeof fieldMessage === 'string' ? fieldMessage : message;
+      if (name)
+        result[name] =
+          typeof fieldMessage === 'string' ? fieldMessage : message;
     }
   }
   return result;
@@ -64,7 +81,17 @@ function toFieldMessages(value: unknown, message: string): FieldErrors {
 
 /** 将 Go JSON 解码器使用的 snake_case 字段名映射到表单字段。 */
 function mapBackendField(value: string): string | undefined {
-  const fields: Record<string, string> = { title: 'title', start: 'start', start_unix: 'start', end: 'end', end_unix: 'end', type: 'type', cron: 'type', until: 'until', until_unix: 'until' };
+  const fields: Record<string, string> = {
+    title: 'title',
+    start: 'start',
+    start_unix: 'start',
+    end: 'end',
+    end_unix: 'end',
+    type: 'type',
+    cron: 'type',
+    until: 'until',
+    until_unix: 'until',
+  };
   return fields[value];
 }
 
@@ -98,5 +125,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** 限定后端错误码，未知错误统一按存储失败处理。 */
 function isScheduleCode(value: unknown): value is ScheduleErrorCode {
-  return value === 'VALIDATION' || value === 'TIME_RANGE_EXCEEDED' || value === 'STALE_REVISION' || value === 'STALE_CURSOR' || value === 'REMINDER_NOT_PROCESSABLE' || value === 'NOT_FOUND' || value === 'STORAGE' || value === 'RUNTIME_STOPPING';
+  return (
+    value === 'VALIDATION' ||
+    value === 'TIME_RANGE_EXCEEDED' ||
+    value === 'STALE_REVISION' ||
+    value === 'STALE_CURSOR' ||
+    value === 'REMINDER_NOT_PROCESSABLE' ||
+    value === 'NOT_FOUND' ||
+    value === 'STORAGE' ||
+    value === 'RUNTIME_STOPPING'
+  );
 }

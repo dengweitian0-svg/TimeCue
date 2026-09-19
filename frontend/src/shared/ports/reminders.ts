@@ -5,5 +5,7 @@ export interface ReminderPort {
   listPendingReminders(request?: ReminderListRequest): Promise<ReminderPage>;
   getReminderDetail(identity: ReminderIdentity): Promise<ReminderDetail>;
   confirmReminder(identity: ReminderIdentity): Promise<ReminderConfirmation>;
-  subscribePendingRemindersChanged(listener: PendingRemindersChangedListener): () => void;
+  subscribePendingRemindersChanged(
+    listener: PendingRemindersChangedListener,
+  ): () => void;
 }

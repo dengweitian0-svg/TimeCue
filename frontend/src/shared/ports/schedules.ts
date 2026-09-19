@@ -7,7 +7,13 @@ export interface SchedulePort {
   getScheduleTimeBounds(): Promise<ScheduleBounds>;
   createSchedule(request: CreateScheduleRequest): Promise<Schedule>;
   deleteSchedule(id: string, expectedRevision: number): Promise<void>;
-  cancelSchedule(id: string, expectedRevision: number): Promise<ScheduleActionResult>;
-  restoreSchedule(id: string, expectedRevision: number): Promise<ScheduleActionResult>;
+  cancelSchedule(
+    id: string,
+    expectedRevision: number,
+  ): Promise<ScheduleActionResult>;
+  restoreSchedule(
+    id: string,
+    expectedRevision: number,
+  ): Promise<ScheduleActionResult>;
   subscribeScheduleHidden(listener: ScheduleHiddenListener): () => void;
 }

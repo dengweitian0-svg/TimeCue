@@ -8,10 +8,18 @@ export interface ReminderIdentity {
 export type ReminderContentStatus = 'available' | 'unavailable';
 
 /** 提醒当前的处理状态。 */
-export type ReminderStatus = 'pending' | 'confirmed' | 'missing' | 'not_processable';
+export type ReminderStatus =
+  | 'pending'
+  | 'confirmed'
+  | 'missing'
+  | 'not_processable';
 
 /** 待处理提醒端口可能返回的业务错误码。 */
-export type PendingReminderErrorCode = 'STALE_CURSOR' | 'REMINDER_NOT_PROCESSABLE' | 'NOT_FOUND' | 'RUNTIME_STOPPING';
+export type PendingReminderErrorCode =
+  | 'STALE_CURSOR'
+  | 'REMINDER_NOT_PROCESSABLE'
+  | 'NOT_FOUND'
+  | 'RUNTIME_STOPPING';
 
 /** 待处理提醒详情。 */
 export interface ReminderDetail extends ReminderIdentity {
