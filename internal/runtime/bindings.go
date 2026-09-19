@@ -166,6 +166,38 @@ func (b *WailsBindings) DeleteSchedule(id int64, payload string) (DeleteSchedule
 	return DeleteScheduleDTO{Title: title}, err
 }
 
+// CancelSchedule 取消重复日程的后续提醒，但保留日程及其历史事实。
+func (b *WailsBindings) CancelSchedule(id int64, payload string) (app.ScheduleActionDTO, error) {
+	if err := b.validate(); err != nil {
+		return app.ScheduleActionDTO{}, err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return app.ScheduleActionDTO{}, err
+	}
+	request, err := app.DecodeScheduleAction([]byte(payload))
+	if err != nil {
+		return app.ScheduleActionDTO{}, err
+	}
+	return b.application.service.CancelSchedule(ctx, domain.ScheduleID(id), request)
+}
+
+// RestoreSchedule 恢复已取消重复日程的后续提醒。
+func (b *WailsBindings) RestoreSchedule(id int64, payload string) (app.ScheduleActionDTO, error) {
+	if err := b.validate(); err != nil {
+		return app.ScheduleActionDTO{}, err
+	}
+	ctx, err := b.application.bindingContext()
+	if err != nil {
+		return app.ScheduleActionDTO{}, err
+	}
+	request, err := app.DecodeScheduleAction([]byte(payload))
+	if err != nil {
+		return app.ScheduleActionDTO{}, err
+	}
+	return b.application.service.RestoreSchedule(ctx, domain.ScheduleID(id), request)
+}
+
 // GetScheduleTimeBounds 返回当前时间环境下的日程时间边界。
 func (b *WailsBindings) GetScheduleTimeBounds() (app.TimeBoundsDTO, error) {
 	if err := b.validate(); err != nil {

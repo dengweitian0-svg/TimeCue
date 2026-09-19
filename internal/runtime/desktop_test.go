@@ -495,6 +495,54 @@ func TestWailsBindingsUseJSONPresenceAndSQLiteStore(t *testing.T) {
 	}
 }
 
+// TestWailsBindingsExposeRecurringScheduleActions 验证绑定可取消和恢复重复日程且不会删除日程。
+func TestWailsBindingsExposeRecurringScheduleActions(t *testing.T) {
+	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	application, cancel := newDesktopTestApplication(t, host, nil)
+	defer cancel()
+	binding := application.Bindings()
+	start := time.Date(2026, 1, 1, 9, 0, 0, 0, time.FixedZone("CST", 8*60*60)).Unix()
+
+	created, err := binding.CreateSchedule(`{"title":"Recurring","start_unix":` + formatInt(start) + `,"end_unix":` + formatInt(start+30*60) + `,"cron":"0 9 * * *"}`)
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	if !created.Open || created.Revision != 1 {
+		t.Fatalf("created schedule = %+v, want open revision 1", created)
+	}
+
+	cancelled, err := binding.CancelSchedule(created.ID, `{"expected_revision":1}`)
+	if err != nil {
+		t.Fatalf("CancelSchedule() error = %v", err)
+	}
+	if cancelled.Open || cancelled.Revision != 2 {
+		t.Fatalf("cancelled action = %+v, want closed revision 2", cancelled)
+	}
+	fetched, err := binding.GetSchedule(created.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule() after cancellation error = %v", err)
+	}
+	if fetched.ID != created.ID || fetched.Open {
+		t.Fatalf("fetched schedule after cancellation = %+v, want retained and closed", fetched)
+	}
+
+	restored, err := binding.RestoreSchedule(created.ID, `{"expected_revision":2}`)
+	if err != nil {
+		t.Fatalf("RestoreSchedule() error = %v", err)
+	}
+	if !restored.Open || restored.Revision != 3 {
+		t.Fatalf("restored action = %+v, want open revision 3", restored)
+	}
+
+	single, err := binding.CreateSchedule(`{"title":"Single","start_unix":` + formatInt(start) + `,"end_unix":` + formatInt(start+30*60) + `}`)
+	if err != nil {
+		t.Fatalf("CreateSchedule(single) error = %v", err)
+	}
+	if _, err := binding.CancelSchedule(single.ID, `{"expected_revision":1}`); err == nil || FormatError(err).Code != string(domain.Validation) {
+		t.Fatalf("CancelSchedule(single) error = %v, formatted = %+v, want VALIDATION", err, FormatError(err))
+	}
+}
+
 // TestConfigBindingsExposeLogLevelAndRestoreDefault 验证日志级别保存与显式恢复默认的运行时边界。
 func TestConfigBindingsExposeLogLevelAndRestoreDefault(t *testing.T) {
 	host := &platform.FakeDesktopHost{RunFunc: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
