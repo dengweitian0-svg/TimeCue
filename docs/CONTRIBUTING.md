@@ -111,13 +111,17 @@ git switch -c feat/12-recurring-reminder
 
 ## CI 规则
 
-向 `dev` 提交 Pull Request 时，`.github/workflows/ci.yml` 会自动执行 Go CI 检查；当前仓库包含 `go.mod`，因此会执行以下检查：
+向 `dev` 提交 Pull Request 时，`.github/workflows/ci.yml` 会自动执行 Go 和 TypeScript CI 检查。当前仓库包含 `go.mod` 和 `frontend/package-lock.json`，因此会执行以下检查：
 
 当前检查包括：
 
 - `gofmt`
 - `go vet`
 - `go test ./...`
+- `npm ci --prefix frontend`
+- `npm --prefix frontend run typecheck`
+- `npm --prefix frontend test`
+- `npm --prefix frontend run build`
 
 CI 通过后再合并 PR。
 

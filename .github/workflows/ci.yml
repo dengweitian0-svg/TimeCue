@@ -53,3 +53,30 @@ jobs:
       - name: 运行测试
         if: steps.go-module.outputs.exists == 'true'
         run: go test ./...
+
+  frontend-checks:
+    name: TypeScript Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js 环境
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装前端依赖
+        run: npm ci --prefix frontend
+
+      - name: TypeScript 类型检查
+        run: npm --prefix frontend run typecheck
+
+      - name: 运行前端测试
+        run: npm --prefix frontend test
+
+      - name: 构建前端
+        run: npm --prefix frontend run build
