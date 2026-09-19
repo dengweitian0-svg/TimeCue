@@ -1,10 +1,16 @@
-import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type RecoveryEvent, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleActionResult, type ScheduleBounds, type ScheduleDraft, type ScheduleHidden, type SchedulePage, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
-import { changeDraftType, draftRequest, emptyDraft } from './schedule-model';
+import { ScheduleError, toScheduleError } from './shared/contracts/errors';
+import type { Activation, RecoveryEvent, RuntimeStatus } from './shared/contracts/runtime';
+import type { AppPort } from './shared/ports/app-port';
+import type { CloseBehavior, ConfigProperty, DirectoryKind, LogLevel, LogLevelSettings, StorageDirectories, StorageDirectory, Theme } from './features/settings/contracts';
+import type { ReminderDetail, ReminderIdentity, ReminderPage } from './features/reminders/contracts';
+import type { Schedule, ScheduleActionKind, ScheduleActionResult, ScheduleActionState, ScheduleBounds, ScheduleDraft, ScheduleHidden, SchedulePage } from './features/schedules/contracts';
+import { groupReminders, sameReminder } from './features/reminders/model';
+import { changeDraftType, draftRequest, emptyDraft } from './features/schedules/model';
 import { windowThemeColors } from './themes';
 
 export type Page = 'schedules' | 'reminders' | 'settings';
-export type ScheduleActionKind = 'cancel' | 'restore';
-export interface ScheduleActionState { kind: ScheduleActionKind; item: Schedule; }
+export type { ScheduleActionKind, ScheduleActionState } from './features/schedules/contracts';
+export { groupReminders, sameReminder } from './features/reminders/model';
 export interface AppState {
   page: Page;
   schedules: SchedulePage;
@@ -34,18 +40,6 @@ export interface AppState {
 
 const initialPage: SchedulePage = { items: [], nextCursor: '', limit: 20 };
 const initialReminderPage: ReminderPage = { items: [], nextCursor: '', limit: 20 };
-
-/** 以稳定身份比较两条提醒，避免依赖列表位置或可变正文。 */
-export function sameReminder(left: ReminderIdentity | null | undefined, right: ReminderIdentity | null | undefined): boolean {
-  return Boolean(left && right && left.scheduleId === right.scheduleId && left.originalDate === right.originalDate);
-}
-
-/** 返回当前提醒同一实际开始时刻的可切换项；无法重建时间的项不被错误合并。 */
-export function groupReminders(items: ReminderDetail[], active: ReminderIdentity | null): ReminderDetail[] {
-  const selected = items.find(item => sameReminder(item, active));
-  if (!selected || selected.startUnix === null) return selected ? [selected] : [];
-  return items.filter(item => item.startUnix === selected.startUnix);
-}
 
 /** 编排生产前端的日程、偏好、运行状态和激活用例，不拥有后端持久状态。 */
 export class Controller {

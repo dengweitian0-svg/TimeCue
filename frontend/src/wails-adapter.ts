@@ -1,4 +1,8 @@
-import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, PendingRemindersChangedListener, RecoveryEvent, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleActionResult, ScheduleBounds, ScheduleHidden, ScheduleHiddenListener, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory, Theme, WindowThemeColors } from './contracts';
+import type { Activation, ActivationListener, FrontendStatus, RecoveryEvent, RuntimeStatus } from './shared/contracts/runtime';
+import type { AppPort } from './shared/ports/app-port';
+import type { CloseBehavior, ConfigProperty, DirectoryKind, LogLevel, LogLevelSettings, StorageDirectories, StorageDirectory, Theme, WindowThemeColors } from './features/settings/contracts';
+import type { PendingRemindersChangedListener, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage } from './features/reminders/contracts';
+import type { CreateScheduleRequest, Schedule, ScheduleActionResult, ScheduleBounds, ScheduleHidden, ScheduleHiddenListener, ScheduleListRequest, SchedulePage } from './features/schedules/contracts';
 import * as generatedBindings from '../wailsjs/go/runtime/WailsBindings';
 import { EventsOn as generatedEventsOn } from '../wailsjs/runtime/runtime';
 
