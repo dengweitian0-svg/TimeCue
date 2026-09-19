@@ -1,13 +1,10 @@
 import { useEffect, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
-import { ScheduleError, type AppPort, type CloseBehavior, type LogLevel, type LogLevelSettings, type ReminderDetail, type Schedule, type ScheduleDraft, type ScheduleField, type ScheduleType, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
+import { type AppPort, type CloseBehavior, type LogLevel, type LogLevelSettings, type ReminderDetail, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
 import { Controller, groupReminders } from './controller';
-import { draftRequest, localMinute, scheduleSummary, scheduleTypes } from './schedule-model';
+import { SchedulesPage } from './features/schedules/SchedulesPage';
 import { ErrorBanner } from './shared/components/ErrorBanner';
 import { LoadingCard } from './shared/components/LoadingCard';
 import { NoticeToast } from './shared/components/NoticeToast';
-import { DateField } from './shared/fields/DateField';
-import { FieldError } from './shared/fields/FieldError';
-import { SelectField } from './shared/fields/SelectField';
 import { themeOrder, themeStyle, themes } from './themes';
 
 /** 生产桌面页面只呈现日程、关闭偏好、运行状态和激活结果。 */
@@ -30,7 +27,7 @@ export function App({ controller }: { controller: Controller }) {
       <header className="topbar"><div><p className="kicker">TIME CUE / DESKTOP</p><p className="today">今天，按自己的节奏来</p></div><span className="status-dot" aria-label="应用在线" /></header>
       {state.error && <ErrorBanner error={state.error} />}
       {state.notice && <NoticeToast message={state.notice} onDismiss={message => controller.clearNotice(message)} />}
-      {state.page === 'settings' ? <Settings controller={controller} theme={state.theme} closeBehavior={state.closeBehavior} logLevel={state.logLevel} storageDirectories={state.storageDirectories} busy={state.busy} /> : state.page === 'reminders' ? <Reminders controller={controller} state={state} /> : <Schedules controller={controller} state={state} />}
+      {state.page === 'settings' ? <Settings controller={controller} theme={state.theme} closeBehavior={state.closeBehavior} logLevel={state.logLevel} storageDirectories={state.storageDirectories} busy={state.busy} /> : state.page === 'reminders' ? <Reminders controller={controller} state={state} /> : <SchedulesPage actions={controller} state={state} />}
     </main>
   </div>;
 }
@@ -80,76 +77,6 @@ function reminderStatusLabel(status: ReminderDetail['status']): string { return 
 
 /** 将 Unix 秒转换为本地化的提醒时间。 */
 function formatReminderTime(unix: number): string { return new Date(unix * 1000).toLocaleString('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
-
-/** 展示结构化错误及字段级提示。 */
-/** 日程定义列表与创建入口。 */
-function Schedules({ controller, state }: { controller: Controller; state: AppState }) {
-  if (state.draft) return <ScheduleForm controller={controller} state={state} />;
-  return <section className="page-section"><div className="page-heading"><div><p className="kicker">SCHEDULES</p><h1>我的日程</h1><p>给重要的小事，留出一段完整的时间。</p></div><button className="primary-button" onClick={() => void controller.beginCreate()}>＋ 添加日程</button></div>
-    <div className="list-toolbar"><span>{state.loading ? '正在读取…' : `${state.schedules.items.length} 个日程`}</span><button className="text-button" onClick={() => void controller.refreshSchedules()} disabled={state.loading}>重新加载</button></div>
-    {state.schedules.items.length ? <div className="schedule-list">{state.schedules.items.map(item => <ScheduleCard key={item.id} schedule={item} onDelete={() => controller.askDelete(item)} onScheduleAction={kind => controller.askScheduleAction(kind, item)} />)}</div> : state.loading ? <LoadingCard /> : <EmptySchedules onCreate={() => void controller.beginCreate()} />}
-    {state.schedules.nextCursor && <button className="secondary-button pagination" onClick={() => void controller.nextPage()}>加载更多</button>}
-    {state.deleting && <DeleteDialog controller={controller} item={state.deleting} busy={state.busy} error={state.error} />}
-    {state.scheduleAction && <ScheduleActionDialog controller={controller} action={state.scheduleAction} busy={state.busy} error={state.error} />}
-  </section>;
-}
-
-/** 显示一条日程定义、重复提醒状态和永久删除动作。 */
-function ScheduleCard({ schedule, onDelete, onScheduleAction }: { schedule: Schedule; onDelete: () => void; onScheduleAction: (kind: 'cancel' | 'restore') => void }) {
-  const recurring = Boolean(schedule.cron);
-  const cancelled = recurring && !schedule.open;
-  return <article className={`schedule-card${cancelled ? ' cancelled' : ''}`}><div className="schedule-accent" /><div className="schedule-card-body"><div className="schedule-card-head"><div><div className="schedule-type-row"><p className="schedule-type">{recurring ? '重复日程' : '单次日程'}</p>{cancelled && <span className="schedule-status">提醒已取消</span>}</div><h2>{schedule.title}</h2></div><div className="schedule-card-actions">{recurring && <button className="text-button schedule-action-button" aria-label={`${cancelled ? '恢复' : '取消'} ${schedule.title} 的提醒`} onClick={() => onScheduleAction(cancelled ? 'restore' : 'cancel')}>{cancelled ? '恢复提醒' : '取消提醒'}</button>}<button className="icon-button delete" aria-label={`删除 ${schedule.title}`} onClick={onDelete}>×</button></div></div><p className="schedule-summary">{scheduleSummary(schedule)}</p>{schedule.notes && <p className="schedule-notes">{schedule.notes}</p>}</div></article>;
-}
-
-/** 创建页面只持有输入，最终校验与提交由控制器完成。 */
-function ScheduleForm({ controller, state }: { controller: Controller; state: AppState }) {
-  const draft = state.draft!; const [localError, setLocalError] = useState<ScheduleError | null>(null);
-  const error = localError ?? state.error;
-  /** 先运行本地纯模型校验，以便表单即时显示字段错误。 */
-  function submit(event: FormEvent) { event.preventDefault(); try { draftRequest(draft); setLocalError(null); void controller.saveCreate(); } catch (failure) { setLocalError(failure instanceof ScheduleError ? failure : null); } }
-  /** 读取字段错误并建立控件可访问性关联。 */
-  function field(name: ScheduleField) { const message = error?.fields[name]; return { 'aria-invalid': Boolean(message), 'aria-describedby': message ? `error-${name}` : undefined }; }
-  return <form className="page-section create-form" onSubmit={submit} noValidate><div className="page-heading compact"><div><p className="kicker">NEW SCHEDULE</p><h1>添加日程</h1><p>把想做的事，轻轻记下来。</p></div><button type="button" className="text-button" onClick={() => controller.cancelCreate()}>取消</button></div>
-    <div className="form-card"><label>标题 <span className="required-mark">*</span><input autoFocus value={draft.title} placeholder="例如：读完一本喜欢的书" {...field('title')} onChange={event => { setLocalError(null); controller.editDraft({ title: event.target.value }); }} /></label><FieldError error={error} name="title" />
-      <label>备注 <small>选填</small><textarea value={draft.notes} placeholder="写点想提醒自己的话" onChange={event => controller.editDraft({ notes: event.target.value })} /></label>
-      <fieldset><legend>重复方式</legend><div className="type-options">{(Object.keys(scheduleTypes) as ScheduleType[]).map(type => <button type="button" key={type} className={`type-option ${draft.type === type ? 'selected' : ''}`} aria-pressed={draft.type === type} onClick={() => controller.changeDraftType(type)}>{scheduleTypes[type]}</button>)}</div></fieldset><FieldError error={error} name="type" />
-      {draft.type === 'single' ? <><div className="form-grid"><DateField label="开始时间" value={draft.start} error={error} name="start" min={state.bounds?.min} max={state.bounds ? localMinute(new Date(new Date(state.bounds.startMaxExclusive).getTime() - 60000)) : undefined} onChange={start => controller.editDraft({ start })} /><DateField label="结束时间" value={draft.end} error={error} name="end" min={draft.start || state.bounds?.min} max={state.bounds?.endMaxInclusive} onChange={end => controller.editDraft({ end })} /></div>{state.bounds && <p className="field-hint">可选范围：{state.bounds.min.replace('T', ' ')} 起，结束不晚于 {state.bounds.endMaxInclusive.replace('T', ' ')}。</p>}</> : <RecurringFields controller={controller} draft={draft} error={error} />}
-      <div className="form-actions"><button type="button" className="secondary-button" onClick={() => controller.cancelCreate()}>取消</button><button type="submit" className="primary-button" disabled={state.busy}>{state.busy ? '正在保存…' : '保存日程'}</button></div>
-    </div></form>;
-}
-
-/** 按重复类型展示时间、持续时长和日期规则，不暴露单次端点或截止日期。 */
-function RecurringFields({ controller, draft, error }: { controller: Controller; draft: ScheduleDraft; error: ScheduleError | null }) {
-  const hours = Array.from({ length: 24 }, (_, index) => padOption(index));
-  const minutes = Array.from({ length: 60 }, (_, index) => padOption(index));
-  return <div className="recurring-fields"><input type="hidden" value={draft.effectiveDate} readOnly aria-label="重复生效日期" />
-    <div className="form-grid"><SelectField label="小时" name="hour" value={draft.hour} error={error} options={hours} onChange={hour => controller.editDraft({ hour })} /><SelectField label="分钟" name="minute" value={draft.minute} error={error} options={minutes} onChange={minute => controller.editDraft({ minute })} /></div>
-    {draft.type === 'weekly' && <WeekdayField controller={controller} draft={draft} error={error} />}
-    {draft.type === 'monthly' && <SelectField label="每月日期" name="monthDay" value={draft.monthDay} error={error} options={Array.from({ length: 31 }, (_, index) => String(index + 1))} onChange={monthDay => controller.editDraft({ monthDay })} />}
-    <label>持续分钟数 <span className="required-mark">*</span><input type="number" min="1" step="1" value={draft.durationMinutes} aria-invalid={Boolean(error?.fields.durationMinutes)} onChange={event => controller.editDraft({ durationMinutes: event.target.value })} />{error?.fields.durationMinutes && <span className="field-error">{error.fields.durationMinutes}</span>}</label>
-    <p className="field-hint">按当前本地日期（{draft.effectiveDate}）开始计算；如果今天的时间已过去，将从下一次匹配开始，不补发历史提醒。{draft.type === 'monthly' ? '短月没有该日期时取当月最后一天。' : ''}</p>
-  </div>;
-}
-
-/** 以按钮组呈现周一至周日多选，星期值直接对应 cron 的 0–6。 */
-function WeekdayField({ controller, draft, error }: { controller: Controller; draft: ScheduleDraft; error: ScheduleError | null }) {
-  const weekdays = [{ label: '一', value: 1 }, { label: '二', value: 2 }, { label: '三', value: 3 }, { label: '四', value: 4 }, { label: '五', value: 5 }, { label: '六', value: 6 }, { label: '日', value: 0 }];
-  return <fieldset><legend>星期 <span className="required-mark">*</span></legend><div className="weekday-options">{weekdays.map(({ label, value }) => { const selected = draft.weekdays.includes(value); return <button type="button" key={value} className={`weekday-option${selected ? ' selected' : ''}`} aria-pressed={selected} onClick={() => controller.editDraft({ weekdays: selected ? draft.weekdays.filter(day => day !== value) : [...draft.weekdays, value].sort((a, b) => a - b) })}>周{label}</button>; })}</div><FieldError error={error} name="weekdays" /></fieldset>;
-}
-
-/** 输出带两位数字的原生下拉选项。 */
-function padOption(value: number): string { return String(value).padStart(2, '0'); }
-
-/** 显示重复时间控件并关联结构化字段错误。 */
-/** 删除确认对话框支持并发失败后的重新读取路径。 */
-function DeleteDialog({ controller, item, busy, error }: { controller: Controller; item: Schedule; busy: boolean; error: ScheduleError | null }) { const recovery = error?.code === 'STALE_REVISION' || error?.code === 'NOT_FOUND'; return <div className="dialog-backdrop" role="presentation"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title"><p className="kicker">DELETE SCHEDULE</p><h2 id="delete-title">{recovery ? '日程状态已变化' : '删除这条日程？'}</h2><p><strong>{item.title}</strong></p><p className="dialog-copy">{recovery ? error?.message : '删除后无法恢复，也不会再产生这条日程的提醒。'}</p><div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => controller.cancelDelete()}>保留日程</button>{recovery ? <button className="primary-button" disabled={busy} onClick={() => void controller.recoverDelete()}>{error?.code === 'NOT_FOUND' ? '刷新列表' : '查看最新内容'}</button> : <button className="danger-button" disabled={busy} onClick={() => void controller.confirmDelete()}>永久删除</button>}</div></section></div>; }
-
-/** 为重复日程提供取消或恢复提醒的确认和并发恢复入口。 */
-function ScheduleActionDialog({ controller, action, busy, error }: { controller: Controller; action: NonNullable<AppState['scheduleAction']>; busy: boolean; error: ScheduleError | null }) {
-  const restoring = action.kind === 'restore';
-  const recovery = error?.code === 'STALE_REVISION' || error?.code === 'NOT_FOUND';
-  return <div className="dialog-backdrop" role="presentation"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="schedule-action-title"><p className="kicker">{restoring ? 'RESTORE REMINDER' : 'CANCEL REMINDER'}</p><h2 id="schedule-action-title">{recovery ? '日程状态已变化' : restoring ? '恢复这条日程的提醒？' : '取消这条日程的提醒？'}</h2><p><strong>{action.item.title}</strong></p><p className="dialog-copy">{recovery ? error?.message : restoring ? '恢复后将继续按原重复规则提醒。' : '取消后会保留日程、重复规则和历史数据，但不会再产生后续提醒。'}</p><div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => controller.cancelScheduleAction()}>保留日程</button>{recovery ? <button className="primary-button" disabled={busy} onClick={() => void controller.recoverScheduleAction()}>{error?.code === 'NOT_FOUND' ? '刷新列表' : '查看最新内容'}</button> : <button className="primary-button" disabled={busy} onClick={() => void controller.confirmScheduleAction()}>{busy ? '正在保存…' : restoring ? '恢复提醒' : '取消提醒'}</button>}</div></section></div>;
-}
 
 /** 设置页面呈现四类用户配置、显式恢复默认操作和清理重试入口。 */
 function Settings({ controller, theme, closeBehavior, logLevel, storageDirectories, busy }: { controller: Controller; theme: Theme; closeBehavior: CloseBehavior; logLevel: LogLevelSettings; storageDirectories: StorageDirectories | null; busy: boolean }) {
