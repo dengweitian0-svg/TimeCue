@@ -20,6 +20,8 @@ function port(overrides: Partial<AppPort> = {}): AppPort & { emit: (value: Activ
     confirmReminder: vi.fn(),
     createSchedule: vi.fn(),
     deleteSchedule: vi.fn(),
+    cancelSchedule: vi.fn(),
+    restoreSchedule: vi.fn(),
     getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const })),
     getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true, recoveryStatus: 'idle' as const }, closeBehavior: 'tray' as const, activation: null })),
     getCloseBehavior: vi.fn(async () => 'tray' as const),
@@ -129,7 +131,7 @@ describe('Controller reminder navigation', () => {
 });
 
 describe('Controller schedule hidden events', () => {
-  const schedule = (id: string): import('../src/contracts').Schedule => ({ id, title: `日程 ${id}`, notes: '', firstStartLocal: '2026-09-16T10:00:00+08:00', durationMinutes: 30, cron: null, untilDateLocal: null, monthEndPolicy: null, revision: 1 });
+  const schedule = (id: string): import('../src/contracts').Schedule => ({ id, title: `日程 ${id}`, notes: '', firstStartLocal: '2026-09-16T10:00:00+08:00', durationMinutes: 30, cron: null, untilDateLocal: null, monthEndPolicy: null, open: true, revision: 1 });
 
   it('removes only the matching schedule without navigating or refreshing other pages', async () => {
     const platform = port({ listSchedules: vi.fn(async () => ({ items: [schedule('1'), schedule('2')], nextCursor: 'next', limit: 2 })) });

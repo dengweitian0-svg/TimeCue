@@ -25,6 +25,8 @@ function port(overrides: Partial<AppPort> = {}): AppPort {
     confirmReminder: vi.fn(),
     createSchedule: vi.fn(),
     deleteSchedule: vi.fn(),
+    cancelSchedule: vi.fn(),
+    restoreSchedule: vi.fn(),
     getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true })),
     getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true }, closeBehavior: 'tray' as const, activation: null })),
     getCloseBehavior: vi.fn(async () => 'tray' as const),

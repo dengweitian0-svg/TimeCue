@@ -45,7 +45,15 @@ export interface Schedule {
   cron: string | null;
   untilDateLocal: string | null;
   monthEndPolicy: 'clamp' | null;
+  open: boolean;
   revision: number;
+}
+
+export interface ScheduleActionResult {
+  scheduleId: string;
+  open: boolean;
+  revision: number;
+  updatedAtUtc: string;
 }
 
 export interface ScheduleBounds {
@@ -167,6 +175,8 @@ export interface WailsPort {
   confirmReminder(identity: ReminderIdentity): Promise<ReminderConfirmation>;
   createSchedule(request: CreateScheduleRequest): Promise<Schedule>;
   deleteSchedule(id: string, expectedRevision: number): Promise<void>;
+  cancelSchedule(id: string, expectedRevision: number): Promise<ScheduleActionResult>;
+  restoreSchedule(id: string, expectedRevision: number): Promise<ScheduleActionResult>;
   getRuntimeStatus(): Promise<RuntimeStatus>;
   getDesktopStatus(): Promise<FrontendStatus>;
   getCloseBehavior(): Promise<CloseBehavior>;
