@@ -1,6 +1,6 @@
-import type { Theme, WindowThemeColors } from './contracts';
+import type { Theme, WindowThemeColors } from './features/settings/contracts';
 
-export type { Theme, WindowThemeColors } from './contracts';
+export type { Theme, WindowThemeColors } from './features/settings/contracts';
 
 /** 四套主题的语义颜色，逐项复用 Issue #28 原型定义。 */
 export const themes = {
