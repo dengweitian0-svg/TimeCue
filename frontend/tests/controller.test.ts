@@ -172,6 +172,67 @@ describe('Controller schedule hidden events', () => {
   });
 });
 
+describe('Controller recurring schedule actions', () => {
+  const recurring = (open: boolean, revision = 1): import('../src/contracts').Schedule => ({ id: '7', title: '晨间计划', notes: '', firstStartLocal: '2026-09-16T09:00:00+08:00', durationMinutes: 30, cron: '0 9 * * *', untilDateLocal: null, monthEndPolicy: null, open, revision });
+
+  it('cancels and restores a recurring schedule without deleting its card', async () => {
+    const original = recurring(true);
+    const cancelSchedule = vi.fn(async () => ({ scheduleId: '7', open: false, revision: 2, updatedAtUtc: '2026-09-16T03:00:00Z' }));
+    const restoreSchedule = vi.fn(async () => ({ scheduleId: '7', open: true, revision: 3, updatedAtUtc: '2026-09-16T04:00:00Z' }));
+    const platform = port({ listSchedules: vi.fn(async () => ({ items: [original], nextCursor: '', limit: 20 })), cancelSchedule, restoreSchedule });
+    const controller = new Controller(platform);
+    await controller.initialize();
+
+    controller.askScheduleAction('cancel', original);
+    await controller.confirmScheduleAction();
+    expect(cancelSchedule).toHaveBeenCalledWith('7', 1);
+    expect(controller.snapshot().schedules.items).toEqual([{ ...original, open: false, revision: 2 }]);
+    expect(controller.snapshot().scheduleAction).toBeNull();
+    expect(platform.deleteSchedule).not.toHaveBeenCalled();
+
+    const cancelled = controller.snapshot().schedules.items[0];
+    controller.askScheduleAction('restore', cancelled);
+    await controller.confirmScheduleAction();
+    expect(restoreSchedule).toHaveBeenCalledWith('7', 2);
+    expect(controller.snapshot().schedules.items).toEqual([{ ...original, open: true, revision: 3 }]);
+    expect(controller.snapshot().notice).toContain('已恢复');
+    controller.dispose();
+  });
+
+  it('reloads the latest schedule after a stale action without retrying automatically', async () => {
+    const original = recurring(true);
+    const latest = recurring(true, 2);
+    const cancelSchedule = vi.fn(async () => { throw { data: JSON.stringify({ code: 'STALE_REVISION', message: '版本已变化' }) }; });
+    const platform = port({ listSchedules: vi.fn(async () => ({ items: [latest], nextCursor: '', limit: 20 })), getSchedule: vi.fn(async () => latest), cancelSchedule });
+    const controller = new Controller(platform);
+    await controller.initialize();
+
+    controller.askScheduleAction('cancel', original);
+    await controller.confirmScheduleAction();
+    expect(cancelSchedule).toHaveBeenCalledTimes(1);
+    expect(controller.snapshot().error?.code).toBe('STALE_REVISION');
+    await controller.recoverScheduleAction();
+    expect(controller.snapshot().scheduleAction).toEqual({ kind: 'cancel', item: latest });
+    expect(controller.snapshot().notice).toContain('最新内容');
+    expect(cancelSchedule).toHaveBeenCalledTimes(1);
+    controller.dispose();
+  });
+
+  it('closes the action after the schedule disappeared', async () => {
+    const original = recurring(true);
+    const platform = port({ cancelSchedule: vi.fn(async () => { throw { data: JSON.stringify({ code: 'NOT_FOUND', message: '日程不存在' }) }; }), getSchedule: vi.fn(async () => { throw { data: JSON.stringify({ code: 'NOT_FOUND', message: '日程不存在' }) }; }), listSchedules: vi.fn(async () => ({ items: [], nextCursor: '', limit: 20 })) });
+    const controller = new Controller(platform);
+    await controller.initialize();
+
+    controller.askScheduleAction('cancel', original);
+    await controller.confirmScheduleAction();
+    await controller.recoverScheduleAction();
+    expect(controller.snapshot().scheduleAction).toBeNull();
+    expect(controller.snapshot().notice).toContain('不存在');
+    controller.dispose();
+  });
+});
+
 describe('Controller recovery events', () => {
   it('refreshes pending reminders after recovery completion and keeps the running state visible', async () => {
     const platform = port();
