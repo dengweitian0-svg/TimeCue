@@ -2,6 +2,12 @@ import { useEffect, useState, useSyncExternalStore, type CSSProperties, type For
 import { ScheduleError, type AppPort, type CloseBehavior, type LogLevel, type LogLevelSettings, type ReminderDetail, type Schedule, type ScheduleDraft, type ScheduleField, type ScheduleType, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
 import { Controller, groupReminders } from './controller';
 import { draftRequest, localMinute, scheduleSummary, scheduleTypes } from './schedule-model';
+import { ErrorBanner } from './shared/components/ErrorBanner';
+import { LoadingCard } from './shared/components/LoadingCard';
+import { NoticeToast } from './shared/components/NoticeToast';
+import { DateField } from './shared/fields/DateField';
+import { FieldError } from './shared/fields/FieldError';
+import { SelectField } from './shared/fields/SelectField';
 import { themeOrder, themeStyle, themes } from './themes';
 
 /** 生产桌面页面只呈现日程、关闭偏好、运行状态和激活结果。 */
@@ -23,7 +29,7 @@ export function App({ controller }: { controller: Controller }) {
     <main className="main-content">
       <header className="topbar"><div><p className="kicker">TIME CUE / DESKTOP</p><p className="today">今天，按自己的节奏来</p></div><span className="status-dot" aria-label="应用在线" /></header>
       {state.error && <ErrorBanner error={state.error} />}
-      {state.notice && <NoticeToast controller={controller} message={state.notice} />}
+      {state.notice && <NoticeToast message={state.notice} onDismiss={message => controller.clearNotice(message)} />}
       {state.page === 'settings' ? <Settings controller={controller} theme={state.theme} closeBehavior={state.closeBehavior} logLevel={state.logLevel} storageDirectories={state.storageDirectories} busy={state.busy} /> : state.page === 'reminders' ? <Reminders controller={controller} state={state} /> : <Schedules controller={controller} state={state} />}
     </main>
   </div>;
@@ -45,14 +51,6 @@ function RuntimeChip({ runtime }: { runtime: AppState['runtime'] }) {
 }
 
 /** 在页面中央显示业务结果，并在五秒后自动清除。 */
-function NoticeToast({ controller, message }: { controller: Controller; message: string }) {
-  useEffect(() => {
-    const timer = window.setTimeout(() => controller.clearNotice(message), 5000);
-    return () => window.clearTimeout(timer);
-  }, [controller, message]);
-  return <div className="notice-toast" role="status" aria-live="polite">{message}</div>;
-}
-
 /** 待处理提醒页面只读取列表和当前详情，不在查看或切换时提交确认。 */
 function Reminders({ controller, state }: { controller: Controller; state: AppState }) {
   const group = groupReminders(state.reminders.items, state.activeReminder);
@@ -84,8 +82,6 @@ function reminderStatusLabel(status: ReminderDetail['status']): string { return 
 function formatReminderTime(unix: number): string { return new Date(unix * 1000).toLocaleString('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 
 /** 展示结构化错误及字段级提示。 */
-function ErrorBanner({ error }: { error: ScheduleError }) { return <div className="error-banner" role="alert"><span className="error-icon">!</span><div><strong>{error.message}</strong>{Object.values(error.fields)[0] && <p>{Object.values(error.fields)[0]}</p>}</div></div>; }
-
 /** 日程定义列表与创建入口。 */
 function Schedules({ controller, state }: { controller: Controller; state: AppState }) {
   if (state.draft) return <ScheduleForm controller={controller} state={state} />;
@@ -145,14 +141,6 @@ function WeekdayField({ controller, draft, error }: { controller: Controller; dr
 function padOption(value: number): string { return String(value).padStart(2, '0'); }
 
 /** 显示重复时间控件并关联结构化字段错误。 */
-function SelectField({ label, name, value, options, error, onChange }: { label: string; name: ScheduleField; value: string; options: string[]; error: ScheduleError | null; onChange: (value: string) => void }) { const message = error?.fields[name]; return <label className="select-field"><span className="field-label">{label} <span className="required-mark">*</span></span><select value={value} aria-invalid={Boolean(message)} onChange={event => onChange(event.target.value)}><option value="">请选择</option>{options.map(option => <option key={option} value={option}>{option}</option>)}</select>{message && <span className="field-error">{message}</span>}</label>; }
-
-/** 显示单个日期时间输入并关联结构化字段错误。 */
-function DateField({ label, name, value, min, max, dateOnly = false, error, onChange }: { label: string; name: ScheduleField; value: string; min?: string; max?: string; dateOnly?: boolean; error: ScheduleError | null; onChange: (value: string) => void }) { const message = error?.fields[name]; return <label>{label} <span className="required-mark">*</span><input type={dateOnly ? 'date' : 'datetime-local'} value={value} min={min?.slice(0, dateOnly ? 10 : 16)} max={max?.slice(0, dateOnly ? 10 : 16)} aria-invalid={Boolean(message)} aria-describedby={message ? `error-${name}` : undefined} onChange={event => onChange(event.target.value)} />{message && <span className="field-error" id={`error-${name}`}>{message}</span>}</label>; }
-
-/** 显示标题和重复规则等非日期字段错误。 */
-function FieldError({ error, name }: { error: ScheduleError | null; name: ScheduleField }) { const message = error?.fields[name]; return message ? <span className="field-error" id={`error-${name}`}>{message}</span> : null; }
-
 /** 删除确认对话框支持并发失败后的重新读取路径。 */
 function DeleteDialog({ controller, item, busy, error }: { controller: Controller; item: Schedule; busy: boolean; error: ScheduleError | null }) { const recovery = error?.code === 'STALE_REVISION' || error?.code === 'NOT_FOUND'; return <div className="dialog-backdrop" role="presentation"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title"><p className="kicker">DELETE SCHEDULE</p><h2 id="delete-title">{recovery ? '日程状态已变化' : '删除这条日程？'}</h2><p><strong>{item.title}</strong></p><p className="dialog-copy">{recovery ? error?.message : '删除后无法恢复，也不会再产生这条日程的提醒。'}</p><div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => controller.cancelDelete()}>保留日程</button>{recovery ? <button className="primary-button" disabled={busy} onClick={() => void controller.recoverDelete()}>{error?.code === 'NOT_FOUND' ? '刷新列表' : '查看最新内容'}</button> : <button className="danger-button" disabled={busy} onClick={() => void controller.confirmDelete()}>永久删除</button>}</div></section></div>; }
 
@@ -239,8 +227,6 @@ function EmptySchedules({ onCreate }: { onCreate: () => void }) { return <div cl
 function EmptyReminders() { return <div className="empty-card"><span className="empty-mark">✓</span><h2>没有待处理提醒</h2><p>新的系统通知到达后，会在这里保留到你确认。</p></div>; }
 
 /** 读取期间保留页面布局，避免内容跳动。 */
-function LoadingCard() { return <div className="loading-card"><span /><span /><span /></div>; }
-
 type AppState = ReturnType<Controller['snapshot']>;
 
 /** 由 Vite 入口延迟创建适配器，避免生产页面绑定具体生成文件。 */
