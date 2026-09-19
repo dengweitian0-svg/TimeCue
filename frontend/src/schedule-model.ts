@@ -140,7 +140,7 @@ export function validateSchedule(request: CreateScheduleRequest, now: Date): Omi
     untilDateLocal = localMinute(until).slice(0, 10);
     if (untilDateLocal < localMinute(start).slice(0, 10)) throw new ScheduleError('VALIDATION', '截止日期不能早于首次开始日期。', { until: '截止日期不能早于首次开始日期。' });
   }
-  return { title: request.title.trim(), notes: request.notes, firstStartLocal: localMinute(start), durationMinutes: (request.end_unix - request.start_unix) / 60, cron: request.cron ?? null, untilDateLocal, monthEndPolicy: type === 'monthly' ? 'clamp' : null };
+  return { title: request.title.trim(), notes: request.notes, firstStartLocal: localMinute(start), durationMinutes: (request.end_unix - request.start_unix) / 60, cron: request.cron ?? null, untilDateLocal, monthEndPolicy: type === 'monthly' ? 'clamp' : null, open: true };
 }
 
 /** 将后端定义转换为简洁的列表摘要。 */

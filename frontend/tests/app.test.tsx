@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
 import { Controller } from '../src/controller';
 import { themes } from '../src/themes';
-import type { AppPort, ReminderDetail, ReminderPage, ScheduleBounds, SchedulePage, Theme } from '../src/contracts';
+import type { AppPort, ReminderDetail, ReminderPage, Schedule, ScheduleBounds, SchedulePage, Theme } from '../src/contracts';
 
 const page: SchedulePage = { items: [], nextCursor: '', limit: 20 };
 const bounds: ScheduleBounds = {
@@ -25,6 +25,8 @@ function port(overrides: Partial<AppPort> = {}): AppPort {
     confirmReminder: vi.fn(),
     createSchedule: vi.fn(),
     deleteSchedule: vi.fn(),
+    cancelSchedule: vi.fn(),
+    restoreSchedule: vi.fn(),
     getRuntimeStatus: vi.fn(async () => ({ visibility: 'visible' as const, lifecycle: 'running' as const, ready: true })),
     getDesktopStatus: vi.fn(async () => ({ runtime: { visibility: 'visible' as const, lifecycle: 'running' as const, ready: true }, closeBehavior: 'tray' as const, activation: null })),
     getCloseBehavior: vi.fn(async () => 'tray' as const),
@@ -70,6 +72,50 @@ describe('App', () => {
     expect(host.querySelector('h1')?.textContent).toBe('添加日程');
     expect(host.querySelector('input[placeholder*="例如"]')).not.toBeNull();
     expect(platform.getScheduleTimeBounds).toHaveBeenCalled();
+
+    root.unmount();
+    controller.dispose();
+    host.remove();
+  });
+
+  it('shows cancel and restore controls only for recurring schedules', async () => {
+    const recurring: Schedule = { id: '7', title: '晨间计划', notes: '', firstStartLocal: '2026-09-16T09:00:00+08:00', durationMinutes: 30, cron: '0 9 * * *', untilDateLocal: null, monthEndPolicy: null, open: true, revision: 1 };
+    const single: Schedule = { id: '8', title: '单次计划', notes: '', firstStartLocal: '2026-09-16T10:00:00+08:00', durationMinutes: 30, cron: null, untilDateLocal: null, monthEndPolicy: null, open: true, revision: 1 };
+    const cancelled: Schedule = { ...recurring, open: false, revision: 2 };
+    const cancelSchedule = vi.fn(async () => ({ scheduleId: '7', open: false, revision: 2, updatedAtUtc: '2026-09-16T03:00:00Z' }));
+    const restoreSchedule = vi.fn(async () => ({ scheduleId: '7', open: true, revision: 3, updatedAtUtc: '2026-09-16T04:00:00Z' }));
+    const platform = port({ listSchedules: vi.fn(async () => ({ items: [recurring, single], nextCursor: '', limit: 20 })), cancelSchedule, restoreSchedule });
+    const controller = new Controller(platform);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    root.render(<App controller={controller} />);
+    await flushRender();
+
+    expect(host.querySelector('[aria-label="取消 晨间计划 的提醒"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="恢复 单次计划 的提醒"]')).toBeNull();
+    expect(host.textContent).not.toContain('提醒已取消');
+
+    const recurringButton = host.querySelector<HTMLButtonElement>('[aria-label="取消 晨间计划 的提醒"]')!;
+    recurringButton.click();
+    await flushRender();
+    expect(host.textContent).toContain('取消这条日程的提醒？');
+    host.querySelector<HTMLButtonElement>('.dialog .primary-button')?.click();
+    await flushRender();
+    expect(cancelSchedule).toHaveBeenCalledWith('7', 1);
+    expect(controller.snapshot().schedules.items.find(item => item.id === '7')?.open).toBe(false);
+
+    platform.listSchedules = vi.fn(async () => ({ items: [cancelled, single], nextCursor: '', limit: 20 }));
+    await controller.refreshSchedules();
+    await flushRender();
+    expect(host.querySelector('[aria-label="恢复 晨间计划 的提醒"]')).not.toBeNull();
+    expect(host.textContent).toContain('提醒已取消');
+    host.querySelector<HTMLButtonElement>('[aria-label="恢复 晨间计划 的提醒"]')?.click();
+    await flushRender();
+    expect(host.textContent).toContain('恢复这条日程的提醒？');
+    host.querySelector<HTMLButtonElement>('.dialog .primary-button')?.click();
+    await flushRender();
+    expect(restoreSchedule).toHaveBeenCalledWith('7', 2);
 
     root.unmount();
     controller.dispose();

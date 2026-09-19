@@ -1,8 +1,10 @@
-import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type RecoveryEvent, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleBounds, type ScheduleDraft, type ScheduleHidden, type SchedulePage, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
+import { ScheduleError, toScheduleError, type Activation, type AppPort, type CloseBehavior, type ConfigProperty, type DirectoryKind, type LogLevel, type LogLevelSettings, type RecoveryEvent, type ReminderDetail, type ReminderIdentity, type ReminderPage, type RuntimeStatus, type Schedule, type ScheduleActionResult, type ScheduleBounds, type ScheduleDraft, type ScheduleHidden, type SchedulePage, type StorageDirectories, type StorageDirectory, type Theme } from './contracts';
 import { changeDraftType, draftRequest, emptyDraft } from './schedule-model';
 import { windowThemeColors } from './themes';
 
 export type Page = 'schedules' | 'reminders' | 'settings';
+export type ScheduleActionKind = 'cancel' | 'restore';
+export interface ScheduleActionState { kind: ScheduleActionKind; item: Schedule; }
 export interface AppState {
   page: Page;
   schedules: SchedulePage;
@@ -16,6 +18,7 @@ export interface AppState {
   bounds: ScheduleBounds | null;
   draft: ScheduleDraft | null;
   deleting: Schedule | null;
+  scheduleAction: ScheduleActionState | null;
   busy: boolean;
   loading: boolean;
   error: ScheduleError | null;
@@ -46,7 +49,7 @@ export function groupReminders(items: ReminderDetail[], active: ReminderIdentity
 
 /** 编排生产前端的日程、偏好、运行状态和激活用例，不拥有后端持久状态。 */
 export class Controller {
-  private state: AppState = { page: 'schedules', schedules: initialPage, reminders: initialReminderPage, reminderLoading: true, reminderDetailLoading: false, reminderConfirming: false, reminderError: null, activeReminder: null, reminderDetail: null, bounds: null, draft: null, deleting: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', theme: 'peach', themeLoading: true, logLevel: { effectiveLevel: 'info', savedLevel: 'info', restartRequired: false }, storageDirectories: null, activation: null };
+  private state: AppState = { page: 'schedules', schedules: initialPage, reminders: initialReminderPage, reminderLoading: true, reminderDetailLoading: false, reminderConfirming: false, reminderError: null, activeReminder: null, reminderDetail: null, bounds: null, draft: null, deleting: null, scheduleAction: null, busy: false, loading: true, error: null, notice: '', runtime: null, closeBehavior: 'tray', theme: 'peach', themeLoading: true, logLevel: { effectiveLevel: 'info', savedLevel: 'info', restartRequired: false }, storageDirectories: null, activation: null };
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeActivation: () => void;
   private readonly unsubscribeScheduleHidden: () => void;
@@ -238,6 +241,45 @@ export class Controller {
     finally { if (!this.disposed) this.update({ busy: false }); }
   }
 
+  /** 打开重复日程的取消或恢复确认对象，并锁定当前版本。 */
+  askScheduleAction(kind: ScheduleActionKind, schedule: Schedule): void {
+    if (this.state.busy || !schedule.cron || (kind === 'cancel' ? !schedule.open : schedule.open)) return;
+    this.update({ scheduleAction: { kind, item: schedule }, error: null, notice: '' });
+  }
+
+  /** 关闭重复日程动作确认且不修改后端。 */
+  cancelScheduleAction(): void { if (!this.state.busy) this.update({ scheduleAction: null, error: null }); }
+
+  /** 按确认时的版本取消或恢复重复日程，并保留日程卡片。 */
+  async confirmScheduleAction(): Promise<void> {
+    const action = this.state.scheduleAction;
+    if (!action || this.state.busy || this.state.error?.code === 'STALE_REVISION' || this.state.error?.code === 'NOT_FOUND') return;
+    this.update({ busy: true, error: null });
+    try {
+      const result = action.kind === 'cancel'
+        ? await this.port.cancelSchedule(action.item.id, action.item.revision)
+        : await this.port.restoreSchedule(action.item.id, action.item.revision);
+      if (this.disposed) return;
+      const schedules = { ...this.state.schedules, items: this.state.schedules.items.map(item => item.id === action.item.id ? applyScheduleAction(item, result) : item) };
+      this.update({ scheduleAction: null, schedules, notice: action.kind === 'cancel' ? `已取消“${action.item.title}”的后续提醒。` : `已恢复“${action.item.title}”的提醒。` });
+    } catch (error) { if (!this.disposed) this.fail(error); }
+    finally { if (!this.disposed) this.update({ busy: false }); }
+  }
+
+  /** 读取并发变化后的重复日程，要求用户重新确认而不自动重试写入。 */
+  async recoverScheduleAction(): Promise<void> {
+    const action = this.state.scheduleAction;
+    if (!action || this.state.busy) return;
+    const missing = this.state.error?.code === 'NOT_FOUND';
+    this.update({ busy: true, error: null });
+    try {
+      const current = missing ? null : await this.port.getSchedule(action.item.id);
+      const schedules = await this.port.listSchedules({ limit: this.state.schedules.limit });
+      if (!this.disposed) this.update({ scheduleAction: current ? { kind: action.kind, item: current } : null, schedules: this.filterHiddenSchedules(schedules), notice: current ? '已读取最新内容，请重新确认操作。' : '列表已刷新，这条日程已不存在。' });
+    } catch (error) { if (!this.disposed) this.fail(error); }
+    finally { if (!this.disposed) this.update({ busy: false }); }
+  }
+
   /** 重新读取日程列表和边界，避免迟到响应覆盖较新的操作。 */
   async refreshSchedules(): Promise<void> {
     const version = ++this.readVersion; this.update({ loading: true });
@@ -411,4 +453,9 @@ export class Controller {
 
   /** 将提醒端口错误隔离到提醒页面，并保留当前详情以便显示稳定状态。 */
   private failReminder(error: unknown, detail: boolean): void { const failure = toScheduleError(error); this.update({ reminderError: failure, reminderLoading: detail ? this.state.reminderLoading : false, reminderDetailLoading: detail ? false : this.state.reminderDetailLoading }); }
+}
+
+/** 将服务端整组动作结果投影回当前日程，保留标题和重复规则等只读字段。 */
+function applyScheduleAction(schedule: Schedule, result: ScheduleActionResult): Schedule {
+  return { ...schedule, open: result.open, revision: result.revision };
 }

@@ -31,6 +31,6 @@ describe('recurring schedule model', () => {
 
   it('accepts and summarizes normalized multi-weekday cron rules', () => {
     expect(cronType('0 9 * * 1,3,5')).toBe('weekly');
-    expect(scheduleSummary({ id: '1', title: 'multi', notes: '', firstStartLocal: '2026-09-14T09:00', durationMinutes: 30, cron: '0 9 * * 1,3,5', untilDateLocal: null, monthEndPolicy: null, revision: 1 })).toContain('每周一、三、五');
+    expect(scheduleSummary({ id: '1', title: 'multi', notes: '', firstStartLocal: '2026-09-14T09:00', durationMinutes: 30, cron: '0 9 * * 1,3,5', untilDateLocal: null, monthEndPolicy: null, open: true, revision: 1 })).toContain('每周一、三、五');
   });
 });

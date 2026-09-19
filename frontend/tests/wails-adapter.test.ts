@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { toScheduleError } from '../src/contracts';
 import { ACTIVATION_EVENT, PENDING_REMINDERS_CHANGED_EVENT, SCHEDULE_HIDDEN_EVENT, WailsAdapter, type BindingsPort, type EventsOn } from '../src/wails-adapter';
 
-const scheduleDTO = { id: 42, title: '深呼吸', notes: '离开屏幕', first_start_local: '2026-09-16T10:00', duration_minutes: 15, cron: null, until_date_local: null, month_end_policy: null, revision: 3 };
+const scheduleDTO = { id: 42, title: '深呼吸', notes: '离开屏幕', first_start_local: '2026-09-16T10:00', duration_minutes: 15, cron: null, until_date_local: null, month_end_policy: null, open: true, revision: 3 };
 const reminderDTO = { schedule_id: '9223372036854775807', original_date: '2026-09-16', attempted_at_utc: '2026-09-16T02:00:00Z', start_unix: null, end_unix: null, title: null, notes: null, content_status: 'unavailable', status: 'pending', processed_at_utc: null };
 
 /** 创建一组最小绑定实现，测试只验证适配器的转换而不依赖生成文件。 */
@@ -16,6 +16,8 @@ function bindings(overrides: Partial<BindingsPort> = {}): BindingsPort {
     ConfirmReminder: vi.fn(async () => ({ schedule_id: reminderDTO.schedule_id, original_date: reminderDTO.original_date, processed_at_utc: '2026-09-16T03:00:00Z', changed: true })),
     CreateSchedule: vi.fn(async () => scheduleDTO),
     DeleteSchedule: vi.fn(async () => undefined),
+    CancelSchedule: vi.fn(async () => ({ schedule_id: 42, open: false, revision: 4, updated_at_utc: '2026-09-16T03:00:00Z' })),
+    RestoreSchedule: vi.fn(async () => ({ schedule_id: 42, open: true, revision: 5, updated_at_utc: '2026-09-16T04:00:00Z' })),
     GetRuntimeStatus: vi.fn(async () => ({ visibility: 'visible', lifecycle: 'running', ready: true })),
     GetDesktopStatus: vi.fn(async () => ({ visibility: 'visible', lifecycle: 'running', ready: true, close_behavior: 'tray', activation: null })),
     GetCloseBehavior: vi.fn(async () => ({ behavior: 'tray' })),
@@ -66,6 +68,10 @@ describe('WailsAdapter', () => {
     expect(port.CreateSchedule).toHaveBeenCalledWith(JSON.stringify({ title: 'x', notes: '', start_unix: 1, end_unix: 61 }));
     await adapter.deleteSchedule(page.items[0].id, 3);
     expect(port.DeleteSchedule).toHaveBeenCalledWith(42, JSON.stringify({ expected_revision: 3 }));
+    await expect(adapter.cancelSchedule(page.items[0].id, 3)).resolves.toEqual({ scheduleId: '42', open: false, revision: 4, updatedAtUtc: '2026-09-16T03:00:00Z' });
+    expect(port.CancelSchedule).toHaveBeenCalledWith(42, JSON.stringify({ expected_revision: 3 }));
+    await expect(adapter.restoreSchedule(page.items[0].id, 4)).resolves.toEqual({ scheduleId: '42', open: true, revision: 5, updatedAtUtc: '2026-09-16T04:00:00Z' });
+    expect(port.RestoreSchedule).toHaveBeenCalledWith(42, JSON.stringify({ expected_revision: 4 }));
     await expect(adapter.deleteSchedule('9223372036854775807', 3)).rejects.toThrow('超出桌面端');
     expect(await adapter.saveCloseBehavior('exit')).toBe('exit');
     expect(port.SaveCloseBehavior).toHaveBeenCalledWith({ behavior: 'exit' });

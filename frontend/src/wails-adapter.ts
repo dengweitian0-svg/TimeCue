@@ -1,4 +1,4 @@
-import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, PendingRemindersChangedListener, RecoveryEvent, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleBounds, ScheduleHidden, ScheduleHiddenListener, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory, Theme, WindowThemeColors } from './contracts';
+import type { Activation, ActivationListener, AppPort, CloseBehavior, ConfigProperty, CreateScheduleRequest, DirectoryKind, FrontendStatus, LogLevel, LogLevelSettings, PendingRemindersChangedListener, RecoveryEvent, ReminderConfirmation, ReminderDetail, ReminderIdentity, ReminderListRequest, ReminderPage, RuntimeStatus, Schedule, ScheduleActionResult, ScheduleBounds, ScheduleHidden, ScheduleHiddenListener, ScheduleListRequest, SchedulePage, StorageDirectories, StorageDirectory, Theme, WindowThemeColors } from './contracts';
 import * as generatedBindings from '../wailsjs/go/runtime/WailsBindings';
 import { EventsOn as generatedEventsOn } from '../wailsjs/runtime/runtime';
 
@@ -12,6 +12,8 @@ export interface BindingsPort {
   ConfirmReminder(scheduleID: number | string, originalDate: string): Promise<unknown>;
   CreateSchedule(payload: string): Promise<unknown>;
   DeleteSchedule(id: number, payload: string): Promise<unknown>;
+  CancelSchedule(id: number, payload: string): Promise<unknown>;
+  RestoreSchedule(id: number, payload: string): Promise<unknown>;
   GetRuntimeStatus(): Promise<unknown>;
   GetDesktopStatus(): Promise<unknown>;
   GetCloseBehavior(): Promise<unknown>;
@@ -153,6 +155,12 @@ export class WailsAdapter implements AppPort {
   /** 按版本删除日程，保留后端并发保护错误。 */
   async deleteSchedule(id: string, expectedRevision: number): Promise<void> { await this.bindings.DeleteSchedule(int64Value(id), JSON.stringify({ expected_revision: expectedRevision })); }
 
+  /** 取消重复日程的后续提醒，并返回服务端提交后的版本。 */
+  async cancelSchedule(id: string, expectedRevision: number): Promise<ScheduleActionResult> { return toScheduleActionResult(await this.bindings.CancelSchedule(int64Value(id), JSON.stringify({ expected_revision: expectedRevision }))); }
+
+  /** 恢复重复日程的后续提醒，并返回服务端提交后的版本。 */
+  async restoreSchedule(id: string, expectedRevision: number): Promise<ScheduleActionResult> { return toScheduleActionResult(await this.bindings.RestoreSchedule(int64Value(id), JSON.stringify({ expected_revision: expectedRevision }))); }
+
   /** 查询调度器运行状态。 */
   async getRuntimeStatus(): Promise<RuntimeStatus> { return toRuntime(await this.bindings.GetRuntimeStatus()); }
 
@@ -213,6 +221,8 @@ export async function createWailsAdapter(): Promise<WailsAdapter> {
     ConfirmReminder: (scheduleID, originalDate) => generatedBindings.ConfirmReminder(Number(scheduleID), originalDate),
     CreateSchedule: generatedBindings.CreateSchedule,
     DeleteSchedule: generatedBindings.DeleteSchedule,
+    CancelSchedule: generatedBindings.CancelSchedule,
+    RestoreSchedule: generatedBindings.RestoreSchedule,
     GetRuntimeStatus: generatedBindings.GetRuntimeStatus,
     GetDesktopStatus: generatedBindings.GetDesktopStatus,
     GetCloseBehavior: generatedBindings.GetCloseBehavior,
@@ -264,7 +274,19 @@ function toSchedule(value: unknown): Schedule {
     cron: read(item, 'cron', 'Cron') == null ? null : String(read(item, 'cron', 'Cron')),
     untilDateLocal: read(item, 'until_date_local', 'untilDateLocal', 'UntilDateLocal') == null ? null : String(read(item, 'until_date_local', 'untilDateLocal', 'UntilDateLocal')),
     monthEndPolicy: read(item, 'month_end_policy', 'monthEndPolicy', 'MonthEndPolicy') == null ? null : 'clamp',
+    open: Boolean(read(item, 'open', 'Open')),
     revision: asNumber(read(item, 'revision', 'Revision')) ?? 0,
+  };
+}
+
+/** 将整组取消或恢复结果转换为前端稳定模型。 */
+function toScheduleActionResult(value: unknown): ScheduleActionResult {
+  const item = asRecord(value);
+  return {
+    scheduleId: int64String(read(item, 'schedule_id', 'scheduleId', 'ScheduleID')),
+    open: Boolean(read(item, 'open', 'Open')),
+    revision: asNumber(read(item, 'revision', 'Revision')) ?? 0,
+    updatedAtUtc: String(read(item, 'updated_at_utc', 'updatedAtUtc', 'UpdatedAtUTC') ?? ''),
   };
 }
 
