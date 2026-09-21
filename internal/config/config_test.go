@@ -161,3 +161,114 @@ func TestLoadConfigStartsConfigYamlWatcher(t *testing.T) {
 	}
 	t.Fatalf("watcher did not reload config.yaml; current config = %#v", manager.currentCfg.Load())
 }
+
+func TestChangeConfigCreatesAndUpdatesUserConfigWithoutDefaults(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	manager, err := NewManager(testLogger())
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	if err := manager.ChangeDB("db_path", "./new.db"); err != nil {
+		t.Fatalf("create config through ChangeDB: %v", err)
+	}
+
+	contents, err := os.ReadFile(configFileName)
+	if err != nil {
+		t.Fatalf("read created config: %v", err)
+	}
+	if bytes.Contains(contents, []byte("app:")) {
+		t.Fatalf("created config unexpectedly contains defaults: %s", contents)
+	}
+	if !bytes.Contains(contents, []byte("db_path: ./new.db")) {
+		t.Fatalf("created config does not contain changed key: %s", contents)
+	}
+
+	if err := manager.ChangeDB("db_path", "./updated.db"); err != nil {
+		t.Fatalf("update config through ChangeDB: %v", err)
+	}
+	updated, err := os.ReadFile(configFileName)
+	if err != nil {
+		t.Fatalf("read updated config: %v", err)
+	}
+	if !bytes.Contains(updated, []byte("db_path: ./updated.db")) {
+		t.Fatalf("updated config does not contain new value: %s", updated)
+	}
+	if bytes.Contains(updated, []byte("./new.db")) {
+		t.Fatalf("updated config still contains old value: %s", updated)
+	}
+
+	current, ok := manager.CurrentConfig()
+	if !ok {
+		t.Fatal("expected current config after change")
+	}
+	if current.DB.DBPath != "./updated.db" {
+		t.Fatalf("db.db_path = %q, want %q", current.DB.DBPath, "./updated.db")
+	}
+}
+
+func TestChangeConfigPreservesExistingKeysAndRejectsApp(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestConfig(t, "log:\n  level: info\n  custom: old\n")
+
+	manager, err := NewManager(testLogger())
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	if err := manager.ChangeLog("level", "debug"); err != nil {
+		t.Fatalf("update existing key: %v", err)
+	}
+	if err := manager.ChangeLog("new_key", "new_value"); err != nil {
+		t.Fatalf("add missing key: %v", err)
+	}
+
+	contents, err := os.ReadFile(configFileName)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !bytes.Contains(contents, []byte("level: debug")) ||
+		!bytes.Contains(contents, []byte("custom: old")) ||
+		!bytes.Contains(contents, []byte("new_key: new_value")) {
+		t.Fatalf("config changes were not preserved: %s", contents)
+	}
+
+	if err := manager.ChangeConfig("app", "name", "changed"); err == nil {
+		t.Fatal("expected app config change to fail")
+	}
+	afterReject, err := os.ReadFile(configFileName)
+	if err != nil {
+		t.Fatalf("read config after rejected change: %v", err)
+	}
+	if !bytes.Equal(afterReject, contents) {
+		t.Fatal("app change modified config file")
+	}
+}
+
+func TestRestoreDefaultClearsUserConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestConfig(t, "log:\n  level: debug\n")
+
+	manager, err := NewManager(testLogger())
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	if err := manager.RestoreDefault(); err != nil {
+		t.Fatalf("restore defaults: %v", err)
+	}
+
+	contents, err := os.ReadFile(configFileName)
+	if err != nil {
+		t.Fatalf("read cleared config: %v", err)
+	}
+	if len(contents) != 0 {
+		t.Fatalf("config file is not empty: %q", contents)
+	}
+
+	current, ok := manager.CurrentConfig()
+	if !ok {
+		t.Fatal("expected current config after restoring defaults")
+	}
+	if current.Log.Level != "info" {
+		t.Fatalf("log.level = %q, want default %q", current.Log.Level, "info")
+	}
+}
