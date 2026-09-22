@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
+
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 )
@@ -45,28 +47,26 @@ type Manager struct {
 	v          *viper.Viper
 	currentCfg atomic.Pointer[Config]
 	watchOnce  sync.Once
-	logger     slog.Logger
 }
 
 // NewManager 创建一个配置管理器实例, 并设置用户配置文件路径
 // 注意, 这里并不加载任何配置
-func NewManager(logger slog.Logger) (*Manager, error) {
+func NewManager() (*Manager, error) {
 	m := &Manager{
-		v:      newConfigViper(),
-		logger: logger,
+		v: newConfigViper(),
 	}
 	m.v.OnConfigChange(func(event fsnotify.Event) {
 		if err := m.reloadConfig(); err != nil {
-			m.logger.Error("[Manager] failed to reload config", "error", err, "file", event.Name, "time", time.Now().UTC().Format(time.RFC3339))
+			logger.Error("[Manager] failed to reload config", "error", err, "file", event.Name, "time", time.Now().UTC().Format(time.RFC3339))
 			return
 		}
-		m.logger.Info("[Manager] config file changed", "file", event.Name, "time", time.Now().UTC().Format(time.RFC3339))
+		logger.Info("[Manager] config file changed", "file", event.Name, "time", time.Now().UTC().Format(time.RFC3339))
 	})
 	return m, nil
 }
 
 // LoadConfig 加载配置文件，并在首次加载成功后启动热更新监听。
-func (m *Manager) LoadConfig(logger slog.Logger) error {
+func (m *Manager) LoadConfig() error {
 	if err := m.reloadConfig(); err != nil {
 		logger.Error("[Manager] failed to load config", "error", err, "file", configFileName, "time", time.Now().UTC().Format(time.RFC3339))
 		return fmt.Errorf("failed to load config: %w", err)
@@ -114,12 +114,8 @@ func (m *Manager) reloadConfig() error {
 	}
 
 	// 先原子读取旧快照，再原子写入新快照；旧快照不会被原地修改。
-	previous := m.currentCfg.Load()
-	if previous == nil {
-		m.currentCfg.Store(next)
-		return nil
-	}
 	m.currentCfg.Store(next)
+	logger.SetLevel(translateLogLevel(next.Log.Level))
 	return nil
 }
 
@@ -135,4 +131,19 @@ func loadDefaultConfig(v *viper.Viper) error {
 		v.SetDefault(key, defaults.Get(key))
 	}
 	return nil
+}
+
+func translateLogLevel(level string) slog.Level {
+	switch level {
+	case "info":
+		return slog.LevelInfo
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

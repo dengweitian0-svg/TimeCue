@@ -2,18 +2,12 @@ package config
 
 import (
 	"bytes"
-	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 )
-
-func testLogger() slog.Logger {
-	return *slog.New(slog.NewTextHandler(io.Discard, nil))
-}
 
 func writeTestConfig(t *testing.T, contents string) {
 	t.Helper()
@@ -27,11 +21,11 @@ func TestLoadConfigUsesImmutableDefaultsAndUserOverrides(t *testing.T) {
 	writeTestConfig(t, "log:\n  level: debug\n")
 
 	defaultBefore := append([]byte(nil), defaultConfig...)
-	manager, err := NewManager(testLogger())
+	manager, err := NewManager()
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
-	if err := manager.LoadConfig(testLogger()); err != nil {
+	if err := manager.LoadConfig(); err != nil {
 		t.Fatalf("load config: %v", err)
 	}
 
@@ -56,11 +50,11 @@ func TestLoadConfigUsesImmutableDefaultsAndUserOverrides(t *testing.T) {
 func TestLoadConfigUsesDefaultsWhenConfigFileIsMissing(t *testing.T) {
 	t.Chdir(t.TempDir())
 
-	manager, err := NewManager(testLogger())
+	manager, err := NewManager()
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
-	if err := manager.LoadConfig(testLogger()); err != nil {
+	if err := manager.LoadConfig(); err != nil {
 		t.Fatalf("load defaults without config file: %v", err)
 	}
 
@@ -88,11 +82,11 @@ func TestReloadConfigKeepsPreviousSnapshotOnFailure(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestConfig(t, "log:\n  level: info\n")
 
-	manager, err := NewManager(testLogger())
+	manager, err := NewManager()
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
-	if err := manager.LoadConfig(testLogger()); err != nil {
+	if err := manager.LoadConfig(); err != nil {
 		t.Fatalf("load config: %v", err)
 	}
 
@@ -142,11 +136,11 @@ func TestLoadConfigStartsConfigYamlWatcher(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestConfig(t, "log:\n  level: info\n")
 
-	manager, err := NewManager(testLogger())
+	manager, err := NewManager()
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
-	if err := manager.LoadConfig(testLogger()); err != nil {
+	if err := manager.LoadConfig(); err != nil {
 		t.Fatalf("load config: %v", err)
 	}
 
@@ -165,7 +159,7 @@ func TestLoadConfigStartsConfigYamlWatcher(t *testing.T) {
 func TestChangeConfigCreatesAndUpdatesUserConfigWithoutDefaults(t *testing.T) {
 	t.Chdir(t.TempDir())
 
-	manager, err := NewManager(testLogger())
+	manager, err := NewManager()
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
@@ -211,7 +205,7 @@ func TestChangeConfigPreservesExistingKeysAndRejectsApp(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestConfig(t, "log:\n  level: info\n  custom: old\n")
 
-	manager, err := NewManager(testLogger())
+	manager, err := NewManager()
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
@@ -248,7 +242,7 @@ func TestRestoreDefaultClearsUserConfig(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestConfig(t, "log:\n  level: debug\n")
 
-	manager, err := NewManager(testLogger())
+	manager, err := NewManager()
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}

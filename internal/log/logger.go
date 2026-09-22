@@ -1,5 +1,5 @@
-// Package log 提供项目统一使用的日志器。
-package log
+// Package logger 提供项目统一使用的全局日志器。
+package logger
 
 import (
 	"io"
@@ -8,49 +8,57 @@ import (
 	"sync/atomic"
 )
 
-// Logger 保存当前生效的 slog.Logger。
-// 通过原子替换，可以在配置热更新后切换日志级别和输出文件，
-// 而不需要修改所有调用方持有的 Logger 指针。
+// Logger 保存当前生效的 slog.Logger 和可热更新的日志级别。
 type Logger struct {
 	current atomic.Pointer[slog.Logger]
-	level   *slog.LevelVar
+	level   slog.LevelVar
 }
 
-// New 创建启动阶段使用的 Logger。
-// 配置尚未加载时，日志记录会被丢弃，但仍保留 Info 级别阈值。
-func New() *Logger {
-	level := new(slog.LevelVar)
-	level.Set(slog.LevelInfo)
-	logger := &Logger{level: level}
+var global = newLogger()
+
+func newLogger() *Logger {
+	logger := &Logger{}
+	logger.level.Set(slog.LevelInfo)
 	logger.current.Store(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
-		Level: level,
+		Level: &logger.level,
 	})))
 	return logger
 }
 
+// New 返回项目唯一的全局 Logger。
+// 配置尚未加载时，日志记录会被丢弃，但仍保留 Info 级别阈值。
+func New() *Logger {
+	return global
+}
+
+// Default 返回项目唯一的全局 Logger，是 New 的语义别名。
+func Default() *Logger {
+	return global
+}
+
 // Upgrade 根据已经加载的配置安装正式 JSONL Logger。
-// file 的创建、路径解析和生命周期由调用方负责；运行期间只通过 SetLevel
-// 热更新日志级别，不重新安装日志文件。
+// file 的创建、路径解析和生命周期由调用方负责；运行期间只通过
+// SetLevel 热更新日志级别，不重新安装日志文件。
 func (l *Logger) Upgrade(file *os.File) {
-	if l == nil || l.level == nil || file == nil {
+	if l == nil || file == nil {
 		return
 	}
 
 	full := slog.New(slog.NewJSONHandler(file, &slog.HandlerOptions{
-		Level: l.level,
+		Level: &l.level,
 	}))
 	l.current.Store(full)
+	slog.SetDefault(full)
 }
 
 // SetLevel 原子修改当前 Logger 的最低日志级别，不替换 Logger 或输出文件。
 func (l *Logger) SetLevel(level slog.Level) {
-	if l == nil || l.level == nil {
+	if l == nil {
 		return
 	}
 	l.level.Set(level)
 }
 
-// currentLogger 返回当前生效的 slog.Logger。
 func (l *Logger) currentLogger() *slog.Logger {
 	if l == nil {
 		return slog.Default()
@@ -59,6 +67,36 @@ func (l *Logger) currentLogger() *slog.Logger {
 		return logger
 	}
 	return slog.Default()
+}
+
+// SetLevel 原子修改全局 Logger 的最低日志级别。
+func SetLevel(level slog.Level) {
+	global.SetLevel(level)
+}
+
+// Upgrade 为全局 Logger 安装正式 JSONL Logger。
+func Upgrade(file *os.File) {
+	global.Upgrade(file)
+}
+
+// Debug 记录全局 Logger 的 Debug 级别日志。
+func Debug(msg string, args ...any) {
+	global.currentLogger().Debug(msg, args...)
+}
+
+// Info 记录全局 Logger 的 Info 级别日志。
+func Info(msg string, args ...any) {
+	global.currentLogger().Info(msg, args...)
+}
+
+// Warn 记录全局 Logger 的 Warn 级别日志。
+func Warn(msg string, args ...any) {
+	global.currentLogger().Warn(msg, args...)
+}
+
+// Error 记录全局 Logger 的 Error 级别日志。
+func Error(msg string, args ...any) {
+	global.currentLogger().Error(msg, args...)
 }
 
 // Debug 记录 Debug 级别日志。
