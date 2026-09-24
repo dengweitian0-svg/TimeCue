@@ -25,12 +25,6 @@ func newLogger() *Logger {
 	return logger
 }
 
-// New 返回项目唯一的全局 Logger。
-// 配置尚未加载时，日志记录会被丢弃，但仍保留 Info 级别阈值。
-func New() *Logger {
-	return global
-}
-
 // Default 返回项目唯一的全局 Logger，是 New 的语义别名。
 func Default() *Logger {
 	return global
@@ -43,7 +37,6 @@ func (l *Logger) Upgrade(file *os.File) {
 	if l == nil || file == nil {
 		return
 	}
-
 	full := slog.New(slog.NewJSONHandler(file, &slog.HandlerOptions{
 		Level: &l.level,
 	}))

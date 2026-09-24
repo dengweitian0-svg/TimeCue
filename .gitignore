@@ -13,3 +13,5 @@ build/bin/
 frontend/package.json.md5
 
 .worktrees/*
+
+db/*

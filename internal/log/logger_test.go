@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewCreatesInfoLevelBootstrapLogger(t *testing.T) {
-	logger := New()
+	logger := newLogger()
 
 	if logger.currentLogger().Enabled(context.Background(), slog.LevelDebug) {
 		t.Fatal("bootstrap logger enables debug records")
@@ -22,8 +22,40 @@ func TestNewCreatesInfoLevelBootstrapLogger(t *testing.T) {
 	}
 }
 
+func TestUpgradeDoesNotWriteBootstrapRecords(t *testing.T) {
+	logger := newLogger()
+	logger.Info("before upgrade")
+
+	path := filepath.Join(t.TempDir(), "timecue.jsonl")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open log file: %v", err)
+	}
+	logger.Upgrade(file)
+	logger.Info("after upgrade")
+	if err := file.Close(); err != nil {
+		t.Fatalf("close log file: %v", err)
+	}
+
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(contents), []byte("\n"))
+	if len(lines) != 1 {
+		t.Fatalf("record count = %d, want 1: %s", len(lines), contents)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(lines[0], &record); err != nil {
+		t.Fatalf("record is not JSON: %v", err)
+	}
+	if record["msg"] != "after upgrade" {
+		t.Fatalf("message = %v, want after upgrade", record["msg"])
+	}
+}
+
 func TestUpgradeAtomicallySwitchesToJSONLLogger(t *testing.T) {
-	logger := New()
+	logger := newLogger()
 	path := filepath.Join(t.TempDir(), "timecue.log")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -65,7 +97,7 @@ func TestUpgradeAtomicallySwitchesToJSONLLogger(t *testing.T) {
 }
 
 func TestSetLevelChangesThresholdWithoutReplacingLogger(t *testing.T) {
-	logger := New()
+	logger := newLogger()
 	path := filepath.Join(t.TempDir(), "timecue.log")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
