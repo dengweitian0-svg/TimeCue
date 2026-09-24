@@ -1,219 +1,69 @@
 # TimeCue
 
-TimeCue 是一款面向 Windows 的桌面日程提醒应用。它把一次性事项和重复事项统一成可持久化的日程，并通过系统通知、托盘和待处理提醒页面帮助用户完成闭环。
+TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由 Go 管理日程规则、提醒状态和本地数据，由 Flutter 提供桌面界面及系统交互。
 
-## 功能
+> 当前仓库尚未形成可运行的桌面应用。`main.go` 只加载配置后退出；下文将现有实现与目标功能分别列出。
 
-- 创建、查看、删除日程，支持标题、备注、开始时间和结束时间。
-- 支持四种日程类型：单次、每天、每周和每月。
-- 重复日程支持可选截止日期；短月没有对应日期时自动使用当月最后一天。
-- 取消或恢复重复日程的后续提醒，保留日程本身和历史事实。
-- 待处理提醒列表、提醒详情和逐条确认；打开通知或查看详情不会自动确认。
-- 四套主题：奶油桃、薄荷绿、晴空蓝和薰衣草紫，并同步原生窗口标题栏颜色。
+## 当前实现
 
-## 技术栈
+| 部分 | 仓库中的现状 |
+| --- | --- |
+| 启动入口 | 创建配置管理器、加载配置，然后退出；尚无应用运行循环。 |
+| 配置 | 从内嵌的 `internal/config/default.yaml` 加载默认值，以工作目录下的 `config.yaml` 覆盖；支持文件监听、配置快照、修改用户配置和恢复默认值。 |
+| 日志 | 提供可调整级别的全局 `slog` 日志器和 JSON 文件输出接口；入口尚未打开日志文件，启动阶段的日志目前被丢弃。 |
+| 日程与提醒 | 定义了单次／周期日程、提醒的数据结构及服务接口；业务用例和规则计算尚未实现。 |
+| SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；表结构由独立 SQL 迁移建立，入口尚未连接数据库。 |
+| Flutter | 已确定为桌面前端方向；仓库中尚无 Flutter 工程和 Go／Flutter 通信实现。 |
 
-- Go 1.27：启动生命周期、领域规则、应用服务、调度和持久化。
-- Wails 2：将 Go 桌面能力与前端页面连接起来。
-- React + TypeScript + Vite：桌面界面和交互状态管理。
-- SQLite：本地日程、提醒和迁移状态持久化。
-- Windows API：单实例、消息线程、系统托盘、Toast 通知、窗口主题和环境时钟。
 
-当前产品目标平台为 Windows。项目包含部分跨平台 stub，主要用于编译隔离和单元测试；完整桌面能力仍依赖 Windows。
+## 产品目标与核心规则
 
-## 架构设计
+- 创建、查看和删除单次或周期日程；周期日程允许暂停和恢复后续提醒。
+- 每天、每周、每月是前端输入预设，保存时转换为 cron 表达式。Go 端统一负责校验表达式并计算下一次触发时间，不为三种频率分别建立日程类型。
+- 支持可选的周期截止时间。若保留“短月使用月末”的行为，需要先确定并实现对应的 cron 方言；当前代码尚未实现该规则。
+- 持久化每次提醒的计划时间、投递结果和用户确认状态。展示通知、打开详情与用户确认是不同操作；外部通知结果须回传 Go 更新状态。
+- Flutter 负责界面及 Windows 桌面交互，Go 负责日程用例、调度与 SQLite 状态转换。双方通过窄接口交换命令、查询结果和提醒事件。
 
-架构以“状态只能通过正式转换改变”为核心规则：前端只通过应用边界发起操作，调度器和应用服务负责业务转换，SQLite 负责提交事实，通知等外部副作用的结果再回流到运行状态。
+重要状态只能经明确的业务操作改变。已发生的提醒应保留可查询的记录；周期表达式只决定未来触发时间，不代替提醒历史或确认状态。
 
-```mermaid
-flowchart TD
-    UI[React + TypeScript 前端]
-    B[WailsBindings<br/>稳定 DTO / 错误边界]
-    R[Runtime 运行单元<br/>生命周期 / 事件 / 平台编排]
-    A[Schedule App<br/>用例 / Service / Coordinator]
-    D[Schedule Domain<br/>日程状态 / 时间规则 / 业务错误]
-    S[SQLite Storage<br/>事务 / 迁移 / 备份]
-    P[Windows Platform<br/>托盘 / 通知 / 单实例 / 时钟]
-    C[Config & Log<br/>YAML 配置 / JSONL 日志]
-    Q[Reminder Scheduler<br/>计算下一次 / 投递 / 恢复]
+## 配置
 
-    UI --> B --> R
-    R --> A --> D
-    R --> Q --> A
-    A --> S
-    R --> P
-    R --> C
-    P -.事件回流.-> R
-    S -.状态事实.-> A
-```
-
-### 分层职责
-
-| 层 | 目录 | 职责 |
-| --- | --- | --- |
-| 入口与生命周期 | `main.go`、`internal/bootstrap` | 加载配置、取得单实例资格、初始化资源、运行应用并按逆序清理。 |
-| 运行单元 | `internal/runtime` | 组装唯一的 Service、协调器和调度器，管理桌面生命周期、Wails 绑定与运行事件。 |
-| 应用层 | `internal/schedule/app` | 提供用例、端口契约、DTO、游标查询、并发保护、提醒处理和调度协调。 |
-| 领域层 | `internal/schedule/domain` | 定义日程、重复规则、发生实例、时间边界、状态转换和业务错误。 |
-| 时间环境 | `internal/schedule/clock` | 把当前时间和时区环境作为可替换依赖提供给应用层。 |
-| 持久化 | `internal/storage/sqlite` | 实现应用层 Store 端口，负责 SQLite 事务、迁移、约束和迁移备份。 |
-| 平台适配 | `internal/platform` | 以窄接口接入 Windows 消息线程、托盘、通知、单实例和窗口主题。 |
-| 配置与日志 | `internal/config`、`internal/log` | 解析 YAML、解析路径、原子保存配置，并创建结构化 JSONL 日志器。 |
-| 页面 | `frontend/src` | 通过受控端口读取状态和提交操作，不直接访问 SQLite、配置文件或平台 API。 |
-
-模块依赖始终从外围指向更稳定的规则：领域层不依赖数据库和 UI，应用层依赖领域契约，存储和平台实现通过端口接入，`bootstrap` 保有顶层资源所有权。重要的外部结果必须回流为可观察状态，避免通知显示、数据库事实和页面状态互相脱节。
-
-## 数据与配置路径
-
-配置基线内嵌于 [`internal/config/defaults.yaml`](internal/config/defaults.yaml)。启动时，程序读取 `timecue.exe` 所在目录的 `config.yaml` 覆盖默认值；配置保存采用原子替换，并保留未知字段。
+默认配置内嵌在 [`internal/config/default.yaml`](internal/config/default.yaml)。程序从**当前工作目录**读取 `config.yaml`；文件不存在时使用默认值。用户配置只需写需要覆盖的字段。例如：
 
 ```yaml
 log:
   level: info
-  path: ./logs/timecue.log
+  log_path: ./log
 
-backup:
-  dir: ./backups
-
-window:
-  close_behavior: tray
-
-theme: peach
+db:
+  db_path: ./db/timecue.db
 ```
 
-支持的值：
+`app.name` 和 `app.version` 也定义在默认配置中，属于应用元数据。相对路径目前按 Go 进程的工作目录解释；Windows 发布版的固定工作目录尚未接入启动流程。
 
-- `log.level`：`debug`、`info`、`warn`、`error`。
-- `window.close_behavior`：`tray` 或 `exit`。
-- `theme`：`peach`、`mint`、`sky` 或 `lavender`。
-- `log.path` 和 `backup.dir`：可以使用相对路径或绝对路径；相对路径以 `timecue.exe` 所在目录为基准。
+配置文件变动会触发重新解析，并以原子方式发布新的配置快照。**目前实际作用到运行组件的热更新只有 `log.level`**。`db.db_path` 的新值可以进入配置快照，但尚无数据库连接切换或数据迁移，因此不能把修改配置文件当作已搬迁数据库。后续的热更新范围限定为 `log.level` 和 `db.db_path`；`log.log_path` 计划只在启动时读取。
 
-数据文件位置固定为：
+当前根目录的 `config.yaml` 还包含旧版的 `backup`、`window` 字段。现行配置结构不使用它们，也没有相应的备份或窗口行为。配置写入会保留已有的未知字段，但不会让这些字段生效。
 
-```text
-%LOCALAPPDATA%\TimeCue\timecue.db
-```
+## 开发与检查
 
-数据库路径不能通过 `data_dir` 或其他配置项修改。日志和备份目录可以在设置页中调整，但保存后需要重启才会影响当前进程使用的路径；程序不会在运行中迁移或删除旧目录中的文件。
-
-### 迁移备份与恢复
-
-仅当检测到需要迁移时，程序才会在关闭数据库连接后创建备份，文件名格式为：
-
-```text
-timecue.db.<UTC 时间戳>.bak
-```
-
-备份失败不会执行迁移；迁移失败会保留当前数据库和备份，并将错误返回到启动边界。
-
-手工恢复：
-
-1. 退出 TimeCue，并确认没有进程继续打开数据库。
-2. 先将当前 `%LOCALAPPDATA%\TimeCue\timecue.db` 复制到安全位置。
-3. 将备份文件复制为 `timecue.db`，覆盖前确认目标路径正确。
-4. 重新启动 TimeCue，让程序按正常启动和迁移流程打开数据库。
-
-## 开发
-
-### 环境要求
-
-- Windows。
-- Go 1.27 或更高版本。
-- Node.js 与 npm。
-- Wails CLI（运行桌面开发或 Windows 打包时需要）。
-
-### 安装依赖
-
-```powershell
-npm --prefix frontend ci
-```
-
-### 启动开发环境
-
-```powershell
-wails dev
-```
-
-也可以直接运行 Go 程序进行后端开发：
+当前 Go 模块要求 `go.mod` 所列的 Go 版本。在仓库根目录可以运行：
 
 ```powershell
 go run .
 ```
 
-`go run` 使用 Go 工具链生成的临时可执行文件，因此相对配置、日志和备份路径可能随运行而变化。需要稳定路径时，请使用发布后的可执行文件，或在配置中指定绝对路径。
+这只会执行当前入口的配置加载流程，不会打开桌面窗口。SQLite 初始迁移的执行方法见 [`migrations/README.md`](migrations/README.md)；`Sqlite.Connect` 不会自动执行迁移。
 
-### 构建
-
-```powershell
-wails build -platform windows/amd64 -webview2 embed
-```
-
-构建产物默认输出到 `build/bin`。具体构建参数以本机 Wails CLI 版本和 [`wails.json`](wails.json) 为准。
-
-## 验证
-
-修改 Go 代码后，至少执行：
+需要检查现有 Go 代码时可运行：
 
 ```powershell
 gofmt -l .
-go test ./...
 go vet ./...
+go test ./...
 ```
 
-修改前端后，执行：
+仓库目前没有 Flutter 工程，因此还没有可用的 Flutter 开发或构建命令。现有 `.github/workflows/ci.yml` 仍包含指向不存在的 React／npm 前端目录的任务，需在 Flutter 工程建立时改为相应的检查。
 
-```powershell
-npm --prefix frontend run typecheck
-npm --prefix frontend test
-npm --prefix frontend run build
-```
 
-Windows 桌面功能验收还应实际观察通知中心显示、通知点击后的窗口激活与定位，以及确认后 SQLite 中提醒处理时间是否持久化。前端 fake 通知器测试只能验证应用端口调用，不能替代 Windows 系统通知验收。
-
-## 项目结构
-
-```text
-.
-├── main.go                     # Windows 桌面入口
-├── frontend/                   # React + TypeScript 页面
-│   ├── src/
-│   │   ├── app/                # 页面组装和前端状态投影
-│   │   ├── features/
-│   │   │   ├── reminders/      # 待处理提醒和确认
-│   │   │   ├── schedules/      # 日程列表、表单和日程模型
-│   │   │   └── settings/       # 设置页、主题和目录配置
-│   │   ├── shared/
-│   │   │   ├── components/     # 跨功能 UI 组件
-│   │   │   ├── contracts/      # 运行时和错误契约
-│   │   │   ├── fields/         # 通用表单字段
-│   │   │   └── ports/          # 前端应用端口
-│   │   ├── controller.ts       # 用例编排和页面状态管理
-│   │   ├── wails-adapter.ts    # Wails 绑定到前端端口的适配器
-│   │   ├── contracts.ts        # 前端契约统一导出
-│   │   ├── schedule-model.ts   # 日程表单转换和校验
-│   │   ├── themes.ts           # 主题语义颜色
-│   │   ├── styles.css          # 全局样式
-│   │   └── main.tsx            # 前端启动入口
-│   ├── tests/                  # Controller、页面和适配器测试
-│   ├── wailsjs/                # Wails 生成的绑定代码
-│   ├── index.html              # Vite HTML 入口
-│   ├── package.json            # npm 脚本和依赖
-│   ├── package-lock.json       # npm 依赖锁定
-│   ├── tsconfig.json           # TypeScript 配置
-│   └── vite.config.ts          # Vite 和 Vitest 配置
-├── internal/
-│   ├── bootstrap/              # 启动、资源所有权和退出
-│   ├── config/                 # YAML 配置和路径解析
-│   ├── log/                    # slog JSONL 日志
-│   ├── platform/               # Windows 与桌面平台适配
-│   ├── runtime/                # 运行单元和 Wails 绑定
-│   ├── schedule/               # 领域、用例、调度和时钟
-│   ├── storage/sqlite/         # SQLite 实现和迁移
-│   └── utils/                  # 错误分类和退出码
-├── build/                      # 构建资源
-└── wails.json                  # Wails 项目配置
-```
-
-## 贡献
-
-请阅读[贡献规范](docs/CONTRIBUTING.md)，其中包含分支策略、提交约定、Pull Request 流程和 CI 检查要求。
+分支与 Pull Request 流程见[贡献规范](docs/CONTRIBUTING.md)。其中的前端 CI 描述仍是旧版内容，待 Flutter 工程加入时同步更新。

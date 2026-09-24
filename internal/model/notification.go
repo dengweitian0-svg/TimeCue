@@ -4,19 +4,21 @@ import (
 	"time"
 )
 
-// Notiification 只管什么时候提醒哪个日程, 其他的都不管
+// Notification 是一次持久化的日程触发记录。
+// 投递结果与用户确认分别保存。
 type Notification struct {
-	ID         int
-	ScheduleID int
-	Status     NotifyStatus
-	NotifyTime time.Time
+	ID             int
+	ScheduleID     int
+	Status         NotifyStatus
+	NotifyTime     time.Time
+	AcknowledgedAt *time.Time
+	Deleted        bool
 }
 
 type NotifyStatus string
 
 const (
-	pending   NotifyStatus = "pending"
-	sended    NotifyStatus = "sended"
-	failed    NotifyStatus = "failed"
-	cancelled NotifyStatus = "cancelled"
+	NotifyPending NotifyStatus = "pending"
+	NotifySent    NotifyStatus = "sent"
+	NotifyFailed  NotifyStatus = "failed"
 )

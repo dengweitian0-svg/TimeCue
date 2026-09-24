@@ -1,19 +1,20 @@
 package model
 
 import (
+	"fmt"
+	"strings"
 	"time"
 )
 
 type ScheduleType string
 
 const (
-	SingleSchedule ScheduleType = "single" // 单次日程
-	PeriodSchedule ScheduleType = "period" // 周期性日程
+	SingleSchedule ScheduleType = "single"
+	PeriodSchedule ScheduleType = "period"
 )
 
-// Schedule 现阶段支持两种日程, 同一个 Schedule 只能有其中一个类型
-// single: 只触发一次, 触发完就失效
-// Period: 重复日程, 通过 cron 计算触发日期, 支持定义多个日期
+// Schedule 保存生成未来提醒所需的规则。
+// Cancelled 表示终止日程；Period.Open 控制可恢复的暂停。
 type Schedule struct {
 	ID          int
 	Name        string
@@ -21,8 +22,10 @@ type Schedule struct {
 	Description *string
 	Period      *Period
 	Single      *Single
-	Create_at   time.Time
-	Update_at   time.Time
+	Deleted     bool // 删除后仍保留记录供历史查询。
+	Cancelled   bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Period 周期日程
@@ -36,11 +39,38 @@ type Single struct {
 	NotifyTime time.Time
 }
 
-// Query 是进行范围查询时的 WHERE 过滤条件
+// Validate 检查日程结构；cron 语法由规则计算部分验证。
+func (s Schedule) Validate() error {
+	if strings.TrimSpace(s.Name) == "" {
+		return fmt.Errorf("[model] schedule name must not be empty")
+	}
+	switch s.Type {
+	case SingleSchedule:
+		if s.Single == nil || s.Period != nil || s.Single.NotifyTime.IsZero() {
+			return fmt.Errorf("[model] single schedule requires one notification time and no period rule")
+		}
+	case PeriodSchedule:
+		if s.Period == nil || s.Single != nil || len(s.Period.Cron) == 0 {
+			return fmt.Errorf("[model] period schedule requires cron rules and no single time")
+		}
+		for _, expression := range s.Period.Cron {
+			if strings.TrimSpace(expression) == "" {
+				return fmt.Errorf("[model] period schedule contains an empty cron rule")
+			}
+		}
+	default:
+		return fmt.Errorf("[model] unknown schedule type %q", s.Type)
+	}
+	return nil
+}
+
+// QueryOption 的字段均为可选查询条件；未设置的指针字段不参与查询。
+// GetScheduleByID 的必填 ID 由方法参数传入；IncludeDeleted 控制是否包含软删除记录。
 type QueryOption struct {
-	Name      *string       // 不传默认不按 name 查找
-	Offset    *int          // 不传默认从 0 开始
-	Limit     *int          // limit 上限为 LimitMax, 不传默认为 50
-	AfterTime *time.Time    // 提供查找触发时间在传入时间之后的日程, 不传默认调用时的时间
-	Type      *ScheduleType // 不指定类型, 则默认查找所有类型的
+	ID             *int
+	Name           *string
+	Offset         *int
+	Limit          *int
+	Type           *ScheduleType
+	IncludeDeleted bool
 }
