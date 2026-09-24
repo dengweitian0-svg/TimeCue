@@ -76,17 +76,12 @@ func (m *Manager) LoadConfig() error {
 }
 
 // CurrentConfig 返回当前配置的值快照。配置尚未成功加载时返回 false。
-func (m *Manager) CurrentConfig() (Config, bool) {
+func (m *Manager) CurrentConfig() (Config, error) {
 	current := m.currentCfg.Load()
 	if current == nil {
-		return Config{}, false
+		return Config{}, fmt.Errorf("[config] no config")
 	}
-	return *current, true
-}
-
-// GetCurrentConfig 是 CurrentConfig 的兼容别名。
-func (m *Manager) GetCurrentConfig() (Config, bool) {
-	return m.CurrentConfig()
+	return *current, nil
 }
 
 // newConfigViper 创建只负责读取 config.yaml 的 Viper 实例。

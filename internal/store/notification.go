@@ -16,7 +16,12 @@ type NotificationStore struct {
 }
 
 // NewNotificationStore 创建使用指定数据库的提醒存储。
-func NewNotificationStore(db *Sqlite) *NotificationStore { return &NotificationStore{db: db} }
+func NewNotificationStore(db *Sqlite) (*NotificationStore, error) {
+	if db == nil {
+		return nil, fmt.Errorf("[store] cannot create notification store, database is nil")
+	}
+	return &NotificationStore{db: db}, nil
+}
 
 // CreateNotification 检查日程状态并幂等地创建一条提醒。
 func (s *NotificationStore) CreateNotification(ctx context.Context, scheduleID int, notifyAt time.Time) (*model.Notification, error) {

@@ -18,7 +18,12 @@ type ScheduleStore struct {
 }
 
 // NewScheduleStore 创建使用指定数据库的日程存储。
-func NewScheduleStore(db *Sqlite) *ScheduleStore { return &ScheduleStore{db: db} }
+func NewScheduleStore(db *Sqlite) (*ScheduleStore, error) {
+	if db == nil {
+		return nil, fmt.Errorf("[store] cannot create schedule store, database is nil")
+	}
+	return &ScheduleStore{db: db}, nil
+}
 
 // CreateSchedule 校验并写入日程，返回生成的 ID 与时间戳。
 func (s *ScheduleStore) CreateSchedule(ctx context.Context, schedule model.Schedule) (*model.Schedule, error) {

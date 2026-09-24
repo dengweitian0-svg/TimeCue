@@ -29,9 +29,9 @@ func TestLoadConfigUsesImmutableDefaultsAndUserOverrides(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 
-	current, ok := manager.GetCurrentConfig()
-	if !ok {
-		t.Fatal("expected current config")
+	current, err := manager.CurrentConfig()
+	if err != nil {
+		t.Fatalf("get current config: %v", err)
 	}
 	if current.App.Name != "timecue" {
 		t.Fatalf("app.name = %q, want %q", current.App.Name, "timecue")
@@ -58,9 +58,9 @@ func TestLoadConfigUsesDefaultsWhenConfigFileIsMissing(t *testing.T) {
 		t.Fatalf("load defaults without config file: %v", err)
 	}
 
-	current, ok := manager.GetCurrentConfig()
-	if !ok {
-		t.Fatal("expected current config")
+	current, err := manager.CurrentConfig()
+	if err != nil {
+		t.Fatalf("get current config: %v", err)
 	}
 	if current.Log.Level != "info" {
 		t.Fatalf("log.level = %q, want %q", current.Log.Level, "info")
@@ -69,8 +69,8 @@ func TestLoadConfigUsesDefaultsWhenConfigFileIsMissing(t *testing.T) {
 	writeTestConfig(t, "log:\n  level: debug\n")
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		current, ok := manager.GetCurrentConfig()
-		if ok && current.Log.Level == "debug" {
+		current, err := manager.CurrentConfig()
+		if err == nil && current.Log.Level == "debug" {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -91,9 +91,9 @@ func TestReloadConfigKeepsPreviousSnapshotOnFailure(t *testing.T) {
 	}
 
 	previousPointer := manager.currentCfg.Load()
-	previous, ok := manager.GetCurrentConfig()
-	if !ok {
-		t.Fatal("expected current config")
+	previous, err := manager.CurrentConfig()
+	if err != nil {
+		t.Fatalf("get current config: %v", err)
 	}
 
 	writeTestConfig(t, "log: [invalid\n")
@@ -101,9 +101,9 @@ func TestReloadConfigKeepsPreviousSnapshotOnFailure(t *testing.T) {
 		t.Fatal("expected reload error")
 	}
 
-	afterFailure, ok := manager.GetCurrentConfig()
-	if !ok {
-		t.Fatal("expected current config after failed reload")
+	afterFailure, err := manager.CurrentConfig()
+	if err != nil {
+		t.Fatalf("get current config after failed reload: %v", err)
 	}
 	if !reflect.DeepEqual(afterFailure, previous) {
 		t.Fatalf("config changed after failed reload: got %#v, want %#v", afterFailure, previous)
@@ -117,9 +117,9 @@ func TestReloadConfigKeepsPreviousSnapshotOnFailure(t *testing.T) {
 		t.Fatalf("reload valid config: %v", err)
 	}
 	updatedPointer := manager.currentCfg.Load()
-	updated, ok := manager.GetCurrentConfig()
-	if !ok {
-		t.Fatal("expected updated config")
+	updated, err := manager.CurrentConfig()
+	if err != nil {
+		t.Fatalf("get updated config: %v", err)
 	}
 	if updated.Log.Level != "warn" {
 		t.Fatalf("log.level = %q, want %q", updated.Log.Level, "warn")
@@ -147,8 +147,8 @@ func TestLoadConfigStartsConfigYamlWatcher(t *testing.T) {
 	writeTestConfig(t, "log:\n  level: debug\n")
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		current, ok := manager.GetCurrentConfig()
-		if ok && current.Log.Level == "debug" {
+		current, err := manager.CurrentConfig()
+		if err == nil && current.Log.Level == "debug" {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -192,9 +192,9 @@ func TestChangeConfigCreatesAndUpdatesUserConfigWithoutDefaults(t *testing.T) {
 		t.Fatalf("updated config still contains old value: %s", updated)
 	}
 
-	current, ok := manager.CurrentConfig()
-	if !ok {
-		t.Fatal("expected current config after change")
+	current, err := manager.CurrentConfig()
+	if err != nil {
+		t.Fatalf("get current config after change: %v", err)
 	}
 	if current.DB.DBPath != "./updated.db" {
 		t.Fatalf("db.db_path = %q, want %q", current.DB.DBPath, "./updated.db")
@@ -258,9 +258,9 @@ func TestRestoreDefaultClearsUserConfig(t *testing.T) {
 		t.Fatalf("config file is not empty: %q", contents)
 	}
 
-	current, ok := manager.CurrentConfig()
-	if !ok {
-		t.Fatal("expected current config after restoring defaults")
+	current, err := manager.CurrentConfig()
+	if err != nil {
+		t.Fatalf("get current config after restoring defaults: %v", err)
 	}
 	if current.Log.Level != "info" {
 		t.Fatalf("log.level = %q, want default %q", current.Log.Level, "info")

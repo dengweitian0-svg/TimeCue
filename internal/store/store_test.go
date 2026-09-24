@@ -24,7 +24,7 @@ var (
 func newMigratedStore(t *testing.T) (*Sqlite, *ScheduleStore, *NotificationStore) {
 	t.Helper()
 	ctx := context.Background()
-	db := &Sqlite{}
+	db := NewSqlite()
 	if err := db.Connect(ctx, filepath.Join(t.TempDir(), "timecue.db")); err != nil {
 		t.Fatalf("连接数据库: %v", err)
 	}
@@ -43,7 +43,15 @@ func newMigratedStore(t *testing.T) (*Sqlite, *ScheduleStore, *NotificationStore
 	if _, err := db.db.ExecContext(ctx, string(script)); err != nil {
 		t.Fatalf("应用测试迁移: %v", err)
 	}
-	return db, NewScheduleStore(db), NewNotificationStore(db)
+	schedules, err := NewScheduleStore(db)
+	if err != nil {
+		t.Fatalf("创建日程存储: %v", err)
+	}
+	notifications, err := NewNotificationStore(db)
+	if err != nil {
+		t.Fatalf("创建提醒存储: %v", err)
+	}
+	return db, schedules, notifications
 }
 
 // TestSoftDeletePreservesHistory 验证删除日程时已发生提醒仍可查询。

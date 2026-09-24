@@ -40,6 +40,11 @@ type Sqlite struct {
 	db *sql.DB
 }
 
+// NewSqlite 创建 SQLite 连接管理器。
+func NewSqlite() *Sqlite {
+	return &Sqlite{}
+}
+
 // Connect 打开数据库并启用外键约束；不会执行数据库迁移。
 func (s *Sqlite) Connect(ctx context.Context, path string) error {
 	s.mu.Lock()
