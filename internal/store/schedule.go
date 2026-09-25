@@ -27,47 +27,87 @@ func NewScheduleStore(db *Sqlite) (*ScheduleStore, error) {
 
 // CreateSchedule 校验并写入日程，返回生成的 ID 与时间戳。
 func (s *ScheduleStore) CreateSchedule(ctx context.Context, schedule model.Schedule) (*model.Schedule, error) {
+	created, _, err := s.CreateScheduleWithNotification(ctx, schedule, nil)
+	return created, err
+}
+
+// CreateScheduleWithNotification 在同一事务中写入日程及可选的首条提醒。
+func (s *ScheduleStore) CreateScheduleWithNotification(ctx context.Context, schedule model.Schedule, notifyAt *time.Time) (*model.Schedule, *model.Notification, error) {
 	if err := schedule.Validate(); err != nil {
-		return nil, fmt.Errorf("[store] invalid schedule, name=%q: %w", schedule.Name, err)
+		return nil, nil, fmt.Errorf("[store] invalid schedule, name=%q: %w", schedule.Name, err)
 	}
 	if schedule.ID != 0 || schedule.Cancelled || schedule.Deleted {
-		return nil, fmt.Errorf("[store] new schedule must not have a preset state, schedule_id=%d, cancelled=%t, deleted=%t", schedule.ID, schedule.Cancelled, schedule.Deleted)
+		return nil, nil, fmt.Errorf("[store] new schedule must not have a preset state, schedule_id=%d, cancelled=%t, deleted=%t", schedule.ID, schedule.Cancelled, schedule.Deleted)
+	}
+	if notifyAt != nil {
+		if notifyAt.IsZero() {
+			return nil, nil, fmt.Errorf("[store] initial notification time must not be zero, name=%q", schedule.Name)
+		}
+		if schedule.Type == model.SingleSchedule && schedule.Single.NotifyTime.UTC().UnixNano() != notifyAt.UTC().UnixNano() {
+			return nil, nil, fmt.Errorf("[store] initial notification time does not match single schedule, name=%q, notify_at=%q", schedule.Name, notifyAt.UTC().Format(time.RFC3339Nano))
+		}
+		if schedule.Type == model.PeriodSchedule && !schedule.Period.Open {
+			return nil, nil, fmt.Errorf("[store] cannot create initial notification for paused schedule, name=%q", schedule.Name)
+		}
 	}
 	db, err := s.db.handle()
 	if err != nil {
-		return nil, fmt.Errorf("[store] cannot create schedule, name=%q: %w", schedule.Name, err)
+		return nil, nil, fmt.Errorf("[store] cannot create schedule, name=%q: %w", schedule.Name, err)
 	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("[store] failed to begin schedule creation, name=%q: %w", schedule.Name, err)
+	}
+	defer tx.Rollback()
 	var periodOpen, periodCron, singleTime any
 	if schedule.Type == model.PeriodSchedule {
 		periodOpen = schedule.Period.Open
 		encoded, err := json.Marshal(schedule.Period.Cron)
 		if err != nil {
-			return nil, fmt.Errorf("[store] failed to encode cron rules, name=%q: %w", schedule.Name, err)
+			return nil, nil, fmt.Errorf("[store] failed to encode cron rules, name=%q: %w", schedule.Name, err)
 		}
 		periodCron = string(encoded)
 	} else {
 		singleTime = schedule.Single.NotifyTime.UTC().UnixNano()
+		single := *schedule.Single
+		single.NotifyTime = single.NotifyTime.In(model.BeijingLocation())
+		schedule.Single = &single
 	}
 	var description any
 	if schedule.Description != nil {
 		description = *schedule.Description
 	}
-	now := time.Now().UTC()
-	result, err := db.ExecContext(ctx, `INSERT INTO schedules
+	now := time.Now().In(model.BeijingLocation())
+	result, err := tx.ExecContext(ctx, `INSERT INTO schedules
 		(name, type, description, period_open, period_cron, single_notify_time, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, schedule.Name, schedule.Type, description,
 		periodOpen, periodCron, singleTime, now.UnixNano(), now.UnixNano())
 	if err != nil {
-		return nil, fmt.Errorf("[store] failed to create schedule, name=%q: %w", schedule.Name, err)
+		return nil, nil, fmt.Errorf("[store] failed to create schedule, name=%q: %w", schedule.Name, err)
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
-		return nil, fmt.Errorf("[store] failed to read new schedule ID, name=%q: %w", schedule.Name, err)
+		return nil, nil, fmt.Errorf("[store] failed to read new schedule ID, name=%q: %w", schedule.Name, err)
 	}
 	schedule.ID = int(id)
 	schedule.CreatedAt = now
 	schedule.UpdatedAt = now
-	return &schedule, nil
+	var notification *model.Notification
+	if notifyAt != nil {
+		// 在创建日程的事务内写入首条提醒，失败时一并回滚。
+		_, err = tx.ExecContext(ctx, `INSERT INTO notifications (schedule_id, notify_time) VALUES (?, ?)`, schedule.ID, notifyAt.UTC().UnixNano())
+		if err != nil {
+			return nil, nil, fmt.Errorf("[store] failed to create initial notification, name=%q, notify_at=%q: %w", schedule.Name, notifyAt.UTC().Format(time.RFC3339Nano), err)
+		}
+		notification, err = scanNotification(tx.QueryRowContext(ctx, notificationSelect+` WHERE schedule_id = ? AND notify_time = ?`, schedule.ID, notifyAt.UTC().UnixNano()))
+		if err != nil {
+			return nil, nil, fmt.Errorf("[store] failed to read initial notification, name=%q, notify_at=%q: %w", schedule.Name, notifyAt.UTC().Format(time.RFC3339Nano), err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("[store] failed to commit schedule creation, name=%q: %w", schedule.Name, err)
+	}
+	return &schedule, notification, nil
 }
 
 // GetScheduleByID 要求单独传入日程 ID，其余已设置的查询条件均参与过滤。
@@ -311,14 +351,14 @@ func scanSchedule(row scanner) (*model.Schedule, error) {
 		s.Description = &description.String
 	}
 	s.Cancelled, s.Deleted = cancelled != 0, deleted != 0
-	s.CreatedAt, s.UpdatedAt = time.Unix(0, createdAt).UTC(), time.Unix(0, updatedAt).UTC()
+	s.CreatedAt, s.UpdatedAt = time.Unix(0, createdAt).In(model.BeijingLocation()), time.Unix(0, updatedAt).In(model.BeijingLocation())
 	if s.Type == model.PeriodSchedule {
 		s.Period = &model.Period{Open: periodOpen.Int64 != 0}
 		if err := json.Unmarshal([]byte(cron.String), &s.Period.Cron); err != nil {
 			return nil, fmt.Errorf("failed to decode cron rules, schedule_id=%d: %w", s.ID, err)
 		}
 	} else {
-		s.Single = &model.Single{NotifyTime: time.Unix(0, singleTime.Int64).UTC()}
+		s.Single = &model.Single{NotifyTime: time.Unix(0, singleTime.Int64).In(model.BeijingLocation())}
 	}
 	return &s, nil
 }

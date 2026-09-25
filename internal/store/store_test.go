@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/service"
 )
@@ -19,6 +20,14 @@ var (
 	_ service.ScheduleRepo = (*ScheduleStore)(nil)
 	_ service.NotifyRepo   = (*NotificationStore)(nil)
 )
+
+func requireBeijingTime(t *testing.T, value time.Time) {
+	t.Helper()
+	_, offset := value.Zone()
+	if offset != 8*60*60 {
+		t.Fatalf("时间应带 +08:00 偏移: %v", value)
+	}
+}
 
 // newMigratedStore 从独立 SQL 文件建立测试数据库，生产连接不会执行迁移。
 func newMigratedStore(t *testing.T) (*Sqlite, *ScheduleStore, *NotificationStore) {
@@ -105,6 +114,8 @@ func TestSoftDeletePreservesHistory(t *testing.T) {
 	if err != nil || storedPast.Deleted || storedPast.AcknowledgedAt == nil || storedPast.Status != model.NotifySent {
 		t.Fatalf("已发生提醒状态丢失: %#v, %v", storedPast, err)
 	}
+	requireBeijingTime(t, storedPast.NotifyTime)
+	requireBeijingTime(t, *storedPast.AcknowledgedAt)
 	storedFuture, err := notifications.GetNotificationByID(ctx, future.ID)
 	if err != nil || !storedFuture.Deleted {
 		t.Fatalf("未来待处理提醒应被隐藏: %#v, %v", storedFuture, err)
@@ -309,5 +320,123 @@ func TestGetAllScheduleAcceptsOptionalFilters(t *testing.T) {
 	filtered, err = schedules.GetAllSchedule(ctx, model.QueryOption{Name: &name})
 	if err != nil || len(filtered) != 0 {
 		t.Fatalf("名称条件应参与列表过滤: %#v, %v", filtered, err)
+	}
+}
+
+// TestAppCreatesAndAdvancesNotifications 验证创建用例、暂停状态与重复推进的持久化结果。
+func TestAppCreatesAndAdvancesNotifications(t *testing.T) {
+	_, schedules, notifications := newMigratedStore(t)
+	manager, err := config.NewManager()
+	if err != nil {
+		t.Fatalf("创建配置管理器: %v", err)
+	}
+	app, err := service.NewApp(manager, schedules, notifications)
+	if err != nil {
+		t.Fatalf("组装服务: %v", err)
+	}
+	ctx := context.Background()
+	firstTime := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	singleInput := model.Schedule{
+		Name: "单次", Type: model.SingleSchedule, Single: &model.Single{NotifyTime: firstTime},
+	}
+	single, first, err := app.CreateSchedule(ctx, singleInput)
+	if err != nil || single == nil || first == nil || first.ScheduleID != single.ID || !first.NotifyTime.Equal(firstTime) {
+		t.Fatalf("创建单次日程及提醒: %#v, %#v, %v", single, first, err)
+	}
+	if singleInput.Single.NotifyTime.Location() != time.UTC {
+		t.Fatalf("创建不应改变调用方的输入时区: %v", singleInput.Single.NotifyTime)
+	}
+	requireBeijingTime(t, single.Single.NotifyTime)
+	requireBeijingTime(t, single.CreatedAt)
+	requireBeijingTime(t, single.UpdatedAt)
+	requireBeijingTime(t, first.NotifyTime)
+	loadedSchedule, err := schedules.GetScheduleByID(ctx, single.ID, model.QueryOption{})
+	if err != nil {
+		t.Fatalf("读取单次日程: %v", err)
+	}
+	requireBeijingTime(t, loadedSchedule.Single.NotifyTime)
+	requireBeijingTime(t, loadedSchedule.CreatedAt)
+	loadedNotification, err := notifications.GetNotificationByID(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("读取首条提醒: %v", err)
+	}
+	requireBeijingTime(t, loadedNotification.NotifyTime)
+	if next, err := app.AdvanceNotification(ctx, *first); next != nil || !errors.Is(err, service.ErrNotPeriodSchedule) {
+		t.Fatalf("单次提醒推进应返回类型错误: %#v, %v", next, err)
+	}
+	if _, _, err := app.CreateSchedule(ctx, model.Schedule{
+		Name: "过期", Type: model.SingleSchedule, Single: &model.Single{NotifyTime: time.Now().UTC().Add(-time.Hour)},
+	}); err == nil {
+		t.Fatal("过期单次日程应在写入前被拒绝")
+	}
+	if _, _, err := app.CreateSchedule(ctx, model.Schedule{
+		Name: "非法规则", Type: model.PeriodSchedule, Period: &model.Period{Open: true, Cron: []string{"0 9 1 * 1"}},
+	}); err == nil {
+		t.Fatal("日期与星期混用应在写入前被拒绝")
+	}
+	period, initial, err := app.CreateSchedule(ctx, model.Schedule{
+		Name: "周期", Type: model.PeriodSchedule, Period: &model.Period{Open: true, Cron: []string{"0 9 30,31 * *"}},
+	})
+	if err != nil || initial == nil || !initial.NotifyTime.After(time.Now().UTC()) {
+		t.Fatalf("创建周期日程及首提醒: %#v, %#v, %v", period, initial, err)
+	}
+	requireBeijingTime(t, initial.NotifyTime)
+	next, err := app.AdvanceNotification(ctx, *initial)
+	if err != nil || next == nil || !next.NotifyTime.After(initial.NotifyTime) {
+		t.Fatalf("周期提醒应严格向后推进: %#v, %v", next, err)
+	}
+	again, err := app.AdvanceNotification(ctx, *initial)
+	if err != nil || again == nil || again.ID != next.ID {
+		t.Fatalf("重复推进应复用同一提醒: %#v, %v", again, err)
+	}
+	history, err := notifications.GetNotificationHistoryByScheduleID(ctx, period.ID)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("重复推进不应增加提醒数: %#v, %v", history, err)
+	}
+	paused, pausedInitial, err := app.CreateSchedule(ctx, model.Schedule{
+		Name: "暂停", Type: model.PeriodSchedule, Period: &model.Period{Open: false, Cron: []string{"0 9 * * 7"}},
+	})
+	if err != nil || pausedInitial != nil {
+		t.Fatalf("暂停日程不应生成首提醒: %#v, %v", pausedInitial, err)
+	}
+	if got, err := app.NextNotify.Next(ctx, paused.ID, time.Now().UTC()); err != nil || got != nil {
+		t.Fatalf("暂停日程不应推进: %#v, %v", got, err)
+	}
+	if err := schedules.SetScheduleOpen(ctx, paused.ID, true); err != nil {
+		t.Fatalf("恢复日程: %v", err)
+	}
+	if got, err := app.NextNotify.Next(ctx, paused.ID, time.Now().UTC()); err != nil || got == nil {
+		t.Fatalf("恢复后应可推进: %#v, %v", got, err)
+	}
+	if err := schedules.CancelScheduleByID(ctx, period.ID); err != nil {
+		t.Fatalf("取消日程: %v", err)
+	}
+	if got, err := app.AdvanceNotification(ctx, *next); err != nil || got != nil {
+		t.Fatalf("取消日程不应继续推进: %#v, %v", got, err)
+	}
+	all, err := schedules.GetAllSchedule(ctx, model.QueryOption{})
+	if err != nil || len(all) != 3 {
+		t.Fatalf("失败的创建不应留下日程: %#v, %v", all, err)
+	}
+}
+
+// TestCreateScheduleWithNotificationRollsBack 验证首条提醒写入失败会撤销日程写入。
+func TestCreateScheduleWithNotificationRollsBack(t *testing.T) {
+	db, schedules, _ := newMigratedStore(t)
+	ctx := context.Background()
+	if _, err := db.db.ExecContext(ctx, `CREATE TRIGGER fail_initial_notification BEFORE INSERT ON notifications
+		BEGIN SELECT RAISE(FAIL, 'blocked notification'); END`); err != nil {
+		t.Fatalf("创建故障触发器: %v", err)
+	}
+	notifyAt := time.Now().UTC().Add(time.Hour)
+	created, notification, err := schedules.CreateScheduleWithNotification(ctx, model.Schedule{
+		Name: "应回滚", Type: model.SingleSchedule, Single: &model.Single{NotifyTime: notifyAt},
+	}, &notifyAt)
+	if err == nil || created != nil || notification != nil {
+		t.Fatalf("首提醒写入失败应返回错误: %#v, %#v, %v", created, notification, err)
+	}
+	var count int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schedules`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("失败事务不应留下日程: count=%d, err=%v", count, err)
 	}
 }

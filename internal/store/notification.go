@@ -235,9 +235,9 @@ func scanNotification(row scanner) (*model.Notification, error) {
 	if err != nil {
 		return nil, fmt.Errorf("[store] failed to scan notification: %w", err)
 	}
-	notification.NotifyTime = time.Unix(0, notifyTime).UTC()
+	notification.NotifyTime = time.Unix(0, notifyTime).In(model.BeijingLocation())
 	if acknowledgedAt.Valid {
-		at := time.Unix(0, acknowledgedAt.Int64).UTC()
+		at := time.Unix(0, acknowledgedAt.Int64).In(model.BeijingLocation())
 		notification.AcknowledgedAt = &at
 	}
 	notification.Deleted = deleted != 0

@@ -17,8 +17,7 @@ type NotifyRepo interface {
 	DeleteNotificationByID(ctx context.Context, notificationID int) error
 }
 
-// NextNotify 提供根据 Rule 计算下一次提醒的统一接口
-// 应该由 model.Schedule 和 model.Notification 实现
+// NextNotify 按日程 ID 计算严格晚于 after 的下一次触发，并幂等写入提醒。
 type NextNotify interface {
-	Next(ctx context.Context, rule model.Rule) *model.Notification
+	Next(ctx context.Context, scheduleID int, after time.Time) (*model.Notification, error)
 }

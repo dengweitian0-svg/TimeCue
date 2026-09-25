@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 )
@@ -10,6 +11,8 @@ import (
 type ScheduleRepo interface {
 	// CreateSchedule 创建日程并返回数据库生成的 ID 与时间戳。
 	CreateSchedule(ctx context.Context, schedule model.Schedule) (*model.Schedule, error)
+	// CreateScheduleWithNotification 在同一事务中创建日程及可选的首条提醒。
+	CreateScheduleWithNotification(ctx context.Context, schedule model.Schedule, notifyAt *time.Time) (*model.Schedule, *model.Notification, error)
 	// GetScheduleByID 要求单独传入日程 ID，QueryOption 中已设置的条件也参与过滤。
 	GetScheduleByID(ctx context.Context, scheduleID int, query model.QueryOption) (*model.Schedule, error)
 	// GetAllSchedule 的查询条件均可选，按已设置条件分页查询日程。
