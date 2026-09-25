@@ -81,11 +81,11 @@ func (s *NotificationStore) CreateNotification(ctx context.Context, scheduleID i
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("[store] failed to commit notification creation, schedule_id=%d, notify_at=%q: %w", scheduleID, notifyAt.UTC().Format(time.RFC3339Nano), err)
 	}
-	return &notification, nil
+	return notification, nil
 }
 
 // GetNotificationByStartTime 返回半开区间内可投递的待处理提醒。
-func (s *NotificationStore) GetNotificationByStartTime(ctx context.Context, startTime, endTime time.Time) ([]model.Notification, error) {
+func (s *NotificationStore) GetNotificationByStartTime(ctx context.Context, startTime, endTime time.Time) ([]*model.Notification, error) {
 	if !endTime.After(startTime) {
 		return nil, fmt.Errorf("[store] end time must be after start time, start_time=%q, end_time=%q", startTime.UTC().Format(time.RFC3339Nano), endTime.UTC().Format(time.RFC3339Nano))
 	}
@@ -112,20 +112,20 @@ func (s *NotificationStore) GetNotificationByStartTime(ctx context.Context, star
 }
 
 // GetNotificationByID 包含已软删除提醒，用于历史和状态检查。
-func (s *NotificationStore) GetNotificationByID(ctx context.Context, notificationID int) (model.Notification, error) {
+func (s *NotificationStore) GetNotificationByID(ctx context.Context, notificationID int) (*model.Notification, error) {
 	db, err := s.db.handle()
 	if err != nil {
-		return model.Notification{}, fmt.Errorf("[store] cannot get notification, notification_id=%d: %w", notificationID, err)
+		return nil, fmt.Errorf("[store] cannot get notification, notification_id=%d: %w", notificationID, err)
 	}
 	notification, err := scanNotification(db.QueryRowContext(ctx, notificationSelect+` WHERE id = ?`, notificationID))
 	if err != nil {
-		return model.Notification{}, fmt.Errorf("[store] failed to get notification, notification_id=%d: %w", notificationID, err)
+		return nil, fmt.Errorf("[store] failed to get notification, notification_id=%d: %w", notificationID, err)
 	}
 	return notification, nil
 }
 
 // GetNotificationHistoryByScheduleID 返回指定日程的所有提醒，包含已软删除记录。
-func (s *NotificationStore) GetNotificationHistoryByScheduleID(ctx context.Context, scheduleID int) ([]model.Notification, error) {
+func (s *NotificationStore) GetNotificationHistoryByScheduleID(ctx context.Context, scheduleID int) ([]*model.Notification, error) {
 	db, err := s.db.handle()
 	if err != nil {
 		return nil, fmt.Errorf("[store] cannot list notification history, schedule_id=%d: %w", scheduleID, err)
@@ -193,7 +193,7 @@ func (s *NotificationStore) ConfirmNotification(ctx context.Context, notificatio
 func (s *NotificationStore) DeleteNotificationByID(ctx context.Context, notificationID int) error {
 	db, err := s.db.handle()
 	if err != nil {
-		return fmt.Errorf("[store] cannot delete notification, notification_id=%d: %w", notificationID, err)
+		return fmt.Errorf("[store] cannot connect to sqlite, notification_id=%d: %w", notificationID, err)
 	}
 	result, err := db.ExecContext(ctx, `UPDATE notifications SET deleted = 1 WHERE id = ? AND deleted = 0`, notificationID)
 	if err != nil {
@@ -222,7 +222,7 @@ func (s *NotificationStore) notificationTransitionError(ctx context.Context, not
 
 const notificationSelect = `SELECT id, schedule_id, status, notify_time, acknowledged_at, deleted FROM notifications`
 
-func scanNotification(row scanner) (model.Notification, error) {
+func scanNotification(row scanner) (*model.Notification, error) {
 	var notification model.Notification
 	var notifyTime int64
 	var acknowledgedAt sql.NullInt64
@@ -230,10 +230,10 @@ func scanNotification(row scanner) (model.Notification, error) {
 	err := row.Scan(&notification.ID, &notification.ScheduleID, &notification.Status,
 		&notifyTime, &acknowledgedAt, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
-		return model.Notification{}, ErrNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
-		return model.Notification{}, fmt.Errorf("failed to scan notification: %w", err)
+		return nil, fmt.Errorf("[store] failed to scan notification: %w", err)
 	}
 	notification.NotifyTime = time.Unix(0, notifyTime).UTC()
 	if acknowledgedAt.Valid {
@@ -241,11 +241,11 @@ func scanNotification(row scanner) (model.Notification, error) {
 		notification.AcknowledgedAt = &at
 	}
 	notification.Deleted = deleted != 0
-	return notification, nil
+	return &notification, nil
 }
 
-func scanNotifications(rows *sql.Rows) ([]model.Notification, error) {
-	result := make([]model.Notification, 0)
+func scanNotifications(rows *sql.Rows) ([]*model.Notification, error) {
+	result := make([]*model.Notification, 0)
 	for rows.Next() {
 		notification, err := scanNotification(rows)
 		if err != nil {
