@@ -63,14 +63,3 @@ func (s Schedule) Validate() error {
 	}
 	return nil
 }
-
-// QueryOption 的字段均为可选查询条件；未设置的指针字段不参与查询。
-// GetScheduleByID 的必填 ID 由方法参数传入；IncludeDeleted 控制是否包含软删除记录。
-type QueryOption struct {
-	ID             *int
-	Name           *string
-	Offset         *int
-	Limit          *int
-	Type           *ScheduleType
-	IncludeDeleted bool
-}

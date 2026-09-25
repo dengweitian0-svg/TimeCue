@@ -110,11 +110,12 @@ func (s *ScheduleStore) CreateScheduleWithNotification(ctx context.Context, sche
 	return &schedule, notification, nil
 }
 
-// GetScheduleByID 要求单独传入日程 ID，其余已设置的查询条件均参与过滤。
-func (s *ScheduleStore) GetScheduleByID(ctx context.Context, scheduleID int, query model.QueryOption) (*model.Schedule, error) {
+// GetScheduleByID 要求单独传入日程 ID，其余函数式选项也参与过滤。
+func (s *ScheduleStore) GetScheduleByID(ctx context.Context, scheduleID int, options ...model.QueryOption) (*model.Schedule, error) {
 	if scheduleID <= 0 {
 		return nil, fmt.Errorf("[store] schedule ID must be positive, schedule_id=%d", scheduleID)
 	}
+	query := model.ResolveQueryOptions(options...)
 	queryDetails := fmt.Sprintf("schedule_id=%d", scheduleID)
 	if optionalDetails := scheduleQueryDetails(query); optionalDetails != "" {
 		queryDetails += ", " + optionalDetails
@@ -139,8 +140,9 @@ func (s *ScheduleStore) GetScheduleByID(ctx context.Context, scheduleID int, que
 	return schedule, nil
 }
 
-// GetAllSchedule 按条件分页查询日程，默认排除已软删除记录。
-func (s *ScheduleStore) GetAllSchedule(ctx context.Context, query model.QueryOption) ([]*model.Schedule, error) {
+// GetAllSchedule 按函数式选项分页查询日程，默认排除已软删除记录。
+func (s *ScheduleStore) GetAllSchedule(ctx context.Context, options ...model.QueryOption) ([]*model.Schedule, error) {
+	query := model.ResolveQueryOptions(options...)
 	limit, offset, err := schedulePagination(query, LimitMax)
 	if err != nil {
 		return nil, fmt.Errorf("[store] invalid schedule pagination: %w", err)
@@ -175,49 +177,49 @@ func (s *ScheduleStore) GetAllSchedule(ctx context.Context, query model.QueryOpt
 }
 
 // schedulePagination 校验可选分页参数并填入方法默认值。
-func schedulePagination(query model.QueryOption, defaultLimit int) (int, int, error) {
+func schedulePagination(query model.Option, defaultLimit int) (int, int, error) {
 	limit, offset := defaultLimit, 0
-	if query.Limit != nil {
-		if *query.Limit < 1 || *query.Limit > LimitMax {
-			return 0, 0, fmt.Errorf("schedule limit must be between 1 and %d, limit=%d", LimitMax, *query.Limit)
+	if requestedLimit, ok := query.Limit(); ok {
+		if requestedLimit < 1 || requestedLimit > LimitMax {
+			return 0, 0, fmt.Errorf("schedule limit must be between 1 and %d, limit=%d", LimitMax, requestedLimit)
 		}
-		limit = *query.Limit
+		limit = requestedLimit
 	}
-	if query.Offset != nil {
-		if *query.Offset < 0 {
-			return 0, 0, fmt.Errorf("schedule offset must not be negative, offset=%d", *query.Offset)
+	if requestedOffset, ok := query.Offset(); ok {
+		if requestedOffset < 0 {
+			return 0, 0, fmt.Errorf("schedule offset must not be negative, offset=%d", requestedOffset)
 		}
-		offset = *query.Offset
+		offset = requestedOffset
 	}
 	return limit, offset, nil
 }
 
 // scheduleQueryDetails 只记录本次实际设置的查询条件，供错误信息使用。
-func scheduleQueryDetails(query model.QueryOption) string {
+func scheduleQueryDetails(query model.Option) string {
 	parts := make([]string, 0, 6)
-	if query.ID != nil {
-		parts = append(parts, fmt.Sprintf("filter_id=%d", *query.ID))
+	if id, ok := query.ID(); ok {
+		parts = append(parts, fmt.Sprintf("filter_id=%d", id))
 	}
-	if query.Name != nil {
-		parts = append(parts, fmt.Sprintf("name=%q", *query.Name))
+	if name, ok := query.Name(); ok {
+		parts = append(parts, fmt.Sprintf("name=%q", name))
 	}
-	if query.Type != nil {
-		parts = append(parts, fmt.Sprintf("type=%q", *query.Type))
+	if scheduleType, ok := query.Type(); ok {
+		parts = append(parts, fmt.Sprintf("type=%q", scheduleType))
 	}
-	if query.Limit != nil {
-		parts = append(parts, fmt.Sprintf("limit=%d", *query.Limit))
+	if limit, ok := query.Limit(); ok {
+		parts = append(parts, fmt.Sprintf("limit=%d", limit))
 	}
-	if query.Offset != nil {
-		parts = append(parts, fmt.Sprintf("offset=%d", *query.Offset))
+	if offset, ok := query.Offset(); ok {
+		parts = append(parts, fmt.Sprintf("offset=%d", offset))
 	}
-	if query.IncludeDeleted {
+	if query.IncludeDeleted() {
 		parts = append(parts, "include_deleted=true")
 	}
 	return strings.Join(parts, ", ")
 }
 
 // scheduleFilter 让单条查询与列表查询使用同一套过滤规则。
-func scheduleFilter(query model.QueryOption, requiredID *int) (string, []any, error) {
+func scheduleFilter(query model.Option, requiredID *int) (string, []any, error) {
 	var statement strings.Builder
 	statement.WriteString(" WHERE 1 = 1")
 	args := make([]any, 0, 4)
@@ -225,26 +227,26 @@ func scheduleFilter(query model.QueryOption, requiredID *int) (string, []any, er
 		statement.WriteString(" AND id = ?")
 		args = append(args, *requiredID)
 	}
-	if query.ID != nil {
-		if *query.ID <= 0 {
-			return "", nil, fmt.Errorf("schedule ID must be positive, schedule_id=%d", *query.ID)
+	if id, ok := query.ID(); ok {
+		if id <= 0 {
+			return "", nil, fmt.Errorf("schedule ID must be positive, schedule_id=%d", id)
 		}
 		statement.WriteString(" AND id = ?")
-		args = append(args, *query.ID)
+		args = append(args, id)
 	}
-	if !query.IncludeDeleted {
+	if !query.IncludeDeleted() {
 		statement.WriteString(" AND deleted = 0")
 	}
-	if query.Name != nil {
+	if name, ok := query.Name(); ok {
 		statement.WriteString(" AND instr(name, ?) > 0")
-		args = append(args, *query.Name)
+		args = append(args, name)
 	}
-	if query.Type != nil {
-		if *query.Type != model.SingleSchedule && *query.Type != model.PeriodSchedule {
-			return "", nil, fmt.Errorf("unknown schedule type, type=%q", *query.Type)
+	if scheduleType, ok := query.Type(); ok {
+		if scheduleType != model.SingleSchedule && scheduleType != model.PeriodSchedule {
+			return "", nil, fmt.Errorf("unknown schedule type, type=%q", scheduleType)
 		}
 		statement.WriteString(" AND type = ?")
-		args = append(args, *query.Type)
+		args = append(args, scheduleType)
 	}
 	return statement.String(), args, nil
 }

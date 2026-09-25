@@ -38,7 +38,7 @@ func (s *NextNotifyService) Next(ctx context.Context, scheduleID int, after time
 	if after.IsZero() {
 		return nil, fmt.Errorf("[service] after must not be zero, schedule_id=%d", scheduleID)
 	}
-	schedule, err := s.schedules.GetScheduleByID(ctx, scheduleID, model.QueryOption{})
+	schedule, err := s.schedules.GetScheduleByID(ctx, scheduleID)
 	if err != nil {
 		return nil, fmt.Errorf("[service] cannot read schedule, schedule_id=%d: %w", scheduleID, err)
 	}

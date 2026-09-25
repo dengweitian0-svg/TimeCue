@@ -92,19 +92,27 @@ func TestSoftDeletePreservesHistory(t *testing.T) {
 	if err := schedules.DeleteScheduleByID(ctx, schedule.ID); err != nil {
 		t.Fatalf("软删除日程: %v", err)
 	}
-	stored, err := schedules.GetScheduleByID(ctx, schedule.ID, model.QueryOption{IncludeDeleted: true})
+	stored, err := schedules.GetScheduleByID(ctx, schedule.ID, model.WithScheduleIncludeDeleted(true))
 	if err != nil || stored == nil || !stored.Deleted {
 		t.Fatalf("已删除日程仍应可按 ID 查询: %#v, %v", stored, err)
 	}
-	if _, err := schedules.GetScheduleByID(ctx, schedule.ID, model.QueryOption{}); !errors.Is(err, ErrNotFound) {
+	if _, err := schedules.GetScheduleByID(ctx, schedule.ID,
+		model.WithScheduleIncludeDeleted(true), model.WithScheduleIncludeDeleted(false)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("后传入的软删除选项应覆盖前一个: %v", err)
+	}
+	if _, err := schedules.GetScheduleByID(ctx, schedule.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("普通查询应隐藏已删除日程，得到 %v", err)
 	}
-	if _, err := schedules.GetScheduleByID(ctx, 0, model.QueryOption{}); err == nil {
+	if _, err := schedules.GetScheduleByID(ctx, 0); err == nil {
 		t.Fatal("按 ID 查询必须提供有效的日程 ID")
 	}
-	visible, err := schedules.GetAllSchedule(ctx, model.QueryOption{})
+	visible, err := schedules.GetAllSchedule(ctx)
 	if err != nil || len(visible) != 0 {
 		t.Fatalf("普通列表应隐藏日程: %#v, %v", visible, err)
+	}
+	withDeleted, err := schedules.GetAllSchedule(ctx, model.WithScheduleIncludeDeleted(true))
+	if err != nil || len(withDeleted) != 1 || withDeleted[0].ID != schedule.ID {
+		t.Fatalf("包含软删除选项应返回已删除日程: %#v, %v", withDeleted, err)
 	}
 	history, err := notifications.GetNotificationHistoryByScheduleID(ctx, schedule.ID)
 	if err != nil || len(history) != 2 {
@@ -216,7 +224,7 @@ func TestStoreErrorFormat(t *testing.T) {
 	_, err := schedules.CreateSchedule(ctx, model.Schedule{Name: ""})
 	check(err, `name=""`)
 	id := 999
-	_, err = schedules.GetScheduleByID(ctx, id, model.QueryOption{})
+	_, err = schedules.GetScheduleByID(ctx, id)
 	check(err, "schedule_id=999")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("查询错误应保留 ErrNotFound: %v", err)
@@ -244,31 +252,25 @@ func TestGetScheduleByIDAppliesOptionalFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建日程: %v", err)
 	}
-	name, scheduleType, limit, offset := "查询", model.SingleSchedule, 1, 0
-	query := model.QueryOption{
-		ID: &schedule.ID, Name: &name, Type: &scheduleType,
-		Limit: &limit, Offset: &offset,
+	query := []model.QueryOption{
+		model.WithScheduleID(schedule.ID), model.WithScheduleName("查询"),
+		model.WithScheduleType(model.SingleSchedule), model.WithScheduleLimit(1), model.WithScheduleOffset(0),
 	}
-	got, err := schedules.GetScheduleByID(ctx, schedule.ID, query)
+	got, err := schedules.GetScheduleByID(ctx, schedule.ID, query...)
 	if err != nil || got == nil || got.ID != schedule.ID {
 		t.Fatalf("组合条件应返回日程: %#v, %v", got, err)
 	}
 	otherID := schedule.ID + 1
-	query.ID = &otherID
-	if _, err := schedules.GetScheduleByID(ctx, schedule.ID, query); !errors.Is(err, ErrNotFound) {
+	if _, err := schedules.GetScheduleByID(ctx, schedule.ID, append(query, model.WithScheduleID(otherID))...); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("可选 ID 条件不匹配应返回 ErrNotFound: %v", err)
 	}
-	query.ID = &schedule.ID
-	name = "不匹配"
-	if _, err := schedules.GetScheduleByID(ctx, schedule.ID, query); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), `name="不匹配"`) {
+	if _, err := schedules.GetScheduleByID(ctx, schedule.ID, append(query, model.WithScheduleName("不匹配"))...); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), `name="不匹配"`) {
 		t.Fatalf("名称条件不匹配应返回 ErrNotFound: %v", err)
 	}
-	name, offset = "查询", 1
-	if _, err := schedules.GetScheduleByID(ctx, schedule.ID, query); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "offset=1") {
+	if _, err := schedules.GetScheduleByID(ctx, schedule.ID, append(query, model.WithScheduleOffset(1))...); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "offset=1") {
 		t.Fatalf("offset 应参与查询: %v", err)
 	}
-	offset, limit = 0, 0
-	if _, err := schedules.GetScheduleByID(ctx, schedule.ID, query); err == nil || !strings.Contains(err.Error(), "limit=0") {
+	if _, err := schedules.GetScheduleByID(ctx, schedule.ID, append(query, model.WithScheduleLimit(0))...); err == nil || !strings.Contains(err.Error(), "limit=0") {
 		t.Fatalf("非法 limit 应返回带参数的错误: %v", err)
 	}
 }
@@ -291,35 +293,50 @@ func TestGetAllScheduleAcceptsOptionalFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建周期日程: %v", err)
 	}
-	all, err := schedules.GetAllSchedule(ctx, model.QueryOption{})
+	all, err := schedules.GetAllSchedule(ctx)
 	if err != nil || len(all) != 2 {
 		t.Fatalf("空查询应返回所有可见日程: %#v, %v", all, err)
 	}
-	name, scheduleType, limit, offset := "晚间", model.PeriodSchedule, 1, 0
-	filtered, err := schedules.GetAllSchedule(ctx, model.QueryOption{
-		ID: &second.ID, Name: &name, Type: &scheduleType,
-		Limit: &limit, Offset: &offset,
-	})
+	filtered, err := schedules.GetAllSchedule(ctx,
+		model.WithScheduleID(second.ID), model.WithScheduleName("晚间"),
+		model.WithScheduleType(model.PeriodSchedule), model.WithScheduleLimit(1), model.WithScheduleOffset(0))
 	if err != nil || len(filtered) != 1 || filtered[0].ID != second.ID {
 		t.Fatalf("组合条件应返回周期日程: %#v, %v", filtered, err)
 	}
-	byID, err := schedules.GetAllSchedule(ctx, model.QueryOption{ID: &first.ID})
+	byID, err := schedules.GetAllSchedule(ctx, model.WithScheduleID(first.ID))
 	if err != nil || len(byID) != 1 || byID[0].ID != first.ID {
 		t.Fatalf("仅 ID 条件应返回指定日程: %#v, %v", byID, err)
 	}
-	byType, err := schedules.GetAllSchedule(ctx, model.QueryOption{Type: &scheduleType})
+	byLastID, err := schedules.GetAllSchedule(ctx, model.WithScheduleID(first.ID), nil, model.WithScheduleID(second.ID))
+	if err != nil || len(byLastID) != 1 || byLastID[0].ID != second.ID {
+		t.Fatalf("空选项应忽略，后传入的 ID 应覆盖前一个: %#v, %v", byLastID, err)
+	}
+	byType, err := schedules.GetAllSchedule(ctx, model.WithScheduleType(model.PeriodSchedule))
 	if err != nil || len(byType) != 1 || byType[0].ID != second.ID {
 		t.Fatalf("仅类型条件应返回周期日程: %#v, %v", byType, err)
 	}
-	offset = 1
-	page, err := schedules.GetAllSchedule(ctx, model.QueryOption{Limit: &limit, Offset: &offset})
+	page, err := schedules.GetAllSchedule(ctx, model.WithScheduleLimit(1), model.WithScheduleOffset(1))
 	if err != nil || len(page) != 1 || page[0].ID != first.ID {
 		t.Fatalf("分页条件应跳过第一条日程: %#v, %v", page, err)
 	}
-	name = "不存在"
-	filtered, err = schedules.GetAllSchedule(ctx, model.QueryOption{Name: &name})
+	filtered, err = schedules.GetAllSchedule(ctx, model.WithScheduleName("不存在"))
 	if err != nil || len(filtered) != 0 {
 		t.Fatalf("名称条件应参与列表过滤: %#v, %v", filtered, err)
+	}
+	for _, test := range []struct {
+		name   string
+		option model.QueryOption
+		detail string
+	}{
+		{name: "ID", option: model.WithScheduleID(0), detail: "schedule_id=0"},
+		{name: "offset", option: model.WithScheduleOffset(-1), detail: "offset=-1"},
+		{name: "type", option: model.WithScheduleType("unknown"), detail: `type="unknown"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := schedules.GetAllSchedule(ctx, test.option); err == nil || !strings.Contains(err.Error(), test.detail) {
+				t.Fatalf("非法查询条件应返回带参数的错误: %v", err)
+			}
+		})
 	}
 }
 
@@ -350,7 +367,7 @@ func TestAppCreatesAndAdvancesNotifications(t *testing.T) {
 	requireBeijingTime(t, single.CreatedAt)
 	requireBeijingTime(t, single.UpdatedAt)
 	requireBeijingTime(t, first.NotifyTime)
-	loadedSchedule, err := schedules.GetScheduleByID(ctx, single.ID, model.QueryOption{})
+	loadedSchedule, err := schedules.GetScheduleByID(ctx, single.ID)
 	if err != nil {
 		t.Fatalf("读取单次日程: %v", err)
 	}
@@ -414,7 +431,7 @@ func TestAppCreatesAndAdvancesNotifications(t *testing.T) {
 	if got, err := app.AdvanceNotification(ctx, *next); err != nil || got != nil {
 		t.Fatalf("取消日程不应继续推进: %#v, %v", got, err)
 	}
-	all, err := schedules.GetAllSchedule(ctx, model.QueryOption{})
+	all, err := schedules.GetAllSchedule(ctx)
 	if err != nil || len(all) != 3 {
 		t.Fatalf("失败的创建不应留下日程: %#v, %v", all, err)
 	}

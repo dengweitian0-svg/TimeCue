@@ -57,7 +57,7 @@ func (a *App) CreateSchedule(ctx context.Context, schedule model.Schedule) (*mod
 
 // AdvanceNotification 只允许周期日程以已处理提醒的计划时间推进下一条提醒。
 func (a *App) AdvanceNotification(ctx context.Context, notification model.Notification) (*model.Notification, error) {
-	schedule, err := a.Schedule.GetScheduleByID(ctx, notification.ScheduleID, model.QueryOption{})
+	schedule, err := a.Schedule.GetScheduleByID(ctx, notification.ScheduleID)
 	if err != nil {
 		return nil, fmt.Errorf("[app] cannot read schedule for notification, notification_id=%d, schedule_id=%d: %w", notification.ID, notification.ScheduleID, err)
 	}
