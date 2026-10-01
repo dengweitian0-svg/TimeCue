@@ -4,19 +4,11 @@ import (
 	"errors"
 	"net/http"
 
-	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
-	"github.com/gin-gonic/gin"
+	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
 )
 
 // apiError 是所有 HTTP 接口共用的错误内容。
-type apiError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-type errorResponse struct {
-	Error apiError `json:"error"`
-}
+type apiError = middleware.APIError
 
 func newAPIError(code, message string) apiError {
 	return apiError{
@@ -67,38 +59,19 @@ func queryParameterInvalid(key string) apiError {
 	}
 }
 
-// WriteError 输出统一的 HTTP 错误结构。
-func WriteError(c *gin.Context, status int, detail apiError) {
-	if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
-		logger.Warn("HTTP request rejected",
-			"method", c.Request.Method,
-			"route", c.FullPath(),
-			"status", status,
-			"code", detail.Code,
-			"message", detail.Message,
-		)
-	}
-	c.JSON(status, errorResponse{
-		Error: detail,
-	})
+// ForbiddenHostResult 返回 Host 校验失败的响应事实。
+func ForbiddenHostResult() middleware.HTTPResult {
+	return middleware.ErrorResult(http.StatusForbidden, errForbiddenHost, nil)
 }
 
-// WriteForbiddenHost 输出 Host 校验失败响应。
-func WriteForbiddenHost(c *gin.Context) {
-	WriteError(c, http.StatusForbidden, errForbiddenHost)
+func RouteNotFoundResult() middleware.HTTPResult {
+	return middleware.ErrorResult(http.StatusNotFound, errRouteNotFound, nil)
 }
 
-// WriteRouteNotFound 输出路径不存在响应。
-func WriteRouteNotFound(c *gin.Context) {
-	WriteError(c, http.StatusNotFound, errRouteNotFound)
+func MethodNotAllowedResult() middleware.HTTPResult {
+	return middleware.ErrorResult(http.StatusMethodNotAllowed, errMethodNotAllowed, nil)
 }
 
-// WriteMethodNotAllowed 输出方法不支持响应。
-func WriteMethodNotAllowed(c *gin.Context) {
-	WriteError(c, http.StatusMethodNotAllowed, errMethodNotAllowed)
-}
-
-// WriteInternalError 输出不泄露内部细节的服务器错误。
-func WriteInternalError(c *gin.Context) {
-	WriteError(c, http.StatusInternalServerError, errInternal)
+func internalErrorResult(cause error) middleware.HTTPResult {
+	return middleware.ErrorResult(http.StatusInternalServerError, errInternal, cause)
 }

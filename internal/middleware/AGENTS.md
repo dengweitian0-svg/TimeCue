@@ -11,5 +11,3 @@
 - 每次请求最多输出一条 `[http]` 消息前缀的 JSONL 日志，包含 method、path、route、status、duration_ms 及结果字段；使用现有全局 logger 的格式、时间和热更新级别过滤。
 - 不解析或缓存请求和响应体，不记录查询字符串及日程描述；不得依赖 API handler、服务或存储实现。
 - 日志测试使用全局 logger，不得并行运行；验证单条输出、事件字段、最终状态、耗时、级别热更新及敏感内容遗漏。
-
-- `RequestDuration` 为尚未迁移的调用方保留，只用于旧响应链路，不应和 HTTPLogger 同时注册。

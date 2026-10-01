@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
+	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/service"
 	"github.com/gin-gonic/gin"
@@ -69,32 +69,27 @@ func requireJSONKeys(body []byte, allowed ...string) error {
 }
 
 // CreateScheduleHandler 校验 JSON 输入并创建日程及首条提醒。
-func CreateScheduleHandler(app *service.App) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func CreateScheduleHandler(app *service.App) middleware.HTTPHandler {
+	return func(c *gin.Context) middleware.HTTPResult {
 		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 		if err != nil || mediaType != "application/json" {
-			WriteError(c, http.StatusUnsupportedMediaType, errUnsupportedMediaType)
-			return
+			return middleware.ErrorResult(http.StatusUnsupportedMediaType, errUnsupportedMediaType, nil)
 		}
 		body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20))
 		if err != nil {
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
-				WriteError(c, http.StatusRequestEntityTooLarge, errPayloadTooLarge)
-			} else {
-				WriteError(c, http.StatusBadRequest, errInvalidJSON)
+				return middleware.ErrorResult(http.StatusRequestEntityTooLarge, errPayloadTooLarge, nil)
 			}
-			return
+			return middleware.ErrorResult(http.StatusBadRequest, errInvalidJSON, nil)
 		}
 
 		var request createScheduleRequest
 		if err := requireJSONKeys(body, "name", "type", "description", "single", "period"); err != nil {
-			WriteError(c, http.StatusBadRequest, errInvalidJSON)
-			return
+			return middleware.ErrorResult(http.StatusBadRequest, errInvalidJSON, nil)
 		}
 		if err := decodeStrict(bytes.NewReader(body), &request); err != nil {
-			WriteError(c, http.StatusBadRequest, errInvalidJSON)
-			return
+			return middleware.ErrorResult(http.StatusBadRequest, errInvalidJSON, nil)
 		}
 		schedule := model.Schedule{
 			Name:        strings.TrimSpace(request.Name),
@@ -102,69 +97,59 @@ func CreateScheduleHandler(app *service.App) gin.HandlerFunc {
 			Description: request.Description,
 		}
 		if schedule.Name == "" {
-			WriteError(c, http.StatusBadRequest, errNameRequired)
-			return
+			return middleware.ErrorResult(http.StatusBadRequest, errNameRequired, nil)
 		}
 		switch request.Type {
 		case model.SingleSchedule:
 			if len(request.Single) == 0 || string(request.Single) == "null" || len(request.Period) != 0 {
-				WriteError(c, http.StatusBadRequest, errSingleRuleRequired)
-				return
+				return middleware.ErrorResult(http.StatusBadRequest, errSingleRuleRequired, nil)
 			}
 			var single createSingleRequest
 			if err := requireJSONKeys(request.Single, "notifyTime"); err != nil {
-				WriteError(c, http.StatusBadRequest, errSingleRuleInvalid)
-				return
+				return middleware.ErrorResult(http.StatusBadRequest, errSingleRuleInvalid, nil)
 			}
 			if err := decodeStrict(bytes.NewReader(request.Single), &single); err != nil {
-				WriteError(c, http.StatusBadRequest, errSingleRuleInvalid)
-				return
+				return middleware.ErrorResult(http.StatusBadRequest, errSingleRuleInvalid, nil)
 			}
 			notifyTime, err := time.Parse(time.RFC3339, single.NotifyTime)
 			_, offset := notifyTime.Zone()
 			if err != nil || offset != 8*3600 || !strings.HasSuffix(single.NotifyTime, "+08:00") {
-				WriteError(c, http.StatusBadRequest, errNotifyTimeInvalid)
-				return
+				return middleware.ErrorResult(http.StatusBadRequest, errNotifyTimeInvalid, nil)
 			}
 			schedule.Single = &model.Single{
 				NotifyTime: notifyTime,
 			}
 		case model.PeriodSchedule:
 			if len(request.Period) == 0 || string(request.Period) == "null" || len(request.Single) != 0 {
-				WriteError(c, http.StatusBadRequest, errPeriodRuleRequired)
-				return
+				return middleware.ErrorResult(http.StatusBadRequest, errPeriodRuleRequired, nil)
 			}
 			var period createPeriodRequest
 			if err := requireJSONKeys(request.Period, "cron"); err != nil {
-				WriteError(c, http.StatusBadRequest, errPeriodRuleInvalid)
-				return
+				return middleware.ErrorResult(http.StatusBadRequest, errPeriodRuleInvalid, nil)
 			}
 			if err := decodeStrict(bytes.NewReader(request.Period), &period); err != nil || len(period.Cron) == 0 {
-				WriteError(c, http.StatusBadRequest, errPeriodCronInvalid)
-				return
+				return middleware.ErrorResult(http.StatusBadRequest, errPeriodCronInvalid, nil)
 			}
 			schedule.Period = &model.Period{
 				Open: true,
 				Cron: period.Cron,
 			}
 		default:
-			WriteError(c, http.StatusBadRequest, errScheduleTypeInvalid)
-			return
+			return middleware.ErrorResult(http.StatusBadRequest, errScheduleTypeInvalid, nil)
 		}
 		created, _, err := app.CreateSchedule(c.Request.Context(), schedule)
 		if err != nil {
 			if errors.Is(err, service.ErrInvalidSchedule) {
-				WriteError(c, http.StatusBadRequest, errScheduleRuleInvalid)
-			} else {
-				logger.Error("failed to create schedule", "error", err)
-				WriteInternalError(c)
+				return middleware.ErrorResult(http.StatusBadRequest, errScheduleRuleInvalid, nil)
 			}
-			return
+			return internalErrorResult(err)
 		}
-		c.Header("Location", "/api/v1/scheduler/schedules/"+strconv.Itoa(created.ID))
-		c.JSON(http.StatusCreated, gin.H{
-			"data": scheduleToResponse(created),
-		})
-		logger.Info("schedule created", "schedule_id", created.ID, "type", created.Type)
+		result := middleware.DataResult(http.StatusCreated, scheduleToResponse(created))
+		result.Headers = http.Header{
+			"Location": []string{
+				"/api/v1/scheduler/schedules/" + strconv.Itoa(created.ID),
+			},
+		}
+		return result
 	}
 }

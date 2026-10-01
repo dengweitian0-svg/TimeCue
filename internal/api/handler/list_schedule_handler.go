@@ -4,45 +4,52 @@ import (
 	"net/http"
 	"strconv"
 
-	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
+	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
-func queryInteger(c *gin.Context, key string, fallback int, minimum int, maximum int) (int, bool) {
+// ScheduleListResponse 保留实际使用的分页值，但不将其输出到客户端。
+type ScheduleListResponse struct {
+	Data   []ScheduleResponse `json:"data"`
+	Limit  int                `json:"-"`
+	Offset int                `json:"-"`
+}
+
+func queryInteger(c *gin.Context, key string, fallback int, minimum int, maximum int) (int, *middleware.HTTPResult) {
 	raw, exists := c.GetQuery(key)
 	if !exists {
-		return fallback, true
+		return fallback, nil
 	}
 	if raw == "" {
-		WriteError(c, http.StatusBadRequest, queryIntegerInvalid(key))
-		return 0, false
+		failure := middleware.ErrorResult(http.StatusBadRequest, queryIntegerInvalid(key), nil)
+		return 0, &failure
 	}
 	for _, digit := range raw {
 		if digit < '0' || digit > '9' {
-			WriteError(c, http.StatusBadRequest, queryIntegerInvalid(key))
-			return 0, false
+			failure := middleware.ErrorResult(http.StatusBadRequest, queryIntegerInvalid(key), nil)
+			return 0, &failure
 		}
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil || value < minimum || (maximum > 0 && value > maximum) {
-		WriteError(c, http.StatusBadRequest, queryParameterInvalid(key))
-		return 0, false
+		failure := middleware.ErrorResult(http.StatusBadRequest, queryParameterInvalid(key), nil)
+		return 0, &failure
 	}
-	return value, true
+	return value, nil
 }
 
 // ListScheduleHandler 按名称、类型及分页条件查询日程。
-func ListScheduleHandler(app *service.App) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		limit, ok := queryInteger(c, "limit", 50, 1, 50)
-		if !ok {
-			return
+func ListScheduleHandler(app *service.App) middleware.HTTPHandler {
+	return func(c *gin.Context) middleware.HTTPResult {
+		limit, failure := queryInteger(c, "limit", 50, 1, 50)
+		if failure != nil {
+			return *failure
 		}
-		offset, ok := queryInteger(c, "offset", 0, 0, 0)
-		if !ok {
-			return
+		offset, failure := queryInteger(c, "offset", 0, 0, 0)
+		if failure != nil {
+			return *failure
 		}
 		options := []model.QueryOption{
 			model.WithScheduleLimit(limit),
@@ -53,24 +60,22 @@ func ListScheduleHandler(app *service.App) gin.HandlerFunc {
 		}
 		if kind, exists := c.GetQuery("type"); exists {
 			if kind != string(model.SingleSchedule) && kind != string(model.PeriodSchedule) {
-				WriteError(c, http.StatusBadRequest, errScheduleTypeInvalid)
-				return
+				return middleware.ErrorResult(http.StatusBadRequest, errScheduleTypeInvalid, nil)
 			}
 			options = append(options, model.WithScheduleType(model.ScheduleType(kind)))
 		}
 		schedules, err := app.ListSchedules(c.Request.Context(), options...)
 		if err != nil {
-			logger.Error("failed to list schedules", "error", err)
-			WriteInternalError(c)
-			return
+			return internalErrorResult(err)
 		}
-		data := make([]scheduleResponse, 0, len(schedules))
+		data := make([]ScheduleResponse, 0, len(schedules))
 		for _, schedule := range schedules {
 			data = append(data, scheduleToResponse(schedule))
 		}
-		c.JSON(http.StatusOK, gin.H{
-			"data": data,
+		return middleware.JSONResult(http.StatusOK, ScheduleListResponse{
+			Data:   data,
+			Limit:  limit,
+			Offset: offset,
 		})
-		logger.Debug("schedules listed", "count", len(data), "limit", limit, "offset", offset)
 	}
 }

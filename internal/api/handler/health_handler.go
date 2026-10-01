@@ -5,40 +5,35 @@ import (
 	"errors"
 	"net/http"
 
-	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
+	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
 type HealthCheck func(context.Context) error
 
-type healthData struct {
+type HealthData struct {
 	Status string    `json:"status"`
 	Error  *apiError `json:"error,omitempty"`
 }
 
 // HealthHandler 在每次请求时复查数据库连接和迁移结构。
-func HealthHandler(check HealthCheck) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func HealthHandler(check HealthCheck) middleware.HTTPHandler {
+	return func(c *gin.Context) middleware.HTTPResult {
 		if err := check(c.Request.Context()); err != nil {
 			detail := errDatabaseUnavailable
 			if errors.Is(err, store.ErrSchemaInvalid) {
 				detail = errSchemaInvalid
 			}
-			logger.Error("HTTP health check failed", "code", detail.Code, "error", err)
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"data": healthData{
-					Status: "error",
-					Error:  &detail,
-				},
+			result := middleware.DataResult(http.StatusServiceUnavailable, HealthData{
+				Status: "error",
+				Error:  &detail,
 			})
-			return
+			result.Cause = err
+			return result
 		}
-		c.JSON(http.StatusOK, gin.H{
-			"data": healthData{
-				Status: "ok",
-			},
+		return middleware.DataResult(http.StatusOK, HealthData{
+			Status: "ok",
 		})
-		logger.Debug("HTTP health check passed")
 	}
 }

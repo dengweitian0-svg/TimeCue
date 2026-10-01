@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
+	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/service"
 	"github.com/gin-gonic/gin"
@@ -19,7 +19,7 @@ type periodResponse struct {
 	Open bool     `json:"open"`
 	Cron []string `json:"cron"`
 }
-type scheduleResponse struct {
+type ScheduleResponse struct {
 	ID          int                `json:"id"`
 	Name        string             `json:"name"`
 	Type        model.ScheduleType `json:"type"`
@@ -31,8 +31,8 @@ type scheduleResponse struct {
 	UpdatedAt   string             `json:"updatedAt"`
 }
 
-func scheduleToResponse(schedule *model.Schedule) scheduleResponse {
-	response := scheduleResponse{
+func scheduleToResponse(schedule *model.Schedule) ScheduleResponse {
+	response := ScheduleResponse{
 		ID:          schedule.ID,
 		Name:        schedule.Name,
 		Type:        schedule.Type,
@@ -55,46 +55,38 @@ func scheduleToResponse(schedule *model.Schedule) scheduleResponse {
 	return response
 }
 
-func parseScheduleID(c *gin.Context) (int, bool) {
+func parseScheduleID(c *gin.Context) (int, *middleware.HTTPResult) {
+	invalid := middleware.ErrorResult(http.StatusBadRequest, errScheduleIDInvalid, nil)
 	raw := c.Param("id")
 	if raw == "" {
-		WriteError(c, http.StatusBadRequest, errScheduleIDInvalid)
-		return 0, false
+		return 0, &invalid
 	}
 	for _, digit := range raw {
 		if digit < '0' || digit > '9' {
-			WriteError(c, http.StatusBadRequest, errScheduleIDInvalid)
-			return 0, false
+			return 0, &invalid
 		}
 	}
 	id, err := strconv.Atoi(raw)
 	if err != nil || id <= 0 {
-		WriteError(c, http.StatusBadRequest, errScheduleIDInvalid)
-		return 0, false
+		return 0, &invalid
 	}
-	return id, true
+	return id, nil
 }
 
 // GetScheduleHandler 返回一条未删除日程。
-func GetScheduleHandler(app *service.App) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id, ok := parseScheduleID(c)
-		if !ok {
-			return
+func GetScheduleHandler(app *service.App) middleware.HTTPHandler {
+	return func(c *gin.Context) middleware.HTTPResult {
+		id, failure := parseScheduleID(c)
+		if failure != nil {
+			return *failure
 		}
 		schedule, err := app.GetSchedule(c.Request.Context(), id)
 		if err != nil {
 			if errors.Is(err, service.ErrScheduleNotFound) {
-				WriteError(c, http.StatusNotFound, errScheduleNotFound)
-			} else {
-				logger.Error("failed to get schedule", "error", err)
-				WriteInternalError(c)
+				return middleware.ErrorResult(http.StatusNotFound, errScheduleNotFound, nil)
 			}
-			return
+			return internalErrorResult(err)
 		}
-		c.JSON(http.StatusOK, gin.H{
-			"data": scheduleToResponse(schedule),
-		})
-		logger.Debug("schedule retrieved", "schedule_id", schedule.ID)
+		return middleware.DataResult(http.StatusOK, scheduleToResponse(schedule))
 	}
 }
