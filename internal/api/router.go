@@ -3,6 +3,7 @@ package api
 import (
 	"github.com/dengweitian0-svg/TimeCue/internal/api/handler"
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
+	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
 	"github.com/dengweitian0-svg/TimeCue/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -12,6 +13,7 @@ func NewRouter(app *service.App, healthCheck handler.HealthCheck) *gin.Engine {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 	router.RedirectTrailingSlash = false
+	router.Use(middleware.RequestDuration())
 	router.Use(func(c *gin.Context) {
 		if c.Request.Host != "127.0.0.1:10086" {
 			handler.WriteForbiddenHost(c)
