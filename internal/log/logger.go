@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"sync/atomic"
+	"time"
 )
 
 // Logger 保存当前生效的 slog.Logger 和可热更新的日志级别。
@@ -16,13 +17,29 @@ type Logger struct {
 
 var global = newLogger()
 
+// 日志时间固定采用 UTC+8，不受主机时区或夏令时影响。
+var logTimeZone = time.FixedZone("UTC+8", 8*60*60)
+
+const logTimeLayout = "2006-01-02-15:04:05"
+
 func newLogger() *Logger {
 	logger := &Logger{}
 	logger.level.Set(slog.LevelInfo)
-	logger.current.Store(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
-		Level: &logger.level,
-	})))
+	logger.current.Store(slog.New(slog.NewTextHandler(io.Discard, logger.handlerOptions())))
 	return logger
+}
+
+// handlerOptions 为启动和正式日志器提供统一的级别与时间格式配置。
+func (l *Logger) handlerOptions() *slog.HandlerOptions {
+	return &slog.HandlerOptions{
+		Level: &l.level,
+		ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
+			if len(groups) == 0 && attr.Key == slog.TimeKey && attr.Value.Kind() == slog.KindTime {
+				return slog.String(slog.TimeKey, attr.Value.Time().In(logTimeZone).Format(logTimeLayout))
+			}
+			return attr
+		},
+	}
 }
 
 // Default 返回项目唯一的全局 Logger，是 New 的语义别名。
@@ -37,9 +54,7 @@ func (l *Logger) Upgrade(file *os.File) {
 	if l == nil || file == nil {
 		return
 	}
-	full := slog.New(slog.NewJSONHandler(file, &slog.HandlerOptions{
-		Level: &l.level,
-	}))
+	full := slog.New(slog.NewJSONHandler(file, l.handlerOptions()))
 	l.current.Store(full)
 	slog.SetDefault(full)
 }

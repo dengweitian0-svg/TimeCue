@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
 
@@ -57,10 +56,10 @@ func NewManager() (*Manager, error) {
 	}
 	m.v.OnConfigChange(func(event fsnotify.Event) {
 		if err := m.reloadConfig(); err != nil {
-			logger.Error("[Manager] failed to reload config", "error", err, "file", event.Name, "time", time.Now().UTC().Format(time.RFC3339))
+			logger.Error("[Manager] failed to reload config", "error", err, "file", event.Name)
 			return
 		}
-		logger.Info("[Manager] config file changed", "file", event.Name, "time", time.Now().UTC().Format(time.RFC3339))
+		logger.Info("[Manager] config file changed", "file", event.Name)
 	})
 	return m, nil
 }
@@ -68,7 +67,7 @@ func NewManager() (*Manager, error) {
 // LoadConfig 加载配置文件，并在首次加载成功后启动热更新监听。
 func (m *Manager) LoadConfig() error {
 	if err := m.reloadConfig(); err != nil {
-		logger.Error("[Manager] failed to load config", "error", err, "file", configFileName, "time", time.Now().UTC().Format(time.RFC3339))
+		logger.Error("[Manager] failed to load config", "error", err, "file", configFileName)
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 	m.watchOnce.Do(m.v.WatchConfig)

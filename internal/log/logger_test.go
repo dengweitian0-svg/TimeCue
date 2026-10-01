@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestNewCreatesInfoLevelBootstrapLogger(t *testing.T) {
@@ -19,6 +20,51 @@ func TestNewCreatesInfoLevelBootstrapLogger(t *testing.T) {
 	}
 	if !logger.currentLogger().Enabled(context.Background(), slog.LevelInfo) {
 		t.Fatal("bootstrap logger does not enable info records")
+	}
+}
+
+func TestUpgradeFormatsTimestampInBeijingTime(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		when time.Time
+	}{
+		{"UTC crosses midnight", time.Date(2026, 9, 30, 17, 2, 3, 123456789, time.UTC)},
+		{"different source timezone", time.Date(2026, 9, 30, 10, 2, 3, 123456789, time.FixedZone("UTC-7", -7*60*60))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logger := newLogger()
+			path := filepath.Join(t.TempDir(), "timecue.jsonl")
+			file, err := os.Create(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { file.Close() })
+			logger.Upgrade(file)
+			record := slog.NewRecord(tc.when, slog.LevelInfo, "timestamp test", 0)
+			record.AddAttrs(slog.Group("event", slog.Time("time", tc.when)))
+			if err := logger.currentLogger().Handler().Handle(context.Background(), record); err != nil {
+				t.Fatal(err)
+			}
+			contents, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output struct {
+				Time  string `json:"time"`
+				Event struct {
+					Time time.Time `json:"time"`
+				} `json:"event"`
+			}
+			if err := json.Unmarshal(contents, &output); err != nil {
+				t.Fatal(err)
+			}
+			if output.Time != "2026-10-01-01:02:03" {
+				t.Fatalf("time = %q, want 2026-10-01-01:02:03", output.Time)
+			}
+			if !output.Event.Time.Equal(tc.when) {
+				t.Fatalf("nested event time changed: %v", output.Event.Time)
+			}
+		})
 	}
 }
 
