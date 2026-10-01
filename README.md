@@ -2,17 +2,17 @@
 
 TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由 Go 管理日程规则、提醒状态和本地数据，由 Flutter 提供桌面界面及系统交互。
 
-> 当前仓库尚未形成可运行的桌面应用。`main.go` 加载配置、打开日志和数据库、组装服务后退出；下文将现有实现与目标功能分别列出。
+> 当前仓库尚未形成可运行的桌面应用。Go 进程已提供仅供本机访问的日程 HTTP API；Flutter 界面仍未建立。
 
 ## 当前实现
 
 | 部分 | 仓库中的现状 |
 | --- | --- |
-| 启动入口 | 加载配置、打开 SQLite 并组装服务，然后退出；尚无应用运行循环。 |
+| 启动入口 | 加载配置、打开 SQLite、检查手动迁移结构，再监听 `127.0.0.1:10086`；收到退出信号后优雅关闭。 |
 | 配置 | 从内嵌的 `internal/config/default.yaml` 加载默认值，以工作目录下的 `config.yaml` 覆盖；支持文件监听、配置快照、修改用户配置和恢复默认值。 |
 | 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
-| 日程与提醒 | 已有创建日程和首条提醒的原子写入、下一次触发计算与提醒推进服务；运行中的调度器尚未实现。 |
-| SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；表结构由独立 SQL 迁移建立，入口连接数据库但不自动执行迁移。 |
+| 日程与提醒 | 已有创建日程和首条提醒的原子写入、下一次触发计算与提醒推进服务；HTTP API 支持创建、列表、查看及软删除日程，运行中的调度器尚未实现。 |
+| SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；表结构由独立 SQL 迁移建立，入口检查迁移版本和表结构但不自动执行迁移。 |
 | Flutter | 已确定为桌面前端方向；仓库中尚无 Flutter 工程和 Go／Flutter 通信实现。 |
 
 
@@ -48,15 +48,37 @@ db:
 
 当前根目录的 `config.yaml` 还包含旧版的 `backup`、`window` 字段。现行配置结构不使用它们，也没有相应的备份或窗口行为。配置写入会保留已有的未知字段，但不会让这些字段生效。
 
+## 本地 HTTP API
+
+首次使用空数据库时，先按[迁移说明](migrations/README.md)手动执行 `001_initial.up.sql`，再从仓库根目录运行 `go run ./cmd/flutter`。服务固定监听 `http://127.0.0.1:10086`，仅接受 `Host: 127.0.0.1:10086`，不启用浏览器 CORS 或应用令牌。启动前检查数据库版本和表结构；`GET /health` 每次复查。缺少迁移时服务不会监听。
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| GET | `/health` | 数据库及迁移健康检查 |
+| POST | `/api/v1/scheduler/schedules` | 创建单次或周期日程；请求体最大 1 MiB |
+| GET | `/api/v1/scheduler/schedules` | 查询未删除日程；支持 `name`、`type`、`limit`、`offset` |
+| GET | `/api/v1/scheduler/schedules/:id` | 查看未删除日程 |
+| DELETE | `/api/v1/scheduler/schedules/:id` | 软删除日程，成功返回 204 |
+
+创建请求示例：
+
+```json
+{"name":"工作日晨会","type":"period","description":null,"period":{"cron":["0 9 * * 1,2,3,4,5"]}}
+```
+
+单次日程使用 `"type":"single"` 和 `"single":{"notifyTime":"2026-10-10T09:30:00+08:00"}`；时间必须晚于创建时刻。周期日程创建时固定启用，不能传 `open`。两类规则不能同时出现，未知字段会被拒绝。成功响应使用 `{"data":{...}}`，创建返回 201 及 `Location`；列表返回 `{"data":[...]}`，按创建时间及 ID 降序排列。日程对象始终包含 `id`、`name`、`type`、`description`、`single`、`period`、`cancelled`、`createdAt`、`updatedAt`，不适用的规则字段为 `null`。业务时间带 `+08:00`。
+
+查询参数 `type` 为 `single` 或 `period`，`limit` 默认为 50 且允许 1–50，`offset` 默认为 0 且必须非负。非法输入返回 400；不存在或已删除日程返回 404。普通错误格式为 `{"error":{"code":"...","message":"..."}}`。健康检查失败返回 503，错误位于 `data.error`。
+
 ## 开发与检查
 
 当前 Go 模块要求 `go.mod` 所列的 Go 版本。在仓库根目录可以运行：
 
 ```powershell
-go run .
+go run ./cmd/flutter
 ```
 
-这只会执行当前入口的配置加载流程，不会打开桌面窗口。SQLite 初始迁移的执行方法见 [`migrations/README.md`](migrations/README.md)；`Sqlite.Connect` 不会自动执行迁移。
+这会启动本地 HTTP 服务，不会打开桌面窗口。SQLite 初始迁移的执行方法见 [`migrations/README.md`](migrations/README.md)；`Sqlite.Connect` 不会自动执行迁移。
 
 需要检查现有 Go 代码时可运行：
 
