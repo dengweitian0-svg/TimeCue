@@ -13,6 +13,12 @@ import (
 // ErrNotPeriodSchedule 表示提醒所属日程不是可推进的周期日程。
 var ErrNotPeriodSchedule = errors.New("schedule is not periodic")
 
+// ErrInvalidSchedule 表示创建请求中的日程规则无效。
+var ErrInvalidSchedule = errors.New("invalid schedule")
+
+// ErrScheduleNotFound 表示日程不存在或已删除。
+var ErrScheduleNotFound = errors.New("schedule not found")
+
 // App 统筹所有服务
 type App struct {
 	Schedule   ScheduleRepo
@@ -44,15 +50,38 @@ func (a *App) CreateSchedule(ctx context.Context, schedule model.Schedule) (*mod
 	after := time.Now().In(model.BeijingLocation())
 	notifyAt, hasNext, err := nextNotificationTime(schedule, after)
 	if err != nil {
-		return nil, nil, fmt.Errorf("[app] invalid schedule rule: %w", err)
+		return nil, nil, fmt.Errorf("[app] invalid schedule rule: %w: %v", ErrInvalidSchedule, err)
 	}
 	if schedule.Type == model.SingleSchedule && !hasNext {
-		return nil, nil, fmt.Errorf("[app] single schedule time must be after current time, notify_at=%q", schedule.Single.NotifyTime.In(model.BeijingLocation()).Format(time.RFC3339Nano))
+		return nil, nil, fmt.Errorf("[app] single schedule time must be after current time: %w", ErrInvalidSchedule)
 	}
 	if !hasNext {
 		return a.Schedule.CreateScheduleWithNotification(ctx, schedule, nil)
 	}
 	return a.Schedule.CreateScheduleWithNotification(ctx, schedule, &notifyAt)
+}
+
+// ListSchedules 查询未删除日程。
+func (a *App) ListSchedules(ctx context.Context, options ...model.QueryOption) ([]*model.Schedule, error) {
+	return a.Schedule.GetAllSchedule(ctx, options...)
+}
+
+// GetSchedule 查询一条未删除日程。
+func (a *App) GetSchedule(ctx context.Context, id int) (*model.Schedule, error) {
+	schedule, err := a.Schedule.GetScheduleByID(ctx, id)
+	if errors.Is(err, model.ErrRecordNotFound) {
+		return nil, ErrScheduleNotFound
+	}
+	return schedule, err
+}
+
+// DeleteSchedule 软删除一条日程。
+func (a *App) DeleteSchedule(ctx context.Context, id int) error {
+	err := a.Schedule.DeleteScheduleByID(ctx, id)
+	if errors.Is(err, model.ErrRecordNotFound) {
+		return ErrScheduleNotFound
+	}
+	return err
 }
 
 // AdvanceNotification 只允许周期日程以已处理提醒的计划时间推进下一条提醒。
