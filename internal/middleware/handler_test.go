@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -150,6 +151,196 @@ func TestHTTPResultResponses(t *testing.T) {
 				t.Fatalf("internal cause and public detail lost: %#v", record)
 			}
 		})
+	}
+}
+
+type brokenJSON struct{}
+
+func (brokenJSON) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("private serialization failure")
+}
+
+type panickingJSON struct{}
+
+func (panickingJSON) MarshalJSON() ([]byte, error) {
+	panic("serialization panic")
+}
+
+func TestHTTPHandlerGuards(t *testing.T) {
+	readLog := captureHTTPLogs(t)
+	for _, tc := range []struct {
+		name, cause, message, body string
+		status                     int
+		handler                    middleware.HTTPHandler
+		fields                     middleware.HTTPResultFields
+	}{
+		{
+			name: "missing status", cause: "invalid HTTP status: 0", message: "HTTP request failed", status: 500,
+			handler: func(*gin.Context) middleware.HTTPResult { return middleware.HTTPResult{} },
+		},
+		{
+			name: "informational status", cause: "invalid HTTP status: 199", message: "HTTP request failed", status: 500,
+			handler: func(*gin.Context) middleware.HTTPResult { return middleware.JSONResult(199, "private-response") },
+		},
+		{
+			name: "negative status", cause: "invalid HTTP status: -1", message: "HTTP request failed", status: 500,
+			handler: func(*gin.Context) middleware.HTTPResult { return middleware.JSONResult(-1, "private-response") },
+		},
+		{
+			name: "out of range status", cause: "invalid HTTP status: 600", message: "HTTP request failed", status: 500,
+			handler: func(*gin.Context) middleware.HTTPResult {
+				result := middleware.JSONResult(600, "private-response")
+				result.Headers = http.Header{"Location": {"/private-resource"}}
+				return result
+			},
+		},
+		{
+			name: "serialization failure", cause: "private serialization failure", message: "HTTP request failed", status: 500,
+			handler: func(*gin.Context) middleware.HTTPResult {
+				result := middleware.JSONResult(201, brokenJSON{})
+				result.Headers = http.Header{"Location": {"/private-resource"}}
+				return result
+			},
+		},
+		{
+			name: "serialization panic", cause: "serialization panic", message: "HTTP panic", status: 500,
+			handler: func(*gin.Context) middleware.HTTPResult { return middleware.JSONResult(200, panickingJSON{}) },
+		},
+		{
+			name: "handler panic", cause: "handler panic", message: "HTTP panic", status: 500,
+			handler: func(*gin.Context) middleware.HTTPResult { panic("handler panic") },
+		},
+		{
+			name: "fields panic", cause: "fields panic", message: "HTTP panic", status: 500,
+			handler: func(*gin.Context) middleware.HTTPResult { return middleware.JSONResult(201, "private-response") },
+			fields:  func(*gin.Context, middleware.HTTPResult) []slog.Attr { panic("fields panic") },
+		},
+		{
+			name: "handler wrote response", cause: "handler wrote response", message: "HTTP request failed", status: 202, body: "already committed",
+			handler: func(c *gin.Context) middleware.HTTPResult {
+				c.String(202, "already committed")
+				return middleware.JSONResult(201, "private-response")
+			},
+		},
+		{
+			name: "fields wrote response", cause: "HTTP result fields wrote response", message: "HTTP request failed", status: 202, body: "already committed",
+			handler: func(*gin.Context) middleware.HTTPResult { return middleware.JSONResult(201, "private-response") },
+			fields: func(c *gin.Context, _ middleware.HTTPResult) []slog.Attr {
+				c.String(202, "already committed")
+				return nil
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := middlewareTestRouter()
+			fields := tc.fields
+			if fields == nil {
+				fields = func(*gin.Context, middleware.HTTPResult) []slog.Attr {
+					t.Error("field extractor called for failed handler result")
+					return nil
+				}
+			}
+			downstream := false
+			router.GET("/guard", middleware.WrapHTTPHandler(tc.handler, fields), func(c *gin.Context) {
+				downstream = true
+				c.String(200, "unwanted extra response")
+			})
+			before := len(readLog())
+			response, elapsed := logRequest(router, "GET", "/guard", "127.0.0.1:10086", "", "")
+			wantBody := tc.body
+			if tc.status == 500 {
+				wantBody = `{"error":{"code":"internal_error","message":"internal server error"}}`
+			}
+			if response.Code != tc.status || response.Body.String() != wantBody || response.Header().Get("Location") != "" || downstream {
+				t.Fatalf("guard response: %d %s %v (downstream=%v)", response.Code, response.Body.String(), response.Header(), downstream)
+			}
+			record := requireHTTPRecord(t, readLog()[before:], "GET", "/guard", "ERROR", tc.message, tc.status, elapsed)
+			cause, ok := record["error"].(string)
+			if !ok || !strings.Contains(cause, tc.cause) {
+				t.Fatalf("cause lost: %#v", record)
+			}
+			if tc.status == 500 && record["code"] != "internal_error" {
+				t.Fatalf("fallback code lost: %#v", record)
+			}
+		})
+	}
+}
+
+type failingHTTPWriter struct {
+	*httptest.ResponseRecorder
+	cause  error
+	short  bool
+	writes int
+}
+
+func (w *failingHTTPWriter) Write(body []byte) (int, error) {
+	w.writes++
+	if w.short {
+		return w.ResponseRecorder.Write(body[:len(body)/2])
+	}
+	return 0, w.cause
+}
+
+func TestHTTPHandlerWriteFailures(t *testing.T) {
+	readLog := captureHTTPLogs(t)
+	for _, short := range []bool{false, true} {
+		router := middlewareTestRouter()
+		downstream := false
+		router.GET("/write", middleware.WrapHTTPHandler(func(*gin.Context) middleware.HTTPResult {
+			return middleware.DataResult(201, "private-response")
+		}, nil), func(*gin.Context) { downstream = true })
+		writer := &failingHTTPWriter{
+			ResponseRecorder: httptest.NewRecorder(),
+			cause:            errors.New("connection write failed"),
+			short:            short,
+		}
+		request := httptest.NewRequest("GET", "/write", nil)
+		request.Host = "127.0.0.1:10086"
+		before := len(readLog())
+		started := time.Now()
+		router.ServeHTTP(writer, request)
+		elapsed := time.Since(started)
+		if writer.Code != 201 || writer.writes != 1 || downstream {
+			t.Fatalf("write failure retried or changed status: %d, %d writes, downstream=%v", writer.Code, writer.writes, downstream)
+		}
+		record := requireHTTPRecord(t, readLog()[before:], "GET", "/write", "ERROR", "HTTP request failed", 201, elapsed)
+		want := writer.cause.Error()
+		if short {
+			want = io.ErrShortWrite.Error()
+		}
+		if record["error"] != want {
+			t.Fatalf("write cause lost: %#v", record)
+		}
+	}
+}
+
+func TestHTTPHandlerPreservesCauseOnWriteFailure(t *testing.T) {
+	readLog := captureHTTPLogs(t)
+	original := errors.New("original service failure")
+	writeErr := errors.New("response write failure")
+	router := middlewareTestRouter()
+	router.GET("/two-failures", middleware.WrapHTTPHandler(func(*gin.Context) middleware.HTTPResult {
+		return middleware.ErrorResult(503, middleware.APIError{
+			Code:    "unavailable",
+			Message: "try later",
+		}, original)
+	}, nil))
+	writer := &failingHTTPWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+		cause:            writeErr,
+	}
+	request := httptest.NewRequest("GET", "/two-failures", nil)
+	request.Host = "127.0.0.1:10086"
+	started := time.Now()
+	router.ServeHTTP(writer, request)
+	elapsed := time.Since(started)
+	if writer.Code != 503 || writer.writes != 1 {
+		t.Fatalf("unexpected failure response: %d, %d writes", writer.Code, writer.writes)
+	}
+	record := requireHTTPRecord(t, readLog(), "GET", "/two-failures", "ERROR", "HTTP request failed", 503, elapsed)
+	cause, ok := record["error"].(string)
+	if !ok || !strings.Contains(cause, original.Error()) || !strings.Contains(cause, writeErr.Error()) {
+		t.Fatalf("original or write error lost: %#v", record)
 	}
 }
 

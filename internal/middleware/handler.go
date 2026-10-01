@@ -2,6 +2,9 @@ package middleware
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -79,17 +82,40 @@ func internalErrorResult(cause error) HTTPResult {
 	}, cause)
 }
 
-// WriteHTTPResult 先序列化和收集素材，再提交响应。
+// WriteHTTPResult 是响应的唯一出口，先序列化和收集素材，再提交响应。
 func WriteHTTPResult(c *gin.Context, result HTTPResult, fields HTTPResultFields) {
-	setHTTPLogDetails(c, httpLogDetails{Error: result.Cause})
+	if c.Writer.Written() {
+		setHTTPLogDetails(c, httpLogDetails{
+			Error: errors.New("handler wrote response before returning HTTPResult"),
+		})
+		c.Abort()
+		return
+	}
+	if result.Status < http.StatusOK || result.Status > 599 {
+		result = internalErrorResult(fmt.Errorf("handler returned invalid HTTP status: %d", result.Status))
+		fields = nil
+		c.Abort()
+	}
+	setHTTPLogDetails(c, httpLogDetails{
+		Error: result.Cause,
+	})
+
 	var body []byte
 	if result.Status != http.StatusNoContent && result.Status != http.StatusNotModified {
 		var err error
 		body, err = json.Marshal(result.Body)
 		if err != nil {
-			panic(err)
+			result = internalErrorResult(err)
+			// 兜底响应只含固定字符串，序列化不会失败。
+			body, _ = json.Marshal(result.Body)
+			fields = nil
+			setHTTPLogDetails(c, httpLogDetails{
+				Error: err,
+			})
+			c.Abort()
 		}
 	}
+
 	var attrs []slog.Attr
 	if detail, ok := result.Body.(ErrorResponse); ok {
 		attrs = append(attrs, slog.String("code", detail.Error.Code), slog.String("message", detail.Error.Message))
@@ -97,7 +123,18 @@ func WriteHTTPResult(c *gin.Context, result HTTPResult, fields HTTPResultFields)
 	if fields != nil {
 		attrs = append(attrs, fields(c, result)...)
 	}
-	setHTTPLogDetails(c, httpLogDetails{Fields: attrs})
+	setHTTPLogDetails(c, httpLogDetails{
+		Fields: attrs,
+	})
+
+	// 提取规则也接收 Gin 上下文；同样防止它提前写响应。
+	if c.Writer.Written() {
+		setHTTPLogDetails(c, httpLogDetails{
+			Error: errors.New("HTTP result fields wrote response before response commit"),
+		})
+		c.Abort()
+		return
+	}
 	for name, values := range result.Headers {
 		c.Writer.Header().Del(name)
 		for _, value := range values {
@@ -108,10 +145,17 @@ func WriteHTTPResult(c *gin.Context, result HTTPResult, fields HTTPResultFields)
 		c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	}
 	c.Status(result.Status)
+	// 明确提交，避免返回结果后其他 Gin handler 改写已经选定的状态。
 	c.Writer.WriteHeaderNow()
 	if body != nil {
-		if _, err := c.Writer.Write(body); err != nil {
-			setHTTPLogDetails(c, httpLogDetails{Error: err})
+		n, err := c.Writer.Write(body)
+		if err == nil && n != len(body) {
+			err = io.ErrShortWrite
+		}
+		if err != nil {
+			setHTTPLogDetails(c, httpLogDetails{
+				Error: err,
+			})
 			c.Abort()
 		}
 	}

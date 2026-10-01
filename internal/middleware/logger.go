@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -25,7 +26,11 @@ func setHTTPLogDetails(c *gin.Context, details httpLogDetails) {
 	current := getHTTPLogDetails(c)
 	current.Fields = append(current.Fields, details.Fields...)
 	if details.Error != nil {
-		current.Error = details.Error
+		if current.Error == nil {
+			current.Error = details.Error
+		} else {
+			current.Error = errors.Join(current.Error, details.Error)
+		}
 	}
 	if details.Panicked {
 		current.Panicked = true
