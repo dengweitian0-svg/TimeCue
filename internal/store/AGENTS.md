@@ -3,6 +3,7 @@
 - 本模块负责 SQLite 连接、日程与提醒的持久化，以及存储层可执行的状态约束；规则计算和业务流程组合由 `service` 负责。
 - `ScheduleStore` 与 `NotificationStore` 直接实现服务层对应的存储接口；`Sqlite` 只管理连接。`GetScheduleByID` 的必填日程 ID 作为独立参数，函数式选项中已设置的条件均参与查询；仅启用 `WithScheduleIncludeDeleted(true)` 时软删除记录可见。
 - 数据库迁移位于仓库根目录 `migrations/` 的独立 SQL 文件中。`Sqlite.Connect` 不执行迁移。
+- `Sqlite.CheckHealth` 检查数据库连通性、迁移版本和日程／提醒表结构；入口在监听前调用，运行中的健康检查每次调用。迁移仍须手动执行。
 - 日程和提醒均使用 `deleted` 软删除。删除日程时，在同一事务内隐藏未来且仍待投递的提醒，保留已发生提醒与日程关联供历史查询。
 - 取消和删除日程时，均在同一事务内隐藏未来且仍待投递的提醒；创建提醒也必须在同一事务内检查日程是否已取消、删除或暂停。相同日程与触发时间只保存一条提醒。
 - `CreateScheduleWithNotification` 在同一事务内创建日程与可选的首条提醒，任一步失败均回滚；规则时间由服务层预先计算。

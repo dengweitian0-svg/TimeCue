@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
 )
 
 const LimitMax = 50
@@ -18,13 +20,78 @@ const LimitMax = 50
 var (
 	ErrNotConnected        = errors.New("database is not connected")
 	ErrAlreadyConnected    = errors.New("database is already connected")
-	ErrNotFound            = errors.New("record not found")
+	ErrNotFound            = model.ErrRecordNotFound
 	ErrScheduleDeleted     = errors.New("schedule is deleted")
 	ErrScheduleCancelled   = errors.New("schedule is cancelled")
 	ErrSchedulePaused      = errors.New("schedule is paused")
 	ErrNotificationDeleted = errors.New("notification is deleted")
 	ErrInvalidTransition   = errors.New("invalid state transition")
+	ErrDatabaseUnavailable = errors.New("database unavailable")
+	ErrSchemaInvalid       = errors.New("database schema invalid")
 )
+
+// CheckHealth 验证连接可用且数据库采用当前手动迁移的结构。
+func (s *Sqlite) CheckHealth(ctx context.Context) error {
+	db, err := s.handle()
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+	}
+	var version int
+	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+	}
+	if version != 1 {
+		return fmt.Errorf("%w: expected version 1, got %d", ErrSchemaInvalid, version)
+	}
+	for table, required := range map[string]map[string]string{
+		"schedules": {
+			"id": "INTEGER", "name": "TEXT", "type": "TEXT", "description": "TEXT",
+			"period_open": "INTEGER", "period_cron": "TEXT", "single_notify_time": "INTEGER",
+			"cancelled": "INTEGER", "deleted": "INTEGER", "created_at": "INTEGER", "updated_at": "INTEGER",
+		},
+		"notifications": {
+			"id": "INTEGER", "schedule_id": "INTEGER", "status": "TEXT",
+			"notify_time": "INTEGER", "acknowledged_at": "INTEGER", "deleted": "INTEGER",
+		},
+	} {
+		rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+		}
+		found := make(map[string]string)
+		primaryID := false
+		for rows.Next() {
+			var cid, notNull, primaryKey int
+			var name, dataType string
+			var defaultValue sql.NullString
+			if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+				rows.Close()
+				return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+			}
+			found[name] = dataType
+			if name == "id" && primaryKey == 1 {
+				primaryID = true
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+		}
+		for column, dataType := range required {
+			if found[column] != dataType {
+				return fmt.Errorf("%w: invalid %s.%s type", ErrSchemaInvalid, table, column)
+			}
+		}
+		if !primaryID {
+			return fmt.Errorf("%w: missing %s primary key", ErrSchemaInvalid, table)
+		}
+	}
+	return nil
+}
 
 // DB 定义数据库连接的生命周期操作。
 type DB interface {

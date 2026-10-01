@@ -5,6 +5,7 @@
 - `BeijingLocation` 定义业务统一使用的固定 UTC+8 时区，不采用夏令时。
 - `Schedule.Deleted` 与 `Notification.Deleted` 是软删除标记，删除后记录仍可用于历史查询。
 - `Schedule.Cancelled` 表示终止日程；`Period.Open` 表示周期日程可恢复的暂停。
+- `ErrRecordNotFound` 是存储查询与服务层之间共享的未找到错误标识；服务层将日程场景转换为 `ErrScheduleNotFound`。
 - `Notification.Status` 保存投递结果，`AcknowledgedAt` 单独保存用户确认时间。
 - `QueryOption` 是函数式查询选项，字段私有的 `Option` 保存可选条件；存储层通过 `Option` 的只读方法读取归并结果。`GetScheduleByID` 的必填日程 ID 作为独立参数，`GetAllSchedule` 不要求任何必填条件。
 - 新增可导出函数与关键规则应提供中文注释。

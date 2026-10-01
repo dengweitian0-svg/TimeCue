@@ -1,10 +1,14 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
+
+// ErrRecordNotFound 表示请求的持久化记录不存在或已软删除。
+var ErrRecordNotFound = errors.New("record not found")
 
 type ScheduleType string
 
