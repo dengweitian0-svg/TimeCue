@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -58,5 +60,59 @@ func ErrorResult(status int, detail APIError, cause error) HTTPResult {
 func NoContentResult() HTTPResult {
 	return HTTPResult{
 		Status: http.StatusNoContent,
+	}
+}
+
+// HTTPResultFields 由 API 层注册，仅提取允许记录的结果事实。
+type HTTPResultFields func(*gin.Context, HTTPResult) []slog.Attr
+
+func WrapHTTPHandler(handler HTTPHandler, fields HTTPResultFields) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		WriteHTTPResult(c, handler(c), fields)
+	}
+}
+
+func internalErrorResult(cause error) HTTPResult {
+	return ErrorResult(http.StatusInternalServerError, APIError{
+		Code:    "internal_error",
+		Message: "internal server error",
+	}, cause)
+}
+
+// WriteHTTPResult 先序列化和收集素材，再提交响应。
+func WriteHTTPResult(c *gin.Context, result HTTPResult, fields HTTPResultFields) {
+	setHTTPLogDetails(c, httpLogDetails{Error: result.Cause})
+	var body []byte
+	if result.Status != http.StatusNoContent && result.Status != http.StatusNotModified {
+		var err error
+		body, err = json.Marshal(result.Body)
+		if err != nil {
+			panic(err)
+		}
+	}
+	var attrs []slog.Attr
+	if detail, ok := result.Body.(ErrorResponse); ok {
+		attrs = append(attrs, slog.String("code", detail.Error.Code), slog.String("message", detail.Error.Message))
+	}
+	if fields != nil {
+		attrs = append(attrs, fields(c, result)...)
+	}
+	setHTTPLogDetails(c, httpLogDetails{Fields: attrs})
+	for name, values := range result.Headers {
+		c.Writer.Header().Del(name)
+		for _, value := range values {
+			c.Writer.Header().Add(name, value)
+		}
+	}
+	if body != nil && c.Writer.Header().Get("Content-Type") == "" {
+		c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	}
+	c.Status(result.Status)
+	c.Writer.WriteHeaderNow()
+	if body != nil {
+		if _, err := c.Writer.Write(body); err != nil {
+			setHTTPLogDetails(c, httpLogDetails{Error: err})
+			c.Abort()
+		}
 	}
 }
