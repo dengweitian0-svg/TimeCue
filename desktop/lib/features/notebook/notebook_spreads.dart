@@ -287,6 +287,18 @@ class CalendarSpread extends StatelessWidget {
   final NotebookViewModel model;
   final Future<void> Function(VoidCallback) onNavigate;
   final Widget? editor;
+  String get daySummary {
+    final count = model.repository.openScheduleCountOn(
+      model.selectedDate ?? model.repository.demoNow,
+    );
+    if (model.right is LoadingDatePage) return '正在读取日程…';
+    if (model.right is ErrorDatePage) return '日程数量读取失败';
+    if (count == null) {
+      return model.repository.loading ? '正在读取日程…' : '日程数量读取失败';
+    }
+    return count == 0 ? '无日程' : '当日共 $count 个日程';
+  }
+
   @override
   Widget build(BuildContext context) => Row(
     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -343,9 +355,12 @@ class CalendarSpread extends StatelessWidget {
                 icon: const Icon(Icons.list_alt),
                 label: const Text('管理日程 · 含已暂停'),
               ),
-              const Text(
-                '○ 今天     · 有安排',
-                style: TextStyle(fontSize: 12, color: NotebookTheme.muted),
+              Text(
+                daySummary,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: NotebookTheme.muted,
+                ),
               ),
             ],
           ),

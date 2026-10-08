@@ -19,6 +19,7 @@ class HttpNotebookRepository extends NotebookRepository {
   List<TriggerSummary> _today = const [], _pending = const [];
   final Map<String, List<TriggerSummary>> _dates = {};
   final Map<String, String> _dateCursors = {};
+  final Map<String, int> _openScheduleCounts = {};
   Set<String> _marks = {};
   int _total = 0, _page = 0;
   List<String> _pendingCursors = [''];
@@ -53,6 +54,8 @@ class HttpNotebookRepository extends NotebookRepository {
       _dates[dateKey(date)] ?? const [];
   @override
   bool markedOn(DateTime date) => _marks.contains(dateKey(date));
+  @override
+  int? openScheduleCountOn(DateTime date) => _openScheduleCounts[dateKey(date)];
   @override
   bool hasMoreOn(DateTime date) =>
       (_dateCursors[dateKey(date)] ?? '').isNotEmpty;
@@ -171,11 +174,16 @@ class HttpNotebookRepository extends NotebookRepository {
       _marks = (marks as List).cast<String>().toSet();
       _dates.clear();
       _dateCursors.clear();
+      _openScheduleCounts.clear();
       _dates[dateKey(now)] = _today;
+      final todayCount = snapshot['occurrences']['openScheduleCount'] as int?;
+      if (todayCount != null) _openScheduleCounts[dateKey(now)] = todayCount;
       _dateCursors[dateKey(now)] =
           snapshot['occurrences']['nextCursor'] as String;
       if (selected != null && datePage != null) {
         _dates[dateKey(selected)] = items(datePage);
+        final count = datePage['openScheduleCount'] as int?;
+        if (count != null) _openScheduleCounts[dateKey(selected)] = count;
         _dateCursors[dateKey(selected)] = datePage['nextCursor'] as String;
       }
       _hasSnapshot = true;
@@ -245,6 +253,8 @@ class HttpNotebookRepository extends NotebookRepository {
       }
       _dates[key] = List.unmodifiable(merged.values);
       _dateCursors[key] = data['nextCursor'] as String;
+      final count = data['openScheduleCount'] as int?;
+      if (count != null) _openScheduleCounts[key] = count;
       if (sameDay(date, _now)) _today = _dates[key]!;
     } catch (e) {
       if (!_disposed && generation == _generation) _error = '$e';

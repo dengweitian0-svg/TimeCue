@@ -46,3 +46,28 @@ func TestScheduleChangeHTTP(t *testing.T) {
 	requireStatus(t, call(http.MethodDelete, path, "", ""), 204)
 	requireStatus(t, call(http.MethodPut, path, strings.Replace(edit, `"expectedRevision":1`, `"expectedRevision":3`, 1), "deleted"), 404)
 }
+
+// TestDateOpenScheduleCountHTTP 保证日期响应携带按日程去重的启用总数。
+func TestDateOpenScheduleCountHTTP(t *testing.T) {
+	router, _ := testRouter(t)
+	base := "/api/v1/scheduler/schedules"
+	check := func(want float64) {
+		t.Helper()
+		out := request(router, http.MethodGet, base+"?view=occurrences&date=2099-01-01", "", "")
+		requireStatus(t, out, 200)
+		result := decodeObject(t, out.Body.Bytes())["data"].(map[string]any)
+		if result["openScheduleCount"] != want {
+			t.Fatalf("启用日程总数=%v，期望=%v", result["openScheduleCount"], want)
+		}
+	}
+	check(0)
+	active := request(router, http.MethodPost, base, `{"name":"同日两次","type":"period","period":{"cron":["0 9 * * *","0 17 * * *"]}}`, "application/json")
+	requireStatus(t, active, 201)
+	check(1)
+	paused := request(router, http.MethodPost, base, `{"name":"暂停","type":"period","period":{"open":false,"cron":["0 9 * * *"]}}`, "application/json")
+	requireStatus(t, paused, 201)
+	check(1)
+	single := request(router, http.MethodPost, base, `{"name":"单次","type":"single","single":{"notifyTime":"2099-01-01T11:00:00+08:00"}}`, "application/json")
+	requireStatus(t, single, 201)
+	check(2)
+}

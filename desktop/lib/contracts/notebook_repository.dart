@@ -132,6 +132,15 @@ abstract class NotebookRepository extends ChangeNotifier {
   String? get refreshError => null;
   bool get hasSnapshot => true;
   bool markedOn(DateTime date) => entriesOn(date).isNotEmpty;
+  // 按启用日程身份统计全部当日安排，已确认的触发同样计入。
+  int? openScheduleCountOn(DateTime date) => entriesOn(date)
+      .where((entry) {
+        final value = schedule(entry.scheduleId);
+        return !value.deleted && value.draft.enabled;
+      })
+      .map((entry) => entry.scheduleId)
+      .toSet()
+      .length;
   Future<void> refresh({DateTime? month, DateTime? date}) async {}
   Future<void> loadPendingPage(int page) async {}
   bool hasMoreOn(DateTime date) => false;

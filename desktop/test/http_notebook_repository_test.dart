@@ -27,10 +27,14 @@ Map<String, dynamic> occurrence(
 Map<String, dynamic> page(
   List<Map<String, dynamic>> items, {
   int? total,
+  int? openScheduleCount,
   String cursor = '',
 }) => {
   'items': items,
   'total': total ?? items.length,
+  'openScheduleCount':
+      openScheduleCount ??
+      items.map((entry) => entry['scheduleId']).toSet().length,
   'nextCursor': cursor,
   'asOf': '2026-10-08T14:32:00+08:00',
 };
@@ -84,6 +88,46 @@ Future<HttpNotebookRepository> serverRepository(
 }
 
 void main() {
+  test('启用日程总数来自服务端，包含确认记录且不随分页长度变化', () async {
+    final date = DateTime.utc(2026, 10, 8);
+    final nextDate = DateTime.utc(2026, 10, 9);
+    var fail = false;
+    final repo = await serverRepository((request) {
+      if (fail) throw StateError('连接中断');
+      if (request.uri.queryParameters['view'] == 'calendar') return <String>[];
+      if (request.uri.queryParameters['date'] == '2026-10-09') {
+        return page([], openScheduleCount: 0);
+      }
+      if (request.uri.queryParameters['cursor'] == 'date-next') {
+        return page([occurrence(60)], total: 61, openScheduleCount: 56);
+      }
+      final data = snapshot();
+      data['occurrences'] = page(
+        [
+          occurrence(1, acknowledgedAt: '2026-10-08T10:00:00+08:00'),
+          occurrence(2),
+        ],
+        total: 61,
+        openScheduleCount: 56,
+        cursor: 'date-next',
+      );
+      return data;
+    });
+    expect(repo.openScheduleCountOn(date), isNull);
+    await repo.refresh();
+    expect(repo.today.length, 2);
+    expect(repo.today.first.acknowledgedAt, isNotNull);
+    expect(repo.openScheduleCountOn(date), 56);
+    await repo.loadMoreOn(date);
+    expect(repo.today.length, 3);
+    expect(repo.openScheduleCountOn(date), 56);
+    await repo.refresh(date: nextDate);
+    expect(repo.openScheduleCountOn(nextDate), 0);
+    fail = true;
+    await repo.refresh(date: nextDate);
+    expect(repo.openScheduleCountOn(nextDate), 0);
+    expect(repo.refreshError, isNotNull);
+  });
   test('创建和更新均拒绝秒或亚秒，不静默取整后发出请求', () async {
     var requests = 0;
     final repo = await serverRepository((request) {

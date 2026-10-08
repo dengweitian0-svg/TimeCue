@@ -7,6 +7,45 @@ import 'package:timecue_desktop/features/room/room_backdrop.dart';
 import 'package:flutter/material.dart';
 
 void main() {
+  test('日程数量包含已确认，暂停和删除不计入，同一日程当天多次不重复计数', () async {
+    final repo = DemoNotebookRepository();
+    addTearDown(repo.dispose);
+    expect(repo.openScheduleCountOn(repo.demoNow), 5);
+    await repo.confirm({'n1'});
+    expect(repo.openScheduleCountOn(repo.demoNow), 5);
+    // 改为晚些提醒后保留历史与新增未来触发，仍只是一条日程。
+    await repo.save(
+      ScheduleDraft(
+        name: '休息',
+        description: '',
+        kind: ScheduleKind.daily,
+        time: DateTime.utc(2026, 10, 7, 17),
+      ),
+      id: 's1',
+    );
+    expect(
+      repo
+          .entriesOn(repo.demoNow)
+          .where((entry) => entry.scheduleId == 's1')
+          .length,
+      2,
+    );
+    expect(repo.openScheduleCountOn(repo.demoNow), 5);
+    await repo.save(
+      ScheduleDraft(
+        name: '休息',
+        description: '',
+        kind: ScheduleKind.daily,
+        time: DateTime.utc(2026, 10, 7, 17),
+        enabled: false,
+      ),
+      id: 's1',
+    );
+    expect(repo.openScheduleCountOn(repo.demoNow), 4);
+    await repo.delete('s0');
+    expect(repo.openScheduleCountOn(repo.demoNow), 3);
+    expect(repo.openScheduleCountOn(DateTime.utc(2026, 11, 1)), 0);
+  });
   test('确认请求失败保留原快照与选择，允许重试', () async {
     final repo = _FailingRepository();
     final vm = NotebookViewModel(repo);

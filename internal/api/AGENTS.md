@@ -14,3 +14,5 @@
 - 中间件顺序为 `HTTPLogger` → `HostGuard` → `Recovery`。路由测试覆盖事件消息、日志级别、业务字段及失败时的字段遗漏。
 
 - `schedule_change_test.go`：原子暂停创建、分钟精度、版本冲突、类型边界、创建/更新幂等重放和已删除规则拒绝更新。
+
+日期视图及组合快照的 occurrences 页增加 openScheduleCount，表示全部分页中的当前启用日程数（按 Schedule ID 去重，不筛确认状态）；提醒待确认页不携带此字段。路由和日志字段提取的响应类型不变。

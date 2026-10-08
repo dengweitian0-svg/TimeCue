@@ -5,12 +5,46 @@ import 'package:timecue_desktop/app/timecue_app.dart';
 import 'package:timecue_desktop/data/demo_notebook_repository.dart';
 import 'package:timecue_desktop/features/notebook/notebook_overlay.dart';
 import 'package:timecue_desktop/features/notebook/notebook_view_model.dart';
+import 'package:timecue_desktop/features/notebook/notebook_spreads.dart';
 import 'package:timecue_desktop/features/schedule_editor/schedule_editor.dart';
 import 'package:timecue_desktop/theme/notebook_theme.dart';
 import 'package:timecue_desktop/features/room/desk_notebook_hotspot.dart';
 import 'package:timecue_desktop/features/room/room_geometry.dart';
 
 void main() {
+  testWidgets('日历底部显示选中日期数量和无日程状态，不再显示固定图例', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repo = DemoNotebookRepository();
+    final model = NotebookViewModel(repo);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListenableBuilder(
+            listenable: model,
+            builder: (_, _) => CalendarSpread(
+              model: model,
+              onNavigate: (action) async => action(),
+              editor: null,
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('当日共 5 个日程'), findsOneWidget);
+    expect(find.textContaining('日历标记'), findsNothing);
+    await repo.confirm({'n1'});
+    await tester.pump();
+    expect(find.text('当日共 5 个日程'), findsOneWidget);
+    await model.selectDate(DateTime.utc(2026, 10, 1));
+    await tester.pump();
+    expect(find.text('无日程'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    model.dispose();
+    repo.dispose();
+  });
   testWidgets('缩窄窗口后本子露出的部分仍可点击，完全裁掉才隐藏', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1280, 800);

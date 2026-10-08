@@ -48,10 +48,11 @@ type OccurrenceView struct {
 
 // OccurrencePage 包含服务端统计和不透明续页游标。
 type OccurrencePage struct {
-	Items      []OccurrenceView `json:"items"`
-	Total      int              `json:"total"`
-	NextCursor string           `json:"nextCursor"`
-	AsOf       time.Time        `json:"asOf"`
+	Items             []OccurrenceView `json:"items"`
+	Total             int              `json:"total"`
+	NextCursor        string           `json:"nextCursor"`
+	AsOf              time.Time        `json:"asOf"`
+	OpenScheduleCount *int             `json:"openScheduleCount,omitempty"`
 }
 
 // ScheduleQueryResult 是日程查询的响应结果，不作为业务实体持久化。
@@ -207,6 +208,25 @@ func occurrencePage(values []OccurrenceView, cursor queryPosition, limit int) Oc
 	return page
 }
 
+// dateOccurrencePage 在分页前统计当天启用日程，确认状态和同规则触发次数不改变日程数。
+func dateOccurrencePage(values []OccurrenceView, rules []*model.Schedule, cursor queryPosition, limit int) OccurrencePage {
+	open := make(map[int]bool, len(rules))
+	for _, rule := range rules {
+		open[rule.ID] = !rule.Deleted && !rule.Cancelled && rule.Validate() == nil &&
+			(rule.Type == model.SingleSchedule || (rule.Period != nil && rule.Period.Open))
+	}
+	ids := make(map[int]struct{})
+	for _, value := range values {
+		if open[value.ScheduleID] {
+			ids[value.ScheduleID] = struct{}{}
+		}
+	}
+	count := len(ids)
+	page := occurrencePage(values, cursor, limit)
+	page.OpenScheduleCount = &count
+	return page
+}
+
 func pendingPage(rules []*model.Schedule, notifications []*model.Notification, total int, cursor queryPosition, limit int) OccurrencePage {
 	schedules := map[int]*model.Schedule{}
 	for _, s := range rules {
@@ -242,7 +262,7 @@ func (a *App) QueryScheduleState(ctx context.Context, date string, now time.Time
 	return &ScheduleQueryResult{
 		Date:           start.Format("2006-01-02"),
 		AsOf:           now,
-		Occurrences:    occurrencePage(values, queryPosition{Scope: "date:" + start.Format("2006-01-02"), AsOf: now}, 50),
+		Occurrences:    dateOccurrencePage(values, schedules, queryPosition{Scope: "date:" + start.Format("2006-01-02"), AsOf: now}, 50),
 		Unacknowledged: pendingPage(schedules, pending, total, queryPosition{Scope: "pending", AsOf: now}, 50),
 	}, nil
 }
@@ -265,7 +285,7 @@ func (a *App) QueryOccurrences(ctx context.Context, date, rawCursor string, now 
 	if err != nil {
 		return OccurrencePage{}, err
 	}
-	return occurrencePage(values, cursor, 50), nil
+	return dateOccurrencePage(values, schedules, cursor, 50), nil
 }
 
 // QueryCalendar 一次读取月份事实和规则，返回日期标记。
