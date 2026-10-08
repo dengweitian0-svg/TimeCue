@@ -15,6 +15,8 @@ class DeskNotebookHotspot extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Tooltip(
     message: '打开日程本',
+    // 按钮已有语义名称，悬停提示不再提供重复的无障碍信息。
+    excludeFromSemantics: true,
     child: ClipPath(
       clipper: _NotebookHitClipper(outline),
       child: Semantics(
