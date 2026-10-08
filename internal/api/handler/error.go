@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
+	"github.com/dengweitian0-svg/TimeCue/internal/service"
 )
 
 // apiError 是所有 HTTP 接口共用的错误内容。
@@ -74,4 +76,17 @@ func MethodNotAllowedResult() middleware.HTTPResult {
 
 func internalErrorResult(cause error) middleware.HTTPResult {
 	return middleware.ErrorResult(http.StatusInternalServerError, errInternal, cause)
+}
+
+func resourceError(err error) middleware.HTTPResult {
+	if errors.Is(err, service.ErrInvalidQuery) {
+		return middleware.ErrorResult(http.StatusBadRequest, newAPIError("invalid_request", "invalid view, include, date, month, state or cursor"), nil)
+	}
+	if errors.Is(err, model.ErrRecordNotFound) {
+		return middleware.ErrorResult(http.StatusNotFound, newAPIError("notification_not_found", "notification not found"), nil)
+	}
+	if errors.Is(err, model.ErrInvalidAcknowledgement) {
+		return middleware.ErrorResult(http.StatusConflict, newAPIError("invalid_acknowledgement", "expected 1 to 500 existing, nondeleted, due notification IDs"), nil)
+	}
+	return internalErrorResult(err)
 }

@@ -11,3 +11,8 @@
 - 投递结果与用户确认分别更新；普通待投递查询排除已删除、已取消或已暂停日程。
 - 公开方法返回的错误以 `[store]` 开头，使用英文说明原因，并在相关参数存在时附上参数名和值；保留 `%w` 包装以支持 `errors.Is`。
 - 新增可导出函数及关键事务逻辑应提供中文注释。
+
+- 业务只持久化 schedules 与 notifications 两张表，不另建本子表、存储类或持久化模型。
+- `ScheduleStore.ReadScheduleState` 在 schedule.go 中通过同一读取事务直接返回日程、指定区间提醒事实、待确认页及总数；不包装为第三种存储对象。历史查询不按父日程启停或投递状态过滤。
+- `NotificationStore.AcknowledgeNotifications` 在 notification.go 的同一事务先校验全部明确 ID（未删除、已到期），再保存首次确认时间；pending/failed/sent 均可确认，重复调用幂等，任一非法成员整批回滚。`ConfirmNotification` 复用同一转换。
+- 普通待投递查询排除已确认提醒；投递回填仍独立保存执行事实。阶段 B 无 SQL 结构变更，保留 001 迁移与手动建库流程。

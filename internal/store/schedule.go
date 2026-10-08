@@ -375,3 +375,72 @@ func requireAffected(result sql.Result) error {
 	}
 	return nil
 }
+
+// ReadScheduleState 在同一事务读取 schedules 和 notifications，直接返回规则、事实及待确认页。
+func (s *ScheduleStore) ReadScheduleState(ctx context.Context, start, end, asOf time.Time, after model.NotificationPosition, limit int) (schedules []*model.Schedule, occurrences, pending []*model.Notification, total int, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("[store] cannot read schedule state, start=%q, end=%q: %w", start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), err)
+		}
+	}()
+	db, err := s.db.handle()
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, nil, 0, fmt.Errorf("[store] cannot begin schedule state snapshot: %w", err)
+	}
+	defer tx.Rollback()
+	schedules, occurrences, pending = []*model.Schedule{}, []*model.Notification{}, []*model.Notification{}
+	rows, err := tx.QueryContext(ctx, scheduleSelect)
+	if err != nil {
+		return nil, nil, nil, 0, fmt.Errorf("[store] cannot read schedule state schedules: %w", err)
+	}
+	for rows.Next() {
+		schedule, scanErr := scanSchedule(rows)
+		if scanErr != nil {
+			rows.Close()
+			return nil, nil, nil, 0, scanErr
+		}
+		schedules = append(schedules, schedule)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	rows, err = tx.QueryContext(ctx, notificationSelect+` WHERE deleted = 0 AND notify_time >= ? AND notify_time < ? ORDER BY notify_time, id`, start.UnixNano(), end.UnixNano())
+	if err != nil {
+		return nil, nil, nil, 0, fmt.Errorf("[store] cannot read schedule state occurrences: %w", err)
+	}
+	occurrences, err = scanNotifications(rows)
+	rows.Close()
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE deleted = 0 AND acknowledged_at IS NULL AND notify_time <= ?`, asOf.UnixNano()).Scan(&total); err != nil {
+		return nil, nil, nil, 0, err
+	}
+	if limit > 0 {
+		statement := notificationSelect + ` WHERE deleted = 0 AND acknowledged_at IS NULL AND notify_time <= ?`
+		args := []any{asOf.UnixNano()}
+		if after.ID > 0 {
+			statement += ` AND (notify_time > ? OR (notify_time = ? AND id > ?))`
+			args = append(args, after.Time.UnixNano(), after.Time.UnixNano(), after.ID)
+		}
+		rows, err = tx.QueryContext(ctx, statement+` ORDER BY notify_time, id LIMIT ?`, append(args, limit)...)
+		if err != nil {
+			return nil, nil, nil, 0, fmt.Errorf("[store] cannot read unacknowledged page: %w", err)
+		}
+		pending, err = scanNotifications(rows)
+		rows.Close()
+		if err != nil {
+			return nil, nil, nil, 0, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, nil, nil, 0, err
+	}
+	return schedules, occurrences, pending, total, nil
+}

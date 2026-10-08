@@ -97,7 +97,7 @@ func (s *NotificationStore) GetNotificationByStartTime(ctx context.Context, star
 	rows, err := db.QueryContext(ctx, `SELECT n.id, n.schedule_id, n.status, n.notify_time, n.acknowledged_at, n.deleted
 		FROM notifications n JOIN schedules s ON s.id = n.schedule_id
 		WHERE n.notify_time >= ? AND n.notify_time < ? AND n.status = 'pending'
-		AND n.deleted = 0 AND s.deleted = 0 AND s.cancelled = 0
+		AND n.acknowledged_at IS NULL AND n.deleted = 0 AND s.deleted = 0 AND s.cancelled = 0
 		AND (s.type = 'single' OR s.period_open = 1)
 		ORDER BY n.notify_time, n.id`, startTime.UTC().UnixNano(), endTime.UTC().UnixNano())
 	if err != nil {
@@ -167,26 +167,8 @@ func (s *NotificationStore) SetDeliveryResult(ctx context.Context, notificationI
 
 // ConfirmNotification 记录用户首次确认时间，不改变投递结果。
 func (s *NotificationStore) ConfirmNotification(ctx context.Context, notificationID int, confirmedAt time.Time) error {
-	if confirmedAt.IsZero() {
-		return fmt.Errorf("[store] confirmation time must not be zero, notification_id=%d, confirmed_at=%q", notificationID, confirmedAt.Format(time.RFC3339Nano))
-	}
-	db, err := s.db.handle()
-	if err != nil {
-		return fmt.Errorf("[store] cannot confirm notification, notification_id=%d, confirmed_at=%q: %w", notificationID, confirmedAt.UTC().Format(time.RFC3339Nano), err)
-	}
-	result, err := db.ExecContext(ctx, `UPDATE notifications SET acknowledged_at = ?
-		WHERE id = ? AND deleted = 0 AND status = 'sent' AND acknowledged_at IS NULL`,
-		confirmedAt.UTC().UnixNano(), notificationID)
-	if err != nil {
-		return fmt.Errorf("[store] failed to confirm notification, notification_id=%d, confirmed_at=%q: %w", notificationID, confirmedAt.UTC().Format(time.RFC3339Nano), err)
-	}
-	if err := requireAffected(result); err != nil {
-		if !errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("[store] failed to inspect confirmation update, notification_id=%d: %w", notificationID, err)
-		}
-		return fmt.Errorf("[store] cannot confirm notification, notification_id=%d, confirmed_at=%q: %w", notificationID, confirmedAt.UTC().Format(time.RFC3339Nano), s.notificationTransitionError(ctx, notificationID))
-	}
-	return nil
+	_, err := s.AcknowledgeNotifications(ctx, []int{notificationID}, confirmedAt)
+	return err
 }
 
 // DeleteNotificationByID 仅标记提醒已删除，保留历史数据。
@@ -254,4 +236,58 @@ func scanNotifications(rows *sql.Rows) ([]*model.Notification, error) {
 		result = append(result, notification)
 	}
 	return result, rows.Err()
+}
+
+// AcknowledgeNotifications 先校验全部成员，再原子保存各条首次确认事实。
+func (s *NotificationStore) AcknowledgeNotifications(ctx context.Context, ids []int, at time.Time) (result []*model.Notification, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("[store] cannot acknowledge notifications, count=%d, confirmed_at=%q: %w", len(ids), at.Format(time.RFC3339Nano), err)
+		}
+	}()
+	if at.IsZero() || len(ids) == 0 || len(ids) > 500 {
+		return nil, model.ErrInvalidAcknowledgement
+	}
+	db, err := s.db.handle()
+	if err != nil {
+		return nil, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("[store] cannot begin acknowledgement: %w", err)
+	}
+	defer tx.Rollback()
+	result = make([]*model.Notification, 0, len(ids))
+	seen := map[int]bool{}
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, model.ErrInvalidAcknowledgement
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		n, err := scanNotification(tx.QueryRowContext(ctx, notificationSelect+` WHERE id = ?`, id))
+		if err != nil {
+			return nil, fmt.Errorf("[store] cannot read acknowledgement member, notification_id=%d: %w", id, err)
+		}
+		if n.Deleted || n.NotifyTime.After(at) {
+			return nil, model.ErrInvalidAcknowledgement
+		}
+		result = append(result, n)
+	}
+	for _, n := range result {
+		if n.AcknowledgedAt != nil {
+			continue
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE notifications SET acknowledged_at = ? WHERE id = ? AND acknowledged_at IS NULL`, at.UnixNano(), n.ID); err != nil {
+			return nil, err
+		}
+		value := at.In(model.BeijingLocation())
+		n.AcknowledgedAt = &value
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

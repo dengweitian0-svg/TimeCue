@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	_ "modernc.org/sqlite"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,10 +15,10 @@ import (
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/service"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 	"github.com/gin-gonic/gin"
-	_ "modernc.org/sqlite"
 )
 
 func testRouter(t *testing.T) (*gin.Engine, *store.Sqlite) {
@@ -292,4 +293,84 @@ func TestHealthRejectsUnmigratedDatabase(t *testing.T) {
 	if data["status"] != "error" || data["error"].(map[string]any)["code"] != "schema_invalid" {
 		t.Fatal(response.Body.String())
 	}
+}
+
+func TestScheduleViewsAndAcknowledgements(t *testing.T) {
+	router, db := testRouter(t)
+	schedules, _ := store.NewScheduleStore(db)
+	notifications, _ := store.NewNotificationStore(db)
+	ctx := context.Background()
+	now := time.Now().In(model.BeijingLocation())
+	schedule, err := schedules.CreateSchedule(ctx, model.Schedule{Name: "历史详情", Type: model.PeriodSchedule, Period: &model.Period{Open: true, Cron: []string{"0 9 * * *"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	due, err := notifications.CreateNotification(ctx, schedule.ID, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := notifications.CreateNotification(ctx, schedule.ID, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	future, err := notifications.CreateNotification(ctx, schedule.ID, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = notifications.SetDeliveryResult(ctx, failed.ID, model.NotifyFailed); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/v1/scheduler/schedules?view=occurrences&include=unacknowledged", "/api/v1/scheduler/schedules?view=occurrences&date=" + now.Format("2006-01-02"), "/api/v1/scheduler/schedules?view=calendar&month=" + now.Format("2006-01"), "/api/v1/notifications?state=unacknowledged", fmt.Sprintf("/api/v1/notifications/%d", due.ID)} {
+		requireStatus(t, request(router, "GET", path, "", ""), http.StatusOK)
+	}
+	for _, path := range []string{"/api/v1/scheduler/schedules?view=occurrences&date=2026-02-30", "/api/v1/scheduler/schedules?view=calendar&month=bad", "/api/v1/notifications?state=sent", "/api/v1/notifications?state=unacknowledged&cursor=garbage"} {
+		requireStatus(t, request(router, "GET", path, "", ""), http.StatusBadRequest)
+	}
+	for _, query := range []string{
+		"view=unknown", "view=", "view=calendar", "view=calendar&month=2026-10&date=2026-10-08",
+		"view=occurrences&include=unknown", "view=occurrences&include=unacknowledged&cursor=",
+		"view=occurrences&name=ignored", "view=occurrences&date=2026-10-08&date=2026-10-09",
+	} {
+		requireStatus(t, request(router, "GET", "/api/v1/scheduler/schedules?"+query, "", ""), http.StatusBadRequest)
+	}
+	// 规则列表保持原有数组协议；独立的页面路由不再注册。
+	responseList := request(router, "GET", "/api/v1/scheduler/schedules?limit=1", "", "")
+	requireStatus(t, responseList, http.StatusOK)
+	if _, ok := decodeObject(t, responseList.Body.Bytes())["data"].([]any); !ok {
+		t.Fatal("默认列表协议不应改变")
+	}
+	for _, path := range []string{"notebook", "occurrences", "calendar"} {
+		requireStatus(t, request(router, "GET", "/api/v1/scheduler/"+path, "", ""), http.StatusNotFound)
+	}
+	requireStatus(t, request(router, "POST", fmt.Sprintf("/api/v1/notifications/%d/acknowledgement", due.ID), "", ""), http.StatusNotFound)
+	batchPath := "/api/v1/notifications/acknowledgements"
+	requireStatus(t, request(router, "POST", batchPath, fmt.Sprintf(`{"notificationIds":[%d,%d]}`, due.ID, future.ID), "application/json"), http.StatusConflict)
+	stored, _ := notifications.GetNotificationByID(ctx, due.ID)
+	if stored.AcknowledgedAt != nil {
+		t.Fatal("非法批次不能部分写入")
+	}
+	requireStatus(t, request(router, "POST", batchPath, `{"notificationIds":[1],"all":true}`, "application/json"), http.StatusBadRequest)
+	requireStatus(t, request(router, "POST", batchPath, `{"notificationIds":[]}`, "application/json"), http.StatusConflict)
+	requireStatus(t, request(router, "POST", batchPath, `null`, "application/json"), http.StatusBadRequest)
+	body := fmt.Sprintf(`{"notificationIds":[%d,%d,%d]}`, due.ID, failed.ID, due.ID)
+	response := request(router, "POST", batchPath, body, "application/json")
+	requireStatus(t, response, http.StatusOK)
+	value := decodeObject(t, response.Body.Bytes())["data"].([]any)
+	if len(value) != 2 {
+		t.Fatal("重复 ID 应去重")
+	}
+	first := value[0].(map[string]any)["acknowledgedAt"]
+	response = request(router, "POST", batchPath, fmt.Sprintf(`{"notificationIds":[%d]}`, due.ID), "application/json")
+	requireStatus(t, response, http.StatusOK)
+	if decodeObject(t, response.Body.Bytes())["data"].([]any)[0].(map[string]any)["acknowledgedAt"] != first {
+		t.Fatal("首次确认时间不应改变")
+	}
+	stored, _ = notifications.GetNotificationByID(ctx, failed.ID)
+	if stored.Status != model.NotifyFailed || stored.AcknowledgedAt == nil {
+		t.Fatal("投递结果与完成事实必须独立")
+	}
+	if err = schedules.DeleteScheduleByID(ctx, schedule.ID); err != nil {
+		t.Fatal(err)
+	}
+	requireStatus(t, request(router, "GET", fmt.Sprintf("/api/v1/notifications/%d", due.ID), "", ""), http.StatusOK)
 }

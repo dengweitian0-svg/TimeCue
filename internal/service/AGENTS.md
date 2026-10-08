@@ -11,3 +11,9 @@
 - `NewApp` 接收配置与 Repo 接口，不直接创建存储实现；数据库连接由入口层持有和关闭。
 - `App` 提供创建、列表、单条查询及软删除日程用例；HTTP 层通过 `ErrInvalidSchedule` 与 `ErrScheduleNotFound` 区分用户输入错误和不存在日程。
 - 新增可导出函数及关键业务转换应提供中文注释。
+
+- 业务只使用原有 `ScheduleRepo` 与 `NotifyRepo`；日程视图及联合读取放在 `schedule.go`，提醒详情及确认放在 `notification.go`，不另建本子业务或存储端口。
+- `schedule.go` 在 Go 展开严格晚于 asOf/规则更新时间的未来安排，与 notifications 的持久化事实按日程 ID 和计划时刻去重。过去只读已有事实，不用当前规则重建。
+- `ScheduleQueryResult` 只描述 HTTP 查询响应，不是持久化模型；读取直接返回 Schedule 与 Notification 记录，不保留聚合存储对象或第三类业务实体。
+- 日期/月历固定 UTC+8；分页默认 50，游标绑定用途、日期、asOf 和稳定排序边界，月份只接受 YYYY-MM。
+- 明确 ID 的确认集合最多 500 条，去重后全部校验再原子提交，非法成员整批拒绝；重复确认返回首次时间，不改写投递结果，不要求父日程仍启用。

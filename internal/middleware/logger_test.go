@@ -88,6 +88,12 @@ func TestHTTPLogger(t *testing.T) {
 
 func scheduleLogRouter(t *testing.T) *gin.Engine {
 	t.Helper()
+	router, _ := resourceLogRouter(t)
+	return router
+}
+
+func resourceLogRouter(t *testing.T) (*gin.Engine, *service.App) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "api.db")
 	db := store.NewSqlite()
 	if err := db.Connect(context.Background(), path); err != nil {
@@ -113,7 +119,80 @@ func scheduleLogRouter(t *testing.T) *gin.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return api.NewRouter(&service.App{Schedule: repo}, db.CheckHealth)
+	notify, err := store.NewNotificationStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &service.App{Schedule: repo, Notify: notify}
+	return api.NewRouter(app, db.CheckHealth), app
+}
+
+func TestHTTPLoggerNotificationRoutes(t *testing.T) {
+	router, app := resourceLogRouter(t)
+	ctx := context.Background()
+	now := time.Now().In(model.BeijingLocation())
+	past := now.Add(-time.Hour)
+	description := "private-description"
+	schedule, first, err := app.Schedule.CreateScheduleWithNotification(ctx, model.Schedule{
+		Name:        "private-response",
+		Description: &description,
+		Type:        model.PeriodSchedule,
+		Period:      &model.Period{Open: true, Cron: []string{"0 9 * * *"}},
+	}, &past)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := app.Notify.CreateNotification(ctx, schedule.ID, past.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	future, err := app.Notify.CreateNotification(ctx, schedule.ID, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readLog := captureHTTPLogs(t)
+	const base = "/api/v1/notifications"
+	for _, tc := range []struct {
+		method, target, body, level, message, route, code string
+		status                                            int
+		fields                                            map[string]any
+	}{
+		{"GET", base + "?state=unacknowledged&token=private-query", "", "DEBUG", "notifications listed", base, "", 200, map[string]any{"count": float64(2), "total": float64(2)}},
+		{"GET", fmt.Sprintf("%s/%d", base, first.ID), "", "DEBUG", "notification retrieved", base + "/:id", "", 200, map[string]any{"notification_id": float64(first.ID), "schedule_id": float64(schedule.ID)}},
+		{"POST", base + "/acknowledgements", fmt.Sprintf(`{"notificationIds":[%d,%d,%d]}`, first.ID, second.ID, first.ID), "INFO", "notifications acknowledged", base + "/acknowledgements", "", 200, map[string]any{"count": float64(2)}},
+		{"POST", base + "/acknowledgements", fmt.Sprintf(`{"notificationIds":[%d]}`, first.ID), "INFO", "notifications acknowledged", base + "/acknowledgements", "", 200, map[string]any{"count": float64(1)}},
+		{"GET", base + "?state=unacknowledged", "", "DEBUG", "notifications listed", base, "", 200, map[string]any{"count": float64(0), "total": float64(0)}},
+		{"GET", base + "?state=invalid", "", "WARN", "HTTP request rejected", base, "invalid_request", 400, nil},
+		{"GET", base + "/999999", "", "WARN", "HTTP request rejected", base + "/:id", "notification_not_found", 404, nil},
+		{"POST", base + "/acknowledgements", fmt.Sprintf(`{"notificationIds":[%d]}`, future.ID), "WARN", "HTTP request rejected", base + "/acknowledgements", "invalid_acknowledgement", 409, nil},
+	} {
+		t.Run(tc.method+" "+tc.target+" "+tc.body, func(t *testing.T) {
+			before := len(readLog())
+			response, elapsed := logRequest(router, tc.method, tc.target, "127.0.0.1:10086", tc.body, "application/json")
+			if response.Code != tc.status {
+				t.Fatalf("status=%d, want=%d: %s", response.Code, tc.status, response.Body.String())
+			}
+			record := requireHTTPRecord(t, readLog()[before:], tc.method, strings.SplitN(tc.target, "?", 2)[0], tc.level, tc.message, tc.status, elapsed)
+			if record["route"] != tc.route {
+				t.Fatalf("route facts lost: %#v", record)
+			}
+			for key, want := range tc.fields {
+				if record[key] != want {
+					t.Fatalf("missing %s=%v: %#v", key, want, record)
+				}
+			}
+			if tc.code != "" {
+				if record["code"] != tc.code {
+					t.Fatalf("error code lost: %#v", record)
+				}
+				for _, key := range []string{"count", "total", "notification_id", "schedule_id"} {
+					if _, exists := record[key]; exists {
+						t.Fatalf("failure must not include successful %s: %#v", key, record)
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestHTTPLoggerScheduleRoutes(t *testing.T) {
@@ -213,10 +292,27 @@ func (r failingScheduleRepo) DeleteScheduleByID(context.Context, int) error {
 	return r.cause
 }
 
+func (r failingScheduleRepo) ReadScheduleState(context.Context, time.Time, time.Time, time.Time, model.NotificationPosition, int) ([]*model.Schedule, []*model.Notification, []*model.Notification, int, error) {
+	return nil, nil, nil, 0, r.cause
+}
+
+type failingNotifyRepo struct {
+	service.NotifyRepo
+	cause error
+}
+
+func (r failingNotifyRepo) GetNotificationByID(context.Context, int) (*model.Notification, error) {
+	return nil, r.cause
+}
+
+func (r failingNotifyRepo) AcknowledgeNotifications(context.Context, []int, time.Time) ([]*model.Notification, error) {
+	return nil, r.cause
+}
+
 func TestHTTPLoggerFailures(t *testing.T) {
 	readLog := captureHTTPLogs(t)
 	cause := errors.New("original database failure")
-	router := api.NewRouter(&service.App{Schedule: failingScheduleRepo{cause: cause}}, func(context.Context) error { return cause })
+	router := api.NewRouter(&service.App{Schedule: failingScheduleRepo{cause: cause}, Notify: failingNotifyRepo{cause: cause}}, func(context.Context) error { return cause })
 	const base = "/api/v1/scheduler/schedules"
 	for _, tc := range []struct {
 		method, target, message string
@@ -226,10 +322,16 @@ func TestHTTPLoggerFailures(t *testing.T) {
 		{"GET", base + "/1", "failed to get schedule"},
 		{"DELETE", base + "/1", "failed to delete schedule"},
 		{"GET", "/health", "HTTP health check failed"},
+		{"GET", "/api/v1/notifications?state=unacknowledged", "failed to list notifications"},
+		{"GET", "/api/v1/notifications/1", "failed to get notification"},
+		{"POST", "/api/v1/notifications/acknowledgements", "failed to acknowledge notifications"},
 	} {
 		t.Run(tc.message, func(t *testing.T) {
 			before := len(readLog())
 			body := `{"name":"private-request","type":"period","period":{"cron":["0 9 * * *"]}}`
+			if tc.target == "/api/v1/notifications/acknowledgements" {
+				body = `{"notificationIds":[1]}`
+			}
 			response, elapsed := logRequest(router, tc.method, tc.target, "127.0.0.1:10086", body, "application/json")
 			status, code := 500, "internal_error"
 			if tc.target == "/health" {
@@ -238,7 +340,7 @@ func TestHTTPLoggerFailures(t *testing.T) {
 			if response.Code != status || strings.Contains(response.Body.String(), cause.Error()) {
 				t.Fatalf("unexpected failure response: %d %s", response.Code, response.Body.String())
 			}
-			record := requireHTTPRecord(t, readLog()[before:], tc.method, tc.target, "ERROR", tc.message, status, elapsed)
+			record := requireHTTPRecord(t, readLog()[before:], tc.method, strings.SplitN(tc.target, "?", 2)[0], "ERROR", tc.message, status, elapsed)
 			if record["error"] != cause.Error() || record["code"] != code {
 				t.Fatalf("original error or code lost: %#v", record)
 			}

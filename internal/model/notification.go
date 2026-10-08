@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"time"
 )
 
@@ -22,3 +23,12 @@ const (
 	NotifySent    NotifyStatus = "sent"
 	NotifyFailed  NotifyStatus = "failed"
 )
+
+// ErrInvalidAcknowledgement 表示确认集合含未来、已删除或非法提醒。
+var ErrInvalidAcknowledgement = errors.New("invalid acknowledgement")
+
+// NotificationPosition 是稳定分页所需的时间与主键边界。
+type NotificationPosition struct {
+	Time time.Time
+	ID   int
+}

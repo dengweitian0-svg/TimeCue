@@ -156,8 +156,8 @@ func TestNotificationCreationAndTransitions(t *testing.T) {
 	if _, err := notifications.CreateNotification(ctx, schedule.ID, notifyAt.Add(time.Minute)); err == nil {
 		t.Fatal("单次日程不应接受其他提醒时间")
 	}
-	if err := notifications.ConfirmNotification(ctx, first.ID, notifyAt); !errors.Is(err, ErrInvalidTransition) {
-		t.Fatalf("投递前确认应失败，得到 %v", err)
+	if err := notifications.ConfirmNotification(ctx, first.ID, notifyAt.Add(-time.Minute)); !errors.Is(err, model.ErrInvalidAcknowledgement) {
+		t.Fatalf("未来提醒确认应失败，得到 %v", err)
 	}
 	if err := notifications.SetDeliveryResult(ctx, first.ID, model.NotifyFailed); err != nil {
 		t.Fatalf("记录失败投递: %v", err)
@@ -455,5 +455,167 @@ func TestCreateScheduleWithNotificationRollsBack(t *testing.T) {
 	var count int
 	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schedules`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("失败事务不应留下日程: count=%d, err=%v", count, err)
+	}
+}
+
+func queryApp(t *testing.T, schedules *ScheduleStore, notifications *NotificationStore) *service.App {
+	t.Helper()
+	manager, err := config.NewManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := service.NewApp(manager, schedules, notifications)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return app
+}
+
+func TestNotificationConfirmationAtomicAndPersistent(t *testing.T) {
+	db, schedules, notifications := newMigratedStore(t)
+	app := queryApp(t, schedules, notifications)
+	ctx := context.Background()
+	now := time.Date(2030, 10, 8, 14, 32, 0, 0, model.BeijingLocation())
+	schedule, err := schedules.CreateSchedule(ctx, model.Schedule{Name: "同日多次", Type: model.PeriodSchedule, Period: &model.Period{Open: true, Cron: []string{"0 9 * * *", "0 17 * * *"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := notifications.CreateNotification(ctx, schedule.ID, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := notifications.CreateNotification(ctx, schedule.ID, now.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	future, err := notifications.CreateNotification(ctx, schedule.ID, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = notifications.SetDeliveryResult(ctx, second.ID, model.NotifyFailed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = app.AcknowledgeNotifications(ctx, []int{first.ID, future.ID}, now); !errors.Is(err, model.ErrInvalidAcknowledgement) {
+		t.Fatalf("未来成员应拒绝整批: %v", err)
+	}
+	first, _ = notifications.GetNotificationByID(ctx, first.ID)
+	if first.AcknowledgedAt != nil {
+		t.Fatal("失败批次不应部分确认")
+	}
+	if _, err = app.AcknowledgeNotifications(ctx, []int{first.ID, 999999}, now); !errors.Is(err, model.ErrRecordNotFound) {
+		t.Fatalf("不存在成员应拒绝: %v", err)
+	}
+	values, err := app.AcknowledgeNotifications(ctx, []int{first.ID, second.ID, first.ID}, now)
+	if err != nil || len(values) != 2 {
+		t.Fatalf("明确集合去重: %v %v", values, err)
+	}
+	values, err = app.AcknowledgeNotifications(ctx, []int{first.ID, second.ID}, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range values {
+		if !n.AcknowledgedAt.Equal(now) {
+			t.Fatal("重复确认应保留首次时间")
+		}
+	}
+	if values[0].Status != model.NotifyPending || values[1].Status != model.NotifyFailed {
+		t.Fatal("确认不能覆写投递结果")
+	}
+	if err = notifications.SetDeliveryResult(ctx, first.ID, model.NotifySent); err != nil {
+		t.Fatal(err)
+	}
+	first, _ = notifications.GetNotificationByID(ctx, first.ID)
+	if !first.AcknowledgedAt.Equal(now) {
+		t.Fatal("投递回填不能重置确认")
+	}
+	var path string
+	if err = db.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Connect(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	second, err = notifications.GetNotificationByID(ctx, second.ID)
+	if err != nil || !second.AcknowledgedAt.Equal(now) || second.Status != model.NotifyFailed {
+		t.Fatalf("重启丢失业务事实: %#v %v", second, err)
+	}
+}
+
+func TestScheduleQueriesHistoryMidnightProjectionAndPagination(t *testing.T) {
+	_, schedules, notifications := newMigratedStore(t)
+	app := queryApp(t, schedules, notifications)
+	ctx := context.Background()
+	now := time.Date(2030, 10, 8, 0, 0, 0, 0, model.BeijingLocation())
+	schedule, err := schedules.CreateSchedule(ctx, model.Schedule{Name: "每日两次", Type: model.PeriodSchedule, Period: &model.Period{Open: true, Cron: []string{"0 9 * * *", "0 17 * * *"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int
+	for i := 0; i < 61; i++ {
+		n, err := notifications.CreateNotification(ctx, schedule.ID, now.Add(-time.Duration(i)*time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, n.ID)
+	}
+	// 持久化未来 pending 与同一投影只能显示一行。
+	_, err = notifications.CreateNotification(ctx, schedule.ID, now.Add(9*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := app.QueryScheduleState(ctx, "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Date != "2030-10-08" || len(snapshot.Occurrences.Items) != 3 || snapshot.Unacknowledged.Total != 61 || len(snapshot.Unacknowledged.Items) != 50 {
+		t.Fatalf("日期、独立触发或分页错误: %#v", snapshot)
+	}
+	before, err := app.QueryOccurrences(ctx, "2030-10-07", "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Total != 60 {
+		t.Fatalf("不能用新规则重建过去，应仅有 60 个事实: %d", before.Total)
+	}
+	next, err := app.QueryUnacknowledged(ctx, snapshot.Unacknowledged.NextCursor, now)
+	if err != nil || len(next.Items) != 11 {
+		t.Fatalf("待确认续页: %#v %v", next, err)
+	}
+	if _, err = app.QueryOccurrences(ctx, "2030-10-08", snapshot.Unacknowledged.NextCursor, now); !errors.Is(err, service.ErrInvalidQuery) {
+		t.Fatal("跨用途游标应被拒绝")
+	}
+	calendar, err := app.QueryCalendar(ctx, "2030-10", now)
+	if err != nil || len(calendar) != 25 {
+		t.Fatalf("月份应含历史7日及8日以后安排: %v %v", calendar, err)
+	}
+	if _, err = app.QueryCalendar(ctx, "2030-10-08", now); !errors.Is(err, service.ErrInvalidQuery) {
+		t.Fatal("月份格式必须严格")
+	}
+	if _, err = app.QueryScheduleState(ctx, "2030-02-30", now); !errors.Is(err, service.ErrInvalidQuery) {
+		t.Fatal("非法日期必须拒绝")
+	}
+	// 直接设软删除以使用确定时刻测试历史查询；实际删除转换另有存储测试。
+	db, _ := notifications.db.handle()
+	if _, err = db.Exec(`UPDATE schedules SET deleted=1 WHERE id=?`, schedule.ID); err != nil {
+		t.Fatal(err)
+	}
+	history, err := app.GetNotification(ctx, ids[1], now)
+	if err != nil || history.Editable {
+		t.Fatalf("删除后历史应只读可见: %#v %v", history, err)
+	}
+	after, err := app.QueryScheduleState(ctx, "", now)
+	if err != nil || after.Unacknowledged.Total != 61 || len(after.Occurrences.Items) != 1 {
+		t.Fatalf("删除父日程不应隐藏到期历史: %#v %v", after, err)
+	}
+	if _, err = app.AcknowledgeNotifications(ctx, []int{ids[1]}, now); err != nil {
+		t.Fatal(err)
+	}
+	// 执行业务查询与确认后仍只有原有两张业务表。
+	var tableCount int
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&tableCount); err != nil || tableCount != 2 {
+		t.Fatalf("业务只能使用 schedules 和 notifications，表数量=%d，错误=%v", tableCount, err)
 	}
 }

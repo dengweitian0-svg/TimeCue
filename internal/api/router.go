@@ -32,6 +32,11 @@ func NewRouter(app *service.App, healthCheck handler.HealthCheck) *gin.Engine {
 	scheduler.GET("/schedules", middleware.WrapHTTPHandler(handler.ListScheduleHandler(app), listScheduleFields))
 	scheduler.GET("/schedules/:id", middleware.WrapHTTPHandler(handler.GetScheduleHandler(app), getScheduleFields))
 	scheduler.DELETE("/schedules/:id", middleware.WrapHTTPHandler(handler.DeleteScheduleHandler(app), deleteScheduleFields))
+
+	notify := router.Group("/api/v1")
+	notify.GET("/notifications", middleware.WrapHTTPHandler(handler.NotificationsHandler(app), listNotificationFields))
+	notify.GET("/notifications/:id", middleware.WrapHTTPHandler(handler.NotificationHandler(app), getNotificationFields))
+	notify.POST("/notifications/acknowledgements", middleware.WrapHTTPHandler(handler.AcknowledgementsHandler(app), acknowledgeNotificationFields))
 	return router
 }
 
@@ -59,11 +64,21 @@ func listScheduleFields(_ *gin.Context, result middleware.HTTPResult) []slog.Att
 	if result.Status != http.StatusOK {
 		return nil
 	}
-	response := result.Body.(handler.ScheduleListResponse)
-	return []slog.Attr{
-		slog.Int("count", len(response.Data)),
-		slog.Int("limit", response.Limit),
-		slog.Int("offset", response.Offset),
+	switch response := result.Body.(type) {
+	case handler.ScheduleListResponse:
+		return []slog.Attr{
+			slog.Int("count", len(response.Data)),
+			slog.Int("limit", response.Limit),
+			slog.Int("offset", response.Offset),
+		}
+	case middleware.DataResponse[service.OccurrencePage]:
+		return []slog.Attr{slog.Int("count", len(response.Data.Items))}
+	case middleware.DataResponse[*service.ScheduleQueryResult]:
+		return []slog.Attr{slog.Int("count", len(response.Data.Occurrences.Items))}
+	case middleware.DataResponse[[]string]:
+		return []slog.Attr{slog.Int("count", len(response.Data))}
+	default:
+		panic("successful schedule query has unexpected response type")
 	}
 }
 
@@ -76,6 +91,36 @@ func deleteScheduleFields(c *gin.Context, result middleware.HTTPResult) []slog.A
 		panic("successful deletion has invalid schedule id")
 	}
 	return []slog.Attr{slog.Int("schedule_id", id)}
+}
+
+func listNotificationFields(_ *gin.Context, result middleware.HTTPResult) []slog.Attr {
+	if result.Status != http.StatusOK {
+		return nil
+	}
+	response := result.Body.(middleware.DataResponse[service.OccurrencePage])
+	return []slog.Attr{
+		slog.Int("count", len(response.Data.Items)),
+		slog.Int("total", response.Data.Total),
+	}
+}
+
+func getNotificationFields(_ *gin.Context, result middleware.HTTPResult) []slog.Attr {
+	if result.Status != http.StatusOK {
+		return nil
+	}
+	response := result.Body.(middleware.DataResponse[*service.OccurrenceView])
+	return []slog.Attr{
+		slog.Int("notification_id", *response.Data.NotificationID),
+		slog.Int("schedule_id", response.Data.ScheduleID),
+	}
+}
+
+func acknowledgeNotificationFields(_ *gin.Context, result middleware.HTTPResult) []slog.Attr {
+	if result.Status != http.StatusOK {
+		return nil
+	}
+	response := result.Body.(middleware.DataResponse[[]handler.AcknowledgementResponse])
+	return []slog.Attr{slog.Int("count", len(response.Data))}
 }
 
 func healthFields(_ *gin.Context, result middleware.HTTPResult) []slog.Attr {
