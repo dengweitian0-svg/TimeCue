@@ -77,6 +77,9 @@ void main() {
       expect(find.byType(TextField), findsNWidgets(2));
       await tester.tap(find.byKey(const ValueKey('add-period-time')));
       await tester.pumpAndSettle();
+      expect(find.textContaining('每格'), findsNothing);
+      expect(find.byTooltip('上一小时'), findsNothing);
+      expect(find.byTooltip('下一小时'), findsNothing);
       if (kind != ScheduleKind.daily) {
         final choice = find.byKey(
           ValueKey('period-day-${kind == ScheduleKind.weekly ? 3 : 31}'),

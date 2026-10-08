@@ -196,8 +196,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('time-field-分钟')));
     await tester.pump();
-    await tester.ensureVisible(find.byTooltip('下一分钟'));
-    await tester.tap(find.byTooltip('下一分钟'));
+    await tester.ensureVisible(find.byType(NotebookTimeDial));
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(find.byType(NotebookTimeDial)),
+        scrollDelta: const Offset(0, 20),
+      ),
+    );
     await tester.pump();
     expect(
       tester.widget<NotebookTimeDial>(find.byType(NotebookTimeDial)).value,

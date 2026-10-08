@@ -47,6 +47,7 @@ void main() {
         tester.getRect(find.byKey(const ValueKey('time-field-小时'))).left,
       ),
     );
+    expect(find.textContaining('每格'), findsNothing);
     await tester.tap(
       find.descendant(
         of: find.byType(CalendarDatePicker),

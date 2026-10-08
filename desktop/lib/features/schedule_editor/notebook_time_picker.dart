@@ -272,30 +272,6 @@ class _NotebookTimePickerState extends State<NotebookTimePicker> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => step(-1),
-                      tooltip: hours ? '上一小时' : '上一分钟',
-                      icon: const Icon(Icons.remove),
-                    ),
-                    Flexible(
-                      child: Text(
-                        hours ? '每格 1 小时 · 30°' : '每格 1 分钟 · 6°',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: NotebookTheme.muted,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => step(1),
-                      tooltip: hours ? '下一小时' : '下一分钟',
-                      icon: const Icon(Icons.add),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
                 if (error != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
