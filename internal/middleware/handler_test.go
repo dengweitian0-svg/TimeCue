@@ -166,6 +166,42 @@ func (panickingJSON) MarshalJSON() ([]byte, error) {
 	panic("serialization panic")
 }
 
+// TestHTTPResultPreservesMutationFacts 验证提交素材先于序列化、字段提取和响应校验收集。
+func TestHTTPResultPreservesMutationFacts(t *testing.T) {
+	readLog := captureHTTPLogs(t)
+	for _, tc := range []struct {
+		name    string
+		body    any
+		status  int
+		fields  middleware.HTTPResultFields
+		message string
+	}{
+		{"serialization error", brokenJSON{}, 201, nil, "HTTP request failed"},
+		{"serialization panic", panickingJSON{}, 201, nil, "HTTP panic"},
+		{"invalid status", nil, 0, nil, "HTTP request failed"},
+		{"fields panic", nil, 201, func(*gin.Context, middleware.HTTPResult) []slog.Attr { panic("fields panic") }, "HTTP panic"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := middlewareTestRouter()
+			router.POST("/committed", middleware.WrapHTTPHandler(func(*gin.Context) middleware.HTTPResult {
+				return middleware.HTTPResult{
+					Status: tc.status, Body: tc.body, SuccessMessage: "schedule write replayed",
+					LogFields: []slog.Attr{slog.Int("schedule_id", 5), slog.Any("mutation", map[string]any{"outcome": "applied"})},
+				}
+			}, tc.fields))
+			before := len(readLog())
+			response, elapsed := logRequest(router, "POST", "/committed", "127.0.0.1:10086", "", "")
+			if response.Code != 500 {
+				t.Fatalf("unexpected status: %d", response.Code)
+			}
+			record := requireHTTPRecord(t, readLog()[before:], "POST", "/committed", "ERROR", tc.message, 500, elapsed)
+			if record["schedule_id"] != float64(5) || record["mutation"].(map[string]any)["outcome"] != "applied" || record["error"] == nil {
+				t.Fatalf("业务事实或响应错误丢失: %#v", record)
+			}
+		})
+	}
+}
+
 func TestHTTPHandlerGuards(t *testing.T) {
 	readLog := captureHTTPLogs(t)
 	for _, tc := range []struct {
@@ -354,6 +390,12 @@ func TestHTTPHandlerRequestIsolation(t *testing.T) {
 				Message: "operation failed",
 			}, errors.New("original request error"))
 		}
+		if c.Param("kind") == "mutation" {
+			result := middleware.DataResult(200, "private-response")
+			result.LogFields = []slog.Attr{slog.Int("schedule_id", 5), slog.Any("mutation", map[string]any{"outcome": "replayed"})}
+			result.SuccessMessage = "schedule write replayed"
+			return result
+		}
 		return middleware.DataResult(200, "private-response")
 	}, func(c *gin.Context, _ middleware.HTTPResult) []slog.Attr {
 		if c.Param("kind") == "failure" {
@@ -364,7 +406,7 @@ func TestHTTPHandlerRequestIsolation(t *testing.T) {
 	router.GET("/isolated-panic", middleware.WrapHTTPHandler(func(*gin.Context) middleware.HTTPResult {
 		panic("isolated panic")
 	}, nil))
-	for _, path := range []string{"/isolated/failure", "/isolated/success", "/isolated-panic", "/isolated/success"} {
+	for _, path := range []string{"/isolated/failure", "/isolated/success", "/isolated-panic", "/isolated/success", "/isolated/mutation", "/isolated/success"} {
 		before := len(readLog())
 		response, elapsed := logRequest(router, "GET", path, "127.0.0.1:10086", "", "")
 		level, message, status := "INFO", "HTTP request completed", 200
@@ -372,13 +414,15 @@ func TestHTTPHandlerRequestIsolation(t *testing.T) {
 			level, message, status = "ERROR", "HTTP request failed", 500
 		} else if path == "/isolated-panic" {
 			level, message, status = "ERROR", "HTTP panic", 500
+		} else if path == "/isolated/mutation" {
+			message = "schedule write replayed"
 		}
 		if response.Code != status {
 			t.Fatalf("status = %d, want %d", response.Code, status)
 		}
 		record := requireHTTPRecord(t, readLog()[before:], "GET", path, level, message, status, elapsed)
 		if path == "/isolated/success" {
-			for _, key := range []string{"code", "message", "error", "schedule_id"} {
+			for _, key := range []string{"code", "message", "error", "schedule_id", "mutation"} {
 				if _, exists := record[key]; exists {
 					t.Fatalf("previous request's %s leaked: %#v", key, record)
 				}

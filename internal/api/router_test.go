@@ -376,7 +376,7 @@ func TestScheduleViewsAndAcknowledgements(t *testing.T) {
 	if stored.Status != model.NotifyFailed || stored.AcknowledgedAt == nil {
 		t.Fatal("投递结果与完成事实必须独立")
 	}
-	if err = schedules.DeleteScheduleByID(ctx, schedule.ID); err != nil {
+	if _, err = schedules.DeleteScheduleByID(ctx, schedule.ID); err != nil {
 		t.Fatal(err)
 	}
 	requireStatus(t, request(router, "GET", fmt.Sprintf("/api/v1/notifications/%d", due.ID), "", ""), http.StatusOK)

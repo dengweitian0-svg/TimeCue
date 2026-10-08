@@ -16,12 +16,13 @@ func DeleteScheduleHandler(app *service.App) middleware.HTTPHandler {
 		if failure != nil {
 			return *failure
 		}
-		if err := app.DeleteSchedule(c.Request.Context(), id); err != nil {
+		deleted, err := app.DeleteScheduleWithResult(c.Request.Context(), id)
+		if err != nil {
 			if errors.Is(err, service.ErrScheduleNotFound) {
 				return middleware.ErrorResult(http.StatusNotFound, errScheduleNotFound, nil)
 			}
 			return internalErrorResult(err)
 		}
-		return middleware.NoContentResult()
+		return withScheduleLog(middleware.NoContentResult(), deleted)
 	}
 }

@@ -36,6 +36,7 @@ func (s *ScheduleStore) ApplyScheduleChange(ctx context.Context, change model.Sc
 			if err = json.Unmarshal([]byte(result), &saved); err != nil {
 				return nil, err
 			}
+			saved.Replayed = true
 			return &saved, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -118,7 +119,7 @@ func (s *ScheduleStore) ApplyScheduleChange(ctx context.Context, change model.Sc
 	if err = saveScheduleVersion(ctx, tx, schedule.ID, now); err != nil {
 		return nil, err
 	}
-	result := &model.ScheduleWrite{Schedule: &schedule, EffectiveAt: now}
+	result := &model.ScheduleWrite{Schedule: &schedule, EffectiveAt: now, Before: current}
 	if next != nil {
 		// 仅复用已撤销、仍在未来的 pending；已执行或确认的事实不能复活。
 		if _, err = tx.ExecContext(ctx, `INSERT INTO notifications (schedule_id, notify_time) VALUES (?, ?)
@@ -161,42 +162,50 @@ func saveScheduleVersion(ctx context.Context, tx *sql.Tx, id int, now time.Time)
 }
 
 // stopSchedule 保留删除之前的规则依据和到期文本，并永久停止旧投递。
-func (s *ScheduleStore) stopSchedule(ctx context.Context, id int, deleted bool) error {
+func (s *ScheduleStore) stopSchedule(ctx context.Context, id int, deleted bool) (*model.ScheduleWrite, error) {
 	db, err := s.db.handle()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, `UPDATE schedules SET revision = revision WHERE id = ?`, id); err != nil {
-		return err
+		return nil, err
 	}
 	current, err := scanSchedule(tx.QueryRowContext(ctx, scheduleSelect+` WHERE id = ?`, id))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if current.Deleted {
-		return ErrNotFound
+		return nil, ErrNotFound
 	}
 	now := s.now().In(model.BeijingLocation())
 	if err = freezeDue(ctx, tx, id, now); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE notifications SET delivery_stopped = 1,
         deleted = CASE WHEN notify_time > ? AND status = 'pending' AND acknowledged_at IS NULL THEN 1 ELSE deleted END WHERE schedule_id = ?`, now.UnixNano(), id); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE schedule_versions SET effective_until = ? WHERE schedule_id = ? AND effective_until IS NULL`, now.UnixNano(), id); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE schedules SET deleted = ?, cancelled = ?, revision = revision + 1, updated_at = ? WHERE id = ?`, deleted, current.Cancelled || !deleted, now.UnixNano(), id); err != nil {
-		return err
+		return nil, err
 	}
 	if err = saveScheduleVersion(ctx, tx, id, now); err != nil {
-		return err
+		return nil, err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	after := *current
+	after.Deleted = deleted
+	after.Cancelled = current.Cancelled || !deleted
+	after.Revision++
+	after.UpdatedAt = now
+	return &model.ScheduleWrite{Schedule: &after, Before: current, EffectiveAt: now}, nil
 }

@@ -226,6 +226,9 @@ func TestHTTPLoggerScheduleRoutes(t *testing.T) {
 	if id <= 0 || record["schedule_id"] != float64(id) || record["type"] != "single" || record["route"] != base {
 		t.Fatalf("creation facts lost: %#v", record)
 	}
+	if mutation := record["mutation"].(map[string]any); mutation["state"].(map[string]any)["single.notify_time"] != future {
+		t.Fatalf("单次创建时间丢失: %#v", mutation)
+	}
 	path := fmt.Sprintf("%s/%d", base, id)
 	before = len(readLog())
 	updateBody := strings.TrimSuffix(body, "}") + `,"expectedRevision":1}`
@@ -309,8 +312,8 @@ func (r failingScheduleRepo) GetAllSchedule(context.Context, ...model.QueryOptio
 	return nil, r.cause
 }
 
-func (r failingScheduleRepo) DeleteScheduleByID(context.Context, int) error {
-	return r.cause
+func (r failingScheduleRepo) DeleteScheduleByID(context.Context, int) (*model.ScheduleWrite, error) {
+	return nil, r.cause
 }
 
 func (r failingScheduleRepo) ReadScheduleState(context.Context, time.Time, time.Time, time.Time, model.NotificationPosition, int) ([]*model.Schedule, []*model.Notification, []*model.Notification, int, error) {
@@ -364,6 +367,9 @@ func TestHTTPLoggerFailures(t *testing.T) {
 			record := requireHTTPRecord(t, readLog()[before:], tc.method, strings.SplitN(tc.target, "?", 2)[0], "ERROR", tc.message, status, elapsed)
 			if record["error"] != cause.Error() || record["code"] != code {
 				t.Fatalf("original error or code lost: %#v", record)
+			}
+			if record["mutation"] != nil {
+				t.Fatalf("失败操作携带已提交摘要: %#v", record)
 			}
 		})
 	}

@@ -69,11 +69,17 @@ func (a *App) GetSchedule(ctx context.Context, id int) (*model.Schedule, error) 
 
 // DeleteSchedule 软删除一条日程。
 func (a *App) DeleteSchedule(ctx context.Context, id int) error {
-	err := a.Schedule.DeleteScheduleByID(ctx, id)
-	if errors.Is(err, model.ErrRecordNotFound) {
-		return ErrScheduleNotFound
-	}
+	_, err := a.DeleteScheduleWithResult(ctx, id)
 	return err
+}
+
+// DeleteScheduleWithResult 返回正式删除事务的状态变化，供调用方观察。
+func (a *App) DeleteScheduleWithResult(ctx context.Context, id int) (*model.ScheduleWrite, error) {
+	result, err := a.Schedule.DeleteScheduleByID(ctx, id)
+	if errors.Is(err, model.ErrRecordNotFound) {
+		return nil, ErrScheduleNotFound
+	}
+	return result, err
 }
 
 // AdvanceNotification 只允许周期日程以已处理提醒的计划时间推进下一条提醒。

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,12 +36,22 @@ func TestRuleChangesPreserveHistoryAndPauseBoundary(t *testing.T) {
 	if err != nil || changed.Schedule.Revision != 2 || changed.Notification.NotifyTime.Hour() != 17 {
 		t.Fatalf("更新失败: %#v %v", changed, err)
 	}
+	if changed.Before == nil || changed.Before.Revision != 1 || changed.Before.Name != "旧名称" || changed.Before.Period.Cron[0] != "0 13 * * *" || changed.Replayed {
+		t.Fatalf("事务内旧状态丢失: %#v", changed)
+	}
+	var receipt string
+	if err = db.db.QueryRow(`SELECT result_json FROM schedule_write_receipts WHERE operation_key = 'edit'`).Scan(&receipt); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(receipt, `"Before"`) || strings.Contains(receipt, `"Replayed"`) {
+		t.Fatalf("调用元数据进入原回执: %s", receipt)
+	}
 	state, err := app.QueryScheduleState(ctx, "", now)
 	if err != nil || len(state.Occurrences.Items) != 2 || state.Occurrences.Items[0].Name != "旧名称" || state.Occurrences.Items[1].Name != "新名称" {
 		t.Fatalf("旧记录或未来投影错误: %#v %v", state, err)
 	}
 	replay, err := app.WriteSchedule(ctx, rule("新名称", "0 17 * * *", true, created.Schedule.ID), 1, "edit")
-	if err != nil || replay.Schedule.Revision != 2 || !replay.EffectiveAt.Equal(changed.EffectiveAt) {
+	if err != nil || !replay.Replayed || replay.Before != nil || replay.Schedule.Revision != 2 || !replay.EffectiveAt.Equal(changed.EffectiveAt) {
 		t.Fatalf("幂等重放失败: %#v %v", replay, err)
 	}
 	if _, err = app.WriteSchedule(ctx, rule("另一个草稿", "0 18 * * *", true, created.Schedule.ID), 1, "other"); !errors.Is(err, model.ErrScheduleConflict) {
@@ -134,7 +145,7 @@ func TestConcurrentRuleUpdatesAndRollback(t *testing.T) {
 	if _, err = db.db.Exec(`CREATE TRIGGER reject_future BEFORE INSERT ON notifications BEGIN SELECT RAISE(ABORT, 'test rollback'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = app.WriteSchedule(ctx, rule("回滚", "0 19 * * *", true, created.Schedule.ID), 2, "rollback"); err == nil {
+	if result, err := app.WriteSchedule(ctx, rule("回滚", "0 19 * * *", true, created.Schedule.ID), 2, "rollback"); err == nil || result != nil {
 		t.Fatal("应触发写入失败")
 	}
 	after, err := schedules.GetScheduleByID(ctx, created.Schedule.ID)

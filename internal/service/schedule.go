@@ -26,7 +26,7 @@ type ScheduleRepo interface {
 	// GetAllSchedule 的查询条件均可选，按已设置条件分页查询日程。
 	GetAllSchedule(ctx context.Context, options ...model.QueryOption) ([]*model.Schedule, error)
 	// DeleteScheduleByID 软删除日程并隐藏尚未到时的待投递提醒，保留历史记录。
-	DeleteScheduleByID(ctx context.Context, scheduleID int) error
+	DeleteScheduleByID(ctx context.Context, scheduleID int) (*model.ScheduleWrite, error)
 }
 
 // ErrInvalidQuery 表示日期、月份或游标不符合查询契约。

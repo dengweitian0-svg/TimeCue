@@ -14,10 +14,11 @@ const httpLogDetailsKey = "timecue.http_log_details"
 
 // httpLogDetails 只在响应适配层与日志 middleware 之间传递请求结果事实。
 type httpLogDetails struct {
-	Fields     []slog.Attr
-	Error      error
-	Panicked   bool
-	PanicValue any
+	Fields         []slog.Attr
+	Error          error
+	Panicked       bool
+	PanicValue     any
+	SuccessMessage string
 }
 
 // setHTTPLogDetails 合并当前请求的日志素材，不直接输出日志。
@@ -25,6 +26,9 @@ type httpLogDetails struct {
 func setHTTPLogDetails(c *gin.Context, details httpLogDetails) {
 	current := getHTTPLogDetails(c)
 	current.Fields = append(current.Fields, details.Fields...)
+	if details.SuccessMessage != "" {
+		current.SuccessMessage = details.SuccessMessage
+	}
 	if details.Error != nil {
 		if current.Error == nil {
 			current.Error = details.Error
@@ -84,6 +88,11 @@ func httpLogEvent(c *gin.Context, details httpLogDetails) (slog.Level, string) {
 		return slog.LevelError, "HTTP request failed"
 	case c.Writer.Status() >= http.StatusBadRequest:
 		return slog.LevelWarn, "HTTP request rejected"
+	case details.SuccessMessage != "":
+		if matched {
+			return event.level, details.SuccessMessage
+		}
+		return slog.LevelInfo, details.SuccessMessage
 	case matched:
 		return event.level, event.success
 	default:

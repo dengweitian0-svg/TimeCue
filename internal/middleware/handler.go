@@ -17,6 +17,10 @@ type HTTPResult struct {
 	Headers http.Header
 	Body    any
 	Cause   error
+	// LogFields 保存已完成业务操作的素材，即使响应失败也必须保留。
+	LogFields []slog.Attr
+	// SuccessMessage 仅在 HTTP 正常完成时覆盖成功消息。
+	SuccessMessage string
 }
 
 // HTTPHandler 读取请求并返回结果，不直接写响应或日志。
@@ -84,6 +88,10 @@ func internalErrorResult(cause error) HTTPResult {
 
 // WriteHTTPResult 是响应的唯一出口，先序列化和收集素材，再提交响应。
 func WriteHTTPResult(c *gin.Context, result HTTPResult, fields HTTPResultFields) {
+	// 在序列化和响应检查前保存业务事实，后续失败不撤销已提交的事务。
+	setHTTPLogDetails(c, httpLogDetails{
+		Fields: result.LogFields, SuccessMessage: result.SuccessMessage,
+	})
 	if c.Writer.Written() {
 		setHTTPLogDetails(c, httpLogDetails{
 			Error: errors.New("handler wrote response before returning HTTPResult"),

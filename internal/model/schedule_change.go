@@ -21,6 +21,9 @@ type ScheduleWrite struct {
 	Schedule     *Schedule
 	Notification *Notification
 	EffectiveAt  time.Time
+	// Before 和 Replayed 是本次调用的事实，不进入持久化幂等回执。
+	Before   *Schedule `json:"-"`
+	Replayed bool      `json:"-"`
 }
 
 // PrepareScheduleChange 在存储事务内校验当前规则并计算首个未来时间。

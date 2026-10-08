@@ -188,6 +188,6 @@ func writeScheduleHandler(app *service.App, update bool) middleware.HTTPHandler 
 				"/api/v1/scheduler/schedules/" + strconv.Itoa(created.Schedule.ID),
 			},
 		}
-		return result
+		return withScheduleLog(result, created)
 	}
 }

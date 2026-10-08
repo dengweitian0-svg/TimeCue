@@ -96,7 +96,7 @@ func TestSoftDeletePreservesHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建未来提醒: %v", err)
 	}
-	if err := schedules.DeleteScheduleByID(ctx, schedule.ID); err != nil {
+	if _, err := schedules.DeleteScheduleByID(ctx, schedule.ID); err != nil {
 		t.Fatalf("软删除日程: %v", err)
 	}
 	stored, err := schedules.GetScheduleByID(ctx, schedule.ID, model.WithScheduleIncludeDeleted(true))

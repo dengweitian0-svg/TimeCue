@@ -3,7 +3,6 @@ package api
 import (
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/api/handler"
 	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
@@ -28,11 +27,11 @@ func NewRouter(app *service.App, healthCheck handler.HealthCheck) *gin.Engine {
 	router.GET("/health", middleware.WrapHTTPHandler(handler.HealthHandler(healthCheck), healthFields))
 
 	scheduler := router.Group("/api/v1/scheduler")
-	scheduler.POST("/schedules", middleware.WrapHTTPHandler(handler.CreateScheduleHandler(app), createScheduleFields))
+	scheduler.POST("/schedules", middleware.WrapHTTPHandler(handler.CreateScheduleHandler(app), nil))
 	scheduler.GET("/schedules", middleware.WrapHTTPHandler(handler.ListScheduleHandler(app), listScheduleFields))
 	scheduler.GET("/schedules/:id", middleware.WrapHTTPHandler(handler.GetScheduleHandler(app), getScheduleFields))
-	scheduler.PUT("/schedules/:id", middleware.WrapHTTPHandler(handler.UpdateScheduleHandler(app), getScheduleFields))
-	scheduler.DELETE("/schedules/:id", middleware.WrapHTTPHandler(handler.DeleteScheduleHandler(app), deleteScheduleFields))
+	scheduler.PUT("/schedules/:id", middleware.WrapHTTPHandler(handler.UpdateScheduleHandler(app), nil))
+	scheduler.DELETE("/schedules/:id", middleware.WrapHTTPHandler(handler.DeleteScheduleHandler(app), nil))
 
 	notify := router.Group("/api/v1")
 	notify.GET("/notifications", middleware.WrapHTTPHandler(handler.NotificationsHandler(app), listNotificationFields))
@@ -42,17 +41,6 @@ func NewRouter(app *service.App, healthCheck handler.HealthCheck) *gin.Engine {
 }
 
 // 提取规则只读取明确的响应 DTO 和已校验的请求事实，不解析 JSON。
-func createScheduleFields(_ *gin.Context, result middleware.HTTPResult) []slog.Attr {
-	if result.Status != http.StatusCreated {
-		return nil
-	}
-	response := result.Body.(middleware.DataResponse[handler.ScheduleResponse])
-	return []slog.Attr{
-		slog.Int("schedule_id", response.Data.ID),
-		slog.Any("type", response.Data.Type),
-	}
-}
-
 func getScheduleFields(_ *gin.Context, result middleware.HTTPResult) []slog.Attr {
 	if result.Status != http.StatusOK {
 		return nil
@@ -81,17 +69,6 @@ func listScheduleFields(_ *gin.Context, result middleware.HTTPResult) []slog.Att
 	default:
 		panic("successful schedule query has unexpected response type")
 	}
-}
-
-func deleteScheduleFields(c *gin.Context, result middleware.HTTPResult) []slog.Attr {
-	if result.Status != http.StatusNoContent {
-		return nil
-	}
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil || id <= 0 {
-		panic("successful deletion has invalid schedule id")
-	}
-	return []slog.Attr{slog.Int("schedule_id", id)}
 }
 
 func listNotificationFields(_ *gin.Context, result middleware.HTTPResult) []slog.Attr {

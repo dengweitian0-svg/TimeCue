@@ -217,11 +217,14 @@ func (s *ScheduleStore) SetScheduleOpen(ctx context.Context, scheduleID int, ope
 
 // CancelScheduleByID 终止未删除日程，并隐藏其未来待投递提醒。
 func (s *ScheduleStore) CancelScheduleByID(ctx context.Context, scheduleID int) error {
-	return s.stopSchedule(ctx, scheduleID, false)
+	_, err := s.stopSchedule(ctx, scheduleID, false)
+	return err
 }
 
-// DeleteScheduleByID 保留历史提醒，只隐藏尚未到时且仍待投递的提醒。
-func (s *ScheduleStore) DeleteScheduleByID(ctx context.Context, scheduleID int) error {
+// DeleteScheduleByID 在事务内软删除日程，并永久停止已有提醒的后续投递。
+// 隐藏未来未确认的 pending 提醒，保留历史记录和投递/确认状态，
+// 返回包含事务内前后状态的已提交变更结果。
+func (s *ScheduleStore) DeleteScheduleByID(ctx context.Context, scheduleID int) (*model.ScheduleWrite, error) {
 	return s.stopSchedule(ctx, scheduleID, true)
 }
 
