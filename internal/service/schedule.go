@@ -14,6 +14,7 @@ import (
 
 // ScheduleRepo 定义日程持久化操作。
 type ScheduleRepo interface {
+	ApplyScheduleChange(context.Context, model.ScheduleChange, model.PrepareScheduleChange) (*model.ScheduleWrite, error)
 	// ReadScheduleState 在同一读取事务获取日程规则与提醒事实，保持响应一致。
 	ReadScheduleState(context.Context, time.Time, time.Time, time.Time, model.NotificationPosition, int) ([]*model.Schedule, []*model.Notification, []*model.Notification, int, error)
 	// CreateSchedule 创建日程并返回数据库生成的 ID 与时间戳。
@@ -119,6 +120,10 @@ func occurrence(schedule *model.Schedule, n *model.Notification, at time.Time, a
 		Editable:      !schedule.Deleted && !schedule.Cancelled && (schedule.Type == model.PeriodSchedule || at.After(asOf)),
 	}
 	if n != nil {
+		if n.SnapshotTaken && n.NameSnapshot != nil {
+			value.Name = *n.NameSnapshot
+			value.Description = n.DescriptionSnapshot
+		}
 		value.Source = "persisted"
 		value.NotificationID = &n.ID
 		value.DeliveryStatus = &n.Status
@@ -136,7 +141,7 @@ func projectOccurrences(ctx context.Context, rules []*model.Schedule, notificati
 	for _, n := range notifications {
 		if s := schedules[n.ScheduleID]; s != nil {
 			// 父日程的启停状态不抹去历史；未来事实仍遵循当前有效规则。
-			if n.NotifyTime.After(asOf) && (s.Deleted || s.Cancelled || (s.Period != nil && !s.Period.Open)) {
+			if n.NotifyTime.After(asOf) && (s.Deleted || s.Cancelled || (s.Period != nil && !s.Period.Open) || (s.Single != nil && (s.Single.NotifyTime.Second() != 0 || s.Single.NotifyTime.Nanosecond() != 0))) {
 				continue
 			}
 			v := occurrence(s, n, n.NotifyTime, asOf)
@@ -144,6 +149,10 @@ func projectOccurrences(ctx context.Context, rules []*model.Schedule, notificati
 		}
 	}
 	for _, s := range rules {
+		// 旧版秒级单次只保留持久化事实，不作为新版本的有效未来规则展开。
+		if s.Single != nil && (s.Single.NotifyTime.Second() != 0 || s.Single.NotifyTime.Nanosecond() != 0) {
+			continue
+		}
 		after := start.Add(-time.Nanosecond)
 		if asOf.After(after) {
 			after = asOf

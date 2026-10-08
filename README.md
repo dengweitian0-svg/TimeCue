@@ -2,7 +2,7 @@
 
 TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由 Go 管理日程规则、提醒状态和本地数据，由 Flutter 提供桌面界面及系统交互。
 
-> 当前可运行 Flutter 视觉骨架和独立 Go 本机 HTTP API。阶段 B 已接通查询与确认；规则变更、系统通知、托盘及发布生命周期仍待实现。
+> 当前可运行 Flutter 视觉骨架和独立 Go 本机 HTTP API。阶段 B 已接通查询与确认，Go 已完成规则事务更新；系统通知、托盘及发布生命周期仍待实现。
 
 ## 当前实现
 
@@ -25,7 +25,7 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 - 持久化每次提醒的计划时间、投递结果和用户确认状态。展示通知、打开详情与用户确认是不同操作；外部通知结果须回传 Go 更新状态。
 - Flutter 负责界面及 Windows 桌面交互，Go 负责日程用例、调度与 SQLite 状态转换。双方通过窄接口交换命令、查询结果和提醒事件。
 
-业务持久化仅使用 `schedules` 和 `notifications` 两张表；Go 查询与确认归入原有日程和提醒模块。Flutter 的日程本是展示方式，没有独立数据库、表或后端业务模型。
+核心业务持久化使用 `schedules` 和 `notifications`，阶段 C 的 `schedule_versions` 与 `schedule_write_receipts` 保存规则区间和幂等回执；Go 查询与确认归入原有日程和提醒模块。Flutter 的日程本是展示方式，没有独立数据库、表或后端业务模型。
 
 重要状态只能经明确的业务操作改变。已发生的提醒应保留可查询的记录；周期表达式只决定未来触发时间，不代替提醒历史或确认状态。
 
@@ -48,7 +48,7 @@ db:
 
 日志的 `time` 字段统一使用固定 UTC+8 北京时间，格式为 `YYYY-MM-DD-HH:MM:SS`（例如 `2026-10-01-09:30:00`），精确到秒，不受主机时区影响。
 
-HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查询成功使用 Debug，创建、删除及提醒确认成功使用 Info，拒绝使用 Warn，内部失败使用 Error。提醒列表记录本页数量和总数，详情记录提醒及日程 ID，确认记录去重后返回条数；不记录名称、说明、请求体、响应体、查询字符串或完整批量 ID 集合。
+HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查询成功使用 Debug，创建、更新、删除及提醒确认成功使用 Info，拒绝使用 Warn，内部失败使用 Error。提醒列表记录本页数量和总数，详情记录提醒及日程 ID，确认记录去重后返回条数；不记录名称、说明、请求体、响应体、查询字符串或完整批量 ID 集合。
 
 配置文件变动会触发重新解析，并以原子方式发布新的配置快照。**目前实际作用到运行组件的热更新只有 `log.level`**。`db.db_path` 的新值可以进入配置快照，但尚无数据库连接切换或数据迁移，因此不能把修改配置文件当作已搬迁数据库。后续的热更新范围限定为 `log.level` 和 `db.db_path`；`log.log_path` 计划只在启动时读取。
 
@@ -56,7 +56,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 
 ## 本地 HTTP API
 
-首次使用空数据库时，先按[迁移说明](migrations/README.md)手动执行 `001_initial.up.sql`，再从仓库根目录运行 `go run ./cmd/flutter`。服务固定监听 `http://127.0.0.1:10086`，仅接受 `Host: 127.0.0.1:10086`，不启用浏览器 CORS 或应用令牌。启动前检查数据库版本和表结构；`GET /health` 每次复查。缺少迁移时服务不会监听。
+首次使用空数据库时，先按[迁移说明](migrations/README.md)依次手动执行 `001_initial.up.sql`、`002_schedule_changes.up.sql`，再从仓库根目录运行 `go run ./cmd/flutter`。服务固定监听 `http://127.0.0.1:10086`，仅接受 `Host: 127.0.0.1:10086`，不启用浏览器 CORS 或应用令牌。启动前检查数据库版本和表结构；`GET /health` 每次复查。缺少迁移时服务不会监听。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
@@ -64,6 +64,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 | POST | `/api/v1/scheduler/schedules` | 创建单次或周期日程；请求体最大 1 MiB |
 | GET | `/api/v1/scheduler/schedules` | 查询未删除日程；支持 `name`、`type`、`limit`、`offset` |
 | GET | `/api/v1/scheduler/schedules/:id` | 查看未删除日程 |
+| PUT | `/api/v1/scheduler/schedules/:id` | 同类型事务更新、周期启停；必传 expectedRevision，支持 Idempotency-Key |
 | DELETE | `/api/v1/scheduler/schedules/:id` | 软删除日程，成功返回 204 |
 | GET | `/api/v1/scheduler/schedules?view=occurrences&include=unacknowledged&date=YYYY-MM-DD` | 同一读取快照的日期安排、待确认首分页及总数 |
 | GET | `/api/v1/scheduler/schedules?view=occurrences&date=YYYY-MM-DD&cursor=...` | 日期事实与未来投影，分页去重 |
@@ -78,7 +79,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 {"name":"工作日晨会","type":"period","description":null,"period":{"cron":["0 9 * * 1,2,3,4,5"]}}
 ```
 
-单次日程使用 `"type":"single"` 和 `"single":{"notifyTime":"2026-10-10T09:30:00+08:00"}`；时间必须晚于创建时刻。周期日程创建时固定启用，不能传 `open`。两类规则不能同时出现，未知字段会被拒绝。成功响应使用 `{"data":{...}}`，创建返回 201 及 `Location`；列表返回 `{"data":[...]}`，按创建时间及 ID 降序排列。日程对象始终包含 `id`、`name`、`type`、`description`、`single`、`period`、`cancelled`、`createdAt`、`updatedAt`，不适用的规则字段为 `null`。业务时间带 `+08:00`。
+单次日程使用 `"type":"single"` 和 `"single":{"notifyTime":"2026-10-10T09:30:00+08:00"}`；时间必须为分钟精度（秒与亚秒均为零）且晚于创建时刻。周期日程可传 `period.open` 原子创建暂停规则，缺省启用。两类规则不能同时出现，未知字段会被拒绝。成功响应使用 `{"data":{...}}`，创建返回 201 及 `Location`；列表返回 `{"data":[...]}`，按创建时间及 ID 降序排列。日程对象始终包含 `id`、`name`、`type`、`description`、`single`、`period`、`cancelled`、`createdAt`、`updatedAt`、`revision`，不适用的规则字段为 `null`。业务时间带 `+08:00`。
 
 查询参数 `type` 为 `single` 或 `period`，`limit` 默认为 50 且允许 1–50，`offset` 默认为 0 且必须非负。非法输入返回 400；不存在或已删除日程返回 404。普通错误格式为 `{"error":{"code":"...","message":"..."}}`。健康检查失败返回 503，错误位于 `data.error`。
 
@@ -111,3 +112,5 @@ Widget 关系、状态所有权与验证命令见 [Flutter 工程说明](desktop
 
 
 分支与 Pull Request 流程、Go 与 Flutter CI 约定见[贡献规范](docs/CONTRIBUTING.md)。
+
+阶段 C 的创建和更新可带 `Idempotency-Key`：相同键和内容返回原始结果，不同内容复用键返回 409；旧草稿的 expectedRevision 不匹配也返回 409。更新响应增加 effectiveAt，Go 在同一事务内冻结到期提醒的原名称/说明，保存版本边界、替换未来 pending 并计算新的首提醒。暂停和删除永久停止已有提醒尚未开始的投递，恢复严格从未来继续；已到期历史仍可查询、确认，不修改真实投递结果。

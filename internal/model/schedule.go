@@ -30,6 +30,7 @@ type Schedule struct {
 	Cancelled   bool
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	Revision    int // 每次正式规则变更递增，用于检测过期草稿。
 }
 
 // Period 周期日程
@@ -52,6 +53,9 @@ func (s Schedule) Validate() error {
 	case SingleSchedule:
 		if s.Single == nil || s.Period != nil || s.Single.NotifyTime.IsZero() {
 			return fmt.Errorf("[model] single schedule requires one notification time and no period rule")
+		}
+		if s.Single.NotifyTime.Second() != 0 || s.Single.NotifyTime.Nanosecond() != 0 {
+			return fmt.Errorf("[model] single notification time must have minute precision")
 		}
 	case PeriodSchedule:
 		if s.Period == nil || s.Single != nil || len(s.Period.Cron) == 0 {

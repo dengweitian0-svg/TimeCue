@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
@@ -47,18 +46,11 @@ func NewApp(manager *config.Manager, schedule ScheduleRepo, notify NotifyRepo) (
 
 // CreateSchedule 校验规则，并原子创建日程和首条提醒。
 func (a *App) CreateSchedule(ctx context.Context, schedule model.Schedule) (*model.Schedule, *model.Notification, error) {
-	after := time.Now().In(model.BeijingLocation())
-	notifyAt, hasNext, err := nextNotificationTime(schedule, after)
+	result, err := a.WriteSchedule(ctx, schedule, 0, "")
 	if err != nil {
-		return nil, nil, fmt.Errorf("[app] invalid schedule rule: %w: %v", ErrInvalidSchedule, err)
+		return nil, nil, err
 	}
-	if schedule.Type == model.SingleSchedule && !hasNext {
-		return nil, nil, fmt.Errorf("[app] single schedule time must be after current time: %w", ErrInvalidSchedule)
-	}
-	if !hasNext {
-		return a.Schedule.CreateScheduleWithNotification(ctx, schedule, nil)
-	}
-	return a.Schedule.CreateScheduleWithNotification(ctx, schedule, &notifyAt)
+	return result.Schedule, result.Notification, nil
 }
 
 // ListSchedules 查询未删除日程。

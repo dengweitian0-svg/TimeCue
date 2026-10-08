@@ -94,11 +94,12 @@ func (s *NotificationStore) GetNotificationByStartTime(ctx context.Context, star
 		return nil, fmt.Errorf("[store] cannot list notifications, start_time=%q, end_time=%q: %w", startTime.UTC().Format(time.RFC3339Nano), endTime.UTC().Format(time.RFC3339Nano), err)
 	}
 	// 日程已取消、删除或暂停时，即使提醒仍在库中也不可投递。
-	rows, err := db.QueryContext(ctx, `SELECT n.id, n.schedule_id, n.status, n.notify_time, n.acknowledged_at, n.deleted
+	rows, err := db.QueryContext(ctx, `SELECT n.id, n.schedule_id, n.status, n.notify_time, n.acknowledged_at, n.deleted, n.delivery_stopped, n.snapshot_taken, n.name_snapshot, n.description_snapshot
 		FROM notifications n JOIN schedules s ON s.id = n.schedule_id
 		WHERE n.notify_time >= ? AND n.notify_time < ? AND n.status = 'pending'
-		AND n.acknowledged_at IS NULL AND n.deleted = 0 AND s.deleted = 0 AND s.cancelled = 0
+		AND n.acknowledged_at IS NULL AND n.delivery_stopped = 0 AND n.deleted = 0 AND s.deleted = 0 AND s.cancelled = 0
 		AND (s.type = 'single' OR s.period_open = 1)
+        AND (s.type != 'single' OR s.single_notify_time % 60000000000 = 0)
 		ORDER BY n.notify_time, n.id`, startTime.UTC().UnixNano(), endTime.UTC().UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("[store] failed to list pending notifications, start_time=%q, end_time=%q: %w", startTime.UTC().Format(time.RFC3339Nano), endTime.UTC().Format(time.RFC3339Nano), err)
@@ -202,15 +203,16 @@ func (s *NotificationStore) notificationTransitionError(ctx context.Context, not
 	return ErrInvalidTransition
 }
 
-const notificationSelect = `SELECT id, schedule_id, status, notify_time, acknowledged_at, deleted FROM notifications`
+const notificationSelect = `SELECT id, schedule_id, status, notify_time, acknowledged_at, deleted, delivery_stopped, snapshot_taken, name_snapshot, description_snapshot FROM notifications`
 
 func scanNotification(row scanner) (*model.Notification, error) {
 	var notification model.Notification
 	var notifyTime int64
 	var acknowledgedAt sql.NullInt64
-	var deleted int
+	var deleted, stopped, snapshot int
+	var name, description sql.NullString
 	err := row.Scan(&notification.ID, &notification.ScheduleID, &notification.Status,
-		&notifyTime, &acknowledgedAt, &deleted)
+		&notifyTime, &acknowledgedAt, &deleted, &stopped, &snapshot, &name, &description)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -223,6 +225,14 @@ func scanNotification(row scanner) (*model.Notification, error) {
 		notification.AcknowledgedAt = &at
 	}
 	notification.Deleted = deleted != 0
+	notification.DeliveryStopped = stopped != 0
+	notification.SnapshotTaken = snapshot != 0
+	if name.Valid {
+		notification.NameSnapshot = &name.String
+	}
+	if description.Valid {
+		notification.DescriptionSnapshot = &description.String
+	}
 	return &notification, nil
 }
 

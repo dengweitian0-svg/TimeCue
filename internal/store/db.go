@@ -43,18 +43,21 @@ func (s *Sqlite) CheckHealth(ctx context.Context) error {
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
 	}
-	if version != 1 {
-		return fmt.Errorf("%w: expected version 1, got %d", ErrSchemaInvalid, version)
+	if version != 2 {
+		return fmt.Errorf("%w: expected version 2, got %d", ErrSchemaInvalid, version)
 	}
 	for table, required := range map[string]map[string]string{
 		"schedules": {
 			"id": "INTEGER", "name": "TEXT", "type": "TEXT", "description": "TEXT",
 			"period_open": "INTEGER", "period_cron": "TEXT", "single_notify_time": "INTEGER",
-			"cancelled": "INTEGER", "deleted": "INTEGER", "created_at": "INTEGER", "updated_at": "INTEGER",
+			"cancelled": "INTEGER", "deleted": "INTEGER", "created_at": "INTEGER", "updated_at": "INTEGER", "revision": "INTEGER",
 		},
+		"schedule_write_receipts": {"operation_key": "TEXT", "request_digest": "TEXT", "result_json": "TEXT"},
+		"schedule_versions":       {"schedule_id": "INTEGER", "revision": "INTEGER", "effective_from": "INTEGER", "effective_until": "INTEGER", "name": "TEXT", "type": "TEXT", "description": "TEXT", "period_open": "INTEGER", "period_cron": "TEXT", "single_notify_time": "INTEGER", "cancelled": "INTEGER", "deleted": "INTEGER"},
 		"notifications": {
 			"id": "INTEGER", "schedule_id": "INTEGER", "status": "TEXT",
 			"notify_time": "INTEGER", "acknowledged_at": "INTEGER", "deleted": "INTEGER",
+			"delivery_stopped": "INTEGER", "snapshot_taken": "INTEGER", "name_snapshot": "TEXT", "description_snapshot": "TEXT",
 		},
 	} {
 		rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
@@ -86,7 +89,7 @@ func (s *Sqlite) CheckHealth(ctx context.Context) error {
 				return fmt.Errorf("%w: invalid %s.%s type", ErrSchemaInvalid, table, column)
 			}
 		}
-		if !primaryID {
+		if (table == "schedules" || table == "notifications") && !primaryID {
 			return fmt.Errorf("%w: missing %s primary key", ErrSchemaInvalid, table)
 		}
 	}

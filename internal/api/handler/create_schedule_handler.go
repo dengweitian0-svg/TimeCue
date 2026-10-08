@@ -18,11 +18,12 @@ import (
 )
 
 type createScheduleRequest struct {
-	Name        string             `json:"name"`
-	Type        model.ScheduleType `json:"type"`
-	Description *string            `json:"description"`
-	Single      json.RawMessage    `json:"single,omitempty"`
-	Period      json.RawMessage    `json:"period,omitempty"`
+	ExpectedRevision int                `json:"expectedRevision,omitempty"`
+	Name             string             `json:"name"`
+	Type             model.ScheduleType `json:"type"`
+	Description      *string            `json:"description"`
+	Single           json.RawMessage    `json:"single,omitempty"`
+	Period           json.RawMessage    `json:"period,omitempty"`
 }
 
 type createSingleRequest struct {
@@ -30,6 +31,7 @@ type createSingleRequest struct {
 }
 type createPeriodRequest struct {
 	Cron []string `json:"cron"`
+	Open *bool    `json:"open,omitempty"`
 }
 
 func decodeStrict(r io.Reader, target any) error {
@@ -70,6 +72,10 @@ func requireJSONKeys(body []byte, allowed ...string) error {
 
 // CreateScheduleHandler 校验 JSON 输入并创建日程及首条提醒。
 func CreateScheduleHandler(app *service.App) middleware.HTTPHandler {
+	return writeScheduleHandler(app, false)
+}
+
+func writeScheduleHandler(app *service.App, update bool) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 		if err != nil || mediaType != "application/json" {
@@ -85,7 +91,11 @@ func CreateScheduleHandler(app *service.App) middleware.HTTPHandler {
 		}
 
 		var request createScheduleRequest
-		if err := requireJSONKeys(body, "name", "type", "description", "single", "period"); err != nil {
+		allowed := []string{"name", "type", "description", "single", "period"}
+		if update {
+			allowed = append(allowed, "expectedRevision")
+		}
+		if err := requireJSONKeys(body, allowed...); err != nil {
 			return middleware.ErrorResult(http.StatusBadRequest, errInvalidJSON, nil)
 		}
 		if err := decodeStrict(bytes.NewReader(body), &request); err != nil {
@@ -95,6 +105,16 @@ func CreateScheduleHandler(app *service.App) middleware.HTTPHandler {
 			Name:        strings.TrimSpace(request.Name),
 			Type:        request.Type,
 			Description: request.Description,
+		}
+		if update {
+			id, failure := parseScheduleID(c)
+			if failure != nil {
+				return *failure
+			}
+			schedule.ID = id
+			if request.ExpectedRevision < 1 {
+				return middleware.ErrorResult(http.StatusBadRequest, errInvalidJSON, nil)
+			}
 		}
 		if schedule.Name == "" {
 			return middleware.ErrorResult(http.StatusBadRequest, errNameRequired, nil)
@@ -124,7 +144,7 @@ func CreateScheduleHandler(app *service.App) middleware.HTTPHandler {
 				return middleware.ErrorResult(http.StatusBadRequest, errPeriodRuleRequired, nil)
 			}
 			var period createPeriodRequest
-			if err := requireJSONKeys(request.Period, "cron"); err != nil {
+			if err := requireJSONKeys(request.Period, "cron", "open"); err != nil {
 				return middleware.ErrorResult(http.StatusBadRequest, errPeriodRuleInvalid, nil)
 			}
 			if err := decodeStrict(bytes.NewReader(request.Period), &period); err != nil || len(period.Cron) == 0 {
@@ -134,20 +154,38 @@ func CreateScheduleHandler(app *service.App) middleware.HTTPHandler {
 				Open: true,
 				Cron: period.Cron,
 			}
+			if period.Open != nil {
+				schedule.Period.Open = *period.Open
+			}
 		default:
 			return middleware.ErrorResult(http.StatusBadRequest, errScheduleTypeInvalid, nil)
 		}
-		created, _, err := app.CreateSchedule(c.Request.Context(), schedule)
+		created, err := app.WriteSchedule(c.Request.Context(), schedule, request.ExpectedRevision, c.GetHeader("Idempotency-Key"))
 		if err != nil {
 			if errors.Is(err, service.ErrInvalidSchedule) {
 				return middleware.ErrorResult(http.StatusBadRequest, errScheduleRuleInvalid, nil)
 			}
+			if errors.Is(err, service.ErrScheduleNotFound) {
+				return middleware.ErrorResult(http.StatusNotFound, errScheduleNotFound, nil)
+			}
+			if errors.Is(err, model.ErrScheduleConflict) {
+				return middleware.ErrorResult(http.StatusConflict, newAPIError("revision_conflict", "日程已被修改，请重新加载最新版本。"), nil)
+			}
+			if errors.Is(err, model.ErrIdempotencyConflict) {
+				return middleware.ErrorResult(http.StatusConflict, newAPIError("idempotency_conflict", "同一操作标识不能提交不同内容。"), nil)
+			}
 			return internalErrorResult(err)
 		}
-		result := middleware.DataResult(http.StatusCreated, scheduleToResponse(created))
+		status := http.StatusCreated
+		if update {
+			status = http.StatusOK
+		}
+		response := scheduleToResponse(created.Schedule)
+		response.EffectiveAt = created.EffectiveAt.Format(time.RFC3339Nano)
+		result := middleware.DataResult(status, response)
 		result.Headers = http.Header{
 			"Location": []string{
-				"/api/v1/scheduler/schedules/" + strconv.Itoa(created.ID),
+				"/api/v1/scheduler/schedules/" + strconv.Itoa(created.Schedule.ID),
 			},
 		}
 		return result

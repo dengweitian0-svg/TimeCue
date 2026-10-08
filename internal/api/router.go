@@ -31,6 +31,7 @@ func NewRouter(app *service.App, healthCheck handler.HealthCheck) *gin.Engine {
 	scheduler.POST("/schedules", middleware.WrapHTTPHandler(handler.CreateScheduleHandler(app), createScheduleFields))
 	scheduler.GET("/schedules", middleware.WrapHTTPHandler(handler.ListScheduleHandler(app), listScheduleFields))
 	scheduler.GET("/schedules/:id", middleware.WrapHTTPHandler(handler.GetScheduleHandler(app), getScheduleFields))
+	scheduler.PUT("/schedules/:id", middleware.WrapHTTPHandler(handler.UpdateScheduleHandler(app), getScheduleFields))
 	scheduler.DELETE("/schedules/:id", middleware.WrapHTTPHandler(handler.DeleteScheduleHandler(app), deleteScheduleFields))
 
 	notify := router.Group("/api/v1")

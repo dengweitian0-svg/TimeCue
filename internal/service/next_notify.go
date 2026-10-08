@@ -45,6 +45,10 @@ func (s *NextNotifyService) Next(ctx context.Context, scheduleID int, after time
 	if schedule == nil {
 		return nil, fmt.Errorf("[service] schedule repo returned nil, schedule_id=%d", scheduleID)
 	}
+	// 已变更规则不能从暂停前的游标补出暂停区间，也不能再生成旧版本安排。
+	if schedule.Revision > 1 && schedule.UpdatedAt.After(after) {
+		after = schedule.UpdatedAt
+	}
 	notifyAt, hasNext, err := nextNotificationTime(*schedule, after)
 	if err != nil {
 		return nil, fmt.Errorf("[service] cannot calculate next notification, schedule_id=%d: %w", scheduleID, err)

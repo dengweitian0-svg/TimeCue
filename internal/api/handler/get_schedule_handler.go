@@ -20,6 +20,8 @@ type periodResponse struct {
 	Cron []string `json:"cron"`
 }
 type ScheduleResponse struct {
+	Revision    int                `json:"revision"`
+	EffectiveAt string             `json:"effectiveAt,omitempty"`
 	ID          int                `json:"id"`
 	Name        string             `json:"name"`
 	Type        model.ScheduleType `json:"type"`
@@ -33,6 +35,7 @@ type ScheduleResponse struct {
 
 func scheduleToResponse(schedule *model.Schedule) ScheduleResponse {
 	response := ScheduleResponse{
+		Revision:    schedule.Revision,
 		ID:          schedule.ID,
 		Name:        schedule.Name,
 		Type:        schedule.Type,

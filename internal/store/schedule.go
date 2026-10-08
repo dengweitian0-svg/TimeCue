@@ -14,7 +14,8 @@ import (
 
 // ScheduleStore 负责日程的持久化和软删除，不负责计算触发时间。
 type ScheduleStore struct {
-	db *Sqlite
+	db  *Sqlite
+	now func() time.Time
 }
 
 // NewScheduleStore 创建使用指定数据库的日程存储。
@@ -22,7 +23,7 @@ func NewScheduleStore(db *Sqlite) (*ScheduleStore, error) {
 	if db == nil {
 		return nil, fmt.Errorf("[store] cannot create schedule store, database is nil")
 	}
-	return &ScheduleStore{db: db}, nil
+	return &ScheduleStore{db: db, now: time.Now}, nil
 }
 
 // CreateSchedule 校验并写入日程，返回生成的 ID 与时间戳。
@@ -50,64 +51,13 @@ func (s *ScheduleStore) CreateScheduleWithNotification(ctx context.Context, sche
 			return nil, nil, fmt.Errorf("[store] cannot create initial notification for paused schedule, name=%q", schedule.Name)
 		}
 	}
-	db, err := s.db.handle()
+	result, err := s.ApplyScheduleChange(ctx, model.ScheduleChange{Schedule: schedule}, func(_ *model.Schedule, _ time.Time) (*time.Time, error) {
+		return notifyAt, nil
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("[store] cannot create schedule, name=%q: %w", schedule.Name, err)
+		return nil, nil, err
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, nil, fmt.Errorf("[store] failed to begin schedule creation, name=%q: %w", schedule.Name, err)
-	}
-	defer tx.Rollback()
-	var periodOpen, periodCron, singleTime any
-	if schedule.Type == model.PeriodSchedule {
-		periodOpen = schedule.Period.Open
-		encoded, err := json.Marshal(schedule.Period.Cron)
-		if err != nil {
-			return nil, nil, fmt.Errorf("[store] failed to encode cron rules, name=%q: %w", schedule.Name, err)
-		}
-		periodCron = string(encoded)
-	} else {
-		singleTime = schedule.Single.NotifyTime.UTC().UnixNano()
-		single := *schedule.Single
-		single.NotifyTime = single.NotifyTime.In(model.BeijingLocation())
-		schedule.Single = &single
-	}
-	var description any
-	if schedule.Description != nil {
-		description = *schedule.Description
-	}
-	now := time.Now().In(model.BeijingLocation())
-	result, err := tx.ExecContext(ctx, `INSERT INTO schedules
-		(name, type, description, period_open, period_cron, single_notify_time, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, schedule.Name, schedule.Type, description,
-		periodOpen, periodCron, singleTime, now.UnixNano(), now.UnixNano())
-	if err != nil {
-		return nil, nil, fmt.Errorf("[store] failed to create schedule, name=%q: %w", schedule.Name, err)
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, nil, fmt.Errorf("[store] failed to read new schedule ID, name=%q: %w", schedule.Name, err)
-	}
-	schedule.ID = int(id)
-	schedule.CreatedAt = now
-	schedule.UpdatedAt = now
-	var notification *model.Notification
-	if notifyAt != nil {
-		// 在创建日程的事务内写入首条提醒，失败时一并回滚。
-		_, err = tx.ExecContext(ctx, `INSERT INTO notifications (schedule_id, notify_time) VALUES (?, ?)`, schedule.ID, notifyAt.UTC().UnixNano())
-		if err != nil {
-			return nil, nil, fmt.Errorf("[store] failed to create initial notification, name=%q, notify_at=%q: %w", schedule.Name, notifyAt.UTC().Format(time.RFC3339Nano), err)
-		}
-		notification, err = scanNotification(tx.QueryRowContext(ctx, notificationSelect+` WHERE schedule_id = ? AND notify_time = ?`, schedule.ID, notifyAt.UTC().UnixNano()))
-		if err != nil {
-			return nil, nil, fmt.Errorf("[store] failed to read initial notification, name=%q, notify_at=%q: %w", schedule.Name, notifyAt.UTC().Format(time.RFC3339Nano), err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, nil, fmt.Errorf("[store] failed to commit schedule creation, name=%q: %w", schedule.Name, err)
-	}
-	return &schedule, notification, nil
+	return result.Schedule, result.Notification, nil
 }
 
 // GetScheduleByID 要求单独传入日程 ID，其余函数式选项也参与过滤。
@@ -253,85 +203,30 @@ func scheduleFilter(query model.Option, requiredID *int) (string, []any, error) 
 
 // SetScheduleOpen 暂停或恢复未取消、未删除的周期日程。
 func (s *ScheduleStore) SetScheduleOpen(ctx context.Context, scheduleID int, open bool) error {
-	db, err := s.db.handle()
+	current, err := s.GetScheduleByID(ctx, scheduleID)
 	if err != nil {
-		return fmt.Errorf("[store] cannot update schedule availability, schedule_id=%d, open=%t: %w", scheduleID, open, err)
+		return err
 	}
-	result, err := db.ExecContext(ctx, `UPDATE schedules SET period_open = ?, updated_at = ?
-		WHERE id = ? AND type = 'period' AND deleted = 0 AND cancelled = 0`,
-		open, time.Now().UTC().UnixNano(), scheduleID)
-	if err != nil {
-		return fmt.Errorf("[store] failed to update schedule availability, schedule_id=%d, open=%t: %w", scheduleID, open, err)
+	if current.Type != model.PeriodSchedule || current.Cancelled {
+		return ErrInvalidTransition
 	}
-	if err := requireAffected(result); err != nil {
-		return fmt.Errorf("[store] failed to update schedule availability, schedule_id=%d, open=%t: %w", scheduleID, open, err)
-	}
-	return nil
+	current.Period.Open = open
+	_, err = s.ApplyScheduleChange(ctx, model.ScheduleChange{Schedule: *current, ExpectedRevision: current.Revision}, func(_ *model.Schedule, _ time.Time) (*time.Time, error) { return nil, nil })
+	return err
 }
 
 // CancelScheduleByID 终止未删除日程，并隐藏其未来待投递提醒。
 func (s *ScheduleStore) CancelScheduleByID(ctx context.Context, scheduleID int) error {
-	db, err := s.db.handle()
-	if err != nil {
-		return fmt.Errorf("[store] cannot cancel schedule, schedule_id=%d: %w", scheduleID, err)
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("[store] failed to begin schedule cancellation, schedule_id=%d: %w", scheduleID, err)
-	}
-	defer tx.Rollback()
-	now := time.Now().UTC().UnixNano()
-	// 终止状态与未来提醒隐藏必须一起提交。
-	result, err := tx.ExecContext(ctx, `UPDATE schedules SET cancelled = 1, updated_at = ?
-		WHERE id = ? AND deleted = 0`, now, scheduleID)
-	if err != nil {
-		return fmt.Errorf("[store] failed to cancel schedule, schedule_id=%d: %w", scheduleID, err)
-	}
-	if err := requireAffected(result); err != nil {
-		return fmt.Errorf("[store] failed to cancel schedule, schedule_id=%d: %w", scheduleID, err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE notifications SET deleted = 1
-		WHERE schedule_id = ? AND status = 'pending' AND notify_time > ? AND deleted = 0`, scheduleID, now); err != nil {
-		return fmt.Errorf("[store] failed to hide future notifications for cancelled schedule, schedule_id=%d: %w", scheduleID, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("[store] failed to commit schedule cancellation, schedule_id=%d: %w", scheduleID, err)
-	}
-	return nil
+	return s.stopSchedule(ctx, scheduleID, false)
 }
 
 // DeleteScheduleByID 保留历史提醒，只隐藏尚未到时且仍待投递的提醒。
 func (s *ScheduleStore) DeleteScheduleByID(ctx context.Context, scheduleID int) error {
-	db, err := s.db.handle()
-	if err != nil {
-		return fmt.Errorf("[store] cannot delete schedule, schedule_id=%d: %w", scheduleID, err)
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("[store] failed to begin schedule deletion, schedule_id=%d: %w", scheduleID, err)
-	}
-	defer tx.Rollback()
-	now := time.Now().UTC().UnixNano()
-	// 日程删除与未来提醒隐藏必须在同一事务内完成。
-	result, err := tx.ExecContext(ctx, `UPDATE schedules SET deleted = 1, updated_at = ? WHERE id = ? AND deleted = 0`, now, scheduleID)
-	if err != nil {
-		return fmt.Errorf("[store] failed to delete schedule, schedule_id=%d: %w", scheduleID, err)
-	}
-	if err := requireAffected(result); err != nil {
-		return fmt.Errorf("[store] failed to delete schedule, schedule_id=%d: %w", scheduleID, err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE notifications SET deleted = 1
-		WHERE schedule_id = ? AND status = 'pending' AND notify_time > ? AND deleted = 0`, scheduleID, now); err != nil {
-		return fmt.Errorf("[store] failed to hide future notifications for deleted schedule, schedule_id=%d: %w", scheduleID, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("[store] failed to commit schedule deletion, schedule_id=%d: %w", scheduleID, err)
-	}
-	return nil
+	return s.stopSchedule(ctx, scheduleID, true)
 }
 
 const scheduleSelect = `SELECT id, name, type, description, period_open, period_cron,
-	single_notify_time, cancelled, deleted, created_at, updated_at FROM schedules`
+	single_notify_time, cancelled, deleted, created_at, updated_at, revision FROM schedules`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -342,7 +237,7 @@ func scanSchedule(row scanner) (*model.Schedule, error) {
 	var cancelled, deleted int
 	var createdAt, updatedAt int64
 	err := row.Scan(&s.ID, &s.Name, &s.Type, &description, &periodOpen, &cron,
-		&singleTime, &cancelled, &deleted, &createdAt, &updatedAt)
+		&singleTime, &cancelled, &deleted, &createdAt, &updatedAt, &s.Revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

@@ -8,12 +8,16 @@ import (
 // Notification 是一次持久化的日程触发记录。
 // 投递结果与用户确认分别保存。
 type Notification struct {
-	ID             int
-	ScheduleID     int
-	Status         NotifyStatus
-	NotifyTime     time.Time
-	AcknowledgedAt *time.Time
-	Deleted        bool
+	ID                  int
+	ScheduleID          int
+	Status              NotifyStatus
+	NotifyTime          time.Time
+	AcknowledgedAt      *time.Time
+	Deleted             bool
+	DeliveryStopped     bool // 暂停、删除后停止旧投递；恢复不清除此标记。
+	SnapshotTaken       bool
+	NameSnapshot        *string
+	DescriptionSnapshot *string
 }
 
 type NotifyStatus string

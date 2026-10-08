@@ -112,6 +112,13 @@ func resourceLogRouter(t *testing.T) (*gin.Engine, *service.App) {
 	if _, err := conn.Exec(string(script)); err != nil {
 		t.Fatal(err)
 	}
+	script2, err := os.ReadFile(filepath.Join("..", "..", "migrations", "002_schedule_changes.up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(string(script2)); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.CheckHealth(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +206,7 @@ func TestHTTPLoggerScheduleRoutes(t *testing.T) {
 	router := scheduleLogRouter(t)
 	readLog := captureHTTPLogs(t)
 	const base = "/api/v1/scheduler/schedules"
-	future := time.Now().In(model.BeijingLocation()).Add(time.Hour).Format(time.RFC3339)
+	future := time.Now().In(model.BeijingLocation()).Add(time.Hour).Truncate(time.Minute).Format(time.RFC3339)
 	body := fmt.Sprintf(`{"name":"private-request","description":"private-description","type":"single","single":{"notifyTime":%q}}`, future)
 	before := len(readLog())
 	response, elapsed := logRequest(router, "POST", base, "127.0.0.1:10086", body, "application/json")
@@ -220,6 +227,16 @@ func TestHTTPLoggerScheduleRoutes(t *testing.T) {
 		t.Fatalf("creation facts lost: %#v", record)
 	}
 	path := fmt.Sprintf("%s/%d", base, id)
+	before = len(readLog())
+	updateBody := strings.TrimSuffix(body, "}") + `,"expectedRevision":1}`
+	response, elapsed = logRequest(router, "PUT", path, "127.0.0.1:10086", updateBody, "application/json")
+	if response.Code != 200 {
+		t.Fatalf("update failed: %s", response.Body.String())
+	}
+	record = requireHTTPRecord(t, readLog()[before:], "PUT", path, "INFO", "schedule updated", 200, elapsed)
+	if record["schedule_id"] != float64(id) || record["route"] != base+"/:id" {
+		t.Fatalf("update facts lost: %#v", record)
+	}
 	for _, tc := range []struct {
 		method, target, level, message, code string
 		status                               int
@@ -274,6 +291,10 @@ func TestHTTPLoggerScheduleRoutes(t *testing.T) {
 type failingScheduleRepo struct {
 	service.ScheduleRepo
 	cause error
+}
+
+func (r failingScheduleRepo) ApplyScheduleChange(context.Context, model.ScheduleChange, model.PrepareScheduleChange) (*model.ScheduleWrite, error) {
+	return nil, r.cause
 }
 
 func (r failingScheduleRepo) CreateScheduleWithNotification(context.Context, model.Schedule, *time.Time) (*model.Schedule, *model.Notification, error) {

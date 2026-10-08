@@ -40,6 +40,13 @@ func testRouter(t *testing.T) (*gin.Engine, *store.Sqlite) {
 	if _, err := conn.Exec(string(script)); err != nil {
 		t.Fatal(err)
 	}
+	script2, err := os.ReadFile(filepath.Join("..", "..", "migrations", "002_schedule_changes.up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(string(script2)); err != nil {
+		t.Fatal(err)
+	}
 	_ = conn.Close()
 	if err := db.CheckHealth(context.Background()); err != nil {
 		t.Fatal(err)
@@ -165,7 +172,7 @@ func TestScheduleRoutes(t *testing.T) {
 		t.Fatal(response.Body.String())
 	}
 
-	future := time.Now().In(time.FixedZone("UTC+8", 8*3600)).Add(24 * time.Hour).Format(time.RFC3339)
+	future := time.Now().In(time.FixedZone("UTC+8", 8*3600)).Add(24 * time.Hour).Truncate(time.Minute).Format(time.RFC3339)
 	singleBody := fmt.Sprintf(`{"name":"  体检  ","type":"single","description":"带报告","single":{"notifyTime":%q}}`, future)
 	response = request(router, http.MethodPost, base, singleBody, "application/json")
 	requireStatus(t, response, 201)
@@ -227,7 +234,7 @@ func TestScheduleRoutes(t *testing.T) {
 func TestInvalidRequestsAndHealth(t *testing.T) {
 	router, db := testRouter(t)
 	base := "/api/v1/scheduler/schedules"
-	future := time.Now().In(time.FixedZone("UTC+8", 8*3600)).Add(time.Hour).Format(time.RFC3339)
+	future := time.Now().In(time.FixedZone("UTC+8", 8*3600)).Add(time.Hour).Truncate(time.Minute).Format(time.RFC3339)
 	invalid := []string{
 		`{"name":" ","type":"period","period":{"cron":["0 9 * * *"]}}`,
 		`{"name":"x","type":"period","period":{"cron":[]}}`,

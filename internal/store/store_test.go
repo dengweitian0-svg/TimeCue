@@ -52,6 +52,13 @@ func newMigratedStore(t *testing.T) (*Sqlite, *ScheduleStore, *NotificationStore
 	if _, err := db.db.ExecContext(ctx, string(script)); err != nil {
 		t.Fatalf("应用测试迁移: %v", err)
 	}
+	script2, err := os.ReadFile(filepath.Join("..", "..", "migrations", "002_schedule_changes.up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(string(script2)); err != nil {
+		t.Fatal(err)
+	}
 	schedules, err := NewScheduleStore(db)
 	if err != nil {
 		t.Fatalf("创建日程存储: %v", err)
@@ -67,7 +74,7 @@ func newMigratedStore(t *testing.T) (*Sqlite, *ScheduleStore, *NotificationStore
 func TestSoftDeletePreservesHistory(t *testing.T) {
 	_, schedules, notifications := newMigratedStore(t)
 	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Now().UTC().Truncate(time.Minute)
 	schedule, err := schedules.CreateSchedule(ctx, model.Schedule{
 		Name: "周期日程", Type: model.PeriodSchedule,
 		Period: &model.Period{Open: true, Cron: []string{"0 9 * * *"}},
@@ -137,7 +144,7 @@ func TestSoftDeletePreservesHistory(t *testing.T) {
 func TestNotificationCreationAndTransitions(t *testing.T) {
 	_, schedules, notifications := newMigratedStore(t)
 	ctx := context.Background()
-	notifyAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	notifyAt := time.Now().UTC().Add(time.Hour).Truncate(time.Minute).Truncate(time.Minute)
 	schedule, err := schedules.CreateSchedule(ctx, model.Schedule{
 		Name: "单次日程", Type: model.SingleSchedule,
 		Single: &model.Single{NotifyTime: notifyAt},
@@ -247,7 +254,7 @@ func TestGetScheduleByIDAppliesOptionalFilters(t *testing.T) {
 	ctx := context.Background()
 	schedule, err := schedules.CreateSchedule(ctx, model.Schedule{
 		Name: "查询日程", Type: model.SingleSchedule,
-		Single: &model.Single{NotifyTime: time.Now().UTC().Add(time.Hour)},
+		Single: &model.Single{NotifyTime: time.Now().UTC().Add(time.Hour).Truncate(time.Minute)},
 	})
 	if err != nil {
 		t.Fatalf("创建日程: %v", err)
@@ -281,7 +288,7 @@ func TestGetAllScheduleAcceptsOptionalFilters(t *testing.T) {
 	ctx := context.Background()
 	first, err := schedules.CreateSchedule(ctx, model.Schedule{
 		Name: "早间会议", Type: model.SingleSchedule,
-		Single: &model.Single{NotifyTime: time.Now().UTC().Add(time.Hour)},
+		Single: &model.Single{NotifyTime: time.Now().UTC().Add(time.Hour).Truncate(time.Minute)},
 	})
 	if err != nil {
 		t.Fatalf("创建单次日程: %v", err)
@@ -352,7 +359,7 @@ func TestAppCreatesAndAdvancesNotifications(t *testing.T) {
 		t.Fatalf("组装服务: %v", err)
 	}
 	ctx := context.Background()
-	firstTime := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	firstTime := time.Now().UTC().Add(time.Hour).Truncate(time.Minute)
 	singleInput := model.Schedule{
 		Name: "单次", Type: model.SingleSchedule, Single: &model.Single{NotifyTime: firstTime},
 	}
@@ -445,7 +452,7 @@ func TestCreateScheduleWithNotificationRollsBack(t *testing.T) {
 		BEGIN SELECT RAISE(FAIL, 'blocked notification'); END`); err != nil {
 		t.Fatalf("创建故障触发器: %v", err)
 	}
-	notifyAt := time.Now().UTC().Add(time.Hour)
+	notifyAt := time.Now().UTC().Add(time.Hour).Truncate(time.Minute)
 	created, notification, err := schedules.CreateScheduleWithNotification(ctx, model.Schedule{
 		Name: "应回滚", Type: model.SingleSchedule, Single: &model.Single{NotifyTime: notifyAt},
 	}, &notifyAt)
@@ -613,9 +620,9 @@ func TestScheduleQueriesHistoryMidnightProjectionAndPagination(t *testing.T) {
 	if _, err = app.AcknowledgeNotifications(ctx, []int{ids[1]}, now); err != nil {
 		t.Fatal(err)
 	}
-	// 执行业务查询与确认后仍只有原有两张业务表。
+	// 业务仍使用两张核心表，另有规则版本和操作回执两张辅助表。
 	var tableCount int
-	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&tableCount); err != nil || tableCount != 2 {
-		t.Fatalf("业务只能使用 schedules 和 notifications，表数量=%d，错误=%v", tableCount, err)
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&tableCount); err != nil || tableCount != 4 {
+		t.Fatalf("阶段 C 表结构数量不符，表数量=%d，错误=%v", tableCount, err)
 	}
 }
