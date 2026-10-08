@@ -1,6 +1,7 @@
 # Flutter 桌面端
 
-提供 Windows 房间场景与双页日程本。默认接入 Go 的查询、确认及规则创建、编辑、启停和删除；内存仓储仅用于显式演示。
+## 功能描述
+- 提供 Windows 房间场景与双页日程本。默认接入 Go 的查询、确认及规则创建、编辑、启停和删除；内存仓储仅用于显式演示。
 
 - `lib/main.dart`：选择 HTTP 或演示仓储并启动应用。
 - [lib/app](lib/app/AGENTS.md)：应用、主题与主屏装配。
@@ -16,4 +17,6 @@
 - [tool](tool/AGENTS.md)：视觉截图工具。
 - `README.md`：运行方式、接口说明与 Widget/状态索引。
 
-工程约束：Widget/ViewModel 依赖仓储契约，具体实现由 `main.dart` 装配。真实模式通过 Go 正式用例读写，不访问 SQLite、不在 Dart 展开 cron；更新提交编辑时读取的 revision，写入重试使用同一操作标识。结构变更同步 README 的 Widget 与状态索引。
+## 工程约束
+
+- Widget/ViewModel 依赖仓储契约，具体实现由 `main.dart` 装配。真实模式通过 Go 正式用例读写，不访问 SQLite、不在 Dart 展开 cron；更新提交编辑时读取的 revision，写入重试使用同一操作标识。结构变更同步 README 的 Widget 与状态索引。

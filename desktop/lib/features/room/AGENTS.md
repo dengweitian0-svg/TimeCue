@@ -6,6 +6,6 @@
 - `room_backdrop.dart`：时段背景切换、图片淡入与窗玻璃遮罩。
 - `room_clock.dart`：北京时间显示与前台恢复同步。
 - `room_geometry.dart`：背景 cover 变换、窗区域和热区坐标计算。
-- `desk_notebook_hotspot.dart`：桌面本子点击区域、可见裁切与键盘焦点提示。
+- `desk_notebook_hotspot.dart`：桌面本子点击区域、可见裁切、键盘焦点与悬停提示；`Tooltip` 排除提示的语义文本，无障碍名称由按钮的 `Semantics` 提供。Windows AXTree 报错须通过完整重启后的交互验证定位，不能仅凭热更新后的日志判定原因。
 
 工程约束：背景、窗玻璃遮罩与本子热区共用源图的 cover 变换；本子热区与视口求交，部分可见仍可点击，完全不可见才隐藏。环境时钟使用真实 UTC+8，与演示业务时间独立。添加入口接入真实 Go 创建；连接不可用时禁用写入入口，保留快照与重试。
