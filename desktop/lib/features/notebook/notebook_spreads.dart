@@ -496,8 +496,13 @@ class MonthGrid extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text('$day'),
-                      if (marked)
-                        Text(
+                      // 所有日期都保留相同的标记高度，避免有安排的数字被向上挤。
+                      Visibility(
+                        visible: marked,
+                        maintainSize: true,
+                        maintainAnimation: true,
+                        maintainState: true,
+                        child: Text(
                           '·',
                           style: TextStyle(
                             height: .7,
@@ -506,6 +511,7 @@ class MonthGrid extends StatelessWidget {
                                 : NotebookTheme.muted,
                           ),
                         ),
+                      ),
                     ],
                   ),
                 ),

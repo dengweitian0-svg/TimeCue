@@ -12,6 +12,45 @@ import 'package:timecue_desktop/features/room/desk_notebook_hotspot.dart';
 import 'package:timecue_desktop/features/room/room_geometry.dart';
 
 void main() {
+  testWidgets('只有星期四有安排时，同一行日期数字仍水平对齐', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repo = _ThursdayMarkedRepository();
+    final model = NotebookViewModel(repo);
+    for (final month in [10, 11]) {
+      model.month = DateTime.utc(2026, month);
+      final selected = month == 10 ? 8 : 5;
+      await model.selectDate(DateTime.utc(2026, month, selected));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 600,
+                child: MonthGrid(model: model, onSelect: (_) {}),
+              ),
+            ),
+          ),
+        ),
+      );
+      final thursdays = month == 10 ? [8, 15, 22, 29] : [5, 12, 19, 26];
+      for (final day in thursdays) {
+        final markedY = tester.getCenter(find.text('$day')).dy;
+        final unmarkedY = tester.getCenter(find.text('${day + 1}')).dy;
+        expect(
+          markedY,
+          closeTo(unmarkedY, .01),
+          reason: '$month 月 $day 日与下一日的数字应对齐',
+        );
+      }
+    }
+    await tester.pumpWidget(const SizedBox());
+    model.dispose();
+    repo.dispose();
+  });
   testWidgets('日历底部显示选中日期数量和无日程状态，不再显示固定图例', (tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1;
@@ -170,4 +209,9 @@ void main() {
     vm.dispose();
     repo.dispose();
   });
+}
+
+class _ThursdayMarkedRepository extends DemoNotebookRepository {
+  @override
+  bool markedOn(DateTime date) => date.weekday == DateTime.thursday;
 }
