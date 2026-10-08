@@ -111,18 +111,12 @@ git switch -c feat/12-recurring-reminder
 
 ## CI 规则
 
-向 `dev` 提交 Pull Request 时，`.github/workflows/ci.yml` 会自动执行 Go 和 TypeScript CI 检查。当前仓库包含 `go.mod` 和 `frontend/package-lock.json`，因此会执行以下检查：
+向 `dev` 提交 Pull Request 时，`.github/workflows/ci.yml` 执行 Go 检查和 Windows Flutter 检查。Flutter 工程位于 `desktop/`。
 
-当前检查包括：
-
-- `gofmt`
-- `go vet`
-- `go test ./...`
-- `npm ci --prefix frontend`
-- `npm --prefix frontend run typecheck`
-- `npm --prefix frontend test`
-- `npm --prefix frontend run build`
-
+- Go：`gofmt`、`go vet ./...`、`go test ./...`。
+- Flutter：`flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。
+- Windows 构建：`flutter build windows --release --dart-define=TIMECUE_DEMO=true`，当前产物是阶段 A 视觉示例。
+- 本地运行：在 `desktop/` 执行 `flutter run -d windows --dart-define=TIMECUE_DEMO=true`。
 CI 通过后再合并 PR。
 
 ## main 分支策略

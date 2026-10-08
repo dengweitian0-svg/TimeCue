@@ -2,7 +2,7 @@
 
 TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由 Go 管理日程规则、提醒状态和本地数据，由 Flutter 提供桌面界面及系统交互。
 
-> 当前仓库尚未形成可运行的桌面应用。Go 进程已提供仅供本机访问的日程 HTTP API；Flutter 界面仍未建立。
+> 当前可运行 Flutter 视觉骨架和独立 Go 本机 HTTP API。二者尚未接通；系统通知、托盘及发布生命周期仍待实现。
 
 ## 当前实现
 
@@ -13,7 +13,7 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 | 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
 | 日程与提醒 | 已有创建日程和首条提醒的原子写入、下一次触发计算与提醒推进服务；HTTP API 支持创建、列表、查看及软删除日程，运行中的调度器尚未实现。 |
 | SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；表结构由独立 SQL 迁移建立，入口检查迁移版本和表结构但不自动执行迁移。 |
-| Flutter | 已确定为桌面前端方向；仓库中尚无 Flutter 工程和 Go／Flutter 通信实现。 |
+| Flutter | `desktop/` 已实现三时段房间、双页本子及创建/编辑视觉骨架，使用显式内存示例仓储；尚未接入 Go。 |
 
 
 ## 产品目标与核心规则
@@ -90,7 +90,14 @@ go vet ./...
 go test ./...
 ```
 
-仓库目前没有 Flutter 工程，因此还没有可用的 Flutter 开发或构建命令。现有 `.github/workflows/ci.yml` 仍包含指向不存在的 React／npm 前端目录的任务，需在 Flutter 工程建立时改为相应的检查。
+在 `desktop/` 运行视觉示例：
+
+```powershell
+flutter pub get
+flutter run -d windows --dart-define=TIMECUE_DEMO=true
+```
+
+Widget 关系、状态所有权与验证命令见 [Flutter 工程说明](desktop/README.md)。CI 已替换为 Windows Flutter 格式、分析、测试与 Release 构建，保留 Go 检查。
 
 
-分支与 Pull Request 流程见[贡献规范](docs/CONTRIBUTING.md)。其中的前端 CI 描述仍是旧版内容，待 Flutter 工程加入时同步更新。
+分支与 Pull Request 流程、Go 与 Flutter CI 约定见[贡献规范](docs/CONTRIBUTING.md)。

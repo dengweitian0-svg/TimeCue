@@ -54,29 +54,27 @@ jobs:
         if: steps.go-module.outputs.exists == 'true'
         run: go test ./...
 
-  frontend-checks:
-    name: TypeScript Checks
-    runs-on: ubuntu-latest
-
+  flutter-checks:
+    name: Flutter Windows Checks
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-
-      - name: 设置 Node.js 环境
-        uses: actions/setup-node@v4
+      - name: 设置 Flutter stable
+        uses: subosito/flutter-action@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: 安装前端依赖
-        run: npm ci --prefix frontend
-
-      - name: TypeScript 类型检查
-        run: npm --prefix frontend run typecheck
-
-      - name: 运行前端测试
-        run: npm --prefix frontend test
-
-      - name: 构建前端
-        run: npm --prefix frontend run build
+          channel: stable
+          cache: true
+      - name: 安装 Flutter 依赖
+        run: flutter pub get
+      - name: 检查 Dart 格式
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: 静态检查
+        run: flutter analyze
+      - name: 运行 Flutter 测试
+        run: flutter test
+      - name: 构建 Windows 视觉示例
+        run: flutter build windows --release --dart-define=TIMECUE_DEMO=true
