@@ -20,7 +20,21 @@ class TodaySpread extends StatelessWidget {
                 '${model.repository.demoNow.month} 月 ${model.repository.demoNow.day} 日 · ${model.repository.today.where((e) => e.acknowledgedAt != null).length} / ${model.repository.today.length} 已完成',
               ),
               for (final entry in model.repository.today)
-                TriggerRow(entry: entry),
+                TriggerRow(
+                  entry: entry,
+                  onTap: model.repository.supportsRuleChanges
+                      ? null
+                      : () => showTriggerDetails(context, entry),
+                ),
+              if (model.repository.hasMoreOn(model.repository.demoNow))
+                TextButton(
+                  onPressed: model.repository.loading
+                      ? null
+                      : () => model.repository.loadMoreOn(
+                          model.repository.demoNow,
+                        ),
+                  child: const Text('加载更多安排'),
+                ),
               const SizedBox(height: 28),
               const Text(
                 '一步一步，慢慢来。\n每一个小小的完成，都值得被记下。',
@@ -43,10 +57,17 @@ class TodaySpread extends StatelessWidget {
             children: [
               PageHeading(
                 '待确认',
-                '${model.repository.pending.length} 件小事，等你轻轻回应',
+                '${model.repository.pendingTotal} 件小事，等你轻轻回应',
                 eyebrow: 'WAITING FOR YOUR REPLY',
               ),
-              if (model.repository.pending.isNotEmpty) ...[
+              if (model.repository.loading) const LinearProgressIndicator(),
+              if (model.repository.refreshError != null)
+                TextButton.icon(
+                  onPressed: model.refresh,
+                  icon: const Icon(Icons.refresh),
+                  label: Text('读取失败，重试 · ${model.repository.refreshError}'),
+                ),
+              if (model.repository.pendingTotal > 0) ...[
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -57,7 +78,9 @@ class TodaySpread extends StatelessWidget {
                       style: const TextStyle(fontSize: 12),
                     ),
                     TextButton(
-                      onPressed: model.busy ? null : model.selectPage,
+                      onPressed: model.busy || model.repository.loading
+                          ? null
+                          : model.selectPage,
                       child: const Text('全选本页'),
                     ),
                     TextButton(
@@ -65,7 +88,10 @@ class TodaySpread extends StatelessWidget {
                       child: const Text('清空'),
                     ),
                     FilledButton(
-                      onPressed: model.busy || model.selected.isEmpty
+                      onPressed:
+                          model.busy ||
+                              model.repository.loading ||
+                              model.selected.isEmpty
                           ? null
                           : () => model.confirm(model.selected),
                       child: const Text('确认选中'),
@@ -82,7 +108,7 @@ class TodaySpread extends StatelessWidget {
                           children: [
                             Checkbox(
                               value: model.selected.contains(entry.id),
-                              onChanged: model.busy
+                              onChanged: model.busy || model.repository.loading
                                   ? null
                                   : (_) => model.toggle(entry.id),
                               semanticLabel:
@@ -103,8 +129,16 @@ class TodaySpread extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 10),
+                        if (entry.description.isNotEmpty)
+                          Text(
+                            entry.description,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: NotebookTheme.muted,
+                            ),
+                          ),
                         OutlinedButton.icon(
-                          onPressed: model.busy
+                          onPressed: model.busy || model.repository.loading
                               ? null
                               : () => model.confirm({entry.id}),
                           icon: const Icon(Icons.check, size: 16),
@@ -118,7 +152,10 @@ class TodaySpread extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     IconButton(
-                      onPressed: model.page == 0
+                      onPressed:
+                          model.busy ||
+                              model.repository.loading ||
+                              model.page == 0
                           ? null
                           : () => model.turnPage(-1),
                       tooltip: '上一页',
@@ -126,7 +163,10 @@ class TodaySpread extends StatelessWidget {
                     ),
                     Text('${model.page + 1} / ${model.pageCount}'),
                     IconButton(
-                      onPressed: model.page + 1 >= model.pageCount
+                      onPressed:
+                          model.busy ||
+                              model.repository.loading ||
+                              model.page + 1 >= model.pageCount
                           ? null
                           : () => model.turnPage(1),
                       tooltip: '下一页',
@@ -134,7 +174,7 @@ class TodaySpread extends StatelessWidget {
                     ),
                   ],
                 ),
-              ] else
+              ] else if (model.repository.hasSnapshot)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 42),
                   child: Text(
@@ -154,6 +194,33 @@ class TodaySpread extends StatelessWidget {
     ],
   );
 }
+
+Future<void> showTriggerDetails(
+  BuildContext context,
+  TriggerSummary entry,
+) => showDialog<void>(
+  context: context,
+  builder: (context) => AlertDialog(
+    title: Text(entry.name),
+    content: SelectableText(
+      '${entry.plannedAt.month} 月 ${entry.plannedAt.day} 日 ${timeLabel(entry.plannedAt)}\n${entry.description}\n${entry.acknowledgedAt != null
+          ? '已完成'
+          : entry.source == 'projected' || entry.delivery.isEmpty
+          ? '未来安排'
+          : entry.delivery == 'failed'
+          ? '投递失败 · 等待你的确认'
+          : entry.delivery == 'pending'
+          ? '待投递 · 等待你的确认'
+          : '已提醒 · 等待你的确认'}',
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('关闭'),
+      ),
+    ],
+  ),
+);
 
 class TriggerRow extends StatelessWidget {
   const TriggerRow({super.key, required this.entry, this.onTap});
@@ -278,6 +345,18 @@ class CalendarSpread extends StatelessWidget {
           right: true,
           child: switch (model.right) {
             BlankPage() => const SizedBox(key: ValueKey('calendar-blank')),
+            LoadingDatePage() => const Center(
+              child: CircularProgressIndicator(),
+            ),
+            ErrorDatePage(:final date) => Column(
+              children: [
+                Text(model.repository.refreshError ?? '读取日期失败'),
+                TextButton(
+                  onPressed: () => model.selectDate(date),
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
             DateListPage(:final date) => Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -290,7 +369,16 @@ class CalendarSpread extends StatelessWidget {
                 for (final entry in model.repository.entriesOn(date))
                   TriggerRow(
                     entry: entry,
-                    onTap: () => model.edit(entry.scheduleId),
+                    onTap: model.repository.supportsRuleChanges
+                        ? () => model.edit(entry.scheduleId)
+                        : () => showTriggerDetails(context, entry),
+                  ),
+                if (model.repository.hasMoreOn(date))
+                  TextButton(
+                    onPressed: model.repository.loading
+                        ? null
+                        : () => model.repository.loadMoreOn(date),
+                    child: const Text('加载更多安排'),
                   ),
               ],
             ),
@@ -344,7 +432,7 @@ class MonthGrid extends StatelessWidget {
                 model.selectedDate != null &&
                 sameDay(date, model.selectedDate!);
             final today = sameDay(date, model.repository.demoNow);
-            final marked = model.repository.entriesOn(date).isNotEmpty;
+            final marked = model.repository.markedOn(date);
             return Padding(
               padding: const EdgeInsets.all(2),
               child: Semantics(

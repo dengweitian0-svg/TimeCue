@@ -21,7 +21,7 @@ class TimeCueApp extends StatelessWidget {
   );
 }
 
-/// 阶段 A 只装配视觉主屏；托盘、通知和 Go 子进程留给运行时适配阶段。
+/// 阶段 B 装配房间与 Go 查询仓储；托盘、通知和子进程留给运行时适配阶段。
 class DesktopShell extends StatelessWidget {
   const DesktopShell({super.key, required this.repository});
   final NotebookRepository repository;

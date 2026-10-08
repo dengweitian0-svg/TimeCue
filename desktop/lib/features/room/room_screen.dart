@@ -15,13 +15,33 @@ class RoomScreen extends StatefulWidget {
   State<RoomScreen> createState() => _RoomScreenState();
 }
 
-class _RoomScreenState extends State<RoomScreen> {
+class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   late final notebook = NotebookViewModel(widget.repository);
   late final clock = RoomClockController();
   final deskFocus = FocusNode(debugLabel: '桌面本子入口');
   final actionFocus = FocusNode(debugLabel: '固定本子入口');
   bool bookVisible = false;
   bool fromDesk = false;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.repository.refresh();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (bookVisible) {
+        notebook.startPolling();
+      } else {
+        widget.repository.refresh();
+      }
+    } else {
+      notebook.close();
+    }
+  }
+
   void open(bool desk) {
     if (bookVisible) return;
     notebook.open();
@@ -41,6 +61,7 @@ class _RoomScreenState extends State<RoomScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     notebook.dispose();
     clock.dispose();
     deskFocus.dispose();
@@ -86,7 +107,7 @@ class _RoomScreenState extends State<RoomScreen> {
               listenable: notebook,
               builder: (context, _) => RoomActions(
                 onOpen: () => open(false),
-                pendingCount: widget.repository.pending.length,
+                pendingCount: widget.repository.pendingTotal,
                 focusNode: actionFocus,
               ),
             ),
@@ -95,10 +116,27 @@ class _RoomScreenState extends State<RoomScreen> {
             bottom: 24,
             right: 28,
             child: FilledButton.icon(
-              onPressed: create,
+              onPressed: widget.repository.supportsRuleChanges ? create : null,
               style: _roomActionStyle,
               icon: const Icon(Icons.add, size: 17),
               label: const Text('添加日程'),
+            ),
+          ),
+          Positioned(
+            top: 76,
+            right: 24,
+            child: ListenableBuilder(
+              listenable: widget.repository,
+              builder: (context, _) => widget.repository.refreshError != null
+                  ? TextButton.icon(
+                      onPressed: notebook.refresh,
+                      style: _roomActionStyle,
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: Text(widget.repository.refreshError!),
+                    )
+                  : widget.repository.loading && !widget.repository.hasSnapshot
+                  ? const Text('正在读取日程…')
+                  : const SizedBox(),
             ),
           ),
           if (bookVisible)
@@ -109,6 +147,7 @@ class _RoomScreenState extends State<RoomScreen> {
                     ? geometry.visibleNotebookBounds.center
                     : fixedOrigin,
                 onClosed: () {
+                  notebook.close();
                   setState(() => bookVisible = false);
                   (fromDesk && geometry.notebookVisible
                           ? deskFocus

@@ -41,10 +41,18 @@ class TriggerSummary {
     required this.plannedAt,
     this.delivery = 'sent',
     this.acknowledgedAt,
+    this.notificationId,
+    this.description = '',
+    this.editable = true,
+    this.source = 'persisted',
+    this.occurrenceKey,
   });
   final String id, scheduleId, name, delivery;
   final DateTime plannedAt;
   final DateTime? acknowledgedAt;
+  final String? notificationId, occurrenceKey;
+  final String description, source;
+  final bool editable;
   TriggerSummary acknowledge(DateTime at) => TriggerSummary(
     id: id,
     scheduleId: scheduleId,
@@ -52,10 +60,28 @@ class TriggerSummary {
     plannedAt: plannedAt,
     delivery: delivery,
     acknowledgedAt: acknowledgedAt ?? at,
+    notificationId: notificationId,
+    description: description,
+    editable: editable,
+    source: source,
+    occurrenceKey: occurrenceKey,
   );
 }
 
 abstract class NotebookRepository extends ChangeNotifier {
+  bool get supportsRuleChanges => true;
+  bool get serverPagination => false;
+  int get pendingTotal => pending.length;
+  int get pendingPageIndex => 0;
+  int get pendingPageSize => 3;
+  bool get loading => false;
+  String? get refreshError => null;
+  bool get hasSnapshot => true;
+  bool markedOn(DateTime date) => entriesOn(date).isNotEmpty;
+  Future<void> refresh({DateTime? month, DateTime? date}) async {}
+  Future<void> loadPendingPage(int page) async {}
+  bool hasMoreOn(DateTime date) => false;
+  Future<void> loadMoreOn(DateTime date) async {}
   DateTime get demoNow;
   List<TriggerSummary> get today;
   List<TriggerSummary> get pending;

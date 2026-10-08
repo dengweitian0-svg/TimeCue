@@ -1,14 +1,50 @@
-# TimeCue Flutter 桌面视觉骨架
+# TimeCue Flutter 桌面端
 
-实现 `docs/design/flutter-desktop.md` 的阶段 A：三时段房间、桌面本子、开合动效、今日/待确认双页、日历/右页编辑、添加弹层。全部交互使用显式内存示例仓储，重启复原。没有接入 Go、SQLite、通知、托盘、自启或子进程管理；当前原生关闭窗口直接退出视觉示例。
+已完成阶段 A 视觉骨架与阶段 B 业务查询及确认。默认通过本机 HTTP 连接 Go；Flutter 不打开 SQLite、不展开 cron。Go 服务须先按 [迁移说明](../migrations/README.md)建立数据库，并在仓库根目录手动启动：
+
+```powershell
+go run ./cmd/flutter
+```
+
+另一个终端运行桌面界面：
 
 ```powershell
 cd D:\go_project\src\TimeCue\desktop
 flutter pub get
-flutter run -d windows --dart-define=TIMECUE_DEMO=true
+flutter run -d windows
 ```
 
-未传入示例开关时显示启动说明，不自动冒充正式业务数据。示例业务时间固定为北京时间 **2026-10-07 14:32**，环境时钟按真实 UTC+8 自动切换早晨、午后、夜晚。
+真实模式提供今日安排、日期清单及详情、月份标记、跨日期待确认分页、单条和多选批量确认。未来 pending 与规则投影去重；投递失败或尚未投递的到期记录均可确认，投递结果独立保留。服务未运行时显示连接失败与重试，不回退为示例数据。
+
+阶段 B 不开放真实规则创建/编辑/删除，添加入口禁用，日期行展示只读详情。规则变更留待阶段 C；调度、系统通知、托盘、自启和子进程管理留待 D/E。关闭原生窗口仍退出应用。当前查询只读取已有历史，不补齐遗漏触发；补齐由阶段 D 的恢复调度负责。
+
+视觉演示仍可显式使用 `flutter run -d windows --dart-define=TIMECUE_DEMO=true`。示例业务时间固定为北京时间 **2026-10-07 14:32**，数据只在内存，环境时钟使用真实 UTC+8。
+
+Go 后端只使用原有 `schedules` 与 `notifications`，日程查询与提醒确认分别由既有模块承担；Flutter 的 Notebook 命名只表示界面与只读仓储契约，不对应额外持久化模型。
+
+### HTTP 查询契约
+
+沿用 `/api/v1/scheduler/schedules`，无 view 参数时保持原日程规则列表。日期与月份使用参数选择查询视图。提醒资源使用 `/api/v1/notifications`，与 scheduler 同级：
+
+| 请求 | 返回 |
+| --- | --- |
+| `GET /schedules?view=occurrences&include=unacknowledged` | 北京时间今日与待确认首分页的同一事务快照；可附 date |
+| `GET /schedules?view=occurrences&date=YYYY-MM-DD&cursor=...` | 日期触发清单及续页 |
+| `GET /schedules?view=calendar&month=YYYY-MM` | 月份日期标记 |
+| `GET /notifications?state=unacknowledged&cursor=...` | 待确认续页 |
+| `GET /notifications/:id` | 持久化提醒详情 |
+| `POST /notifications/acknowledgements` | `notificationIds` 数组，单条和批量走同一事务操作 |
+
+日期投影的 include 只接受 unacknowledged，组合快照不能附 cursor；续页调用独立的日期或待确认查询。投影视图不混用规则列表的 name/type/limit/offset 参数，不支持参数时返回 400。
+
+### 快照、分页与失败行为
+
+- 待确认默认每页 50，徽标读取 Go 总数；全选只捕获当前页，跨页选择保留，不随后台新记录扩大。批量请求提交明确 ID，最多 500 条，非法成员整批拒绝。
+- 本子打开期间每 5 秒刷新；打开、恢复前台和确认后立即查询，关闭或后台停止普通轮询。请求代次阻止旧响应覆盖新状态。
+- 确认响应同时更新今日、日期清单和待确认；确认失败保持旧内容及选择。确认成功后的刷新失败单独提示，保留已成功的完成事实。
+- 日期清单与今日提供加载更多；未来投影使用 Go 的不透明 occurrenceKey，确认使用 notificationId。日历首进为空白，选日期后显示加载/错误/清单。
+- 名称与说明当前回退到关联日程内容；历史内容快照、规则版本及升级迁移在后续阶段落实，不宣称能还原更名之前的文字。
+
 
 ## Widget 组合关系
 
@@ -31,7 +67,8 @@ TimeCueApp                              MaterialApp、主题、构造注入
                └─ PaperPage             互斥右页
                   ├─ BlankPage          首次进入，无内容
                   ├─ DateListPage       日期清单 → TriggerRow
-                  └─ EditingPage        ScheduleEditor
+                  ├─ LoadingDatePage / ErrorDatePage  真实查询加载与重试
+                  └─ EditingPage        ScheduleEditor（示例模式）；真实模式为只读详情
 
 RoomScreen → showDialog
 └─ ScheduleCreateDialog                 草稿、关闭守卫、弹层焦点
@@ -59,11 +96,12 @@ flowchart LR
   VM --> Contract[NotebookRepository 契约]
   EVM --> Contract
   Demo -.实现.-> Contract
+  HTTP -.实现.-> Contract
 ```
 
 | 状态 | 所有者 | Widget 的关系 |
 | --- | --- | --- |
-| 业务示例快照、确认结果 | 示例仓储 | 只读 DTO；确认/保存/删除必须调用契约 |
+| Go 业务快照、确认结果 / 内存示例 | HTTP / 示例仓储 | 只读 DTO；确认必须调用正式用例，真实规则写入留待 C |
 | 标签、月份、互斥右页、跨页勾选 | NotebookViewModel | 跨页监听状态，只发送界面操作 |
 | 开合阶段、动画进度、编辑会话 | NotebookOverlay | 内容到位后才可操作；导航时守卫草稿 |
 | 字段、草稿、保存错误 | ScheduleEditorViewModel | 创建弹层与右页编辑复用表单 |

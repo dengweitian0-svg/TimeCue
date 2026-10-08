@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../contracts/notebook_repository.dart';
 
@@ -22,6 +23,16 @@ class EditingPage extends CalendarRightPage {
   final String scheduleId;
 }
 
+class LoadingDatePage extends CalendarRightPage {
+  const LoadingDatePage(this.date);
+  final DateTime date;
+}
+
+class ErrorDatePage extends CalendarRightPage {
+  const ErrorDatePage(this.date);
+  final DateTime date;
+}
+
 class NotebookViewModel extends ChangeNotifier {
   NotebookViewModel(this.repository)
     : month = DateTime.utc(repository.demoNow.year, repository.demoNow.month) {
@@ -36,6 +47,8 @@ class NotebookViewModel extends ChangeNotifier {
   DateTime? get selectedDate => switch (_right) {
     DateListPage(:final date) => date,
     EditingPage(:final date) => date,
+    LoadingDatePage(:final date) => date,
+    ErrorDatePage(:final date) => date,
     _ => null,
   };
   final Set<String> _selected = {};
@@ -44,21 +57,49 @@ class NotebookViewModel extends ChangeNotifier {
   static const pageSize = 3;
   bool busy = false;
   String? error;
-  int get pageCount =>
-      (repository.pending.length / pageSize).ceil().clamp(1, 1000000);
-  List<TriggerSummary> get pendingPage => repository.pending
-      .skip(page * pageSize)
-      .take(pageSize)
-      .toList(growable: false);
+  Timer? _poll;
+  bool _disposed = false;
+  int _dateRequest = 0;
+  int get pageCount => (repository.pendingTotal / repository.pendingPageSize)
+      .ceil()
+      .clamp(1, 1000000);
+  List<TriggerSummary> get pendingPage => repository.serverPagination
+      ? repository.pending
+      : repository.pending
+            .skip(page * pageSize)
+            .take(pageSize)
+            .toList(growable: false);
   void _refresh() {
+    if (repository.serverPagination) page = repository.pendingPageIndex;
     page = page.clamp(0, pageCount - 1);
-    _selected.retainAll(repository.pending.map((e) => e.id));
+    if (!repository.serverPagination) {
+      _selected.retainAll(repository.pending.map((e) => e.id));
+    }
     notifyListeners();
   }
 
   void open() {
     _tab = NotebookTab.today;
+    startPolling();
     notifyListeners();
+  }
+
+  void startPolling() {
+    _poll?.cancel();
+    refresh();
+    _poll = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!busy && !repository.loading) refresh();
+    });
+  }
+
+  void close() {
+    _poll?.cancel();
+    _poll = null;
+  }
+
+  Future<void> refresh() async {
+    if (busy) return;
+    await repository.refresh(month: month, date: selectedDate);
   }
 
   void changeTab(NotebookTab tab) {
@@ -68,11 +109,20 @@ class NotebookViewModel extends ChangeNotifier {
 
   void changeMonth(int offset) {
     month = DateTime.utc(month.year, month.month + offset);
+    refresh();
     notifyListeners();
   }
 
-  void selectDate(DateTime date) {
+  Future<void> selectDate(DateTime date) async {
+    final request = ++_dateRequest;
     _right = DateListPage(date);
+    if (repository.serverPagination) _right = LoadingDatePage(date);
+    notifyListeners();
+    await repository.refresh(month: month, date: date);
+    if (_disposed || request != _dateRequest) return;
+    _right = repository.refreshError == null
+        ? DateListPage(date)
+        : ErrorDatePage(date);
     notifyListeners();
   }
 
@@ -107,12 +157,17 @@ class NotebookViewModel extends ChangeNotifier {
   }
 
   void turnPage(int delta) {
+    if (busy || repository.loading) return;
+    if (repository.serverPagination) {
+      repository.loadPendingPage(page + delta);
+      return;
+    }
     page = (page + delta).clamp(0, pageCount - 1);
     notifyListeners();
   }
 
   Future<void> confirm(Set<String> ids) async {
-    if (busy || ids.isEmpty) return;
+    if (busy || ids.isEmpty || repository.loading) return;
     busy = true;
     error = null;
     notifyListeners();
@@ -123,12 +178,15 @@ class NotebookViewModel extends ChangeNotifier {
     } catch (e) {
       error = '$e';
     }
+    if (_disposed) return;
     busy = false;
     notifyListeners();
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    close();
     repository.removeListener(_refresh);
     super.dispose();
   }
