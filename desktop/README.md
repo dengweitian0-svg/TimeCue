@@ -1,7 +1,5 @@
 # TimeCue Flutter 桌面端
 
-已完成阶段 A 视觉骨架与阶段 B 业务查询及确认。默认通过本机 HTTP 连接 Go；Flutter 不打开 SQLite、不展开 cron。Go 服务须先按 [迁移说明](../migrations/README.md)建立数据库，并在仓库根目录手动启动：
-
 ```powershell
 go run ./cmd/flutter
 ```
@@ -14,13 +12,8 @@ flutter pub get
 flutter run -d windows
 ```
 
-真实模式提供今日安排、日期清单及详情、月份标记、跨日期待确认分页、单条和多选批量确认。未来 pending 与规则投影去重；投递失败或尚未投递的到期记录均可确认，投递结果独立保留。服务未运行时显示连接失败与重试，不回退为示例数据。
-
-阶段 B 不开放真实规则创建/编辑/删除，添加入口禁用，日期行展示只读详情。规则变更留待阶段 C；调度、系统通知、托盘、自启和子进程管理留待 D/E。关闭原生窗口仍退出应用。当前查询只读取已有历史，不补齐遗漏触发；补齐由阶段 D 的恢复调度负责。
-
 视觉演示仍可显式使用 `flutter run -d windows --dart-define=TIMECUE_DEMO=true`。示例业务时间固定为北京时间 **2026-10-07 14:32**，数据只在内存，环境时钟使用真实 UTC+8。
 
-Go 后端只使用原有 `schedules` 与 `notifications`，日程查询与提醒确认分别由既有模块承担；Flutter 的 Notebook 命名只表示界面与只读仓储契约，不对应额外持久化模型。
 
 ### HTTP 查询契约
 
@@ -43,7 +36,6 @@ Go 后端只使用原有 `schedules` 与 `notifications`，日程查询与提醒
 - 本子打开期间每 5 秒刷新；打开、恢复前台和确认后立即查询，关闭或后台停止普通轮询。请求代次阻止旧响应覆盖新状态。
 - 确认响应同时更新今日、日期清单和待确认；确认失败保持旧内容及选择。确认成功后的刷新失败单独提示，保留已成功的完成事实。
 - 日期清单与今日提供加载更多；未来投影使用 Go 的不透明 occurrenceKey，确认使用 notificationId。日历首进为空白，选日期后显示加载/错误/清单。
-- 名称与说明当前回退到关联日程内容；历史内容快照、规则版本及升级迁移在后续阶段落实，不宣称能还原更名之前的文字。
 
 
 ## Widget 组合关系
@@ -63,19 +55,21 @@ TimeCueApp                              MaterialApp、主题、构造注入
             │  ├─ PaperPage             今日安排 → TriggerRow
             │  └─ PaperPage             待确认、选择工具栏、分页、逐条确认
             └─ CalendarSpread           第二组跨页
-               ├─ PaperPage             月份导航 → MonthGrid
+               ├─ PaperPage             月份导航 → MonthGrid、管理日程分页弹层
                └─ PaperPage             互斥右页
                   ├─ BlankPage          首次进入，无内容
                   ├─ DateListPage       日期清单 → TriggerRow
                   ├─ LoadingDatePage / ErrorDatePage  真实查询加载与重试
-                  └─ EditingPage        ScheduleEditor（示例模式）；真实模式为只读详情
+                  └─ EditingPage        ScheduleEditor（完整规则及 revision）
 
 RoomScreen → showDialog
 └─ ScheduleCreateDialog                 草稿、关闭守卫、弹层焦点
    └─ ScheduleEditor                    与右页编辑共用表单
       ├─ 名称、说明、类型
-      ├─ 日期/时间选择                  分钟精度，UTC+8
-      │  └─ NotebookTimePicker          暖色细针转盘 → NotebookTimeDial
+      ├─ ＋与 ScheduleTimeChip           明确选择、悬停删除；单次选中后隐藏＋
+      │  ├─ 单次合并弹层                左 CalendarDatePicker / 右时间输入与转盘
+      │  └─ 周期单项弹层                时间、星期+时间、日号+时间
+      │     └─ NotebookTimePicker       暖色细针转盘 → NotebookTimeDial
       ├─ 周期启停                       单次不展示
       └─ 保存、返回、删除               类型不可变，已到期单次时间只读
 ```
@@ -101,26 +95,30 @@ flowchart LR
 
 | 状态 | 所有者 | Widget 的关系 |
 | --- | --- | --- |
-| Go 业务快照、确认结果 / 内存示例 | HTTP / 示例仓储 | 只读 DTO；确认必须调用正式用例，真实规则写入留待 C |
+| Go 业务快照、确认结果 / 内存示例 | HTTP / 示例仓储 | 只读 DTO；确认必须调用正式用例，规则变更必须调用正式事务 |
 | 标签、月份、互斥右页、跨页勾选 | NotebookViewModel | 跨页监听状态，只发送界面操作 |
 | 开合阶段、动画进度、编辑会话 | NotebookOverlay | 内容到位后才可操作；导航时守卫草稿 |
-| 字段、草稿、保存错误 | ScheduleEditorViewModel | 创建弹层与右页编辑复用表单 |
+| 字段、草稿、保存错误 | ScheduleEditorViewModel | 创建弹层与右页编辑复用表单，版本冲突保留草稿 |
 | 真实环境时间 | RoomClockController | 每秒重读 UTC+8，恢复前台立即同步 |
 | 场景已解码图片 | RoomBackdrop | 解码成功再淡入，失败保留旧图 |
 | 入口焦点、本子显隐 | RoomScreen | 合上后回到实际入口；热区裁切后回固定入口 |
 
 业务快照不与表单共享可变对象。每次确认针对触发 ID；失败投递也可确认，确认不会将失败改成成功。全选只选择点击时本页记录，跨页保留，确认没有撤销。删除与未来编辑保留历史。
 
-示例预设支持单次、每天、每周（所选日期的星期）、每月（所选日号），仅用于视觉演示。正式接入不能用示例投影代替 Go 的查询、调度和规则处理。
+单次、每天、每周、每月统一用＋选择。单次打开左日历/右时间的合并弹层，只能选择一项；选择后只显示圆角日期时间框，删除后＋重新出现。每天每项选择一个时间，每周每项选择一个星期和时间，每月每项选择一个日号和时间；各项独立配对、重复去重，不再手输逗号集合。悬停或键盘聚焦时圆角框右侧显示 ×，点击直接从草稿移除。周期存在时间项时不能混用其它频率，删除全部项后可切换类型。时间选择器支持逐格步进，保留输入、转盘、滚轮与键盘；取消/确定固定在底部。短月按月末处理仍由 Go 计算。
+
+同频率的旧 cron 日期列表可拆成独立可编辑项，包括各时间对应不同日期集合；保存按每个时间真实对应的日期生成 cron，不扩展成日期与时间的笛卡尔积。混合频率的旧 cron 保留原文，只改名称、说明和启停。
+
+
+已完成阶段 A 视觉骨架、阶段 B 查询确认及阶段 C 规则变更。默认通过本机 HTTP 连接 Go；Flutter 不打开 SQLite、不展开 cron。Go 服务须先按 [迁移说明](../migrations/README.md)建立数据库，并在仓库根目录手动启动：
+
+真实模式提供今日安排、日期清单及详情、月份标记、跨日期待确认分页、单条和多选批量确认。未来 pending 与规则投影去重；投递失败或尚未投递的到期记录均可确认，投递结果独立保留。服务未运行时显示连接失败与重试，不回退为示例数据。
+
+真实模式已开放创建、编辑、暂停/恢复及删除；管理日程入口包含暂停规则。调度、系统通知及发布生命周期仍留待 D/E。
+
+Go 的核心实体仍是 Schedule 和 Notification，辅助版本及回执表服务于历史区间与幂等。
 
 ## 验证
-
-```powershell
-dart format --output=none --set-exit-if-changed lib test
-flutter analyze
-flutter test
-flutter build windows --release --dart-define=TIMECUE_DEMO=true
-```
 
 本机沿用已有 Flutter `3.49.0-1.0.pre-240` / Dart `3.14.0` 开发版，没有更换 SDK；CI 使用 stable 验证。本轮不加入桌面第三方插件。
 

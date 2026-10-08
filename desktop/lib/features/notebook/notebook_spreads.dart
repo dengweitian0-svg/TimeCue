@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
 import '../../theme/notebook_theme.dart';
 import 'notebook_view_model.dart';
+import 'schedule_management_dialog.dart';
 
 class TodaySpread extends StatelessWidget {
   const TodaySpread({super.key, required this.model});
@@ -22,9 +23,7 @@ class TodaySpread extends StatelessWidget {
               for (final entry in model.repository.today)
                 TriggerRow(
                   entry: entry,
-                  onTap: model.repository.supportsRuleChanges
-                      ? null
-                      : () => showTriggerDetails(context, entry),
+                  onTap: () => showTriggerDetails(context, entry),
                 ),
               if (model.repository.hasMoreOn(model.repository.demoNow))
                 TextButton(
@@ -332,6 +331,18 @@ class CalendarSpread extends StatelessWidget {
                 onSelect: (date) => onNavigate(() => model.selectDate(date)),
               ),
               const SizedBox(height: 24),
+              TextButton.icon(
+                onPressed: () => onNavigate(() async {
+                  final id = await showDialog<String>(
+                    context: context,
+                    builder: (_) =>
+                        ScheduleManagementDialog(repository: model.repository),
+                  );
+                  if (id != null) await model.edit(id);
+                }),
+                icon: const Icon(Icons.list_alt),
+                label: const Text('管理日程 · 含已暂停'),
+              ),
               const Text(
                 '○ 今天     · 有安排',
                 style: TextStyle(fontSize: 12, color: NotebookTheme.muted),
@@ -345,7 +356,7 @@ class CalendarSpread extends StatelessWidget {
           right: true,
           child: switch (model.right) {
             BlankPage() => const SizedBox(key: ValueKey('calendar-blank')),
-            LoadingDatePage() => const Center(
+            LoadingSchedulePage() || LoadingDatePage() => const Center(
               child: CircularProgressIndicator(),
             ),
             ErrorDatePage(:final date) => Column(
@@ -355,6 +366,16 @@ class CalendarSpread extends StatelessWidget {
                   onPressed: () => model.selectDate(date),
                   child: const Text('重试'),
                 ),
+              ],
+            ),
+            ScheduleErrorPage(:final id, :final message) => Column(
+              children: [
+                Text(message),
+                TextButton(
+                  onPressed: () => model.edit(id),
+                  child: const Text('重试读取日程'),
+                ),
+                TextButton(onPressed: model.back, child: const Text('返回当天安排')),
               ],
             ),
             DateListPage(:final date) => Column(
@@ -369,8 +390,11 @@ class CalendarSpread extends StatelessWidget {
                 for (final entry in model.repository.entriesOn(date))
                   TriggerRow(
                     entry: entry,
-                    onTap: model.repository.supportsRuleChanges
-                        ? () => model.edit(entry.scheduleId)
+                    onTap:
+                        model.repository.supportsRuleChanges &&
+                            (entry.editable ||
+                                !model.repository.serverPagination)
+                        ? () => onNavigate(() => model.edit(entry.scheduleId))
                         : () => showTriggerDetails(context, entry),
                   ),
                 if (model.repository.hasMoreOn(date))

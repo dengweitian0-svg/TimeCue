@@ -84,13 +84,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('添加日程'));
     await capture('05-create');
-    await tester.tap(find.text('15:32 · 北京时间'));
+    await tester.tap(find.byKey(const ValueKey('add-single-time')));
     await capture('06-hour-dial');
     await tester.tap(find.byKey(const ValueKey('time-field-分钟')));
     await capture('07-minute-dial');
     await tester.tap(find.text('取消').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('2026-10-7'));
+    await tester.tap(find.byKey(const ValueKey('add-single-time')));
     await capture('08-date-picker');
     await tester.tap(find.text('取消').last);
     await tester.pumpAndSettle();

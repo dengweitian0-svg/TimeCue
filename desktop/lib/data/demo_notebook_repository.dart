@@ -1,4 +1,5 @@
 import '../contracts/notebook_repository.dart';
+import '../contracts/schedule_rules.dart';
 
 /// 显式内存示例仓储，不连接 Go，也不写入 SQLite。
 class DemoNotebookRepository extends NotebookRepository {
@@ -76,33 +77,41 @@ class DemoNotebookRepository extends NotebookRepository {
         continue;
       }
       final d = s.draft;
-      if (d.kind == ScheduleKind.weekly && date.weekday != d.time.weekday) {
-        continue;
+      for (final slot in ScheduleRules.slots(d)) {
+        if (d.kind == ScheduleKind.weekly && date.weekday != slot.day) continue;
+        final lastDay = DateTime.utc(date.year, date.month + 1, 0).day;
+        if (d.kind == ScheduleKind.monthly &&
+            date.day != (slot.day! > lastDay ? lastDay : slot.day!)) {
+          continue;
+        }
+        final at = DateTime.utc(
+          date.year,
+          date.month,
+          date.day,
+          slot.hour,
+          slot.minute,
+        );
+        if (!at.isAfter(demoNow) ||
+            result.any((e) => e.scheduleId == s.id && e.plannedAt == at)) {
+          continue;
+        }
+        result.add(
+          TriggerSummary(
+            id: 'preview-${s.id}-$at',
+            scheduleId: s.id,
+            name: d.name,
+            plannedAt: at,
+          ),
+        );
       }
-      if (d.kind == ScheduleKind.monthly && date.day != d.time.day) continue;
-      final at = DateTime.utc(
-        date.year,
-        date.month,
-        date.day,
-        d.time.hour,
-        d.time.minute,
-      );
-      if (!at.isAfter(demoNow) ||
-          result.any((e) => e.scheduleId == s.id && e.plannedAt == at)) {
-        continue;
-      }
-      result.add(
-        TriggerSummary(
-          id: 'preview-${s.id}-$at',
-          scheduleId: s.id,
-          name: d.name,
-          plannedAt: at,
-        ),
-      );
     }
     result.sort((a, b) => a.plannedAt.compareTo(b.plannedAt));
     return List.unmodifiable(result);
   }
+
+  @override
+  Future<List<ScheduleSummary>> listSchedules({int offset = 0}) async =>
+      _schedules.values.where((s) => !s.deleted).skip(offset).take(50).toList();
 
   @override
   Future<void> confirm(Set<String> ids) async {
@@ -117,11 +126,18 @@ class DemoNotebookRepository extends NotebookRepository {
   }
 
   @override
-  Future<void> save(ScheduleDraft draft, {String? id}) async {
+  Future<void> save(
+    ScheduleDraft draft, {
+    String? id,
+    int? expectedRevision,
+    String? operationKey,
+  }) async {
     final key = id ?? 'created${_sequence++}';
     final old = _schedules[key];
     if (old?.deleted == true) throw StateError('已删除的日程不可恢复');
-    if (old != null && old.draft.kind != draft.kind) {
+    if (old != null &&
+        (old.draft.kind == ScheduleKind.single) !=
+            (draft.kind == ScheduleKind.single)) {
       throw StateError('编辑不能更改日程类型');
     }
     if (draft.time.second != 0 ||
@@ -134,6 +150,7 @@ class DemoNotebookRepository extends NotebookRepository {
         (old == null || old.draft.time != draft.time)) {
       throw StateError('请选择未来时间');
     }
+    if (draft.kind != ScheduleKind.single) ScheduleRules.encode(draft);
     _schedules[key] = ScheduleSummary(key, draft);
     _triggers.removeWhere(
       (e) => e.scheduleId == key && e.plannedAt.isAfter(demoNow),

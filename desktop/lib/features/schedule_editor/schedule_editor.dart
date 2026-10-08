@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../contracts/notebook_repository.dart';
+import '../../contracts/schedule_rules.dart';
 import '../../theme/notebook_theme.dart';
-import 'notebook_time_picker.dart';
+import 'notebook_date_time_picker.dart';
+import 'schedule_slot_picker.dart';
+import 'schedule_time_chip.dart';
 
 class ScheduleEditorViewModel extends ChangeNotifier {
   ScheduleEditorViewModel(this.repository, this.original) {
+    repository.addListener(_repositoryChanged);
     final draft = original?.draft;
     name = TextEditingController(text: draft?.name ?? '');
     description = TextEditingController(text: draft?.description ?? '');
@@ -16,10 +20,73 @@ class ScheduleEditorViewModel extends ChangeNotifier {
             .add(const Duration(hours: 1))
             .copyWith(second: 0, millisecond: 0, microsecond: 0);
     enabled = draft?.enabled ?? true;
+    _slots = draft == null ? [] : ScheduleRules.slots(draft);
+    singleTimeSelected = original != null;
   }
+  void _repositoryChanged() => notifyListeners();
   final NotebookRepository repository;
-  final ScheduleSummary? original;
+  ScheduleSummary? original;
   late final TextEditingController name, description;
+  bool singleTimeSelected = false;
+  List<ScheduleTimeSlot> _slots = [];
+  List<ScheduleTimeSlot> get slots => List.unmodifiable(_slots);
+  bool get kindLocked =>
+      original?.draft.kind == ScheduleKind.single ||
+      original?.draft.rawCron != null ||
+      (kind != ScheduleKind.single && _slots.isNotEmpty);
+  void changeKind(ScheduleKind value) {
+    if (busy ||
+        readOnly ||
+        kindLocked ||
+        value == kind ||
+        (original != null && value == ScheduleKind.single)) {
+      return;
+    }
+    update(() {
+      kind = value;
+      _slots.clear();
+      singleTimeSelected = false;
+      error = null;
+    });
+  }
+
+  bool addSlot(ScheduleTimeSlot slot) {
+    if (busy || readOnly || original?.draft.rawCron != null) return false;
+    if (!slot.valid || slot.kind != kind) {
+      error = '提醒时间必须使用当前周期类型';
+      notifyListeners();
+      return false;
+    }
+    if (_slots.contains(slot)) {
+      error = '这个提醒时间已添加';
+      notifyListeners();
+      return false;
+    }
+    update(() {
+      _slots.add(slot);
+      error = null;
+    });
+    return true;
+  }
+
+  void removeSlot(ScheduleTimeSlot slot) {
+    if (busy || readOnly || original?.draft.rawCron != null) return;
+    update(() {
+      _slots.remove(slot);
+      error = null;
+    });
+  }
+
+  void removeSingleTime() {
+    if (busy || timeLocked) return;
+    update(() {
+      singleTimeSelected = false;
+      error = null;
+    });
+  }
+
+  final String operationKey = 'editor-${DateTime.now().microsecondsSinceEpoch}';
+  bool conflict = false;
   late ScheduleKind kind;
   late DateTime time;
   late bool enabled;
@@ -29,6 +96,7 @@ class ScheduleEditorViewModel extends ChangeNotifier {
   bool get readOnly => original?.deleted == true;
   bool get timeLocked =>
       readOnly ||
+      original?.draft.rawCron != null ||
       (original != null &&
           kind == ScheduleKind.single &&
           !original!.draft.time.isAfter(repository.demoNow));
@@ -39,14 +107,45 @@ class ScheduleEditorViewModel extends ChangeNotifier {
   }
 
   Future<bool> save() async {
-    if (busy || readOnly) return false;
+    if (busy || readOnly || !repository.canWrite) return false;
     if (name.text.trim().isEmpty) {
       error = '请填写日程名称';
       notifyListeners();
       return false;
     }
+    if (kind == ScheduleKind.single && !singleTimeSelected) {
+      error = '请选择日期和时间';
+      notifyListeners();
+      return false;
+    }
+    if (kind == ScheduleKind.single && timeLocked && original != null) {
+      time = original!.draft.time;
+    }
+    if (kind == ScheduleKind.single &&
+        !time.isAfter(repository.demoNow) &&
+        (original == null || time != original!.draft.time)) {
+      error = '请选择未来时间';
+      notifyListeners();
+      return false;
+    }
+    if (kind == ScheduleKind.single &&
+        (time.second != 0 || time.millisecond != 0 || time.microsecond != 0)) {
+      error = timeLocked
+          ? '新版本仅支持分钟级时间，这条旧日程无法按原规则保存。历史仍保留，也可以删除日程。'
+          : '新版本仅支持分钟级时间，请重新选择时间。';
+      notifyListeners();
+      return false;
+    }
+    if (kind != ScheduleKind.single &&
+        original?.draft.rawCron == null &&
+        _slots.isEmpty) {
+      error = '请至少添加一个提醒时间';
+      notifyListeners();
+      return false;
+    }
     busy = true;
     error = null;
+    conflict = false;
     notifyListeners();
     try {
       await repository.save(
@@ -56,9 +155,32 @@ class ScheduleEditorViewModel extends ChangeNotifier {
           kind: kind,
           time: time,
           enabled: enabled,
+          slots: kind == ScheduleKind.single ? null : List.unmodifiable(_slots),
+          rawCron: original?.draft.rawCron,
         ),
         id: original?.id,
+        expectedRevision: original?.revision,
+        operationKey: operationKey,
       );
+      dirty = false;
+      return true;
+    } catch (e) {
+      error = '$e';
+      conflict = e is NotebookApiException && e.code == 'revision_conflict';
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> delete() async {
+    if (busy || original == null || !repository.canWrite) return false;
+    busy = true;
+    error = null;
+    notifyListeners();
+    try {
+      await repository.delete(original!.id);
       dirty = false;
       return true;
     } catch (e) {
@@ -70,8 +192,34 @@ class ScheduleEditorViewModel extends ChangeNotifier {
     }
   }
 
+  Future<void> reload() async {
+    if (busy || original == null) return;
+    busy = true;
+    notifyListeners();
+    try {
+      final latest = await repository.loadSchedule(original!.id);
+      original = latest;
+      name.text = latest.draft.name;
+      description.text = latest.draft.description;
+      kind = latest.draft.kind;
+      time = latest.draft.time;
+      singleTimeSelected = true;
+      enabled = latest.draft.enabled;
+      _slots = ScheduleRules.slots(latest.draft);
+      dirty = false;
+      conflict = false;
+      error = null;
+    } catch (e) {
+      error = '$e';
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
   @override
   void dispose() {
+    repository.removeListener(_repositoryChanged);
     name.dispose();
     description.dispose();
     super.dispose();
@@ -82,25 +230,26 @@ Future<bool> allowDiscard(
   BuildContext context,
   ScheduleEditorViewModel model,
 ) async =>
-    !model.dirty ||
-    await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('舍弃未保存的修改？'),
-            content: const Text('这次填写的内容还没有保存。'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('继续编辑'),
+    !model.busy &&
+    (!model.dirty ||
+        await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('舍弃未保存的修改？'),
+                content: const Text('这次填写的内容还没有保存。'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('继续编辑'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('舍弃修改'),
+                  ),
+                ],
               ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('舍弃修改'),
-              ),
-            ],
-          ),
-        ) ==
-        true;
+            ) ==
+            true);
 
 class ScheduleEditor extends StatefulWidget {
   const ScheduleEditor({
@@ -116,44 +265,27 @@ class ScheduleEditor extends StatefulWidget {
 }
 
 class _ScheduleEditorState extends State<ScheduleEditor> {
-  Future<void> _pickDate() async {
+  Future<void> _pickDateTime() async {
     final m = widget.model;
-    final date = await showDatePicker(
-      context: context,
-      initialDate: m.time,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
-    if (date != null && mounted) {
-      m.update(
-        () => m.time = DateTime.utc(
-          date.year,
-          date.month,
-          date.day,
-          m.time.hour,
-          m.time.minute,
-        ),
-      );
+    final selected = await showNotebookDateTimePicker(context, m.time);
+    if (selected != null && mounted) {
+      m.update(() {
+        m.time = selected;
+        m.singleTimeSelected = true;
+        m.error = null;
+      });
     }
   }
 
-  Future<void> _pickTime() async {
+  Future<void> _addTime() async {
     final m = widget.model;
-    final time = await showNotebookTimePicker(
+    final slot = await showScheduleSlotPicker(
       context,
-      TimeOfDay(hour: m.time.hour, minute: m.time.minute),
+      kind: m.kind,
+      initialTime: TimeOfDay(hour: m.time.hour, minute: m.time.minute),
+      initialDay: m.kind == ScheduleKind.weekly ? m.time.weekday : m.time.day,
     );
-    if (time != null && mounted) {
-      m.update(
-        () => m.time = DateTime.utc(
-          m.time.year,
-          m.time.month,
-          m.time.day,
-          time.hour,
-          time.minute,
-        ),
-      );
-    }
+    if (slot != null && mounted) m.addSlot(slot);
   }
 
   @override
@@ -166,7 +298,7 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
         children: [
           TextField(
             controller: m.name,
-            readOnly: m.readOnly,
+            readOnly: m.readOnly || m.busy,
             onChanged: (_) => m.dirty = true,
             decoration: const InputDecoration(labelText: '日程名称'),
             autofocus: true,
@@ -174,48 +306,108 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
           const SizedBox(height: 18),
           TextField(
             controller: m.description,
-            readOnly: m.readOnly,
+            readOnly: m.readOnly || m.busy,
             onChanged: (_) => m.dirty = true,
             maxLines: 3,
             decoration: const InputDecoration(labelText: '说明'),
           ),
           const SizedBox(height: 18),
           DropdownButtonFormField<ScheduleKind>(
+            key: ValueKey('${m.original?.revision}-${m.kind}'),
             initialValue: m.kind,
             decoration: const InputDecoration(labelText: '日程类型'),
-            items: const [
-              DropdownMenuItem(value: ScheduleKind.single, child: Text('单次')),
-              DropdownMenuItem(value: ScheduleKind.daily, child: Text('每天')),
+            items: [
+              if (m.original == null ||
+                  m.original?.draft.kind == ScheduleKind.single)
+                const DropdownMenuItem(
+                  value: ScheduleKind.single,
+                  child: Text('单次'),
+                ),
+              DropdownMenuItem(
+                value: ScheduleKind.daily,
+                child: Text(
+                  m.original?.draft.rawCron == null ? '每天' : '复杂周期（保留原规则）',
+                ),
+              ),
               DropdownMenuItem(value: ScheduleKind.weekly, child: Text('每周')),
               DropdownMenuItem(value: ScheduleKind.monthly, child: Text('每月')),
             ],
-            onChanged: m.original != null
+            onChanged: m.readOnly || m.busy || m.kindLocked
                 ? null
-                : (value) => m.update(() => m.kind = value!),
+                : (value) => m.changeKind(value!),
           ),
           const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (m.kind != ScheduleKind.daily)
-                OutlinedButton(
-                  onPressed: m.timeLocked ? null : _pickDate,
-                  child: Text(
-                    '${m.time.year}-${m.time.month}-${m.time.day}${m.kind == ScheduleKind.weekly
-                        ? ' · 星期${['一', '二', '三', '四', '五', '六', '日'][m.time.weekday - 1]}'
-                        : m.kind == ScheduleKind.monthly
-                        ? ' · 每月此日'
-                        : ''}',
+          if (m.original?.draft.rawCron != null)
+            Text(
+              '当前规则暂不能在此修改，保留原规则：\n${m.original!.draft.rawCron!.join("\n")}',
+              style: const TextStyle(color: NotebookTheme.muted),
+            )
+          else if (m.kind == ScheduleKind.single) ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (m.singleTimeSelected)
+                  ScheduleTimeChip.single(
+                    key: const ValueKey('single-selected-time'),
+                    date: m.time,
+                    onRemoved: m.timeLocked || m.busy
+                        ? null
+                        : m.removeSingleTime,
+                  ),
+                if (!m.singleTimeSelected)
+                  Tooltip(
+                    message: '选择日期和时间',
+                    child: OutlinedButton(
+                      key: const ValueKey('add-single-time'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(44, 44),
+                        padding: const EdgeInsets.all(10),
+                        shape: const StadiumBorder(),
+                      ),
+                      onPressed: m.timeLocked || m.busy ? null : _pickDateTime,
+                      child: const Icon(Icons.add, size: 20),
+                    ),
+                  ),
+              ],
+            ),
+          ] else ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                for (final slot in m.slots)
+                  ScheduleTimeChip(
+                    key: ValueKey(slot),
+                    slot: slot,
+                    onRemoved: m.readOnly || m.busy
+                        ? null
+                        : () => m.removeSlot(slot),
+                  ),
+                Tooltip(
+                  message: '添加提醒时间',
+                  child: OutlinedButton(
+                    key: const ValueKey('add-period-time'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(44, 44),
+                      padding: const EdgeInsets.all(10),
+                      shape: const StadiumBorder(),
+                    ),
+                    onPressed: m.readOnly || m.busy ? null : _addTime,
+                    child: const Icon(Icons.add, size: 20),
                   ),
                 ),
-              OutlinedButton(
-                onPressed: m.timeLocked ? null : _pickTime,
-                child: Text('${timeLabel(m.time)} · 北京时间'),
-              ),
-            ],
-          ),
-          if (m.timeLocked)
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              m.slots.isEmpty ? '点击＋添加提醒时间。' : '删除全部提醒时间后，可切换周期类型。',
+              style: const TextStyle(fontSize: 12, color: NotebookTheme.muted),
+            ),
+          ],
+          if (m.timeLocked && m.kind == ScheduleKind.single)
             const Padding(
               padding: EdgeInsets.only(top: 12),
               child: Text(
@@ -229,19 +421,22 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
               title: Text(m.enabled ? '周期已启用' : '周期已暂停'),
               subtitle: const Text('恢复从下一次未来触发继续'),
               value: m.enabled,
-              onChanged: m.readOnly
+              onChanged: m.readOnly || m.busy
                   ? null
                   : (value) => m.update(() => m.enabled = value),
             ),
           const SizedBox(height: 16),
-          const Text(
-            '示例模式：修改仅保留在本次运行。历史提醒不随未来规则修改。',
+          Text(
+            m.repository.serverPagination
+                ? '保存后更新未来安排，历史提醒保留。'
+                : '示例模式：修改仅保留在本次运行。历史提醒不随未来规则修改。',
             style: TextStyle(
               fontSize: 11,
               height: 1.7,
               color: NotebookTheme.muted,
             ),
           ),
+          if (!m.repository.canWrite) const Text('提醒服务暂不可用，请恢复连接后保存。'),
           if (m.error != null)
             Padding(
               padding: const EdgeInsets.only(top: 12),
@@ -250,6 +445,15 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),
+          if (m.conflict)
+            TextButton(
+              onPressed: m.busy
+                  ? null
+                  : () async {
+                      if (await allowDiscard(context, m)) await m.reload();
+                    },
+              child: const Text('重新加载最新版本'),
+            ),
           const SizedBox(height: 20),
           Wrap(
             spacing: 8,
@@ -257,7 +461,7 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
             children: [
               if (!m.readOnly)
                 FilledButton(
-                  onPressed: m.busy
+                  onPressed: m.busy || !m.repository.canWrite
                       ? null
                       : () async {
                           if (await m.save() && mounted) widget.onSaved();
@@ -270,7 +474,7 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
               ),
               if (m.original != null && !m.readOnly)
                 TextButton(
-                  onPressed: m.busy
+                  onPressed: m.busy || !m.repository.canWrite
                       ? null
                       : () async {
                           final yes = await showDialog<bool>(
@@ -292,8 +496,7 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
                             ),
                           );
                           if (yes == true) {
-                            await m.repository.delete(m.original!.id);
-                            if (mounted) widget.onSaved();
+                            if (await m.delete() && mounted) widget.onSaved();
                           }
                         },
                   child: const Text('删除'),
@@ -345,7 +548,7 @@ class _ScheduleCreateDialogState extends State<ScheduleCreateDialog> {
                     ),
                   ),
                   IconButton(
-                    onPressed: close,
+                    onPressed: model.busy ? null : close,
                     tooltip: '关闭',
                     icon: const Icon(Icons.close),
                   ),

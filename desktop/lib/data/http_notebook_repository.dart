@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import '../contracts/notebook_repository.dart';
+import '../contracts/schedule_rules.dart';
 
 /// Go 是唯一业务事实来源；本类只保存只读快照，不展开规则。
 class HttpNotebookRepository extends NotebookRepository {
@@ -24,7 +25,7 @@ class HttpNotebookRepository extends NotebookRepository {
   String _nextPending = '';
 
   @override
-  bool get supportsRuleChanges => false;
+  bool get supportsRuleChanges => true;
   @override
   bool get serverPagination => true;
   @override
@@ -85,15 +86,20 @@ class HttpNotebookRepository extends NotebookRepository {
     String path, {
     Map<String, String>? query,
     Object? body,
+    String? method,
+    String? operationKey,
   }) async {
     try {
       // 提醒资源与 scheduler 同级，不能沿用日程接口的路径前缀。
       final resourcePath = path.startsWith('notifications') ? '../$path' : path;
       final uri = _base.resolve(resourcePath).replace(queryParameters: query);
       final request = await _client
-          .openUrl(body == null ? 'GET' : 'POST', uri)
+          .openUrl(method ?? (body == null ? 'GET' : 'POST'), uri)
           .timeout(const Duration(seconds: 5));
       request.followRedirects = false;
+      if (operationKey != null) {
+        request.headers.set('Idempotency-Key', operationKey);
+      }
       if (body != null) {
         request.headers.contentType = ContentType.json;
         request.write(jsonEncode(body));
@@ -105,11 +111,14 @@ class HttpNotebookRepository extends NotebookRepository {
           .transform(utf8.decoder)
           .join()
           .timeout(const Duration(seconds: 5));
+      if (response.statusCode == 204) return null;
       final value = jsonDecode(text) as Map<String, dynamic>;
-      if (response.statusCode != 200) {
-        throw StateError(
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw NotebookApiException(
+          value['error']?['code']?.toString() ?? 'request_failed',
           value['error']?['message']?.toString() ??
               '请求失败（${response.statusCode}）',
+          status: response.statusCode,
         );
       }
       return value['data'];
@@ -288,15 +297,141 @@ class HttpNotebookRepository extends NotebookRepository {
     await refresh();
   }
 
+  final Map<String, ScheduleSummary> _schedules = {};
+  final Map<String, (String, String)> _uncertainWrites = {};
+
+  static ScheduleSummary summary(dynamic raw) {
+    final item = raw as Map<String, dynamic>;
+    final single = item['type'] == 'single';
+    final draft = single
+        ? ScheduleDraft(
+            name: item['name'] as String,
+            description: item['description'] as String? ?? '',
+            kind: ScheduleKind.single,
+            time: wallTime(item['single']['notifyTime'] as String),
+          )
+        : ScheduleRules.decode(
+            name: item['name'] as String,
+            description: item['description'] as String? ?? '',
+            cron: (item['period']['cron'] as List).cast<String>(),
+            enabled: item['period']['open'] as bool,
+            anchor: beijingNow(),
+          );
+    return ScheduleSummary(
+      item['id'].toString(),
+      draft,
+      deleted: item['cancelled'] == true,
+      revision: item['revision'] as int,
+    );
+  }
+
   @override
-  ScheduleSummary schedule(String id) =>
-      throw UnsupportedError('规则编辑将在阶段 C 接入');
+  ScheduleSummary schedule(String id) => _schedules[id]!;
+
   @override
-  Future<void> save(ScheduleDraft draft, {String? id}) async =>
-      throw UnsupportedError('规则编辑将在阶段 C 接入');
+  Future<ScheduleSummary> loadSchedule(String id) async {
+    final result = summary(await _request('schedules/$id'));
+    if (!_disposed) _schedules[id] = result;
+    return result;
+  }
+
   @override
-  Future<void> delete(String id) async =>
-      throw UnsupportedError('规则删除将在阶段 C 接入');
+  Future<List<ScheduleSummary>> listSchedules({int offset = 0}) async {
+    final data = await _request(
+      'schedules',
+      query: {'limit': '50', 'offset': '$offset'},
+    );
+    final result = (data as List).map(summary).toList(growable: false);
+    if (!_disposed) {
+      for (final item in result) {
+        _schedules[item.id] = item;
+      }
+    }
+    return result;
+  }
+
+  @override
+  Future<void> save(
+    ScheduleDraft draft, {
+    String? id,
+    int? expectedRevision,
+    String? operationKey,
+  }) async {
+    if (draft.kind == ScheduleKind.single &&
+        (draft.time.second != 0 ||
+            draft.time.millisecond != 0 ||
+            draft.time.microsecond != 0)) {
+      throw StateError('新版本仅支持分钟级时间，请选择没有秒或亚秒的时间。');
+    }
+    final body = <String, Object?>{
+      'name': draft.name,
+      'description': draft.description,
+      'type': draft.kind == ScheduleKind.single ? 'single' : 'period',
+      if (id != null)
+        'expectedRevision': expectedRevision ?? schedule(id).revision,
+      if (draft.kind == ScheduleKind.single)
+        'single': {
+          'notifyTime':
+              '${dateKey(draft.time)}T${timeLabel(draft.time)}:00+08:00',
+        }
+      else
+        'period': {'cron': ScheduleRules.encode(draft), 'open': draft.enabled},
+    };
+    final fingerprint = jsonEncode(body);
+    final session = operationKey ?? 'save-${id ?? "new"}';
+    final previous = _uncertainWrites[session];
+    if (previous != null && previous.$1 != fingerprint) {
+      throw StateError('上次保存结果尚未确认，请保留原草稿重试，以免重复创建或覆盖。');
+    }
+    final key =
+        previous?.$2 ??
+        '$session-${DateTime.now().microsecondsSinceEpoch}-${_generation++}';
+    _uncertainWrites[session] = (fingerprint, key);
+    ++_generation;
+    try {
+      final result = summary(
+        await _request(
+          id == null ? 'schedules' : 'schedules/$id',
+          method: id == null ? 'POST' : 'PUT',
+          body: body,
+          operationKey: key,
+        ),
+      );
+      _uncertainWrites.remove(session);
+      if (_disposed) return;
+      ++_generation;
+      _schedules[result.id] = result;
+      await refresh();
+    } on NotebookApiException catch (e) {
+      if (e.status < 500) {
+        _uncertainWrites.remove(session);
+      }
+      rethrow;
+    } finally {
+      if (!_disposed) {
+        _loading = false;
+        _publish();
+      }
+    }
+  }
+
+  @override
+  Future<void> delete(String id) async {
+    ++_generation;
+    try {
+      await _request('schedules/$id', method: 'DELETE');
+      if (_disposed) return;
+      ++_generation;
+      _schedules.remove(id);
+      await refresh();
+    } finally {
+      if (!_disposed) {
+        _loading = false;
+        _publish();
+      }
+    }
+  }
+
   @override
   void dispose() {
     _disposed = true;

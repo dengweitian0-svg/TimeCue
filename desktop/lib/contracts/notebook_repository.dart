@@ -9,6 +9,42 @@ bool sameDay(DateTime a, DateTime b) =>
 enum ScheduleKind { single, daily, weekly, monthly }
 
 @immutable
+class ScheduleTimeSlot {
+  const ScheduleTimeSlot(this.kind, this.hour, this.minute, {this.day});
+  final ScheduleKind kind;
+  final int hour, minute;
+  final int? day;
+  String get clockLabel =>
+      '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+  String get label => switch (kind) {
+    ScheduleKind.weekly =>
+      '周${['一', '二', '三', '四', '五', '六', '日'][day! - 1]} $clockLabel · 北京时间',
+    ScheduleKind.monthly => '每月 $day 日 $clockLabel · 北京时间',
+    _ => '$clockLabel · 北京时间',
+  };
+  bool get valid =>
+      hour >= 0 &&
+      hour < 24 &&
+      minute >= 0 &&
+      minute < 60 &&
+      switch (kind) {
+        ScheduleKind.daily => day == null,
+        ScheduleKind.weekly => day != null && day! >= 1 && day! <= 7,
+        ScheduleKind.monthly => day != null && day! >= 1 && day! <= 31,
+        ScheduleKind.single => false,
+      };
+  @override
+  bool operator ==(Object other) =>
+      other is ScheduleTimeSlot &&
+      kind == other.kind &&
+      hour == other.hour &&
+      minute == other.minute &&
+      day == other.day;
+  @override
+  int get hashCode => Object.hash(kind, hour, minute, day);
+}
+
+@immutable
 class ScheduleDraft {
   const ScheduleDraft({
     required this.name,
@@ -16,20 +52,35 @@ class ScheduleDraft {
     required this.kind,
     required this.time,
     this.enabled = true,
+    this.times,
+    this.days,
+    this.rawCron,
+    this.slots,
   });
   final String name, description;
   final ScheduleKind kind;
   // 示例中的 UTC 字段存放北京时间墙上时刻；正式接入由响应映射统一转换。
   final DateTime time;
   final bool enabled;
+  final List<String>? times;
+  final List<int>? days;
+  // 无法无损映射到预设的旧规则只按原样回传。
+  final List<String>? rawCron;
+  final List<ScheduleTimeSlot>? slots;
 }
 
 @immutable
 class ScheduleSummary {
-  const ScheduleSummary(this.id, this.draft, {this.deleted = false});
+  const ScheduleSummary(
+    this.id,
+    this.draft, {
+    this.deleted = false,
+    this.revision = 1,
+  });
   final String id;
   final ScheduleDraft draft;
   final bool deleted;
+  final int revision;
 }
 
 @immutable
@@ -70,6 +121,9 @@ class TriggerSummary {
 
 abstract class NotebookRepository extends ChangeNotifier {
   bool get supportsRuleChanges => true;
+  bool get canWrite =>
+      supportsRuleChanges &&
+      (!serverPagination || (hasSnapshot && refreshError == null));
   bool get serverPagination => false;
   int get pendingTotal => pending.length;
   int get pendingPageIndex => 0;
@@ -87,7 +141,23 @@ abstract class NotebookRepository extends ChangeNotifier {
   List<TriggerSummary> get pending;
   List<TriggerSummary> entriesOn(DateTime date);
   ScheduleSummary schedule(String id);
+  Future<ScheduleSummary> loadSchedule(String id) async => schedule(id);
+  Future<List<ScheduleSummary>> listSchedules({int offset = 0}) async =>
+      const [];
   Future<void> confirm(Set<String> ids);
-  Future<void> save(ScheduleDraft draft, {String? id});
+  Future<void> save(
+    ScheduleDraft draft, {
+    String? id,
+    int? expectedRevision,
+    String? operationKey,
+  });
   Future<void> delete(String id);
+}
+
+class NotebookApiException implements Exception {
+  const NotebookApiException(this.code, this.message, {this.status = 400});
+  final String code, message;
+  final int status;
+  @override
+  String toString() => message;
 }

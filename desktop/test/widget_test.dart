@@ -58,6 +58,11 @@ void main() {
     expect(find.text('舍弃未保存的修改？'), findsOneWidget);
     await tester.tap(find.text('继续编辑'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('add-single-time')));
+    await tester.tap(find.byKey(const ValueKey('add-single-time')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('保存日程'));
     await tester.tap(find.text('保存日程'));
     await tester.pumpAndSettle();

@@ -4,3 +4,7 @@
 - `notebook_model_test.dart`：示例数据、提醒确认、分页选择和页面状态测试。
 - `http_notebook_repository_test.dart`：HTTP 路径、快照、分页、确认、错误和刷新测试。
 - `notebook_time_picker_test.dart`：时间输入、转盘联动与交互测试。
+
+- HTTP 测试覆盖 201/204、PUT、草稿版本、暂停创建、多时间规则、结果不明时幂等重试、冲突保留与重新加载；`schedule_rules_test.dart` 验证预设往返和复杂规则保留，`schedule_management_test.dart` 验证暂停日程的管理入口。
+
+- `schedule_editor_test.dart`：周期＋添加、星期/日号与时间同时选择、圆角项悬停删除、重复/混合类型拒绝、空列表校验及独立组合保存。

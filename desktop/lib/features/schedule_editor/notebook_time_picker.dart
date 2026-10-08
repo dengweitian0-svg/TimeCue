@@ -13,8 +13,19 @@ Future<TimeOfDay?> showNotebookTimePicker(
 );
 
 class NotebookTimePicker extends StatefulWidget {
-  const NotebookTimePicker({super.key, required this.initialTime});
+  const NotebookTimePicker({
+    super.key,
+    required this.initialTime,
+    this.title = '选择时间',
+    this.selection,
+    this.onSelected,
+    this.leftPane,
+  });
   final TimeOfDay initialTime;
+  final String title;
+  final Widget? selection;
+  final Widget? leftPane;
+  final ValueChanged<TimeOfDay>? onSelected;
   @override
   State<NotebookTimePicker> createState() => _NotebookTimePickerState();
 }
@@ -101,7 +112,12 @@ class _NotebookTimePickerState extends State<NotebookTimePicker> {
   void step(int delta) =>
       choose(((hours ? time.hour : time.minute) + delta) % (hours ? 24 : 60));
   void submit() {
-    if (readInput()) Navigator.pop(context, time);
+    if (!readInput()) return;
+    if (widget.onSelected != null) {
+      widget.onSelected!(time);
+    } else {
+      Navigator.pop(context, time);
+    }
   }
 
   @override
@@ -113,140 +129,205 @@ class _NotebookTimePickerState extends State<NotebookTimePicker> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) => CallbackShortcuts(
+  Widget _timePanel() => CallbackShortcuts(
     bindings: {
       const SingleActivator(LogicalKeyboardKey.arrowRight): () => step(1),
       const SingleActivator(LogicalKeyboardKey.arrowUp): () => step(1),
       const SingleActivator(LogicalKeyboardKey.arrowLeft): () => step(-1),
       const SingleActivator(LogicalKeyboardKey.arrowDown): () => step(-1),
     },
-    child: Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 620),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final header = Wrap(
+          alignment: WrapAlignment.center,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _TimeField(
+              controller: hourInput,
+              focusNode: hourFocus,
+              label: '小时',
+              active: hours,
+              onChanged: (text) => edit(true, text),
+              onSubmitted: () => minuteFocus.requestFocus(),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                ':',
+                style: TextStyle(fontSize: 38, color: NotebookTheme.muted),
+              ),
+            ),
+            _TimeField(
+              controller: minuteInput,
+              focusNode: minuteFocus,
+              label: '分钟',
+              active: !hours,
+              onChanged: (text) => edit(false, text),
+              onSubmitted: submit,
+            ),
+          ],
+        );
+        final dial = NotebookTimeDial(
+          hours: hours,
+          value: hours ? time.hour : time.minute,
+          onChanged: choose,
+          onStep: step,
+        );
+        if (constraints.maxWidth >= 530 &&
+            MediaQuery.textScalerOf(context).scale(14) < 20) {
+          return Row(
+            children: [
+              header,
+              const SizedBox(width: 24),
+              Expanded(child: dial),
+            ],
+          );
+        }
+        return Column(
+          children: [
+            Center(child: header),
+            const SizedBox(height: 20),
+            dial,
+          ],
+        );
+      },
+    ),
+  );
+
+  Widget _pickerContent() {
+    if (widget.leftPane == null) return _timePanel();
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: math.max(
+            constraints.maxWidth,
+            MediaQuery.textScalerOf(context).scale(14) >= 20 ? 1000 : 800,
+          ),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('选择时间', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 8),
-              const Text(
-                '北京时间 · 可直接输入，或拖动指针、滚轮逐格调整',
-                style: TextStyle(fontSize: 12, color: NotebookTheme.muted),
-              ),
-              const SizedBox(height: 24),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final header = Wrap(
-                    alignment: WrapAlignment.center,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      _TimeField(
-                        controller: hourInput,
-                        focusNode: hourFocus,
-                        label: '小时',
-                        active: hours,
-                        onChanged: (text) => edit(true, text),
-                        onSubmitted: () => minuteFocus.requestFocus(),
-                      ),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 8),
-                        child: Text(
-                          ':',
-                          style: TextStyle(
-                            fontSize: 38,
-                            color: NotebookTheme.muted,
-                          ),
-                        ),
-                      ),
-                      _TimeField(
-                        controller: minuteInput,
-                        focusNode: minuteFocus,
-                        label: '分钟',
-                        active: !hours,
-                        onChanged: (text) => edit(false, text),
-                        onSubmitted: submit,
-                      ),
-                    ],
-                  );
-                  final dial = NotebookTimeDial(
-                    hours: hours,
-                    value: hours ? time.hour : time.minute,
-                    onChanged: choose,
-                    onStep: step,
-                  );
-                  if (constraints.maxWidth >= 530 &&
-                      MediaQuery.textScalerOf(context).scale(14) < 20) {
-                    return Row(
-                      children: [
-                        header,
-                        const SizedBox(width: 24),
-                        Expanded(child: dial),
-                      ],
-                    );
-                  }
-                  return Column(
-                    children: [
-                      Center(child: header),
-                      const SizedBox(height: 20),
-                      dial,
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  IconButton(
-                    onPressed: () => step(-1),
-                    tooltip: hours ? '上一小时' : '上一分钟',
-                    icon: const Icon(Icons.remove),
-                  ),
-                  Flexible(
-                    child: Text(
-                      hours ? '每格 1 小时 · 30°' : '每格 1 分钟 · 6°',
-                      style: const TextStyle(
-                        fontSize: 12,
+              SizedBox(width: 340, child: widget.leftPane!),
+              const SizedBox(width: 24),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '选择时间',
+                      style: TextStyle(
+                        fontSize: 16,
                         color: NotebookTheme.muted,
                       ),
                     ),
-                  ),
-                  IconButton(
-                    onPressed: () => step(1),
-                    tooltip: hours ? '下一小时' : '下一分钟',
-                    icon: const Icon(Icons.add),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (error != null)
-                Text(
-                  error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    const SizedBox(height: 12),
+                    _timePanel(),
+                  ],
                 ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: NotebookTheme.cover,
-                      foregroundColor: NotebookTheme.paper,
-                    ),
-                    onPressed: submit,
-                    child: const Text('确定'),
-                  ),
-                ],
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    child: ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: widget.leftPane == null ? 620 : 1100,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.title,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  if (widget.selection != null) ...[
+                    const SizedBox(height: 16),
+                    widget.selection!,
+                  ],
+                  const SizedBox(height: 8),
+                  const Text(
+                    '北京时间 · 可直接输入，或拖动指针、滚轮逐格调整',
+                    style: TextStyle(fontSize: 12, color: NotebookTheme.muted),
+                  ),
+                  const SizedBox(height: 24),
+                  _pickerContent(),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => step(-1),
+                      tooltip: hours ? '上一小时' : '上一分钟',
+                      icon: const Icon(Icons.remove),
+                    ),
+                    Flexible(
+                      child: Text(
+                        hours ? '每格 1 小时 · 30°' : '每格 1 分钟 · 6°',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: NotebookTheme.muted,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => step(1),
+                      tooltip: hours ? '下一小时' : '下一分钟',
+                      icon: const Icon(Icons.add),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('取消'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: NotebookTheme.cover,
+                        foregroundColor: NotebookTheme.paper,
+                      ),
+                      onPressed: submit,
+                      child: const Text('确定'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     ),
   );

@@ -33,6 +33,18 @@ class ErrorDatePage extends CalendarRightPage {
   final DateTime date;
 }
 
+class LoadingSchedulePage extends CalendarRightPage {
+  const LoadingSchedulePage(this.date, this.id);
+  final DateTime date;
+  final String id;
+}
+
+class ScheduleErrorPage extends CalendarRightPage {
+  const ScheduleErrorPage(this.date, this.id, this.message);
+  final DateTime date;
+  final String id, message;
+}
+
 class NotebookViewModel extends ChangeNotifier {
   NotebookViewModel(this.repository)
     : month = DateTime.utc(repository.demoNow.year, repository.demoNow.month) {
@@ -49,6 +61,8 @@ class NotebookViewModel extends ChangeNotifier {
     EditingPage(:final date) => date,
     LoadingDatePage(:final date) => date,
     ErrorDatePage(:final date) => date,
+    LoadingSchedulePage(:final date) => date,
+    ScheduleErrorPage(:final date) => date,
     _ => null,
   };
   final Set<String> _selected = {};
@@ -103,6 +117,10 @@ class NotebookViewModel extends ChangeNotifier {
   }
 
   void changeTab(NotebookTab tab) {
+    ++_dateRequest;
+    if (_right case LoadingSchedulePage(:final date)) {
+      _right = DateListPage(date);
+    }
     _tab = tab;
     notifyListeners();
   }
@@ -126,12 +144,30 @@ class NotebookViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void edit(String id) {
-    _right = EditingPage(selectedDate!, id);
+  Future<void> edit(String id) async {
+    final date = selectedDate ?? repository.demoNow;
+    final request = ++_dateRequest;
+    _tab = NotebookTab.calendar;
+    if (repository.serverPagination) {
+      _right = LoadingSchedulePage(date, id);
+      notifyListeners();
+      try {
+        await repository.loadSchedule(id);
+      } catch (e) {
+        if (!_disposed && request == _dateRequest) {
+          _right = ScheduleErrorPage(date, id, '$e');
+          notifyListeners();
+        }
+        return;
+      }
+    }
+    if (_disposed || request != _dateRequest) return;
+    _right = EditingPage(date, id);
     notifyListeners();
   }
 
   void back() {
+    ++_dateRequest;
     if (selectedDate != null) _right = DateListPage(selectedDate!);
     notifyListeners();
   }

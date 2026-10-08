@@ -115,11 +115,14 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           Positioned(
             bottom: 24,
             right: 28,
-            child: FilledButton.icon(
-              onPressed: widget.repository.supportsRuleChanges ? create : null,
-              style: _roomActionStyle,
-              icon: const Icon(Icons.add, size: 17),
-              label: const Text('添加日程'),
+            child: ListenableBuilder(
+              listenable: widget.repository,
+              builder: (context, _) => FilledButton.icon(
+                onPressed: widget.repository.canWrite ? create : null,
+                style: _roomActionStyle,
+                icon: const Icon(Icons.add, size: 17),
+                label: const Text('添加日程'),
+              ),
             ),
           ),
           Positioned(
