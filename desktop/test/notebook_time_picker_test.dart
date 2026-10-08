@@ -37,7 +37,14 @@ void main() {
     await tester.pump();
     expect(
       tester.widget<NotebookTimeDial>(find.byType(NotebookTimeDial)).value,
-      23,
+      32,
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('time-field-分钟')))
+          .focusNode!
+          .hasFocus,
+      isTrue,
     );
     await tester.enterText(find.byKey(const ValueKey('time-field-分钟')), '58');
     await tester.pump();
@@ -57,6 +64,43 @@ void main() {
     await tester.tap(find.text('确定'));
     await tester.pumpAndSettle();
     expect(result, const TimeOfDay(hour: 23, minute: 35));
+  });
+  testWidgets('小时输满两位后选中分钟，未完成或越界小时不跳转', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NotebookTheme.data,
+        home: const NotebookTimePicker(
+          initialTime: TimeOfDay(hour: 15, minute: 32),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final hour = find.byKey(const ValueKey('time-field-小时'));
+    final minute = find.byKey(const ValueKey('time-field-分钟'));
+    await tester.enterText(hour, '1');
+    await tester.pump();
+    expect(tester.widget<TextField>(hour).focusNode!.hasFocus, isTrue);
+    await tester.enterText(hour, '24');
+    await tester.pump();
+    expect(tester.widget<TextField>(hour).focusNode!.hasFocus, isTrue);
+    await tester.enterText(hour, '09');
+    await tester.pump();
+    final minuteField = tester.widget<TextField>(minute);
+    expect(minuteField.focusNode!.hasFocus, isTrue);
+    expect(
+      minuteField.controller!.selection,
+      const TextSelection(baseOffset: 0, extentOffset: 2),
+    );
+    expect(
+      tester.widget<NotebookTimeDial>(find.byType(NotebookTimeDial)).hours,
+      isFalse,
+    );
+    await tester.enterText(minute, '45');
+    await tester.pump();
+    expect(
+      tester.widget<NotebookTimeDial>(find.byType(NotebookTimeDial)).value,
+      45,
+    );
   });
   test('小时双圈与分钟刻度精确吸附，保留任意分钟', () {
     final hour = NotebookTimeDial(

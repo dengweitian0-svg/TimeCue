@@ -81,6 +81,10 @@ class _NotebookTimePickerState extends State<NotebookTimePicker> {
         error = text.isEmpty ? null : '小时请输入 0–23，分钟请输入 0–59';
       }
     });
+    // 只在用户输满两位合法小时后前进，转盘回填不会触发焦点跳转。
+    if (hour && text.length == 2 && value != null && value >= 0 && value < 24) {
+      minuteFocus.requestFocus();
+    }
   }
 
   void choose(int value) {
