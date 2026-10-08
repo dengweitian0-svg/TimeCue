@@ -115,8 +115,8 @@ git switch -c feat/12-recurring-reminder
 
 - Go：`gofmt`、`go vet ./...`、`go test ./...`。
 - Flutter：`flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。
-- Windows 构建：`flutter build windows --release --dart-define=TIMECUE_DEMO=true`，当前产物是阶段 A 视觉示例。
-- 本地运行：在 `desktop/` 执行 `flutter run -d windows --dart-define=TIMECUE_DEMO=true`。
+- Windows 构建：`flutter build windows --release`，默认连接手动启动的 Go 服务。
+- 本地运行：先在根目录运行 `go run ./cmd/flutter`，再在 `desktop/` 执行 `flutter run -d windows`；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
 CI 通过后再合并 PR。
 
 ## main 分支策略

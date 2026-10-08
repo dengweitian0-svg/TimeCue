@@ -2,7 +2,7 @@
 
 TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由 Go 管理日程规则、提醒状态和本地数据，由 Flutter 提供桌面界面及系统交互。
 
-> 当前可运行 Flutter 视觉骨架和独立 Go 本机 HTTP API。二者尚未接通；系统通知、托盘及发布生命周期仍待实现。
+> 当前可运行 Flutter 视觉骨架和独立 Go 本机 HTTP API。阶段 B 已接通查询与确认；规则变更、系统通知、托盘及发布生命周期仍待实现。
 
 ## 当前实现
 
@@ -11,9 +11,9 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 | 启动入口 | 加载配置、打开 SQLite、检查手动迁移结构，再监听 `127.0.0.1:10086`；收到退出信号后优雅关闭。 |
 | 配置 | 从内嵌的 `internal/config/default.yaml` 加载默认值，以工作目录下的 `config.yaml` 覆盖；支持文件监听、配置快照、修改用户配置和恢复默认值。 |
 | 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
-| 日程与提醒 | 已有创建日程和首条提醒的原子写入、下一次触发计算与提醒推进服务；HTTP API 支持创建、列表、查看及软删除日程，运行中的调度器尚未实现。 |
+| 日程与提醒 | 已有创建日程和首条提醒的原子写入、下一次触发计算与提醒推进服务；HTTP API 支持日程基础操作、日期/月历/历史待确认查询和原子单条/批量确认，运行中的调度器尚未实现。 |
 | SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；表结构由独立 SQL 迁移建立，入口检查迁移版本和表结构但不自动执行迁移。 |
-| Flutter | `desktop/` 已实现三时段房间、双页本子及创建/编辑视觉骨架，使用显式内存示例仓储；尚未接入 Go。 |
+| Flutter | `desktop/` 已实现三时段房间、双页本子及创建/编辑视觉骨架，默认接入 Go 查询与单条/批量确认，视觉示例仍用显式内存仓储。 |
 
 
 ## 产品目标与核心规则
@@ -24,6 +24,8 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 - 前端提供带 `+08:00` 偏移的北京时间，周期规则也按固定 UTC+8 解释；Go 端返回的业务时间统一带 `+08:00`，不采用夏令时。SQLite 仍以 Unix 纳秒保存时间点。可选的周期截止时间尚未实现。
 - 持久化每次提醒的计划时间、投递结果和用户确认状态。展示通知、打开详情与用户确认是不同操作；外部通知结果须回传 Go 更新状态。
 - Flutter 负责界面及 Windows 桌面交互，Go 负责日程用例、调度与 SQLite 状态转换。双方通过窄接口交换命令、查询结果和提醒事件。
+
+业务持久化仅使用 `schedules` 和 `notifications` 两张表；Go 查询与确认归入原有日程和提醒模块。Flutter 的日程本是展示方式，没有独立数据库、表或后端业务模型。
 
 重要状态只能经明确的业务操作改变。已发生的提醒应保留可查询的记录；周期表达式只决定未来触发时间，不代替提醒历史或确认状态。
 
@@ -46,6 +48,8 @@ db:
 
 日志的 `time` 字段统一使用固定 UTC+8 北京时间，格式为 `YYYY-MM-DD-HH:MM:SS`（例如 `2026-10-01-09:30:00`），精确到秒，不受主机时区影响。
 
+HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查询成功使用 Debug，创建、删除及提醒确认成功使用 Info，拒绝使用 Warn，内部失败使用 Error。提醒列表记录本页数量和总数，详情记录提醒及日程 ID，确认记录去重后返回条数；不记录名称、说明、请求体、响应体、查询字符串或完整批量 ID 集合。
+
 配置文件变动会触发重新解析，并以原子方式发布新的配置快照。**目前实际作用到运行组件的热更新只有 `log.level`**。`db.db_path` 的新值可以进入配置快照，但尚无数据库连接切换或数据迁移，因此不能把修改配置文件当作已搬迁数据库。后续的热更新范围限定为 `log.level` 和 `db.db_path`；`log.log_path` 计划只在启动时读取。
 
 当前根目录的 `config.yaml` 还包含旧版的 `backup`、`window` 字段。现行配置结构不使用它们，也没有相应的备份或窗口行为。配置写入会保留已有的未知字段，但不会让这些字段生效。
@@ -61,6 +65,12 @@ db:
 | GET | `/api/v1/scheduler/schedules` | 查询未删除日程；支持 `name`、`type`、`limit`、`offset` |
 | GET | `/api/v1/scheduler/schedules/:id` | 查看未删除日程 |
 | DELETE | `/api/v1/scheduler/schedules/:id` | 软删除日程，成功返回 204 |
+| GET | `/api/v1/scheduler/schedules?view=occurrences&include=unacknowledged&date=YYYY-MM-DD` | 同一读取快照的日期安排、待确认首分页及总数 |
+| GET | `/api/v1/scheduler/schedules?view=occurrences&date=YYYY-MM-DD&cursor=...` | 日期事实与未来投影，分页去重 |
+| GET | `/api/v1/scheduler/schedules?view=calendar&month=YYYY-MM` | 月份日期标记 |
+| GET | `/api/v1/notifications?state=unacknowledged&cursor=...` | 全历史到期未确认页，含失败及待投递 |
+| GET | `/api/v1/notifications/:id` | 提醒详情，父日程删除后历史仍可查 |
+| POST | `/api/v1/notifications/acknowledgements` | 单条及批量统一提交 notificationIds，最多 500 个，整批校验后原子确认 |
 
 创建请求示例：
 

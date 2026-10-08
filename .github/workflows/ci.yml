@@ -76,5 +76,5 @@ jobs:
         run: flutter analyze
       - name: 运行 Flutter 测试
         run: flutter test
-      - name: 构建 Windows 视觉示例
-        run: flutter build windows --release --dart-define=TIMECUE_DEMO=true
+      - name: 构建 Windows 桌面端
+        run: flutter build windows --release
