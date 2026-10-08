@@ -3,7 +3,7 @@ import '../../contracts/notebook_repository.dart';
 import '../../theme/notebook_theme.dart';
 import 'notebook_time_picker.dart';
 
-/// 一次确认只添加一个日期和时间组合，周期类型由外层表单固定。
+/// 一次确认返回一个日期和时间组合，添加或替换由外层表单决定。
 Future<ScheduleTimeSlot?> showScheduleSlotPicker(
   BuildContext context, {
   required ScheduleKind kind,

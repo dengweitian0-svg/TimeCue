@@ -62,13 +62,45 @@ void main() {
     expect(model.time, DateTime.utc(2026, 10, 9, 20, 11));
     expect(find.text('2026-10-9 20:11 · 北京时间'), findsOneWidget);
     expect(find.byKey(const ValueKey('add-single-time')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('single-selected-time')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<CalendarDatePicker>(find.byType(CalendarDatePicker))
+          .initialDate,
+      DateTime(2026, 10, 9),
+    );
+    expect(
+      tester
+          .widget<NotebookTimePicker>(find.byType(NotebookTimePicker))
+          .initialTime,
+      const TimeOfDay(hour: 20, minute: 11),
+    );
+    await tester.enterText(find.byKey(const ValueKey('time-field-小时')), '22');
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(model.time, DateTime.utc(2026, 10, 9, 20, 11));
+    await tester.tap(find.byKey(const ValueKey('single-selected-time')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(CalendarDatePicker),
+        matching: find.text('10'),
+      ),
+    );
+    await tester.enterText(find.byKey(const ValueKey('time-field-小时')), '21');
+    await tester.enterText(find.byKey(const ValueKey('time-field-分钟')), '32');
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(model.time, DateTime.utc(2026, 10, 10, 21, 32));
+    expect(find.byKey(const ValueKey('add-single-time')), findsNothing);
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await mouse.addPointer(location: Offset.zero);
     await mouse.moveTo(
       tester.getCenter(find.byKey(const ValueKey('single-selected-time'))),
     );
     await tester.pump();
-    await tester.tap(find.byTooltip('删除2026-10-9 20:11 · 北京时间'));
+    await tester.tap(find.byTooltip('删除2026-10-10 21:32 · 北京时间'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('single-selected-time')), findsNothing);
     expect(find.byKey(const ValueKey('add-single-time')), findsOneWidget);
@@ -81,7 +113,7 @@ void main() {
       tester
           .widget<NotebookTimePicker>(find.byType(NotebookTimePicker))
           .initialTime,
-      const TimeOfDay(hour: 20, minute: 11),
+      const TimeOfDay(hour: 21, minute: 32),
     );
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
 import '../notebook/notebook_overlay.dart';
 import '../notebook/notebook_view_model.dart';
+import '../notebook/schedule_management_dialog.dart';
 import '../schedule_editor/schedule_editor.dart';
 import 'desk_notebook_hotspot.dart';
 import 'room_backdrop.dart';
@@ -56,6 +57,13 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       context: context,
       barrierDismissible: false,
       builder: (_) => ScheduleCreateDialog(repository: widget.repository),
+    );
+  }
+
+  Future<void> manage() async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => ScheduleManagementDialog(repository: widget.repository),
     );
   }
 
@@ -117,11 +125,22 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             right: 28,
             child: ListenableBuilder(
               listenable: widget.repository,
-              builder: (context, _) => FilledButton.icon(
-                onPressed: widget.repository.canWrite ? create : null,
-                style: _roomActionStyle,
-                icon: const Icon(Icons.add, size: 17),
-                label: const Text('添加日程'),
+              builder: (context, _) => Wrap(
+                spacing: 12,
+                children: [
+                  FilledButton.icon(
+                    onPressed: manage,
+                    style: _roomActionStyle,
+                    icon: const Icon(Icons.list_alt, size: 17),
+                    label: const Text('管理日程'),
+                  ),
+                  FilledButton.icon(
+                    onPressed: widget.repository.canWrite ? create : null,
+                    style: _roomActionStyle,
+                    icon: const Icon(Icons.add, size: 17),
+                    label: const Text('添加日程'),
+                  ),
+                ],
               ),
             ),
           ),

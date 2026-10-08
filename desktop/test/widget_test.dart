@@ -66,6 +66,7 @@ void main() {
             builder: (_, _) => CalendarSpread(
               model: model,
               onNavigate: (action) async => action(),
+              onManage: () {},
               editor: null,
             ),
           ),

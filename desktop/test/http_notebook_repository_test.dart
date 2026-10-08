@@ -88,6 +88,53 @@ Future<HttpNotebookRepository> serverRepository(
 }
 
 void main() {
+  test('管理列表查询关闭规则，重新开启提交原 revision 并保留混合周期规则', () async {
+    const cron = ['0 9 * * *', '30 18 * * 3'];
+    var enabled = false;
+    var revision = 4;
+    Map<String, dynamic>? write;
+    Map<String, dynamic> rule() => {
+      'id': 7,
+      'name': '已关闭的混合周期',
+      'description': '原说明',
+      'type': 'period',
+      'revision': revision,
+      'period': {'open': enabled, 'cron': cron},
+    };
+    final repo = await serverRepository((request) async {
+      if (request.method == 'PUT') {
+        expect(request.uri.path, '/schedules/7');
+        expect(request.headers.value('Idempotency-Key'), isNotEmpty);
+        write =
+            jsonDecode(await utf8.decoder.bind(request).join())
+                as Map<String, dynamic>;
+        enabled = write!['period']['open'] as bool;
+        revision++;
+        return rule();
+      }
+      if (request.uri.path == '/schedules/7') return rule();
+      if (request.uri.queryParameters['view'] == 'calendar') return <String>[];
+      if (request.uri.queryParameters['view'] == null) {
+        expect(request.uri.queryParameters, {'limit': '50', 'offset': '0'});
+        return [rule()];
+      }
+      return snapshot();
+    });
+    await repo.refresh();
+    final listed = (await repo.listSchedules()).single;
+    expect(listed.draft.enabled, isFalse);
+    final editor = ScheduleEditorViewModel(repo, await repo.loadSchedule('7'));
+    addTearDown(editor.dispose);
+    editor.update(() => editor.enabled = true);
+    expect(await editor.save(), isTrue);
+    expect(write!['expectedRevision'], 4);
+    expect(write!['name'], '已关闭的混合周期');
+    expect(write!['description'], '原说明');
+    expect(write!['period'], {'open': true, 'cron': cron});
+    expect(repo.schedule('7').draft.enabled, isTrue);
+    expect(repo.schedule('7').revision, 5);
+  });
+
   test('启用日程总数来自服务端，包含确认记录且不随分页长度变化', () async {
     final date = DateTime.utc(2026, 10, 8);
     final nextDate = DateTime.utc(2026, 10, 9);

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
 import '../../theme/notebook_theme.dart';
 import 'notebook_view_model.dart';
-import 'schedule_management_dialog.dart';
 
 class TodaySpread extends StatelessWidget {
   const TodaySpread({super.key, required this.model});
@@ -282,10 +281,12 @@ class CalendarSpread extends StatelessWidget {
     super.key,
     required this.model,
     required this.onNavigate,
+    required this.onManage,
     required this.editor,
   });
   final NotebookViewModel model;
   final Future<void> Function(VoidCallback) onNavigate;
+  final VoidCallback onManage;
   final Widget? editor;
   String get daySummary {
     final count = model.repository.openScheduleCountOn(
@@ -344,14 +345,7 @@ class CalendarSpread extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               TextButton.icon(
-                onPressed: () => onNavigate(() async {
-                  final id = await showDialog<String>(
-                    context: context,
-                    builder: (_) =>
-                        ScheduleManagementDialog(repository: model.repository),
-                  );
-                  if (id != null) await model.edit(id);
-                }),
+                onPressed: onManage,
                 icon: const Icon(Icons.list_alt),
                 label: const Text('管理日程 · 含已暂停'),
               ),
@@ -529,11 +523,13 @@ class NotebookFrame extends StatelessWidget {
     super.key,
     required this.model,
     required this.onClose,
+    required this.onManage,
     required this.onTab,
     required this.spread,
   });
   final NotebookViewModel model;
   final VoidCallback onClose;
+  final VoidCallback onManage;
   final ValueChanged<NotebookTab> onTab;
   final Widget spread;
   @override
@@ -627,13 +623,17 @@ class NotebookFrame extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'TimeCue · 日常手记',
-              style: TextStyle(
-                fontSize: 10,
-                letterSpacing: 2,
-                color: NotebookTheme.paper,
+            TextButton.icon(
+              onPressed: onManage,
+              style: TextButton.styleFrom(
+                foregroundColor: NotebookTheme.paper,
+                textStyle: const TextStyle(fontSize: 11),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
+              icon: const Icon(Icons.list_alt, size: 14),
+              label: const Text('管理日程'),
             ),
             Text(
               model.tab == NotebookTab.today ? '01 — 02' : '03 — 04',

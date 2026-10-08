@@ -5,6 +5,7 @@ import '../../theme/notebook_theme.dart';
 import '../schedule_editor/schedule_editor.dart';
 import 'notebook_view_model.dart';
 import 'notebook_spreads.dart';
+import 'schedule_management_dialog.dart';
 
 enum NotebookPhase { closed, opening, open, closing }
 
@@ -68,6 +69,15 @@ class _NotebookOverlayState extends State<NotebookOverlay>
       phase = NotebookPhase.closed;
       widget.onClosed();
     }
+  }
+
+  Future<void> manage() async {
+    if (phase != NotebookPhase.open || editor?.busy == true) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) =>
+          ScheduleManagementDialog(repository: widget.model.repository),
+    );
   }
 
   Widget? buildEditor() {
@@ -181,6 +191,7 @@ class _NotebookOverlayState extends State<NotebookOverlay>
                                     return NotebookFrame(
                                       model: widget.model,
                                       onClose: close,
+                                      onManage: manage,
                                       onTab: (tab) => navigate(
                                         () => widget.model.changeTab(tab),
                                       ),
@@ -198,6 +209,7 @@ class _NotebookOverlayState extends State<NotebookOverlay>
                                               : CalendarSpread(
                                                   model: widget.model,
                                                   onNavigate: navigate,
+                                                  onManage: manage,
                                                   editor: buildEditor(),
                                                 ),
                                         ),
