@@ -15,3 +15,5 @@ frontend/package.json.md5
 .worktrees/*
 
 db/*
+
+docs/design/*

@@ -1,10 +1,15 @@
-# TimeCue 项目约定
+# TimeCue
 
-- Go 拥有日程规则、每次提醒及合法状态转换；Flutter 不直接访问业务数据库，平台副作用的结果必须回流。
-- 桌面工程位于 desktop，阶段 B 默认连接手动启动的 Go HTTP 服务，显式 TIMECUE_DEMO=true 仍可运行内存示例，Widget 和状态关系见 desktop/README.md。
-- 日常开发在 dev 派生分支进行，完整分支策略见 docs/CONTRIBUTING.md。
-- 代码注释使用中文。修改模块时同步对应 AGENTS.md 和工程说明。
-- 所有 git 操作优先使用 gh；gh 不支持的本地工作区检查使用 git。
-- 架构按最小稳定点、删除/替换/拆分/重复测试确定职责；窄契约、单向依赖、状态通过明确操作变更，易变实现依赖稳定规则。
+Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务，Flutter 提供房间与日程本界面。目前已接通查询和确认；系统通知与后台调度尚未实现。
 
-- 日程本是 Flutter 展示形式；Go 业务只使用 Schedule/Notification、原有仓储及 schedules/notifications 表，不增加独立本子模型或存储模块。
+- [cmd/flutter](cmd/flutter/AGENTS.md)：Go 本机 HTTP 服务启动、组件装配与退出清理。
+- [internal/api](internal/api/AGENTS.md)：HTTP 路由、日程与提醒接口。
+- [internal/middleware](internal/middleware/AGENTS.md)：请求日志、Host 校验、异常恢复与响应适配。
+- [internal/service](internal/service/AGENTS.md)：日程用例、触发时间计算、日期/月历查询与提醒确认。
+- [internal/model](internal/model/AGENTS.md)：日程、提醒、查询条件及共享业务类型。
+- [internal/store](internal/store/AGENTS.md)：SQLite 连接、健康检查、日程与提醒持久化。
+- [internal/config](internal/config/AGENTS.md)：配置加载、监听、修改与恢复默认值。
+- [internal/log](internal/log/AGENTS.md)：全局日志、JSONL 输出与级别热更新。
+- [desktop](desktop/AGENTS.md)：Flutter 桌面界面、HTTP 数据接入和内存演示。
+
+工程约束：代码注释使用中文；模块变更同步对应 AGENTS.md 和工程说明。Go 管理日程规则与提醒状态，Flutter 通过业务接口操作；平台副作用结果回传 Go。开发分支与检查流程见 [贡献规范](docs/CONTRIBUTING.md)。

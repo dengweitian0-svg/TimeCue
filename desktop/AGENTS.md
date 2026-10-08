@@ -1,31 +1,19 @@
-# Flutter 桌面视觉骨架
+# Flutter 桌面端
 
-- 本工程已完成阶段 A 与阶段 B。默认连接手动启动的 Go 服务，只有示例模式才启用 `TIMECUE_DEMO=true`。示例数据仅在内存中，固定业务时刻为北京时间 2026-10-07 14:32；房间时钟独立使用真实 UTC+8。
-- 注释使用中文。Windows runner 的 Flutter 生成文件保留上游版权声明和生成说明。
-- 自定义颜色统一使用 Color.fromARGB(alpha, red, green, blue)，各通道采用 0–255 的十进制数，便于直接调整透明度和颜色。
-- 通用表单、按钮、日期选择、确认弹层和文本选择共用 NotebookTheme 的米色纸张与暖棕主题，和时间转盘一致；sage 只用于明确的完成事实标记。
-- 时间选择使用 NotebookTimePicker / NotebookTimeDial：小时双圈每格 30°，分钟每格 6°，点击/拖动吸附整数刻度，滚轮与方向键逐格调整；针尖不遮挡数字，当前数字加粗高亮，配色沿用纸张与封面暖色。
-- 时间选择器左侧小时、分钟就是可编辑输入框，聚焦切换对应转盘，合法输入即时联动指针，转盘操作回填原输入框；不另设输入模式，空值与越界值禁止确认。
-- 用户输满两位合法小时后自动聚焦分钟并全选旧分钟；未完成、越界输入和转盘回填不触发自动跳转。
-- `main.dart` 是具体仓储的组合入口。`app/` 装配主屏，`features/` 管理受控视图与暂态，`contracts/` 定义不可变 DTO 和窄操作，`data/` 实现示例仓储和 HTTP 快照仓储，`theme/` 保存视觉参数。
-- Widget / ViewModel 只依赖仓储契约，不依赖具体示例仓储，不访问 SQLite，不执行 Windows 通知。Go 查询与确认已接入；规则写入、托盘和进程管理仍属后续阶段。
-- 日历右页采用互斥类型；初始为空，选中日期后才显示清单，编辑只替换右页。双页在小窗口或高文本缩放时横向滚动，各页独立纵向滚动。
-- 开合状态由单一动画控制器管理；过程中禁用本子交互，减少动效时直接到位。关闭恢复入口焦点；Escape 先关闭顶部弹层，草稿必须经过舍弃确认。
-- 示例仓储的预设展开仅用于演示；正式模式由 Go 返回日期与月份投影，Dart 不实现 cron 调度。
-- 确认作用于明确的触发 ID，不修改投递结果，不提供撤销。全选只捕获本页 ID，跨页选择保留，提交冻结选择。
-- 房间背景与窗玻璃遮罩、桌面热区共用源图 1672×941 的 cover 变换。背景资产复制自设计原型，运行不依赖 docs。
-- 桌面本子直接使用背景图已有的插画，不再叠画封面、纸页、厚度或阴影；DeskNotebookHotspot 只提供透明入口。热区由原图本子四角经过 cover 变换后与视口求交，露出的部分始终可点击，仅完全不可见时隐藏；开合起点取可见区域，键盘聚焦时显示边界。
-- 房间的“添加日程”和“日程本”固定入口共用无边框半透明深色背景；文字和图标采用 60% 不透明度。
-- 共用入口样式使用 getter，确保热重载重新读取描边和颜色设置，不缓存旧的顶层 final 样式。
-- 修改结构时同步 README 的 Widget 树、状态所有权和验证说明。
+提供 Windows 房间场景与双页日程本。默认接入 Go 的查询和提醒确认，内存演示支持创建、编辑及删除交互。
 
-- `HttpNotebookRepository` 将 RFC3339 转为 UTC+8 墙上字段，保存 Go 快照与总数；月历使用批量标记，日期续页按服务端 occurrenceKey 去重，Dart 不展开正式规则。
-- 待确认每页 50，跨页选择保存明确 notificationId，服务端刷新不扩大选择；旧查询通过请求代次失效，确认响应同时更新今日/日期/待确认，确认后的刷新失败单独提示。
-- 本子打开后每 5 秒查询，关闭或进入后台停止普通轮询，恢复前台立即读取。加载/错误保留旧内容和重试入口，未选日期右页保持空白。
-- 真实模式仅开放阶段 B 查询、历史只读详情与确认；添加/编辑/删除不接入真实仓储，留待阶段 C。示例模式仍保留完整视觉交互。
+- `lib/main.dart`：选择 HTTP 或演示仓储并启动应用。
+- [lib/app](lib/app/AGENTS.md)：应用、主题与主屏装配。
+- [lib/contracts](lib/contracts/AGENTS.md)：日程 DTO、草稿和仓储操作契约。
+- [lib/data](lib/data/AGENTS.md)：HTTP 快照、分页、确认与内存示例数据。
+- [lib/features/room](lib/features/room/AGENTS.md)：房间背景、时钟、桌面入口与本子显隐。
+- [lib/features/notebook](lib/features/notebook/AGENTS.md)：本子开合、今日/日历页面、跨页选择与查询状态。
+- [lib/features/schedule_editor](lib/features/schedule_editor/AGENTS.md)：日程表单、编辑草稿与时间选择器。
+- [lib/theme](lib/theme/AGENTS.md)：纸张主题、视觉参数与通用页面组件。
+- [assets](assets/AGENTS.md)：房间背景资源。
+- [windows](windows/AGENTS.md)：Windows 原生窗口与 Flutter 构建集成。
+- [test](test/AGENTS.md)：Widget、状态、HTTP 仓储与时间选择器测试。
+- [tool](tool/AGENTS.md)：视觉截图工具。
+- `README.md`：运行方式、接口说明与 Widget/状态索引。
 
-- HTTP 查询复用 schedules 的 view/include/date/month/cursor 参数；确认统一提交 notificationIds 数组，单条为单元素数组，不根据条数选择不同路由。
-
-- Notebook 仅表示 Flutter 的日程本视图与只读查询仓储，Go 不建立对应业务实体或独立数据库，后端复用 schedules 和 notifications。
-
-- 真实仓储的日程请求使用 /api/v1/scheduler/schedules，提醒查询与确认使用同级 /api/v1/notifications；测试覆盖带 scheduler 前缀的实际组合入口。
+工程约束：Widget/ViewModel 依赖仓储契约，具体实现由 `main.dart` 装配。真实模式通过 Go 查询与确认，不访问 SQLite、不在 Dart 展开 cron，创建/编辑/删除目前仅用于演示模式。结构变更同步 README 的 Widget 与状态索引。
