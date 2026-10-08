@@ -94,6 +94,18 @@ void main() {
     await capture('08-date-picker');
     await tester.tap(find.text('取消').last);
     await tester.pumpAndSettle();
+    await tester.tap(find.text('单次'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('每月').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('add-period-time')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('period-day-31')));
+    await tester.enterText(find.byKey(const ValueKey('time-field-小时')), '22');
+    await tester.enterText(find.byKey(const ValueKey('time-field-分钟')), '09');
+    await capture('10-monthly-date-time');
+    await tester.tap(find.text('取消').last);
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, '一件小事');
     await tester.tap(find.byTooltip('关闭'));
     await capture('09-discard-dialog');

@@ -80,6 +80,14 @@ void main() {
       expect(find.textContaining('每格'), findsNothing);
       expect(find.byTooltip('上一小时'), findsNothing);
       expect(find.byTooltip('下一小时'), findsNothing);
+      if (kind == ScheduleKind.monthly) {
+        expect(
+          tester.getRect(find.byKey(const ValueKey('period-day-1'))).right,
+          lessThan(
+            tester.getRect(find.byKey(const ValueKey('time-field-小时'))).left,
+          ),
+        );
+      }
       if (kind != ScheduleKind.daily) {
         final choice = find.byKey(
           ValueKey('period-day-${kind == ScheduleKind.weekly ? 3 : 31}'),

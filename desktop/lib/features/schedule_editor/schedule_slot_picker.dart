@@ -96,7 +96,8 @@ Future<ScheduleTimeSlot?> showScheduleSlotPicker(
         return NotebookTimePicker(
           initialTime: initialTime,
           title: weekly ? '选择星期和时间' : '选择日期和时间',
-          selection: selector,
+          selection: weekly ? selector : null,
+          leftPane: weekly ? null : selector,
           onSelected: (time) => Navigator.pop(
             context,
             ScheduleTimeSlot(kind, time.hour, time.minute, day: day),
