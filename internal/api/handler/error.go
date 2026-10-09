@@ -79,6 +79,15 @@ func internalErrorResult(cause error) middleware.HTTPResult {
 }
 
 func resourceError(err error) middleware.HTTPResult {
+	if errors.Is(err, service.ErrTaskNotFound) {
+		return middleware.ErrorResult(http.StatusNotFound, newAPIError("delivery_task_not_found", "task is not valid in this process"), nil)
+	}
+	if errors.Is(err, service.ErrMembersChanged) {
+		return middleware.ErrorResult(http.StatusConflict, newAPIError("delivery_members_changed", "refresh task members from first page"), nil)
+	}
+	if errors.Is(err, service.ErrAttemptNotFound) || errors.Is(err, service.ErrDeliveryConflict) {
+		return deliveryError(err)
+	}
 	if errors.Is(err, service.ErrInvalidQuery) {
 		return middleware.ErrorResult(http.StatusBadRequest, newAPIError("invalid_request", "invalid view, include, date, month, state or cursor"), nil)
 	}

@@ -53,6 +53,7 @@ type OccurrencePage struct {
 	NextCursor        string           `json:"nextCursor"`
 	AsOf              time.Time        `json:"asOf"`
 	OpenScheduleCount *int             `json:"openScheduleCount,omitempty"`
+	Recovery          *RecoveryView    `json:"recovery,omitempty"`
 }
 
 // ScheduleQueryResult 是日程查询的响应结果，不作为业务实体持久化。
@@ -61,13 +62,15 @@ type ScheduleQueryResult struct {
 	AsOf           time.Time      `json:"asOf"`
 	Occurrences    OccurrencePage `json:"occurrences"`
 	Unacknowledged OccurrencePage `json:"unacknowledged"`
+	Recovery       *RecoveryView  `json:"recovery"`
 }
 
 type queryPosition struct {
-	Scope string    `json:"scope"`
-	AsOf  time.Time `json:"asOf"`
-	Time  time.Time `json:"time"`
-	ID    int       `json:"id"`
+	Scope         string    `json:"scope"`
+	AsOf          time.Time `json:"asOf"`
+	Time          time.Time `json:"time"`
+	ID            int       `json:"id"`
+	MemberVersion int       `json:"memberVersion,omitempty"`
 }
 
 func encodeQueryCursor(value queryPosition) string {
@@ -246,6 +249,8 @@ func pendingPage(rules []*model.Schedule, notifications []*model.Notification, t
 
 // QueryScheduleState 组合两张表的同一读取快照，返回日期触发与待确认首分页。
 func (a *App) QueryScheduleState(ctx context.Context, date string, now time.Time) (*ScheduleQueryResult, error) {
+	a.operations.Lock()
+	defer a.operations.Unlock()
 	start, end, err := scheduleRange(date, false, now)
 	if err != nil {
 		return nil, err
@@ -259,11 +264,19 @@ func (a *App) QueryScheduleState(ctx context.Context, date string, now time.Time
 	if err != nil {
 		return nil, err
 	}
+	var recovery *RecoveryView
+	if a.Recovery != nil {
+		recovery, err = a.recoveryViewLocked(ctx, a.Recovery.current, now)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &ScheduleQueryResult{
 		Date:           start.Format("2006-01-02"),
 		AsOf:           now,
 		Occurrences:    dateOccurrencePage(values, schedules, queryPosition{Scope: "date:" + start.Format("2006-01-02"), AsOf: now}, 50),
 		Unacknowledged: pendingPage(schedules, pending, total, queryPosition{Scope: "pending", AsOf: now}, 50),
+		Recovery:       recovery,
 	}, nil
 }
 

@@ -66,7 +66,7 @@ func listScheduleFields(_ *gin.Context, result middleware.HTTPResult) []slog.Att
 	case middleware.DataResponse[service.OccurrencePage]:
 		return []slog.Attr{slog.Int("count", len(response.Data.Items))}
 	case middleware.DataResponse[*service.ScheduleQueryResult]:
-		return []slog.Attr{slog.Int("count", len(response.Data.Occurrences.Items))}
+		return append([]slog.Attr{slog.Int("count", len(response.Data.Occurrences.Items))}, recoveryFields(response.Data.Recovery)...)
 	case middleware.DataResponse[[]string]:
 		return []slog.Attr{slog.Int("count", len(response.Data))}
 	default:
@@ -79,10 +79,17 @@ func listNotificationFields(_ *gin.Context, result middleware.HTTPResult) []slog
 		return nil
 	}
 	response := result.Body.(middleware.DataResponse[service.OccurrencePage])
-	return []slog.Attr{
+	return append([]slog.Attr{
 		slog.Int("count", len(response.Data.Items)),
 		slog.Int("total", response.Data.Total),
+	}, recoveryFields(response.Data.Recovery)...)
+}
+
+func recoveryFields(view *service.RecoveryView) []slog.Attr {
+	if view == nil {
+		return nil
 	}
+	return []slog.Attr{slog.String("recovery_id", view.RecoveryID), slog.String("recovery_state", view.State), slog.Int("materialized_count", view.MaterializedCount)}
 }
 
 func getNotificationFields(_ *gin.Context, result middleware.HTTPResult) []slog.Attr {
