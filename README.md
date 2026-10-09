@@ -11,7 +11,7 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 | 启动入口 | main 装配适配器并调用 service.App.Run；App 加载配置、打开 SQLite、检查结构，再运行 HTTP 与调度，退出后关闭依赖资源。 |
 | 配置 | 从内嵌的 `internal/config/default.yaml` 加载默认值，以工作目录下的 `config.yaml` 覆盖；支持文件监听、配置快照、修改用户配置和恢复默认值。 |
 | 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
-| 日程与提醒 | 已有规则操作、查询与确认；D1 分钟预加载及到期核验开放完整分组，D2 提供领取、开始、结果回填和运行内有限重试。Windows 展示及全期间恢复待 D5/D3 接入。 |
+| 日程与提醒 | 已有规则操作、查询与确认；D1 开放完整分钟分组，D2 提供领取、开始、结果回填和有限重试，D3 按历史版本分批恢复、开放唯一遗漏汇总并查询成员/进度。Windows 展示与恢复界面待 D5/D6 接入。 |
 | SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；表结构由独立 SQL 迁移建立，入口检查迁移版本和表结构但不自动执行迁移。 |
 | Flutter | `desktop/` 已实现三时段房间、双页本子及创建/编辑视觉骨架，默认接入 Go 查询、单条/批量确认及真实规则变更，视觉示例仍用显式内存仓储。 |
 
@@ -27,15 +27,17 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 核心业务持久化使用 `schedules` 和 `notifications`，阶段 C 的 `schedule_versions` 与 `schedule_write_receipts` 保存规则区间和幂等回执；Go 查询与确认归入原有日程和提醒模块。Flutter 的日程本是展示方式，没有独立数据库、表或后端业务模型。
 
-阶段 D 的[运行状态方案](docs/phase-d0-runtime-state.md)规定：任务分组、展示次数、尝试成员和恢复位置只放内存；预加载状态复用 `notifications.status=loaded`，不增加表、字段、迁移、RuntimeStore、runtime_json、租约或心跳。D1 直接修改原 001 的 status CHECK，仍使用 001 + 002、版本 2；系统通知与全期间恢复待后续任务实现。
+阶段 D 的[运行状态方案](docs/design/phase-d0-runtime-state.md)规定：任务分组、展示次数、尝试成员和恢复位置只放内存；预加载状态复用 `notifications.status=loaded`，不增加表、字段、迁移、RuntimeStore、runtime_json、租约或心跳。D1 直接修改原 001 的 status CHECK，仍使用 001 + 002、版本 2；D3 已接入全期间恢复，系统通知待后续任务实现。
 
 重要状态只能经明确的业务操作改变。已发生的提醒应保留可查询的记录；周期表达式只决定未来触发时间，不代替提醒历史或确认状态。
 
-阶段 D 的实施顺序见[开发规划](docs/phase-d-development-plan.md)；已实现的 D1 及 D2/D3 接入契约见[分钟调度方案](docs/phase-d1-minute-scheduler.md)。loaded 表示加载/等待执行，只有 sent 表示平台接受展示，用户确认保持独立。
+阶段 D 的实施顺序见[开发规划](docs/design/phase-d-development-plan.md)；已实现的 D1 及 D2/D3 接入契约见[分钟调度方案](docs/design/phase-d1-minute-scheduler.md)。loaded 表示加载/等待执行，只有 sent 表示平台接受展示，用户确认保持独立。
 
 D2 已实现三接口协议、开始资格及成员冻结、原子结果回填和运行内有限重试，核心实现见[投递服务](internal/service/notification_delivery.go)。任务及尝试不持久化，数据库继续使用原四张表和版本 2；Apifox 验收报告保留在本地 `.apifox/d2/reports/`。
 
-D1 的 Go/race、Flutter 测试与 Windows release 构建、Apifox 接口验收已通过，证据见[验收记录](docs/phase-d1-validation.md)。
+D3 已接入启动和运行间隙的全期间恢复：每事务最多补齐 500 条可证明的历史触发，排除暂停区间并保留旧文本和永久停止。整理完成后只开放一个 recovery 汇总；未开始旧分钟及连续遗漏的旧汇总合入新汇总，已开始任务保留身份和本运行预算。任务及 attempt 成员每页 50 条，组合快照区分恢复进度和投递结果；完整遗漏总数未确定时返回 null。设计和任务见[D3 契约](docs/design/phase-d3-recovery-query.md)，Go/race 和 Apifox 结果见[验收记录](docs/design/phase-d3-validation.md)。
+
+D1 的 Go/race、Flutter 测试与 Windows release 构建、Apifox 接口验收已通过，证据见[验收记录](docs/design/phase-d1-validation.md)。
 
 ## 配置
 
@@ -80,9 +82,10 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 | GET | `/api/v1/scheduler/schedules?view=occurrences&date=YYYY-MM-DD&cursor=...` | 日期事实与未来投影，分页去重 |
 | GET | `/api/v1/scheduler/schedules?view=calendar&month=YYYY-MM` | 月份日期标记 |
 | GET | `/api/v1/notifications?state=unacknowledged&cursor=...` | 全历史到期未确认页，含失败及待投递 |
+| GET | `/api/v1/notifications?deliveryTaskId=...&attemptId=...&cursor=...` | 本运行任务历史成员；可选 attemptId 读取该次冻结实际成员，50 条分页 |
 | GET | `/api/v1/notifications/:id` | 提醒详情，父日程删除后历史仍可查 |
 | POST | `/api/v1/notifications/acknowledgements` | 单条及批量统一提交 notificationIds，最多 500 个，整批校验后原子确认 |
-| POST | `/api/v1/notifications/claim` | 领取最多 20 个完整任务，返回本运行的任务/attempt 身份及平台标识 |
+| POST | `/api/v1/notifications/claim` | 领取最多 20 个完整 minute/recovery 任务，返回本运行的任务/attempt 身份及平台标识 |
 | POST | `/api/v1/notifications/delivery-attempts/:id/start` | 重检成员资格并冻结文案，消费一次运行内展示预算，重复请求幂等 |
 | POST | `/api/v1/notifications/delivery-attempts/:id/results` | 回填整次平台请求的 sent/failed，原子更新实际成员；重复结果不再次执行 |
 

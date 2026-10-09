@@ -8,6 +8,7 @@
 - [handler](handler/AGENTS.md)：请求解析与校验、服务调用、响应 DTO 和业务错误映射。
 - `router_test.go`：验证路由、输入校验、响应协议和 HTTP 日志。
 - `delivery_test.go`：投递三接口严格输入、空队列、当前运行身份、真实数据库正向流程和日志隐私测试。
+- `recovery_test.go`：真实 SQLite 的恢复摘要、任务及 attempt 成员查询、参数组合、旧身份和投递/确认独立性 HTTP 回归。
 - `schedule_logging_test.go`：使用真实 SQLite 验证创建、更新、启停、删除、幂等重放及提交后响应失败的日志；`http_log_helpers_test.go` 复用 API 路由装配，提供日志捕获、断言和响应短写模拟。
 
 工程约束：
@@ -19,6 +20,8 @@
 - 日程变更日志的完整链路测试归 API；日志素材保留、序列化失败、panic 和请求隔离等通用测试归 middleware。使用全局日志器的测试不并行执行。
 - POST notifications/claim 领取完整任务，delivery-attempts/:id/start 冻结执行决定，delivery-attempts/:id/results 回填 sent/failed；只支持单执行者。不存在或旧进程身份返回 404，未开始回填及矛盾结果返回 409，停止接纳返回 503。
 - 三条投递路由由 handler 直接附加 HTTPResult.LogFields，包含运行身份、数量和次数，不包含文案及成员列表；响应失败仍保留已提交操作事实。
+- 领取和开始支持 minute/recovery；recovery 全部整理完成才开放，开始文案仅含实际数量。GET notifications 通过 deliveryTaskId 及可选 attemptId 查询当前任务历史或冻结成员；与 state 模式互斥，未开始尝试及成员版本变化返回 409，旧身份返回 404。
+- 组合快照增加 recovery（无轮次为 null），recovery 任务分页附加对应轮次进度；未知 missedTotal 为 null，原 total 与 openScheduleCount 的统计范围不变。查询日志只追加恢复身份、阶段和已整理数，不记录文案、游标或成员集合。
 
 - `schedule_change_test.go`：原子暂停创建、分钟精度、版本冲突、类型边界、创建/更新幂等重放和已删除规则拒绝更新。
 

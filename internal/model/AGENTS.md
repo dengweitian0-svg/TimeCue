@@ -5,6 +5,7 @@
 - `schedule.go`：单次与周期日程、启停/取消/删除状态、结构校验、规则版本及共享未找到错误。
 - `notification.go`：提醒计划时间、pending/loaded/sent/failed 生命周期状态、永久停止投递标记、历史文本快照、用户确认时间、分页位置与确认错误。
 - `notification_loading.go`：规则版本边界、预加载/到期窗口、纯候选准备函数和完整事实/可加载成员的事务结果。
+- `notification_recovery.go`：固定恢复窗口、运行内继续位置、有界版本计算回调及提交后的历史批次结果，不定义持久化恢复实体。
 - `query_option.go`：日程查询筛选、分页和软删除可见性选项。
 - `time.go`：固定 UTC+8 北京时间工具。
 
