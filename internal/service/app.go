@@ -32,6 +32,8 @@ type App struct {
 	NextNotify NextNotify
 	Config     *config.Manager
 	Scheduler  *Scheduler
+	Delivery   *DeliveryService
+	operations sync.Mutex // 正式写入、开始冻结和回填共用操作边界，避免提交后回调竞争。
 }
 
 // NewApp 使用依赖注入的配置与 Repo 接口组装应用服务。
@@ -83,6 +85,8 @@ func (a *App) DeleteSchedule(ctx context.Context, id int) error {
 
 // DeleteScheduleWithResult 返回正式删除事务的状态变化，供调用方观察。
 func (a *App) DeleteScheduleWithResult(ctx context.Context, id int) (*model.ScheduleWrite, error) {
+	a.operations.Lock()
+	defer a.operations.Unlock()
 	result, err := a.Schedule.DeleteScheduleByID(ctx, id)
 	if errors.Is(err, model.ErrRecordNotFound) {
 		return nil, ErrScheduleNotFound
@@ -184,6 +188,7 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 		WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
 	defer func() {
+		a.StopDelivery()
 		stop()
 		requests.stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

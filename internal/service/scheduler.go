@@ -22,11 +22,13 @@ type MinuteGroup struct {
 	Minute    time.Time
 	FactIDs   []int
 	MemberIDs []int
+	RetryIDs  []int // failed 仅作为候选交 D2，扫描自身不许可重加载。
 }
 
 // SchedulerSnapshot 提供 D2/D3 所需的只读运行视图，不持久化身份或预算。
 type SchedulerSnapshot struct {
 	Ready       []MinuteGroup
+	Retry       []MinuteGroup // 仅候选，需 D2 预算许可后才可领取。
 	WaitingIDs  []int
 	Missing     []model.NotificationWindow
 	ScanThrough time.Time
@@ -119,16 +121,20 @@ func (s *Scheduler) Step(ctx context.Context) error {
 			}
 		}
 		facts := make([]int, 0, len(batch.Notifications))
+		retryIDs := make([]int, 0)
 		for _, n := range batch.Notifications {
 			if n.Deleted || n.NotifyTime.Second() != 0 || n.NotifyTime.Nanosecond() != 0 {
 				continue
 			}
 			facts = append(facts, n.ID)
+			if n.Status == model.NotifyFailed && !n.DeliveryStopped && n.AcknowledgedAt == nil && n.SnapshotTaken {
+				retryIDs = append(retryIDs, n.ID)
+			}
 			delete(s.waiting, n.ID)
 			s.memberSchedules[n.ID] = n.ScheduleID
 		}
-		if len(batch.EligibleIDs) > 0 {
-			s.groups[minute.UnixNano()] = MinuteGroup{Minute: minute, FactIDs: facts, MemberIDs: append([]int(nil), batch.EligibleIDs...)}
+		if len(batch.EligibleIDs) > 0 || len(retryIDs) > 0 {
+			s.groups[minute.UnixNano()] = MinuteGroup{Minute: minute, FactIDs: facts, MemberIDs: append([]int(nil), batch.EligibleIDs...), RetryIDs: retryIDs}
 		}
 		s.lastMinute = minute
 		s.completed[minute.UnixNano()] = true
@@ -247,13 +253,20 @@ func (s *Scheduler) Snapshot() SchedulerSnapshot {
 	}
 	sort.Ints(value.WaitingIDs)
 	for _, g := range s.groups {
-		if len(g.MemberIDs) == 0 {
+		if len(g.MemberIDs) == 0 && len(g.RetryIDs) == 0 {
 			continue
 		}
 		g.FactIDs, g.MemberIDs = append([]int(nil), g.FactIDs...), append([]int(nil), g.MemberIDs...)
-		value.Ready = append(value.Ready, g)
+		g.RetryIDs = append([]int(nil), g.RetryIDs...)
+		if len(g.MemberIDs) > 0 {
+			value.Ready = append(value.Ready, g)
+		}
+		if len(g.RetryIDs) > 0 {
+			value.Retry = append(value.Retry, g)
+		}
 	}
 	sort.Slice(value.Ready, func(i, j int) bool { return value.Ready[i].Minute.Before(value.Ready[j].Minute) })
+	sort.Slice(value.Retry, func(i, j int) bool { return value.Retry[i].Minute.Before(value.Retry[j].Minute) })
 	return value
 }
 

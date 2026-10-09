@@ -14,6 +14,8 @@ import (
 
 // WriteSchedule 将规则校验与下一次触发计算放进正式存储事务。
 func (a *App) WriteSchedule(ctx context.Context, schedule model.Schedule, expectedRevision int, key string) (*model.ScheduleWrite, error) {
+	a.operations.Lock()
+	defer a.operations.Unlock()
 	if len(key) > 128 || strings.TrimSpace(key) != key || strings.ContainsAny(key, "\r\n") {
 		return nil, ErrInvalidSchedule
 	}
