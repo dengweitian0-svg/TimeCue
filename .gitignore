@@ -17,3 +17,9 @@ frontend/package.json.md5
 db/*
 
 docs/design/*
+
+# 本地阶段 D 规划与验收文档
+/docs/phase-d-development-plan.md
+/docs/phase-d0-runtime-state.md
+/docs/phase-d1-minute-scheduler.md
+/docs/phase-d1-validation.md
