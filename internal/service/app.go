@@ -4,8 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
+	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 )
 
@@ -100,3 +107,136 @@ func (a *App) AdvanceNotification(ctx context.Context, notification model.Notifi
 	}
 	return a.NextNotify.Next(ctx, notification.ScheduleID, notification.NotifyTime)
 }
+
+// RuntimeDatabase 是 App 运行时使用的连接端口，业务层不依赖具体 SQLite 实现。
+type RuntimeDatabase interface {
+	Connect(context.Context, string) error
+	CheckHealth(context.Context) error
+	Close() error
+}
+
+// RuntimeOptions 注入外部适配器；路由在入口装配，App 不解释 HTTP 路由。
+type RuntimeOptions struct {
+	Database RuntimeDatabase
+	Handler  http.Handler
+	Log      *logger.Logger
+}
+
+// Run 管理配置、日志、数据库、HTTP 与调度生命周期，退出后才释放依赖资源。
+func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
+	if a.Config == nil || options.Database == nil || options.Handler == nil {
+		return fmt.Errorf("[app] runtime configuration, database and handler are required")
+	}
+	log := options.Log
+	if log == nil {
+		log = logger.Default()
+	}
+	if err := a.Config.LoadConfig(); err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	cfg, err := a.Config.CurrentConfig()
+	if err != nil {
+		return fmt.Errorf("get config: %w", err)
+	}
+	logFile, err := openLogFile(cfg.Log.LogPath)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	defer func() {
+		if err := logFile.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "close log file: %v\n", err)
+		}
+	}()
+	log.Upgrade(logFile)
+	if err = options.Database.Connect(ctx, cfg.DB.DBPath); err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
+	defer func() {
+		if err := options.Database.Close(); err != nil {
+			log.Error("[app] failed to close database", "error", err)
+		}
+	}()
+	if err = options.Database.CheckHealth(ctx); err != nil {
+		return fmt.Errorf("check database schema: %w", err)
+	}
+	if a.Scheduler == nil {
+		repo, ok := a.Notify.(NotificationSchedulerRepo)
+		if !ok {
+			return fmt.Errorf("[app] notification repo does not support scheduling")
+		}
+		a.Scheduler, err = NewScheduler(repo, SchedulerOptions{OnError: func(err error) { log.Error("[scheduler] background operation failed", "error", err) }})
+		if err != nil {
+			return err
+		}
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:10086")
+	if err != nil {
+		return fmt.Errorf("listen on 127.0.0.1:10086: %w", err)
+	}
+	runCtx, stop := context.WithCancel(ctx)
+	schedulerDone := make(chan error, 1)
+	go func() { schedulerDone <- a.Scheduler.Run(runCtx) }()
+	requests := &requestTracker{handler: options.Handler}
+	server := &http.Server{
+		Handler:           requests,
+		BaseContext:       func(net.Listener) context.Context { return runCtx },
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
+		WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
+	}
+	defer func() {
+		stop()
+		requests.stop()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+		}
+		requests.active.Wait()
+		<-schedulerDone
+	}()
+	serveErrors := make(chan error, 1)
+	go func() { serveErrors <- server.Serve(listener) }()
+	log.Info("[app] HTTP server listening", "address", listener.Addr().String())
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-serveErrors:
+		if err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("serve HTTP: %w", err)
+		}
+		return nil
+	}
+}
+
+func openLogFile(directory string) (*os.File, error) {
+	if directory == "" {
+		return nil, fmt.Errorf("log.log_path is empty")
+	}
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(filepath.Join(directory, "timecue.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+}
+
+// requestTracker 关闭请求入口后才允许等待，避免退出与新请求交错。
+type requestTracker struct {
+	handler http.Handler
+	mu      sync.Mutex
+	closing bool
+	active  sync.WaitGroup
+}
+
+func (t *requestTracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	t.mu.Lock()
+	if t.closing {
+		t.mu.Unlock()
+		http.Error(w, "service stopping", http.StatusServiceUnavailable)
+		return
+	}
+	t.active.Add(1)
+	t.mu.Unlock()
+	defer t.active.Done()
+	t.handler.ServeHTTP(w, r)
+}
+
+func (t *requestTracker) stop() { t.mu.Lock(); t.closing = true; t.mu.Unlock() }
