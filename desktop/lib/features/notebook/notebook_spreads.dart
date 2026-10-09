@@ -207,7 +207,7 @@ Future<void> showTriggerDetails(
           ? '未来安排'
           : entry.delivery == 'failed'
           ? '投递失败 · 等待你的确认'
-          : entry.delivery == 'pending'
+          : entry.delivery == 'pending' || entry.delivery == 'loaded'
           ? '待投递 · 等待你的确认'
           : '已提醒 · 等待你的确认'}',
     ),

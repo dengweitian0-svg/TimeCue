@@ -4,6 +4,7 @@
 - `notebook_model_test.dart`：示例数据、提醒确认、分页选择和页面状态测试。
 - `http_notebook_repository_test.dart`：HTTP 路径、快照、分页、确认、错误和刷新测试。
 - `notebook_time_picker_test.dart`：时间输入、转盘联动与交互测试。
+- `notebook_loaded_status_test.dart`：已加载提醒详情显示待投递，不显示已提醒。
 
 - HTTP 测试覆盖 201/204、PUT、草稿版本、暂停创建、多时间规则、结果不明时幂等重试、冲突保留与重新加载，以及管理列表包含暂停规则、恢复提交原 revision 和完整混合周期；`schedule_rules_test.dart` 验证预设往返和复杂规则保留，`schedule_management_test.dart` 从实际房间和今日日程本入口验证无未来投影的暂停日程仍能查看名称/说明/时间，打开独立修改弹窗而不打开本子或切换原页面；覆盖恢复未来安排、保存后列表刷新、未保存修改舍弃/继续、详情读取失败重试及删除后刷新。
 
