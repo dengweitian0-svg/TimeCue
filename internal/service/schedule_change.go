@@ -58,5 +58,8 @@ func (a *App) WriteSchedule(ctx context.Context, schedule model.Schedule, expect
 	if errors.Is(err, model.ErrRecordNotFound) {
 		return nil, ErrScheduleNotFound
 	}
+	if err == nil && a.Scheduler != nil {
+		a.Scheduler.ScheduleChanged(ctx, result)
+	}
 	return result, err
 }

@@ -46,6 +46,13 @@ func (s *Sqlite) CheckHealth(ctx context.Context) error {
 	if version != 2 {
 		return fmt.Errorf("%w: expected version 2, got %d", ErrSchemaInvalid, version)
 	}
+	var notificationDDL string
+	if err := db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notifications'`).Scan(&notificationDDL); err != nil {
+		return fmt.Errorf("%w: notifications table missing: %v", ErrSchemaInvalid, err)
+	}
+	if !strings.Contains(strings.ToLower(notificationDDL), "'loaded'") {
+		return fmt.Errorf("%w: notifications status does not support loaded", ErrSchemaInvalid)
+	}
 	for table, required := range map[string]map[string]string{
 		"schedules": {
 			"id": "INTEGER", "name": "TEXT", "type": "TEXT", "description": "TEXT",

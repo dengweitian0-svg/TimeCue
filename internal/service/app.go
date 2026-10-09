@@ -24,6 +24,7 @@ type App struct {
 	Notify     NotifyRepo
 	NextNotify NextNotify
 	Config     *config.Manager
+	Scheduler  *Scheduler
 }
 
 // NewApp 使用依赖注入的配置与 Repo 接口组装应用服务。
@@ -78,6 +79,9 @@ func (a *App) DeleteScheduleWithResult(ctx context.Context, id int) (*model.Sche
 	result, err := a.Schedule.DeleteScheduleByID(ctx, id)
 	if errors.Is(err, model.ErrRecordNotFound) {
 		return nil, ErrScheduleNotFound
+	}
+	if err == nil && a.Scheduler != nil {
+		a.Scheduler.ScheduleChanged(ctx, result)
 	}
 	return result, err
 }

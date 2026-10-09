@@ -24,6 +24,7 @@ type NotifyStatus string
 
 const (
 	NotifyPending NotifyStatus = "pending"
+	NotifyLoaded  NotifyStatus = "loaded"
 	NotifySent    NotifyStatus = "sent"
 	NotifyFailed  NotifyStatus = "failed"
 )

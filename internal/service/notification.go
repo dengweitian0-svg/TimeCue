@@ -58,5 +58,9 @@ func (a *App) GetNotification(ctx context.Context, id int, now time.Time) (*Occu
 
 // AcknowledgeNotifications 对明确的提醒集合原子确认，重复请求保留首次时间。
 func (a *App) AcknowledgeNotifications(ctx context.Context, ids []int, now time.Time) ([]*model.Notification, error) {
-	return a.Notify.AcknowledgeNotifications(ctx, ids, now)
+	result, err := a.Notify.AcknowledgeNotifications(ctx, ids, now)
+	if err == nil && a.Scheduler != nil {
+		a.Scheduler.NotificationsAcknowledged(result)
+	}
+	return result, err
 }

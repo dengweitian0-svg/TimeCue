@@ -2,6 +2,8 @@
 
 提供本机 HTTP 路由与业务接口装配。
 
+提醒视图 deliveryStatus 使用 pending/loaded/sent/failed；loaded 表示加载/等待执行，不能当作展示成功。待确认查询仍按确认时间筛选，确认不改变投递状态。枚举扩展须完成 Apifox 验收后再接前端。
+
 - `router.go`：注册健康检查、日程创建/更新/启停/删除及提醒路由，装配中间件、404/405 响应及请求日志字段提取。
 - [handler](handler/AGENTS.md)：请求解析与校验、服务调用、响应 DTO 和业务错误映射。
 - `router_test.go`：验证路由、输入校验、响应协议和 HTTP 日志。

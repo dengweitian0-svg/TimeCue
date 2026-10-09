@@ -78,7 +78,7 @@ func (s *ScheduleStore) ApplyScheduleChange(ctx context.Context, change model.Sc
 			return nil, err
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE notifications SET deleted = 1
-            WHERE schedule_id = ? AND notify_time > ? AND status = 'pending' AND acknowledged_at IS NULL`, schedule.ID, now.UnixNano()); err != nil {
+            WHERE schedule_id = ? AND notify_time > ? AND status IN ('pending', 'loaded') AND acknowledged_at IS NULL AND snapshot_taken = 0`, schedule.ID, now.UnixNano()); err != nil {
 			return nil, err
 		}
 		if schedule.Period != nil && !schedule.Period.Open {
@@ -121,10 +121,10 @@ func (s *ScheduleStore) ApplyScheduleChange(ctx context.Context, change model.Sc
 	}
 	result := &model.ScheduleWrite{Schedule: &schedule, EffectiveAt: now, Before: current}
 	if next != nil {
-		// 仅复用已撤销、仍在未来的 pending；已执行或确认的事实不能复活。
+		// 仅复用已撤销、仍在未来且未触发的候选；已执行或确认的事实不能复活。
 		if _, err = tx.ExecContext(ctx, `INSERT INTO notifications (schedule_id, notify_time) VALUES (?, ?)
             ON CONFLICT(schedule_id, notify_time) DO UPDATE SET deleted = 0, delivery_stopped = 0
-            WHERE notifications.deleted = 1 AND notifications.status = 'pending' AND notifications.acknowledged_at IS NULL AND notifications.notify_time > ?`, schedule.ID, next.UnixNano(), now.UnixNano()); err != nil {
+            WHERE notifications.deleted = 1 AND notifications.status IN ('pending', 'loaded') AND notifications.acknowledged_at IS NULL AND notifications.snapshot_taken = 0 AND notifications.notify_time > ?`, schedule.ID, next.UnixNano(), now.UnixNano()); err != nil {
 			return nil, err
 		}
 		result.Notification, err = scanNotification(tx.QueryRowContext(ctx, notificationSelect+` WHERE schedule_id = ? AND notify_time = ?`, schedule.ID, next.UnixNano()))
@@ -187,7 +187,7 @@ func (s *ScheduleStore) stopSchedule(ctx context.Context, id int, deleted bool) 
 		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE notifications SET delivery_stopped = 1,
-        deleted = CASE WHEN notify_time > ? AND status = 'pending' AND acknowledged_at IS NULL THEN 1 ELSE deleted END WHERE schedule_id = ?`, now.UnixNano(), id); err != nil {
+        deleted = CASE WHEN notify_time > ? AND status IN ('pending', 'loaded') AND acknowledged_at IS NULL AND snapshot_taken = 0 THEN 1 ELSE deleted END WHERE schedule_id = ?`, now.UnixNano(), id); err != nil {
 		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE schedule_versions SET effective_until = ? WHERE schedule_id = ? AND effective_until IS NULL`, now.UnixNano(), id); err != nil {

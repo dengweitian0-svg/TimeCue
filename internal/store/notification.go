@@ -96,7 +96,7 @@ func (s *NotificationStore) GetNotificationByStartTime(ctx context.Context, star
 	// 日程已取消、删除或暂停时，即使提醒仍在库中也不可投递。
 	rows, err := db.QueryContext(ctx, `SELECT n.id, n.schedule_id, n.status, n.notify_time, n.acknowledged_at, n.deleted, n.delivery_stopped, n.snapshot_taken, n.name_snapshot, n.description_snapshot
 		FROM notifications n JOIN schedules s ON s.id = n.schedule_id
-		WHERE n.notify_time >= ? AND n.notify_time < ? AND n.status = 'pending'
+		WHERE n.notify_time >= ? AND n.notify_time < ? AND n.status IN ('pending', 'loaded')
 		AND n.acknowledged_at IS NULL AND n.delivery_stopped = 0 AND n.deleted = 0 AND s.deleted = 0 AND s.cancelled = 0
 		AND (s.type = 'single' OR s.period_open = 1)
         AND (s.type != 'single' OR s.single_notify_time % 60000000000 = 0)
@@ -153,7 +153,7 @@ func (s *NotificationStore) SetDeliveryResult(ctx context.Context, notificationI
 		return fmt.Errorf("[store] cannot set delivery result, notification_id=%d, status=%q: %w", notificationID, status, err)
 	}
 	result, err := db.ExecContext(ctx, `UPDATE notifications SET status = ?
-		WHERE id = ? AND deleted = 0 AND status IN ('pending', 'failed')`, status, notificationID)
+		WHERE id = ? AND deleted = 0 AND status IN ('pending', 'loaded', 'failed')`, status, notificationID)
 	if err != nil {
 		return fmt.Errorf("[store] failed to set delivery result, notification_id=%d, status=%q: %w", notificationID, status, err)
 	}

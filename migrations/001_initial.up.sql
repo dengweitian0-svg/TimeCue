@@ -21,7 +21,7 @@ CREATE TABLE schedules (
 CREATE TABLE notifications (
     id INTEGER PRIMARY KEY,
     schedule_id INTEGER NOT NULL REFERENCES schedules(id),
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'loaded', 'sent', 'failed')),
     notify_time INTEGER NOT NULL,
     acknowledged_at INTEGER,
     deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
