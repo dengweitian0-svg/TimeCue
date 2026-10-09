@@ -15,7 +15,3 @@
 - `HTTPResult.SuccessMessage` 仅覆盖正常完成时的成功消息，幂等重放使用 `schedule write replayed`；内部错误、panic 和 4xx 始终优先使用失败消息及对应级别。内部素材仅用于日志，不进入响应 JSON。
 - `HTTPLogger` 在 Host 校验和异常恢复前注册，每请求最多一条 `[http]` 日志。查询/健康检查成功为 Debug，创建/更新/删除/确认为 Info，4xx 为 Warn，内部错误/panic 为 Error。
 - 日志不记录请求/响应体、查询字符串或日程说明；使用全局 logger 的测试不并行运行。
-
-阶段 C 同步 PUT 日程更新的 Info 事件及失败消息；日志测试使用 001 + 002 迁移，失败存储替身实现正式规则变更端口。
-
-日程变更日志的完整链路测试位于 [api/schedule_logging_test.go](../api/schedule_logging_test.go)；本包保留日志素材收集、序列化失败、panic、响应写入失败和请求隔离等通用测试。

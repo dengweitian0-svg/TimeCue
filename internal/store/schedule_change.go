@@ -137,7 +137,7 @@ func (s *ScheduleStore) ApplyScheduleChange(ctx context.Context, change model.Sc
 		if e != nil {
 			return nil, e
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO schedule_write_receipts VALUES (?, ?, ?)`, change.Key, change.Digest, string(encoded)); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schedule_write_receipts (operation_key, request_digest, result_json) VALUES (?, ?, ?)`, change.Key, change.Digest, string(encoded)); err != nil {
 			return nil, err
 		}
 	}

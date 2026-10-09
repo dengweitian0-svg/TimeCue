@@ -620,9 +620,9 @@ func TestScheduleQueriesHistoryMidnightProjectionAndPagination(t *testing.T) {
 	if _, err = app.AcknowledgeNotifications(ctx, []int{ids[1]}, now); err != nil {
 		t.Fatal(err)
 	}
-	// 业务仍使用两张核心表，另有规则版本和操作回执两张辅助表。
+	// 保留原有日程、提醒、规则版本及写入回执四张表，运行状态不扩展数据库。
 	var tableCount int
 	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&tableCount); err != nil || tableCount != 4 {
-		t.Fatalf("阶段 C 表结构数量不符，表数量=%d，错误=%v", tableCount, err)
+		t.Fatalf("业务表结构数量不符，表数量=%d，错误=%v", tableCount, err)
 	}
 }
