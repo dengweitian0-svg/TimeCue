@@ -1,0 +1,1114 @@
+{
+  "result": {
+    "stats": {
+      "steps": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0
+      },
+      "iterations": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "items": {},
+      "scripts": {
+        "total": 3,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "requests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "socketRequests": {
+        "total": 0,
+        "pending": 0,
+        "failed": 0
+      },
+      "tests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "testScripts": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequestScripts": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      }
+    },
+    "timings": {
+      "responseTime": 24,
+      "responseAverage": 24,
+      "responseMin": 24,
+      "responseMax": 24,
+      "responseSd": 0,
+      "dnsAverage": 0,
+      "dnsMin": 0,
+      "dnsMax": 0,
+      "dnsSd": 0,
+      "firstByteAverage": 0,
+      "firstByteMin": 0,
+      "firstByteMax": 0,
+      "firstByteSd": 0,
+      "started": 1791538872388,
+      "completed": 1791538872558
+    },
+    "transfers": {
+      "responseTotal": 24
+    },
+    "failures": [],
+    "stepTree": [
+      {
+        "ref": "39113447-a4f2-4245-9631-cdad47028229",
+        "type": "http"
+      }
+    ],
+    "error": null
+  },
+  "isTestFlowControl": true,
+  "run": {
+    "stats": {
+      "steps": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0
+      },
+      "iterations": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "items": {},
+      "scripts": {
+        "total": 3,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "requests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "socketRequests": {
+        "total": 0,
+        "pending": 0,
+        "failed": 0
+      },
+      "tests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "testScripts": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequestScripts": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      }
+    },
+    "timings": {
+      "responseTime": 24,
+      "responseAverage": 24,
+      "responseMin": 24,
+      "responseMax": 24,
+      "responseSd": 0,
+      "dnsAverage": 0,
+      "dnsMin": 0,
+      "dnsMax": 0,
+      "dnsSd": 0,
+      "firstByteAverage": 0,
+      "firstByteMin": 0,
+      "firstByteMax": 0,
+      "firstByteSd": 0,
+      "started": 1791538872388,
+      "completed": 1791538872558
+    },
+    "transfers": {
+      "responseTotal": 24
+    },
+    "failures": [],
+    "stepTree": [
+      {
+        "ref": "39113447-a4f2-4245-9631-cdad47028229",
+        "type": "http"
+      }
+    ],
+    "error": null
+  },
+  "options": {
+    "accessToken": "[REDACTED]",
+    "apiBaseUrl": "https://api.apifox.com",
+    "branch": 8703058,
+    "project": 8902401,
+    "testCaseEndpoint": 522022494,
+    "environment": 49486135,
+    "reporters": [
+      "json"
+    ],
+    "outDir": ".apifox/d1/reports",
+    "outFile": "health-regression",
+    "originalOutFile": "health-regression",
+    "envVar": [],
+    "globalVar": [],
+    "color": "auto",
+    "delayRequest": 0,
+    "timeoutRequest": 0,
+    "timeoutScript": 0,
+    "enableBigInt": false,
+    "disableRejectUnauthorized": false,
+    "allowSecuritySensitiveActions": true,
+    "reporterOptions": {
+      "name": "测试用例",
+      "runnerId": "845cab70-a8c5-4a98-b615-70d082a6e0b5",
+      "testCaseGroupId": 8902401,
+      "executionCount": 1
+    },
+    "isUploadReportSummary": false,
+    "apifoxVersion": "2.2.11",
+    "globals": {},
+    "teamGlobals": {}
+  },
+  "collection": {
+    "apifoxCli": "1.2.21",
+    "item": [
+      {
+        "item": [
+          {
+            "id": "1c1f84f8-a8a2-4a11-8e6e-f42c0fc1ad15",
+            "name": "检查本机服务与数据库(健康检查正常)",
+            "request": {
+              "url": {
+                "protocol": "http",
+                "port": "10086",
+                "path": [
+                  "health"
+                ],
+                "host": [
+                  "127",
+                  "0",
+                  "0",
+                  "1"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "User-Agent",
+                  "value": "app/1.0.0"
+                }
+              ],
+              "method": "GET",
+              "baseUrl": "http://127.0.0.1:10086",
+              "body": {},
+              "auth": {
+                "type": "noauth",
+                "noauth": []
+              },
+              "type": "http"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "prerequest",
+                "script": {
+                  "id": "commonScript.assertion",
+                  "type": "text/javascript",
+                  "exec": [
+                    "",
+                    "  ____string2Array = function(value) {",
+                    "    if(typeof value === 'object'){",
+                    "      return value;",
+                    "    }",
+                    "    try {",
+                    "      return JSON.parse(value);",
+                    "    } catch (e) {",
+                    "      return value;",
+                    "    }",
+                    "  }",
+                    "  ____string2Number = function(value, errorMsg) {",
+                    "   if(typeof value !== 'string'){",
+                    "     return value;",
+                    "   }",
+                    "   if (/^\\-?\\d+$/.test(value)) {",
+                    "       return parseInt(value);",
+                    "   } else if (/^\\-?\\d+\\.\\d+$/.test(value)) {",
+                    "       return parseFloat(value);",
+                    "   } else {",
+                    "       throw new Error(errorMsg || 'Data type mismatch')",
+                    "   }",
+                    " }",
+                    "",
+                    "  ____formatValues = function(value, stringCompareValue, comparison) {",
+                    "   try{",
+                    "     const isNumberComparisons = ['isBelow', 'isAtMost', 'isAbove', 'isAtLeast'].includes(comparison);",
+                    "     const isCollectionComparisons = ['isOneOf', 'notOneOf'].includes(comparison);",
+                    "     let compareValue;",
+                    "     switch (typeof value) {",
+                    "         case 'string':",
+                    "             if (isNumberComparisons) {",
+                    "                value = ____string2Number(value);",
+                    "                compareValue = ____string2Number(stringCompareValue);",
+                    "             } else if (isCollectionComparisons) {",
+                    "                compareValue = ____string2Array(stringCompareValue);",
+                    "             } else if (comparison === 'exists' || comparison === 'notExist') {",
+                    "                value = /^({%.*%})|({{.*}})$/.test(value) ? undefined : value;",
+                    "             } else {",
+                    "                compareValue = stringCompareValue;",
+                    "             }",
+                    "             break;",
+                    "         case 'object':",
+                    "             const isArray = value instanceof Array;",
+                    "             if (isNumberComparisons) {",
+                    "                 throw new Error('Values of type object cannot be compared using the ' + comparison + ' method')",
+                    "             } else if (isCollectionComparisons && isArray) {",
+                    "              throw new Error('Values of type array cannot be compared using the ' + comparison + ' method')",
+                    "            } else if (",
+                    "              isArray &&",
+                    "              comparison === 'include' &&",
+                    "              value.includes(stringCompareValue)",
+                    "            ) {",
+                    "              compareValue = stringCompareValue;",
+                    "            } else {",
+                    "              try {",
+                    "                  compareValue = JSON.parse(stringCompareValue);",
+                    "              } catch (e) {",
+                    "                  compareValue = stringCompareValue;",
+                    "              }",
+                    "            }",
+                    "             break;",
+                    "         case 'boolean':",
+                    "             if (isNumberComparisons || isCollectionComparisons) {",
+                    "                 throw new Error('Values of type boolean cannot be compared using the ' + comparison + ' method')",
+                    "             }",
+                    "             compareValue = stringCompareValue === 'true' ? true : (stringCompareValue === 'false' ? false : stringCompareValue);",
+                    "             break;",
+                    "           case 'bigint':",
+                    "           case 'number':",
+                    "             if (isNumberComparisons) {",
+                    "               compareValue = ____string2Number(stringCompareValue);",
+                    "             } else if (isCollectionComparisons) {",
+                    "              compareValue = ____string2Array(stringCompareValue);",
+                    "              value = '' + value;",
+                    "            } else {",
+                    "               compareValue = stringCompareValue;",
+                    "               value = '' + value;",
+                    "             }",
+                    "             break;",
+                    "         case 'null':",
+                    "             if (isNumberComparisons) {",
+                    "                 throw new Error('Values of type null cannot be compared using the ' + comparison + ' method')",
+                    "             }",
+                    "             compareValue = stringCompareValue === 'null' ? null : stringCompareValue;",
+                    "             break;",
+                    "         default:",
+                    "            if (isCollectionComparisons) {",
+                    "              compareValue = ____string2Array(stringCompareValue);",
+                    "            } else {",
+                    "              compareValue = stringCompareValue;",
+                    "            }",
+                    "            break;",
+                    "     }",
+                    "     return { compareValue, value };",
+                    "   } catch(e) {",
+                    "     console.log(e);",
+                    "     throw e;",
+                    "   }",
+                    " }",
+                    " "
+                  ]
+                }
+              },
+              {
+                "listen": "test",
+                "script": {
+                  "id": "postProcessors.0.assertion",
+                  "type": "text/javascript",
+                  "exec": [
+                    "",
+                    "        if (JSON.setEnableBigInt) {",
+                    "          JSON.setEnableBigInt(undefined);",
+                    "        }",
+                    "        ",
+                    "  async function ____replaceIn(value) {",
+                    "    if (typeof pm.variables.replaceInAsync === 'function') {",
+                    "      return await pm.variables.replaceInAsync(value);",
+                    "    }",
+                    "    return pm.variables.replaceIn(value);",
+                    "  };",
+                    "",
+                    "  ;(async () => {",
+                    "    try {",
+                    "      const formattedName = await ____replaceIn(`HTTP 200`);",
+                    "      pm.test(formattedName, async function(done) {",
+                    "        try {",
+                    "          ",
+                    "          const expression = await ____replaceIn(\"\");",
+                    "          const value = pm.response.code",
+                    "      ",
+                    "          ",
+                    "    const compareValue = await ____replaceIn(`200`);",
+                    "    const formattedValues = ____formatValues(value, compareValue, 'equal');",
+                    "  ",
+                    "          pm.expect(formattedValues.value).to.eql(formattedValues.compareValue);",
+                    "          done();",
+                    "        } catch (err) {",
+                    "          done(err);",
+                    "        }",
+                    "      });",
+                    "    } catch(e) {",
+                    "      setImmediate(() => { throw e });",
+                    "    }",
+                    "  })();",
+                    "      "
+                  ]
+                }
+              },
+              {
+                "listen": "test",
+                "script": {
+                  "id": "postProcessors.1.customScript",
+                  "type": "text/javascript",
+                  "exec": [
+                    "",
+                    "        if (JSON.setEnableBigInt) {",
+                    "          JSON.setEnableBigInt(undefined);",
+                    "        }",
+                    "        pm.test('健康状态', function(){ pm.expect(pm.response.json().data.status).to.eql('ok'); });",
+                    "      "
+                  ]
+                }
+              }
+            ],
+            "type": "http",
+            "metaInfo": {
+              "blockId": "065849f0-2cbb-4c23-8c0d-6e03968249a5",
+              "id": "065849f0-2cbb-4c23-8c0d-6e03968249a5",
+              "type": "http",
+              "projectId": 8902401,
+              "relatedId": 522022494,
+              "environmentId": 49486135,
+              "blockNumber": 1,
+              "tags": [],
+              "httpApiId": 522022494,
+              "httpApiCaseId": 419600071,
+              "httpApiName": "检查本机服务与数据库",
+              "httpApiPath": "/health",
+              "httpApiMethod": "get",
+              "httpApiCaseName": "健康检查正常",
+              "moduleId": 8672360,
+              "serverId": "default"
+            },
+            "protocolProfileBehavior": {
+              "useWhatWGUrlParser": false,
+              "disableUrlEncoding": false,
+              "disabledSystemHeaders": {},
+              "disableCookies": false
+            },
+            "responseDefinition": {
+              "id": "196223104",
+              "name": "",
+              "code": "200",
+              "contentType": "json",
+              "jsonSchema": {
+                "$ref": "#/definitions/318689176"
+              },
+              "itemSchema": {},
+              "description": "健康",
+              "mediaType": "application/json",
+              "headers": [],
+              "oasExtensions": "",
+              "schemaDefinitions": {
+                "318689176": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "ok"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "x-apifox-orders": [
+                        "status"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "x-apifox-orders": [
+                    "data"
+                  ],
+                  "title": "HealthResponse",
+                  "name": "HealthResponse"
+                }
+              }
+            },
+            "requestDefinition": {
+              "jsonSchema": {},
+              "examples": []
+            },
+            "overrideRequesterOptions": {
+              "strictSSL": false
+            }
+          }
+        ],
+        "name": "检查本机服务与数据库"
+      }
+    ],
+    "info": {
+      "name": "检查本机服务与数据库"
+    },
+    "dataSchemas": {
+      "318689176": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ok"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "x-apifox-orders": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "x-apifox-orders": [
+          "data"
+        ],
+        "title": "HealthResponse",
+        "name": "HealthResponse"
+      }
+    },
+    "mockRules": {
+      "rules": [],
+      "enableSystemRule": true
+    },
+    "environment": {
+      "id": 49486135,
+      "name": "本地隔离回归",
+      "type": "normal",
+      "baseUrls": {
+        "default": "http://127.0.0.1:10086"
+      },
+      "websocketBaseUrls": {},
+      "socketioBaseUrls": {},
+      "baseUrl": "http://127.0.0.1:10086",
+      "variable": {
+        "id": "c1b2adba-329a-4db8-a8e8-cf6f4659e953",
+        "name": "本地隔离回归",
+        "baseUrl": "http://127.0.0.1:10086",
+        "baseUrls": {
+          "default": "http://127.0.0.1:10086"
+        },
+        "values": [
+          {
+            "type": "any",
+            "value": "false",
+            "key": "tc_allow_writes",
+            "isBindInitial": false
+          },
+          {
+            "type": "any",
+            "value": "false",
+            "key": "tc_fixture_ready",
+            "isBindInitial": false
+          }
+        ]
+      },
+      "parameter": {
+        "header": [],
+        "query": [],
+        "body": [],
+        "cookie": []
+      },
+      "advancedSettings": {}
+    },
+    "globals": {
+      "baseUrls": {},
+      "websocketBaseUrls": {},
+      "socketioBaseUrls": {},
+      "baseUrl": "",
+      "variable": {
+        "id": "c7ce3713-82d1-4679-9b00-dd275cd62dd5",
+        "baseUrl": "",
+        "baseUrls": {},
+        "values": []
+      },
+      "parameter": {
+        "header": [],
+        "query": [],
+        "body": [],
+        "cookie": []
+      }
+    },
+    "teamGlobals": {
+      "baseUrls": {},
+      "websocketBaseUrls": {},
+      "socketioBaseUrls": {},
+      "baseUrl": "",
+      "variable": {
+        "id": "3c237d8c-b1eb-4526-b634-9b5834cc6c47",
+        "baseUrl": "",
+        "baseUrls": {},
+        "values": []
+      },
+      "parameter": {
+        "header": [],
+        "query": [],
+        "body": [],
+        "cookie": []
+      }
+    },
+    "moduleVariablesMap": {
+      "8672360": []
+    },
+    "isServerBuild": true,
+    "isTestFlowControl": true,
+    "collectionDefinition": {
+      "apifoxCli": "1.2.21",
+      "item": [
+        {
+          "item": [
+            {
+              "id": "1c1f84f8-a8a2-4a11-8e6e-f42c0fc1ad15",
+              "name": "检查本机服务与数据库(健康检查正常)",
+              "request": {
+                "url": {
+                  "protocol": "http",
+                  "port": "10086",
+                  "path": [
+                    "health"
+                  ],
+                  "host": [
+                    "127",
+                    "0",
+                    "0",
+                    "1"
+                  ],
+                  "query": [],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "User-Agent",
+                    "value": "app/1.0.0"
+                  }
+                ],
+                "method": "GET",
+                "baseUrl": "http://127.0.0.1:10086",
+                "body": {},
+                "auth": {
+                  "type": "noauth",
+                  "noauth": []
+                },
+                "type": "http"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "id": "commonScript.assertion",
+                    "type": "text/javascript",
+                    "exec": [
+                      "",
+                      "  ____string2Array = function(value) {",
+                      "    if(typeof value === 'object'){",
+                      "      return value;",
+                      "    }",
+                      "    try {",
+                      "      return JSON.parse(value);",
+                      "    } catch (e) {",
+                      "      return value;",
+                      "    }",
+                      "  }",
+                      "  ____string2Number = function(value, errorMsg) {",
+                      "   if(typeof value !== 'string'){",
+                      "     return value;",
+                      "   }",
+                      "   if (/^\\-?\\d+$/.test(value)) {",
+                      "       return parseInt(value);",
+                      "   } else if (/^\\-?\\d+\\.\\d+$/.test(value)) {",
+                      "       return parseFloat(value);",
+                      "   } else {",
+                      "       throw new Error(errorMsg || 'Data type mismatch')",
+                      "   }",
+                      " }",
+                      "",
+                      "  ____formatValues = function(value, stringCompareValue, comparison) {",
+                      "   try{",
+                      "     const isNumberComparisons = ['isBelow', 'isAtMost', 'isAbove', 'isAtLeast'].includes(comparison);",
+                      "     const isCollectionComparisons = ['isOneOf', 'notOneOf'].includes(comparison);",
+                      "     let compareValue;",
+                      "     switch (typeof value) {",
+                      "         case 'string':",
+                      "             if (isNumberComparisons) {",
+                      "                value = ____string2Number(value);",
+                      "                compareValue = ____string2Number(stringCompareValue);",
+                      "             } else if (isCollectionComparisons) {",
+                      "                compareValue = ____string2Array(stringCompareValue);",
+                      "             } else if (comparison === 'exists' || comparison === 'notExist') {",
+                      "                value = /^({%.*%})|({{.*}})$/.test(value) ? undefined : value;",
+                      "             } else {",
+                      "                compareValue = stringCompareValue;",
+                      "             }",
+                      "             break;",
+                      "         case 'object':",
+                      "             const isArray = value instanceof Array;",
+                      "             if (isNumberComparisons) {",
+                      "                 throw new Error('Values of type object cannot be compared using the ' + comparison + ' method')",
+                      "             } else if (isCollectionComparisons && isArray) {",
+                      "              throw new Error('Values of type array cannot be compared using the ' + comparison + ' method')",
+                      "            } else if (",
+                      "              isArray &&",
+                      "              comparison === 'include' &&",
+                      "              value.includes(stringCompareValue)",
+                      "            ) {",
+                      "              compareValue = stringCompareValue;",
+                      "            } else {",
+                      "              try {",
+                      "                  compareValue = JSON.parse(stringCompareValue);",
+                      "              } catch (e) {",
+                      "                  compareValue = stringCompareValue;",
+                      "              }",
+                      "            }",
+                      "             break;",
+                      "         case 'boolean':",
+                      "             if (isNumberComparisons || isCollectionComparisons) {",
+                      "                 throw new Error('Values of type boolean cannot be compared using the ' + comparison + ' method')",
+                      "             }",
+                      "             compareValue = stringCompareValue === 'true' ? true : (stringCompareValue === 'false' ? false : stringCompareValue);",
+                      "             break;",
+                      "           case 'bigint':",
+                      "           case 'number':",
+                      "             if (isNumberComparisons) {",
+                      "               compareValue = ____string2Number(stringCompareValue);",
+                      "             } else if (isCollectionComparisons) {",
+                      "              compareValue = ____string2Array(stringCompareValue);",
+                      "              value = '' + value;",
+                      "            } else {",
+                      "               compareValue = stringCompareValue;",
+                      "               value = '' + value;",
+                      "             }",
+                      "             break;",
+                      "         case 'null':",
+                      "             if (isNumberComparisons) {",
+                      "                 throw new Error('Values of type null cannot be compared using the ' + comparison + ' method')",
+                      "             }",
+                      "             compareValue = stringCompareValue === 'null' ? null : stringCompareValue;",
+                      "             break;",
+                      "         default:",
+                      "            if (isCollectionComparisons) {",
+                      "              compareValue = ____string2Array(stringCompareValue);",
+                      "            } else {",
+                      "              compareValue = stringCompareValue;",
+                      "            }",
+                      "            break;",
+                      "     }",
+                      "     return { compareValue, value };",
+                      "   } catch(e) {",
+                      "     console.log(e);",
+                      "     throw e;",
+                      "   }",
+                      " }",
+                      " "
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "id": "postProcessors.0.assertion",
+                    "type": "text/javascript",
+                    "exec": [
+                      "",
+                      "        if (JSON.setEnableBigInt) {",
+                      "          JSON.setEnableBigInt(undefined);",
+                      "        }",
+                      "        ",
+                      "  async function ____replaceIn(value) {",
+                      "    if (typeof pm.variables.replaceInAsync === 'function') {",
+                      "      return await pm.variables.replaceInAsync(value);",
+                      "    }",
+                      "    return pm.variables.replaceIn(value);",
+                      "  };",
+                      "",
+                      "  ;(async () => {",
+                      "    try {",
+                      "      const formattedName = await ____replaceIn(`HTTP 200`);",
+                      "      pm.test(formattedName, async function(done) {",
+                      "        try {",
+                      "          ",
+                      "          const expression = await ____replaceIn(\"\");",
+                      "          const value = pm.response.code",
+                      "      ",
+                      "          ",
+                      "    const compareValue = await ____replaceIn(`200`);",
+                      "    const formattedValues = ____formatValues(value, compareValue, 'equal');",
+                      "  ",
+                      "          pm.expect(formattedValues.value).to.eql(formattedValues.compareValue);",
+                      "          done();",
+                      "        } catch (err) {",
+                      "          done(err);",
+                      "        }",
+                      "      });",
+                      "    } catch(e) {",
+                      "      setImmediate(() => { throw e });",
+                      "    }",
+                      "  })();",
+                      "      "
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "id": "postProcessors.1.customScript",
+                    "type": "text/javascript",
+                    "exec": [
+                      "",
+                      "        if (JSON.setEnableBigInt) {",
+                      "          JSON.setEnableBigInt(undefined);",
+                      "        }",
+                      "        pm.test('健康状态', function(){ pm.expect(pm.response.json().data.status).to.eql('ok'); });",
+                      "      "
+                    ]
+                  }
+                }
+              ],
+              "type": "http",
+              "metaInfo": {
+                "blockId": "065849f0-2cbb-4c23-8c0d-6e03968249a5",
+                "id": "065849f0-2cbb-4c23-8c0d-6e03968249a5",
+                "type": "http",
+                "projectId": 8902401,
+                "relatedId": 522022494,
+                "environmentId": 49486135,
+                "blockNumber": 1,
+                "tags": [],
+                "httpApiId": 522022494,
+                "httpApiCaseId": 419600071,
+                "httpApiName": "检查本机服务与数据库",
+                "httpApiPath": "/health",
+                "httpApiMethod": "get",
+                "httpApiCaseName": "健康检查正常",
+                "moduleId": 8672360,
+                "serverId": "default"
+              },
+              "protocolProfileBehavior": {
+                "useWhatWGUrlParser": false,
+                "disableUrlEncoding": false,
+                "disabledSystemHeaders": {},
+                "disableCookies": false
+              },
+              "responseDefinition": {
+                "id": "196223104",
+                "name": "",
+                "code": "200",
+                "contentType": "json",
+                "jsonSchema": {
+                  "$ref": "#/definitions/318689176"
+                },
+                "itemSchema": {},
+                "description": "健康",
+                "mediaType": "application/json",
+                "headers": [],
+                "oasExtensions": "",
+                "schemaDefinitions": {
+                  "318689176": {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "ok"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "status"
+                        ],
+                        "x-apifox-orders": [
+                          "status"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "data"
+                    ],
+                    "x-apifox-orders": [
+                      "data"
+                    ],
+                    "title": "HealthResponse",
+                    "name": "HealthResponse"
+                  }
+                }
+              },
+              "requestDefinition": {
+                "jsonSchema": {},
+                "examples": []
+              },
+              "overrideRequesterOptions": {
+                "strictSSL": false
+              }
+            }
+          ],
+          "name": "检查本机服务与数据库"
+        }
+      ],
+      "info": {
+        "name": "检查本机服务与数据库"
+      },
+      "dataSchemas": {
+        "318689176": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ok"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "x-apifox-orders": [
+                "status"
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "x-apifox-orders": [
+            "data"
+          ],
+          "title": "HealthResponse",
+          "name": "HealthResponse"
+        }
+      },
+      "mockRules": {
+        "rules": [],
+        "enableSystemRule": true
+      },
+      "environment": {
+        "id": 49486135,
+        "name": "本地隔离回归",
+        "type": "normal",
+        "baseUrls": {
+          "default": "http://127.0.0.1:10086"
+        },
+        "websocketBaseUrls": {},
+        "socketioBaseUrls": {},
+        "baseUrl": "http://127.0.0.1:10086",
+        "variable": {
+          "id": "c1b2adba-329a-4db8-a8e8-cf6f4659e953",
+          "name": "本地隔离回归",
+          "baseUrl": "http://127.0.0.1:10086",
+          "baseUrls": {
+            "default": "http://127.0.0.1:10086"
+          },
+          "values": [
+            {
+              "type": "any",
+              "value": "false",
+              "key": "tc_allow_writes",
+              "isBindInitial": false
+            },
+            {
+              "type": "any",
+              "value": "false",
+              "key": "tc_fixture_ready",
+              "isBindInitial": false
+            }
+          ]
+        },
+        "parameter": {
+          "header": [],
+          "query": [],
+          "body": [],
+          "cookie": []
+        },
+        "advancedSettings": {}
+      },
+      "globals": {
+        "baseUrls": {},
+        "websocketBaseUrls": {},
+        "socketioBaseUrls": {},
+        "baseUrl": "",
+        "variable": {
+          "id": "c7ce3713-82d1-4679-9b00-dd275cd62dd5",
+          "baseUrl": "",
+          "baseUrls": {},
+          "values": []
+        },
+        "parameter": {
+          "header": [],
+          "query": [],
+          "body": [],
+          "cookie": []
+        }
+      },
+      "teamGlobals": {
+        "baseUrls": {},
+        "websocketBaseUrls": {},
+        "socketioBaseUrls": {},
+        "baseUrl": "",
+        "variable": {
+          "id": "3c237d8c-b1eb-4526-b634-9b5834cc6c47",
+          "baseUrl": "",
+          "baseUrls": {},
+          "values": []
+        },
+        "parameter": {
+          "header": [],
+          "query": [],
+          "body": [],
+          "cookie": []
+        }
+      },
+      "moduleVariablesMap": {
+        "8672360": []
+      },
+      "defaultModuleId": 8672360,
+      "isServerBuild": true,
+      "isTestFlowControl": true,
+      "projectAssociationMap": {},
+      "testDataMap": {},
+      "databaseConnectionMap": {}
+    },
+    "runOptions": {
+      "environmentId": 49486135,
+      "useDataSetId": -1,
+      "threadCount": 1,
+      "iterationCount": 1,
+      "delayItem": 0,
+      "saveVariables": true,
+      "saveReportDetail": "all",
+      "readGlobalCookie": false,
+      "saveGlobalCookie": false,
+      "onError": "ignore",
+      "runnerId": 0
+    },
+    "projectOptions": {
+      "allowAutomationWriteAutomationCreatedSprintBranch": true,
+      "enableJsonc": false,
+      "enableBigint": false,
+      "responseValidate": true,
+      "enableTestScenarioSetting": false,
+      "enableYAPICompatScript": false,
+      "isDefaultUrlEncoding": 2,
+      "publishedDocUrlRules": {
+        "defaultRule": "RESOURCE_KEY_ONLY",
+        "resourceKeyStandard": "NEW"
+      },
+      "mockSettings": {},
+      "language": "zh-CN"
+    },
+    "ciRunningOptions": {
+      "environmentId": 49486135,
+      "useDataSetId": -1,
+      "threadCount": 1,
+      "iterationCount": 1,
+      "delayItem": 0,
+      "saveVariables": true,
+      "saveReportDetail": "all",
+      "readGlobalCookie": false,
+      "saveGlobalCookie": false,
+      "onError": "ignore",
+      "runnerId": 0
+    },
+    "projectId": 8902401,
+    "databaseConnectionMap": {},
+    "testDataMap": {},
+    "reportUrlTemplate": "https://app.apifox.com/link/project/{{projectId}}/api-test/test-report/{{id}}",
+    "reportExtra": {
+      "runOptions": {
+        "environmentId": 49486135,
+        "useDataSetId": -1,
+        "threadCount": 1,
+        "iterationCount": 1,
+        "delayItem": 0,
+        "saveVariables": true,
+        "saveReportDetail": "all",
+        "readGlobalCookie": false,
+        "saveGlobalCookie": false,
+        "onError": "ignore",
+        "runnerId": 0
+      },
+      "endpoint": {
+        "id": 522022494,
+        "name": "检查本机服务与数据库",
+        "path": "/health",
+        "method": "get"
+      },
+      "testCaseRunSource": {
+        "type": "endpoint",
+        "endpointId": 522022494,
+        "requestedEnvironmentId": 49486135,
+        "resolvedEnvironmentId": 49486135,
+        "resolvedEnvironmentName": "本地隔离回归",
+        "isDefaultEnvironment": false
+      }
+    },
+    "runnerId": "392e83a6-6429-441b-8734-3f481ac44032",
+    "name": "检查本机服务与数据库"
+  }
+}

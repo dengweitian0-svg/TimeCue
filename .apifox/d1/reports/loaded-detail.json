@@ -1,0 +1,1126 @@
+{
+  "result": {
+    "stats": {
+      "steps": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0
+      },
+      "iterations": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "items": {},
+      "scripts": {
+        "total": 3,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "requests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "socketRequests": {
+        "total": 0,
+        "pending": 0,
+        "failed": 0
+      },
+      "tests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "testScripts": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequestScripts": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      }
+    },
+    "timings": {
+      "responseTime": 25,
+      "responseAverage": 25,
+      "responseMin": 25,
+      "responseMax": 25,
+      "responseSd": 0,
+      "dnsAverage": 0,
+      "dnsMin": 0,
+      "dnsMax": 0,
+      "dnsSd": 0,
+      "firstByteAverage": 0,
+      "firstByteMin": 0,
+      "firstByteMax": 0,
+      "firstByteSd": 0,
+      "started": 1791538757590,
+      "completed": 1791538757736
+    },
+    "transfers": {
+      "responseTotal": 260
+    },
+    "failures": [],
+    "stepTree": [
+      {
+        "ref": "ef2d5a06-3a4e-4ada-bd1e-16dc7661944c",
+        "type": "http"
+      }
+    ],
+    "error": null
+  },
+  "isTestFlowControl": true,
+  "run": {
+    "stats": {
+      "steps": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0
+      },
+      "iterations": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "items": {},
+      "scripts": {
+        "total": 3,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "requests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "socketRequests": {
+        "total": 0,
+        "pending": 0,
+        "failed": 0
+      },
+      "tests": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "testScripts": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequestScripts": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      }
+    },
+    "timings": {
+      "responseTime": 25,
+      "responseAverage": 25,
+      "responseMin": 25,
+      "responseMax": 25,
+      "responseSd": 0,
+      "dnsAverage": 0,
+      "dnsMin": 0,
+      "dnsMax": 0,
+      "dnsSd": 0,
+      "firstByteAverage": 0,
+      "firstByteMin": 0,
+      "firstByteMax": 0,
+      "firstByteSd": 0,
+      "started": 1791538757590,
+      "completed": 1791538757736
+    },
+    "transfers": {
+      "responseTotal": 260
+    },
+    "failures": [],
+    "stepTree": [
+      {
+        "ref": "ef2d5a06-3a4e-4ada-bd1e-16dc7661944c",
+        "type": "http"
+      }
+    ],
+    "error": null
+  },
+  "options": {
+    "accessToken": "[REDACTED]",
+    "apiBaseUrl": "https://api.apifox.com",
+    "branch": 8703058,
+    "project": 8902401,
+    "testCase": [
+      419893292
+    ],
+    "environment": 49486135,
+    "reporters": [
+      "json"
+    ],
+    "outDir": ".apifox/d1/reports",
+    "outFile": "loaded-detail",
+    "originalOutFile": "loaded-detail",
+    "envVar": [],
+    "globalVar": [],
+    "color": "auto",
+    "delayRequest": 0,
+    "timeoutRequest": 0,
+    "timeoutScript": 0,
+    "enableBigInt": false,
+    "disableRejectUnauthorized": false,
+    "allowSecuritySensitiveActions": true,
+    "reporterOptions": {
+      "name": "测试用例",
+      "runnerId": "1d8b9dca-d347-4a14-8040-289382956c17",
+      "testCaseGroupId": 8902401,
+      "executionCount": 1
+    },
+    "isUploadReportSummary": false,
+    "apifoxVersion": "2.2.11",
+    "globals": {},
+    "teamGlobals": {}
+  },
+  "collection": {
+    "apifoxCli": "1.2.21",
+    "item": [
+      {
+        "item": [
+          {
+            "id": "80cecb2f-434b-4787-b5a9-6a3e2b5155c4",
+            "name": "查询提醒事实与历史文本(D1 loaded 提醒详情)",
+            "request": {
+              "url": {
+                "protocol": "http",
+                "port": "10086",
+                "path": [
+                  "api",
+                  "v1",
+                  "notifications",
+                  "901"
+                ],
+                "host": [
+                  "127",
+                  "0",
+                  "0",
+                  "1"
+                ],
+                "query": [],
+                "variable": [
+                  {
+                    "disabled": false,
+                    "type": "any",
+                    "value": "901",
+                    "key": "id"
+                  }
+                ]
+              },
+              "header": [
+                {
+                  "key": "User-Agent",
+                  "value": "app/1.0.0"
+                }
+              ],
+              "method": "GET",
+              "baseUrl": "http://127.0.0.1:10086",
+              "body": {},
+              "auth": {
+                "type": "noauth",
+                "noauth": []
+              },
+              "type": "http"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "prerequest",
+                "script": {
+                  "id": "commonScript.assertion",
+                  "type": "text/javascript",
+                  "exec": [
+                    "",
+                    "  ____string2Array = function(value) {",
+                    "    if(typeof value === 'object'){",
+                    "      return value;",
+                    "    }",
+                    "    try {",
+                    "      return JSON.parse(value);",
+                    "    } catch (e) {",
+                    "      return value;",
+                    "    }",
+                    "  }",
+                    "  ____string2Number = function(value, errorMsg) {",
+                    "   if(typeof value !== 'string'){",
+                    "     return value;",
+                    "   }",
+                    "   if (/^\\-?\\d+$/.test(value)) {",
+                    "       return parseInt(value);",
+                    "   } else if (/^\\-?\\d+\\.\\d+$/.test(value)) {",
+                    "       return parseFloat(value);",
+                    "   } else {",
+                    "       throw new Error(errorMsg || 'Data type mismatch')",
+                    "   }",
+                    " }",
+                    "",
+                    "  ____formatValues = function(value, stringCompareValue, comparison) {",
+                    "   try{",
+                    "     const isNumberComparisons = ['isBelow', 'isAtMost', 'isAbove', 'isAtLeast'].includes(comparison);",
+                    "     const isCollectionComparisons = ['isOneOf', 'notOneOf'].includes(comparison);",
+                    "     let compareValue;",
+                    "     switch (typeof value) {",
+                    "         case 'string':",
+                    "             if (isNumberComparisons) {",
+                    "                value = ____string2Number(value);",
+                    "                compareValue = ____string2Number(stringCompareValue);",
+                    "             } else if (isCollectionComparisons) {",
+                    "                compareValue = ____string2Array(stringCompareValue);",
+                    "             } else if (comparison === 'exists' || comparison === 'notExist') {",
+                    "                value = /^({%.*%})|({{.*}})$/.test(value) ? undefined : value;",
+                    "             } else {",
+                    "                compareValue = stringCompareValue;",
+                    "             }",
+                    "             break;",
+                    "         case 'object':",
+                    "             const isArray = value instanceof Array;",
+                    "             if (isNumberComparisons) {",
+                    "                 throw new Error('Values of type object cannot be compared using the ' + comparison + ' method')",
+                    "             } else if (isCollectionComparisons && isArray) {",
+                    "              throw new Error('Values of type array cannot be compared using the ' + comparison + ' method')",
+                    "            } else if (",
+                    "              isArray &&",
+                    "              comparison === 'include' &&",
+                    "              value.includes(stringCompareValue)",
+                    "            ) {",
+                    "              compareValue = stringCompareValue;",
+                    "            } else {",
+                    "              try {",
+                    "                  compareValue = JSON.parse(stringCompareValue);",
+                    "              } catch (e) {",
+                    "                  compareValue = stringCompareValue;",
+                    "              }",
+                    "            }",
+                    "             break;",
+                    "         case 'boolean':",
+                    "             if (isNumberComparisons || isCollectionComparisons) {",
+                    "                 throw new Error('Values of type boolean cannot be compared using the ' + comparison + ' method')",
+                    "             }",
+                    "             compareValue = stringCompareValue === 'true' ? true : (stringCompareValue === 'false' ? false : stringCompareValue);",
+                    "             break;",
+                    "           case 'bigint':",
+                    "           case 'number':",
+                    "             if (isNumberComparisons) {",
+                    "               compareValue = ____string2Number(stringCompareValue);",
+                    "             } else if (isCollectionComparisons) {",
+                    "              compareValue = ____string2Array(stringCompareValue);",
+                    "              value = '' + value;",
+                    "            } else {",
+                    "               compareValue = stringCompareValue;",
+                    "               value = '' + value;",
+                    "             }",
+                    "             break;",
+                    "         case 'null':",
+                    "             if (isNumberComparisons) {",
+                    "                 throw new Error('Values of type null cannot be compared using the ' + comparison + ' method')",
+                    "             }",
+                    "             compareValue = stringCompareValue === 'null' ? null : stringCompareValue;",
+                    "             break;",
+                    "         default:",
+                    "            if (isCollectionComparisons) {",
+                    "              compareValue = ____string2Array(stringCompareValue);",
+                    "            } else {",
+                    "              compareValue = stringCompareValue;",
+                    "            }",
+                    "            break;",
+                    "     }",
+                    "     return { compareValue, value };",
+                    "   } catch(e) {",
+                    "     console.log(e);",
+                    "     throw e;",
+                    "   }",
+                    " }",
+                    " "
+                  ]
+                }
+              },
+              {
+                "listen": "test",
+                "script": {
+                  "id": "postProcessors.0.assertion",
+                  "type": "text/javascript",
+                  "exec": [
+                    "",
+                    "        if (JSON.setEnableBigInt) {",
+                    "          JSON.setEnableBigInt(undefined);",
+                    "        }",
+                    "        ",
+                    "  async function ____replaceIn(value) {",
+                    "    if (typeof pm.variables.replaceInAsync === 'function') {",
+                    "      return await pm.variables.replaceInAsync(value);",
+                    "    }",
+                    "    return pm.variables.replaceIn(value);",
+                    "  };",
+                    "",
+                    "  ;(async () => {",
+                    "    try {",
+                    "      const formattedName = await ____replaceIn(`HTTP 200`);",
+                    "      pm.test(formattedName, async function(done) {",
+                    "        try {",
+                    "          ",
+                    "          const expression = await ____replaceIn(\"\");",
+                    "          const value = pm.response.code",
+                    "      ",
+                    "          ",
+                    "    const compareValue = await ____replaceIn(`200`);",
+                    "    const formattedValues = ____formatValues(value, compareValue, 'equal');",
+                    "  ",
+                    "          pm.expect(formattedValues.value).to.eql(formattedValues.compareValue);",
+                    "          done();",
+                    "        } catch (err) {",
+                    "          done(err);",
+                    "        }",
+                    "      });",
+                    "    } catch(e) {",
+                    "      setImmediate(() => { throw e });",
+                    "    }",
+                    "  })();",
+                    "      "
+                  ]
+                }
+              },
+              {
+                "listen": "test",
+                "script": {
+                  "id": "postProcessors.1.assertion",
+                  "type": "text/javascript",
+                  "exec": [
+                    "",
+                    "        if (JSON.setEnableBigInt) {",
+                    "          JSON.setEnableBigInt(undefined);",
+                    "        }",
+                    "        ",
+                    "  async function ____replaceIn(value) {",
+                    "    if (typeof pm.variables.replaceInAsync === 'function') {",
+                    "      return await pm.variables.replaceInAsync(value);",
+                    "    }",
+                    "    return pm.variables.replaceIn(value);",
+                    "  };",
+                    "",
+                    "  ;(async () => {",
+                    "    try {",
+                    "      const formattedName = await ____replaceIn(`已加载不等于展示成功`);",
+                    "      pm.test(formattedName, async function(done) {",
+                    "        try {",
+                    "          ",
+                    "          const expression = await ____replaceIn(`$.data.deliveryStatus`);",
+                    "          const JSONPath = require('jsonpath-plus').JSONPath;",
+                    "          let jsonData;",
+                    "          try {",
+                    "            jsonData = pm.response.json();",
+                    "          } catch(e) {",
+                    "            let text = pm.response.text();",
+                    "            const xml2js = require('xml2js');",
+                    "            function removeXmlUselessPrefixAndSuffix(text) {",
+                    "              const start = text.indexOf('<');",
+                    "              const end = text.lastIndexOf('>');",
+                    "              if (start === -1 || end === -1) {",
+                    "                return text;",
+                    "              }",
+                    "              return text.substring(start, end + 1);",
+                    "            }",
+                    "            text = removeXmlUselessPrefixAndSuffix(text);",
+                    "            let json;",
+                    "            let xmlParseOptions = {",
+                    "                explicitArray: false,",
+                    "                trim: true,",
+                    "                ignoreAttrs: true,",
+                    "            };",
+                    "            xml2js.parseString(text, xmlParseOptions, function (_, result) {",
+                    "                jsonData = result;",
+                    "            });",
+                    "          }",
+                    "          let value = JSONPath({",
+                    "            json: jsonData,",
+                    "            path: expression,",
+                    "            wrap: false",
+                    "          });",
+                    "",
+                    "          if (false && undefined !== undefined) {",
+                    "            if (Array.isArray(value)) {",
+                    "              value = Number(undefined) >= 0 ? value[undefined] : value[value.length + Number(undefined)];",
+                    "            } else {",
+                    "              value = undefined;",
+                    "            }",
+                    "          }",
+                    "",
+                    "          ",
+                    "          ",
+                    "    const compareValue = await ____replaceIn(`loaded`);",
+                    "    const formattedValues = ____formatValues(value, compareValue, 'equal');",
+                    "  ",
+                    "          pm.expect(formattedValues.value).to.eql(formattedValues.compareValue);",
+                    "          done();",
+                    "        } catch (err) {",
+                    "          done(err);",
+                    "        }",
+                    "      });",
+                    "    } catch(e) {",
+                    "      setImmediate(() => { throw e });",
+                    "    }",
+                    "  })();",
+                    "      "
+                  ]
+                }
+              }
+            ],
+            "type": "http",
+            "metaInfo": {
+              "blockId": "71d40954-a10e-4647-b777-8c3e95ca6ce1",
+              "id": "71d40954-a10e-4647-b777-8c3e95ca6ce1",
+              "type": "http",
+              "projectId": 8902401,
+              "relatedId": 522022501,
+              "environmentId": 49486135,
+              "blockNumber": 1,
+              "tags": [],
+              "httpApiId": 522022501,
+              "httpApiCaseId": 419893292,
+              "httpApiName": "查询提醒事实与历史文本",
+              "httpApiPath": "/api/v1/notifications/{id}",
+              "httpApiMethod": "get",
+              "httpApiCaseName": "D1 loaded 提醒详情",
+              "moduleId": 8672360,
+              "serverId": "default"
+            },
+            "protocolProfileBehavior": {
+              "useWhatWGUrlParser": false,
+              "disableUrlEncoding": false,
+              "disabledSystemHeaders": {},
+              "disableCookies": false
+            },
+            "responseDefinition": {
+              "validateDeletedResponse": false
+            },
+            "requestDefinition": {
+              "jsonSchema": {},
+              "examples": []
+            },
+            "overrideRequesterOptions": {
+              "strictSSL": false
+            }
+          }
+        ],
+        "name": "查询提醒事实与历史文本"
+      }
+    ],
+    "info": {
+      "name": "查询提醒事实与历史文本"
+    },
+    "dataSchemas": {},
+    "mockRules": {
+      "rules": [],
+      "enableSystemRule": true
+    },
+    "environment": {
+      "id": 49486135,
+      "name": "本地隔离回归",
+      "type": "normal",
+      "baseUrls": {
+        "default": "http://127.0.0.1:10086"
+      },
+      "websocketBaseUrls": {},
+      "socketioBaseUrls": {},
+      "baseUrl": "http://127.0.0.1:10086",
+      "variable": {
+        "id": "f8842ec5-0a31-4484-b25d-15b9bbf0746f",
+        "name": "本地隔离回归",
+        "baseUrl": "http://127.0.0.1:10086",
+        "baseUrls": {
+          "default": "http://127.0.0.1:10086"
+        },
+        "values": [
+          {
+            "type": "any",
+            "value": "false",
+            "key": "tc_allow_writes",
+            "isBindInitial": false
+          },
+          {
+            "type": "any",
+            "value": "false",
+            "key": "tc_fixture_ready",
+            "isBindInitial": false
+          }
+        ]
+      },
+      "parameter": {
+        "header": [],
+        "query": [],
+        "body": [],
+        "cookie": []
+      },
+      "advancedSettings": {}
+    },
+    "globals": {
+      "baseUrls": {},
+      "websocketBaseUrls": {},
+      "socketioBaseUrls": {},
+      "baseUrl": "",
+      "variable": {
+        "id": "14d07410-4cd6-4cf8-be5e-d76e4cf5e9d4",
+        "baseUrl": "",
+        "baseUrls": {},
+        "values": []
+      },
+      "parameter": {
+        "header": [],
+        "query": [],
+        "body": [],
+        "cookie": []
+      }
+    },
+    "teamGlobals": {
+      "baseUrls": {},
+      "websocketBaseUrls": {},
+      "socketioBaseUrls": {},
+      "baseUrl": "",
+      "variable": {
+        "id": "292d2634-c8bb-4ccb-b4be-6024c704668e",
+        "baseUrl": "",
+        "baseUrls": {},
+        "values": []
+      },
+      "parameter": {
+        "header": [],
+        "query": [],
+        "body": [],
+        "cookie": []
+      }
+    },
+    "moduleVariablesMap": {
+      "8672360": []
+    },
+    "isServerBuild": true,
+    "isTestFlowControl": true,
+    "collectionDefinition": {
+      "apifoxCli": "1.2.21",
+      "item": [
+        {
+          "item": [
+            {
+              "id": "80cecb2f-434b-4787-b5a9-6a3e2b5155c4",
+              "name": "查询提醒事实与历史文本(D1 loaded 提醒详情)",
+              "request": {
+                "url": {
+                  "protocol": "http",
+                  "port": "10086",
+                  "path": [
+                    "api",
+                    "v1",
+                    "notifications",
+                    "901"
+                  ],
+                  "host": [
+                    "127",
+                    "0",
+                    "0",
+                    "1"
+                  ],
+                  "query": [],
+                  "variable": [
+                    {
+                      "disabled": false,
+                      "type": "any",
+                      "value": "901",
+                      "key": "id"
+                    }
+                  ]
+                },
+                "header": [
+                  {
+                    "key": "User-Agent",
+                    "value": "app/1.0.0"
+                  }
+                ],
+                "method": "GET",
+                "baseUrl": "http://127.0.0.1:10086",
+                "body": {},
+                "auth": {
+                  "type": "noauth",
+                  "noauth": []
+                },
+                "type": "http"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "id": "commonScript.assertion",
+                    "type": "text/javascript",
+                    "exec": [
+                      "",
+                      "  ____string2Array = function(value) {",
+                      "    if(typeof value === 'object'){",
+                      "      return value;",
+                      "    }",
+                      "    try {",
+                      "      return JSON.parse(value);",
+                      "    } catch (e) {",
+                      "      return value;",
+                      "    }",
+                      "  }",
+                      "  ____string2Number = function(value, errorMsg) {",
+                      "   if(typeof value !== 'string'){",
+                      "     return value;",
+                      "   }",
+                      "   if (/^\\-?\\d+$/.test(value)) {",
+                      "       return parseInt(value);",
+                      "   } else if (/^\\-?\\d+\\.\\d+$/.test(value)) {",
+                      "       return parseFloat(value);",
+                      "   } else {",
+                      "       throw new Error(errorMsg || 'Data type mismatch')",
+                      "   }",
+                      " }",
+                      "",
+                      "  ____formatValues = function(value, stringCompareValue, comparison) {",
+                      "   try{",
+                      "     const isNumberComparisons = ['isBelow', 'isAtMost', 'isAbove', 'isAtLeast'].includes(comparison);",
+                      "     const isCollectionComparisons = ['isOneOf', 'notOneOf'].includes(comparison);",
+                      "     let compareValue;",
+                      "     switch (typeof value) {",
+                      "         case 'string':",
+                      "             if (isNumberComparisons) {",
+                      "                value = ____string2Number(value);",
+                      "                compareValue = ____string2Number(stringCompareValue);",
+                      "             } else if (isCollectionComparisons) {",
+                      "                compareValue = ____string2Array(stringCompareValue);",
+                      "             } else if (comparison === 'exists' || comparison === 'notExist') {",
+                      "                value = /^({%.*%})|({{.*}})$/.test(value) ? undefined : value;",
+                      "             } else {",
+                      "                compareValue = stringCompareValue;",
+                      "             }",
+                      "             break;",
+                      "         case 'object':",
+                      "             const isArray = value instanceof Array;",
+                      "             if (isNumberComparisons) {",
+                      "                 throw new Error('Values of type object cannot be compared using the ' + comparison + ' method')",
+                      "             } else if (isCollectionComparisons && isArray) {",
+                      "              throw new Error('Values of type array cannot be compared using the ' + comparison + ' method')",
+                      "            } else if (",
+                      "              isArray &&",
+                      "              comparison === 'include' &&",
+                      "              value.includes(stringCompareValue)",
+                      "            ) {",
+                      "              compareValue = stringCompareValue;",
+                      "            } else {",
+                      "              try {",
+                      "                  compareValue = JSON.parse(stringCompareValue);",
+                      "              } catch (e) {",
+                      "                  compareValue = stringCompareValue;",
+                      "              }",
+                      "            }",
+                      "             break;",
+                      "         case 'boolean':",
+                      "             if (isNumberComparisons || isCollectionComparisons) {",
+                      "                 throw new Error('Values of type boolean cannot be compared using the ' + comparison + ' method')",
+                      "             }",
+                      "             compareValue = stringCompareValue === 'true' ? true : (stringCompareValue === 'false' ? false : stringCompareValue);",
+                      "             break;",
+                      "           case 'bigint':",
+                      "           case 'number':",
+                      "             if (isNumberComparisons) {",
+                      "               compareValue = ____string2Number(stringCompareValue);",
+                      "             } else if (isCollectionComparisons) {",
+                      "              compareValue = ____string2Array(stringCompareValue);",
+                      "              value = '' + value;",
+                      "            } else {",
+                      "               compareValue = stringCompareValue;",
+                      "               value = '' + value;",
+                      "             }",
+                      "             break;",
+                      "         case 'null':",
+                      "             if (isNumberComparisons) {",
+                      "                 throw new Error('Values of type null cannot be compared using the ' + comparison + ' method')",
+                      "             }",
+                      "             compareValue = stringCompareValue === 'null' ? null : stringCompareValue;",
+                      "             break;",
+                      "         default:",
+                      "            if (isCollectionComparisons) {",
+                      "              compareValue = ____string2Array(stringCompareValue);",
+                      "            } else {",
+                      "              compareValue = stringCompareValue;",
+                      "            }",
+                      "            break;",
+                      "     }",
+                      "     return { compareValue, value };",
+                      "   } catch(e) {",
+                      "     console.log(e);",
+                      "     throw e;",
+                      "   }",
+                      " }",
+                      " "
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "id": "postProcessors.0.assertion",
+                    "type": "text/javascript",
+                    "exec": [
+                      "",
+                      "        if (JSON.setEnableBigInt) {",
+                      "          JSON.setEnableBigInt(undefined);",
+                      "        }",
+                      "        ",
+                      "  async function ____replaceIn(value) {",
+                      "    if (typeof pm.variables.replaceInAsync === 'function') {",
+                      "      return await pm.variables.replaceInAsync(value);",
+                      "    }",
+                      "    return pm.variables.replaceIn(value);",
+                      "  };",
+                      "",
+                      "  ;(async () => {",
+                      "    try {",
+                      "      const formattedName = await ____replaceIn(`HTTP 200`);",
+                      "      pm.test(formattedName, async function(done) {",
+                      "        try {",
+                      "          ",
+                      "          const expression = await ____replaceIn(\"\");",
+                      "          const value = pm.response.code",
+                      "      ",
+                      "          ",
+                      "    const compareValue = await ____replaceIn(`200`);",
+                      "    const formattedValues = ____formatValues(value, compareValue, 'equal');",
+                      "  ",
+                      "          pm.expect(formattedValues.value).to.eql(formattedValues.compareValue);",
+                      "          done();",
+                      "        } catch (err) {",
+                      "          done(err);",
+                      "        }",
+                      "      });",
+                      "    } catch(e) {",
+                      "      setImmediate(() => { throw e });",
+                      "    }",
+                      "  })();",
+                      "      "
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "id": "postProcessors.1.assertion",
+                    "type": "text/javascript",
+                    "exec": [
+                      "",
+                      "        if (JSON.setEnableBigInt) {",
+                      "          JSON.setEnableBigInt(undefined);",
+                      "        }",
+                      "        ",
+                      "  async function ____replaceIn(value) {",
+                      "    if (typeof pm.variables.replaceInAsync === 'function') {",
+                      "      return await pm.variables.replaceInAsync(value);",
+                      "    }",
+                      "    return pm.variables.replaceIn(value);",
+                      "  };",
+                      "",
+                      "  ;(async () => {",
+                      "    try {",
+                      "      const formattedName = await ____replaceIn(`已加载不等于展示成功`);",
+                      "      pm.test(formattedName, async function(done) {",
+                      "        try {",
+                      "          ",
+                      "          const expression = await ____replaceIn(`$.data.deliveryStatus`);",
+                      "          const JSONPath = require('jsonpath-plus').JSONPath;",
+                      "          let jsonData;",
+                      "          try {",
+                      "            jsonData = pm.response.json();",
+                      "          } catch(e) {",
+                      "            let text = pm.response.text();",
+                      "            const xml2js = require('xml2js');",
+                      "            function removeXmlUselessPrefixAndSuffix(text) {",
+                      "              const start = text.indexOf('<');",
+                      "              const end = text.lastIndexOf('>');",
+                      "              if (start === -1 || end === -1) {",
+                      "                return text;",
+                      "              }",
+                      "              return text.substring(start, end + 1);",
+                      "            }",
+                      "            text = removeXmlUselessPrefixAndSuffix(text);",
+                      "            let json;",
+                      "            let xmlParseOptions = {",
+                      "                explicitArray: false,",
+                      "                trim: true,",
+                      "                ignoreAttrs: true,",
+                      "            };",
+                      "            xml2js.parseString(text, xmlParseOptions, function (_, result) {",
+                      "                jsonData = result;",
+                      "            });",
+                      "          }",
+                      "          let value = JSONPath({",
+                      "            json: jsonData,",
+                      "            path: expression,",
+                      "            wrap: false",
+                      "          });",
+                      "",
+                      "          if (false && undefined !== undefined) {",
+                      "            if (Array.isArray(value)) {",
+                      "              value = Number(undefined) >= 0 ? value[undefined] : value[value.length + Number(undefined)];",
+                      "            } else {",
+                      "              value = undefined;",
+                      "            }",
+                      "          }",
+                      "",
+                      "          ",
+                      "          ",
+                      "    const compareValue = await ____replaceIn(`loaded`);",
+                      "    const formattedValues = ____formatValues(value, compareValue, 'equal');",
+                      "  ",
+                      "          pm.expect(formattedValues.value).to.eql(formattedValues.compareValue);",
+                      "          done();",
+                      "        } catch (err) {",
+                      "          done(err);",
+                      "        }",
+                      "      });",
+                      "    } catch(e) {",
+                      "      setImmediate(() => { throw e });",
+                      "    }",
+                      "  })();",
+                      "      "
+                    ]
+                  }
+                }
+              ],
+              "type": "http",
+              "metaInfo": {
+                "blockId": "71d40954-a10e-4647-b777-8c3e95ca6ce1",
+                "id": "71d40954-a10e-4647-b777-8c3e95ca6ce1",
+                "type": "http",
+                "projectId": 8902401,
+                "relatedId": 522022501,
+                "environmentId": 49486135,
+                "blockNumber": 1,
+                "tags": [],
+                "httpApiId": 522022501,
+                "httpApiCaseId": 419893292,
+                "httpApiName": "查询提醒事实与历史文本",
+                "httpApiPath": "/api/v1/notifications/{id}",
+                "httpApiMethod": "get",
+                "httpApiCaseName": "D1 loaded 提醒详情",
+                "moduleId": 8672360,
+                "serverId": "default"
+              },
+              "protocolProfileBehavior": {
+                "useWhatWGUrlParser": false,
+                "disableUrlEncoding": false,
+                "disabledSystemHeaders": {},
+                "disableCookies": false
+              },
+              "responseDefinition": {
+                "validateDeletedResponse": false
+              },
+              "requestDefinition": {
+                "jsonSchema": {},
+                "examples": []
+              },
+              "overrideRequesterOptions": {
+                "strictSSL": false
+              }
+            }
+          ],
+          "name": "查询提醒事实与历史文本"
+        }
+      ],
+      "info": {
+        "name": "查询提醒事实与历史文本"
+      },
+      "dataSchemas": {},
+      "mockRules": {
+        "rules": [],
+        "enableSystemRule": true
+      },
+      "environment": {
+        "id": 49486135,
+        "name": "本地隔离回归",
+        "type": "normal",
+        "baseUrls": {
+          "default": "http://127.0.0.1:10086"
+        },
+        "websocketBaseUrls": {},
+        "socketioBaseUrls": {},
+        "baseUrl": "http://127.0.0.1:10086",
+        "variable": {
+          "id": "f8842ec5-0a31-4484-b25d-15b9bbf0746f",
+          "name": "本地隔离回归",
+          "baseUrl": "http://127.0.0.1:10086",
+          "baseUrls": {
+            "default": "http://127.0.0.1:10086"
+          },
+          "values": [
+            {
+              "type": "any",
+              "value": "false",
+              "key": "tc_allow_writes",
+              "isBindInitial": false
+            },
+            {
+              "type": "any",
+              "value": "false",
+              "key": "tc_fixture_ready",
+              "isBindInitial": false
+            }
+          ]
+        },
+        "parameter": {
+          "header": [],
+          "query": [],
+          "body": [],
+          "cookie": []
+        },
+        "advancedSettings": {}
+      },
+      "globals": {
+        "baseUrls": {},
+        "websocketBaseUrls": {},
+        "socketioBaseUrls": {},
+        "baseUrl": "",
+        "variable": {
+          "id": "14d07410-4cd6-4cf8-be5e-d76e4cf5e9d4",
+          "baseUrl": "",
+          "baseUrls": {},
+          "values": []
+        },
+        "parameter": {
+          "header": [],
+          "query": [],
+          "body": [],
+          "cookie": []
+        }
+      },
+      "teamGlobals": {
+        "baseUrls": {},
+        "websocketBaseUrls": {},
+        "socketioBaseUrls": {},
+        "baseUrl": "",
+        "variable": {
+          "id": "292d2634-c8bb-4ccb-b4be-6024c704668e",
+          "baseUrl": "",
+          "baseUrls": {},
+          "values": []
+        },
+        "parameter": {
+          "header": [],
+          "query": [],
+          "body": [],
+          "cookie": []
+        }
+      },
+      "moduleVariablesMap": {
+        "8672360": []
+      },
+      "defaultModuleId": 8672360,
+      "isServerBuild": true,
+      "isTestFlowControl": true,
+      "projectAssociationMap": {},
+      "testDataMap": {},
+      "databaseConnectionMap": {}
+    },
+    "runOptions": {
+      "environmentId": 49486135,
+      "useDataSetId": -1,
+      "threadCount": 1,
+      "iterationCount": 1,
+      "delayItem": 0,
+      "saveVariables": true,
+      "saveReportDetail": "all",
+      "readGlobalCookie": false,
+      "saveGlobalCookie": false,
+      "onError": "ignore",
+      "runnerId": 0
+    },
+    "projectOptions": {
+      "allowAutomationWriteAutomationCreatedSprintBranch": true,
+      "enableJsonc": false,
+      "enableBigint": false,
+      "responseValidate": true,
+      "enableTestScenarioSetting": false,
+      "enableYAPICompatScript": false,
+      "isDefaultUrlEncoding": 2,
+      "publishedDocUrlRules": {
+        "defaultRule": "RESOURCE_KEY_ONLY",
+        "resourceKeyStandard": "NEW"
+      },
+      "mockSettings": {},
+      "language": "zh-CN"
+    },
+    "ciRunningOptions": {
+      "environmentId": 49486135,
+      "useDataSetId": -1,
+      "threadCount": 1,
+      "iterationCount": 1,
+      "delayItem": 0,
+      "saveVariables": true,
+      "saveReportDetail": "all",
+      "readGlobalCookie": false,
+      "saveGlobalCookie": false,
+      "onError": "ignore",
+      "runnerId": 0
+    },
+    "projectId": 8902401,
+    "databaseConnectionMap": {},
+    "testDataMap": {},
+    "reportUrlTemplate": "https://app.apifox.com/link/project/{{projectId}}/api-test/test-report/{{id}}",
+    "reportExtra": {
+      "runOptions": {
+        "environmentId": 49486135,
+        "useDataSetId": -1,
+        "threadCount": 1,
+        "iterationCount": 1,
+        "delayItem": 0,
+        "saveVariables": true,
+        "saveReportDetail": "all",
+        "readGlobalCookie": false,
+        "saveGlobalCookie": false,
+        "onError": "ignore",
+        "runnerId": 0
+      },
+      "endpoint": {
+        "id": 522022501,
+        "name": "查询提醒事实与历史文本",
+        "path": "/api/v1/notifications/{id}",
+        "method": "get"
+      },
+      "testCaseRunSource": {
+        "type": "case",
+        "caseId": 419893292,
+        "requestedEnvironmentId": 49486135,
+        "resolvedEnvironmentId": 49486135,
+        "resolvedEnvironmentName": "本地隔离回归",
+        "isDefaultEnvironment": false
+      }
+    },
+    "runnerId": "65d782c2-5a2c-47ce-9a97-396ff1d1ca4e",
+    "name": "查询提醒事实与历史文本"
+  }
+}

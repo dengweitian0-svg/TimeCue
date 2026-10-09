@@ -8,10 +8,10 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 | 部分 | 仓库中的现状 |
 | --- | --- |
-| 启动入口 | 加载配置、打开 SQLite、检查手动迁移结构，再监听 `127.0.0.1:10086`；收到退出信号后优雅关闭。 |
+| 启动入口 | main 装配适配器并调用 service.App.Run；App 加载配置、打开 SQLite、检查结构，再运行 HTTP 与调度，退出后关闭依赖资源。 |
 | 配置 | 从内嵌的 `internal/config/default.yaml` 加载默认值，以工作目录下的 `config.yaml` 覆盖；支持文件监听、配置快照、修改用户配置和恢复默认值。 |
 | 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
-| 日程与提醒 | 已有创建日程和首条提醒的原子写入、下一次触发计算与提醒推进服务；HTTP API 支持日程基础操作、日期/月历/历史待确认查询和原子单条/批量确认，运行中的调度器尚未实现。 |
+| 日程与提醒 | 已有规则操作、查询与确认；D1 每 30 秒扫描前后各 30 秒，近期首提醒即时入队，到点冻结快照并开放完整分钟分组。Windows 展示及恢复汇总待 D2/D3 接入。 |
 | SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；表结构由独立 SQL 迁移建立，入口检查迁移版本和表结构但不自动执行迁移。 |
 | Flutter | `desktop/` 已实现三时段房间、双页本子及创建/编辑视觉骨架，默认接入 Go 查询、单条/批量确认及真实规则变更，视觉示例仍用显式内存仓储。 |
 
@@ -27,7 +27,13 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 核心业务持久化使用 `schedules` 和 `notifications`，阶段 C 的 `schedule_versions` 与 `schedule_write_receipts` 保存规则区间和幂等回执；Go 查询与确认归入原有日程和提醒模块。Flutter 的日程本是展示方式，没有独立数据库、表或后端业务模型。
 
+阶段 D 的[运行状态方案](docs/phase-d0-runtime-state.md)规定：任务分组、展示次数、尝试成员和恢复位置只放内存；预加载状态复用 `notifications.status=loaded`，不增加表、字段、迁移、RuntimeStore、runtime_json、租约或心跳。D1 直接修改原 001 的 status CHECK，仍使用 001 + 002、版本 2；系统通知与全期间恢复待后续任务实现。
+
 重要状态只能经明确的业务操作改变。已发生的提醒应保留可查询的记录；周期表达式只决定未来触发时间，不代替提醒历史或确认状态。
+
+阶段 D 的实施顺序见[开发规划](docs/phase-d-development-plan.md)；已实现的 D1 及 D2/D3 接入契约见[分钟调度方案](docs/phase-d1-minute-scheduler.md)。loaded 表示加载/等待执行，只有 sent 表示平台接受展示，用户确认保持独立。
+
+D1 的 Go/race、Flutter 测试与 Windows release 构建、Apifox 接口验收已通过，证据见[验收记录](docs/phase-d1-validation.md)。
 
 ## 配置
 
@@ -58,7 +64,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 
 ## 本地 HTTP API
 
-首次使用空数据库时，先按[迁移说明](migrations/README.md)依次手动执行 `001_initial.up.sql`、`002_schedule_changes.up.sql`，再从仓库根目录运行 `go run ./cmd/flutter`。服务固定监听 `http://127.0.0.1:10086`，仅接受 `Host: 127.0.0.1:10086`，不启用浏览器 CORS 或应用令牌。启动前检查数据库版本和表结构；`GET /health` 每次复查。缺少迁移时服务不会监听。
+首次使用空数据库时，先按[迁移说明](migrations/README.md)依次手动执行当前 `001_initial.up.sql`、`002_schedule_changes.up.sql`，再运行 `go run ./cmd/flutter`。版本仍为 2；旧库若 status CHECK 不支持 loaded，将明确拒绝启动，修改 SQL 文件不会自动修改旧库。服务固定监听 `http://127.0.0.1:10086`，仅接受 `Host: 127.0.0.1:10086`，不启用浏览器 CORS 或应用令牌。启动前和 `GET /health` 检查版本、结构及 loaded 约束。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |

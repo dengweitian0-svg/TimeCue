@@ -1,0 +1,51 @@
+{
+  "name": "D1 loaded 待确认查询",
+  "apiDetailId": 522022500,
+  "categoryId": 13918741,
+  "method": "get",
+  "path": "/api/v1/notifications",
+  "parameters": {
+    "path": [],
+    "query": [
+      {
+        "id": "param-state",
+        "name": "state",
+        "value": "unacknowledged",
+        "type": "string",
+        "enable": true,
+        "isModify": true,
+        "description": ""
+      }
+    ],
+    "cookie": [],
+    "header": []
+  },
+  "commonParameters": {},
+  "requestBody": {
+    "type": "none"
+  },
+  "preProcessors": [],
+  "postProcessors": [
+    {
+      "data": {
+        "value": "200",
+        "comparison": "equal",
+        "subject": "httpCode",
+        "path": "",
+        "name": "HTTP 200"
+      },
+      "type": "assertion",
+      "enable": true,
+      "id": "post.0",
+      "defaultEnable": true
+    },
+    {
+      "data": "pm.test('loaded 提醒保留在待确认页', function(){var rows=pm.response.json().data.items;var row=rows.find(function(x){return x.notificationId===901;});pm.expect(row).to.exist;pm.expect(row.deliveryStatus).to.eql('loaded');});",
+      "type": "customScript",
+      "enable": true,
+      "id": "post.1",
+      "defaultEnable": true
+    }
+  ],
+  "tagIds": []
+}

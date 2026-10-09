@@ -2,7 +2,7 @@
 
 迁移使用独立 SQL 文件。Go 的 Sqlite.Connect 只打开数据库，不会建表或自动升级结构。当前代码要求迁移版本 2，目录提供 001/002。
 
-D1直接修改原 001 中 notifications.status 的 CHECK，允许 pending/loaded/sent/failed。仍使用四张业务表、版本 2，不新增表、字段、迁移或中间表。
+[D1 实现](../docs/phase-d1-minute-scheduler.md)直接修改原 001 中 notifications.status 的 CHECK，允许 pending/loaded/sent/failed。仍使用四张业务表、版本 2，不新增表、字段、迁移或中间表。
 
 首次建立数据库时，在仓库根目录执行：
 

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "notifications-regression",
+    "steps": 6,
+    "assertions": 12,
+    "failed": 0
+  },
+  {
+    "name": "loaded-detail",
+    "steps": 1,
+    "assertions": 2,
+    "failed": 0
+  },
+  {
+    "name": "immediate-loading",
+    "steps": 1,
+    "assertions": 3,
+    "failed": 0
+  },
+  {
+    "name": "acknowledgement",
+    "steps": 1,
+    "assertions": 3,
+    "failed": 0
+  },
+  {
+    "name": "health-regression",
+    "steps": 1,
+    "assertions": 2,
+    "failed": 0
+  }
+]

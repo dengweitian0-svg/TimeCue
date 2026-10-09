@@ -1,0 +1,57 @@
+{
+  "name": "D1 loaded 不作为待确认筛选状态",
+  "categoryId": 13918742,
+  "apiDetailId": 522022500,
+  "method": "",
+  "path": "/api/v1/notifications",
+  "parameters": {
+    "path": [],
+    "query": [
+      {
+        "id": "param-state",
+        "name": "state",
+        "value": "loaded",
+        "type": "string",
+        "enable": true,
+        "isModify": true,
+        "description": ""
+      }
+    ],
+    "cookie": [],
+    "header": []
+  },
+  "commonParameters": {},
+  "requestBody": {
+    "type": "none"
+  },
+  "preProcessors": [],
+  "postProcessors": [
+    {
+      "defaultEnable": true,
+      "id": "post.0",
+      "enable": true,
+      "type": "assertion",
+      "data": {
+        "name": "HTTP 400",
+        "path": "",
+        "comparison": "equal",
+        "value": "400",
+        "subject": "httpCode"
+      }
+    },
+    {
+      "defaultEnable": true,
+      "id": "post.1",
+      "enable": true,
+      "type": "assertion",
+      "data": {
+        "name": "错误码存在",
+        "path": "$.error.code",
+        "comparison": "exists",
+        "value": "",
+        "subject": "responseJson"
+      }
+    }
+  ],
+  "tagIds": []
+}

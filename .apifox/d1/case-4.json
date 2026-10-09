@@ -1,0 +1,42 @@
+{
+  "name": "D1 确认保留实际投递状态",
+  "apiDetailId": 522022502,
+  "categoryId": 13918741,
+  "method": "post",
+  "path": "/api/v1/notifications/acknowledgements",
+  "parameters": {
+    "cookie": [],
+    "header": [],
+    "path": [],
+    "query": []
+  },
+  "commonParameters": {},
+  "requestBody": {
+    "type": "application/json",
+    "data": "{\"notificationIds\":[901]}"
+  },
+  "preProcessors": [],
+  "postProcessors": [
+    {
+      "data": {
+        "value": "200",
+        "comparison": "equal",
+        "subject": "httpCode",
+        "path": "",
+        "name": "HTTP 200"
+      },
+      "type": "assertion",
+      "enable": true,
+      "id": "post.0",
+      "defaultEnable": true
+    },
+    {
+      "data": "pm.test('确认集合正确',function(){pm.expect(pm.response.json().data[0].notificationId).to.eql(901);});\npm.sendRequest('http://127.0.0.1:10086/api/v1/notifications/901',function(err,response){pm.test('确认不改写 loaded 为 sent',function(){pm.expect(err).to.eql(null);var row=response.json().data;pm.expect(row.deliveryStatus).to.eql('loaded');pm.expect(row.acknowledgedAt).to.be.a('string');});});",
+      "type": "customScript",
+      "enable": true,
+      "id": "post.1",
+      "defaultEnable": true
+    }
+  ],
+  "tagIds": []
+}

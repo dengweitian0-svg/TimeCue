@@ -1,0 +1,93 @@
+{
+  "name": "Occurrence",
+  "displayName": "",
+  "folderId": 0,
+  "jsonSchema": {
+    "type": "object",
+    "properties": {
+      "occurrenceKey": {
+        "type": "string"
+      },
+      "scheduleId": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "notificationId": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "name": {
+        "type": "string"
+      },
+      "description": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "notifyTime": {
+        "type": "string",
+        "format": "date-time",
+        "description": "北京时间，固定 +08:00；业务计划时间必须为整分钟。"
+      },
+      "source": {
+        "type": "string",
+        "enum": [
+          "persisted",
+          "projected"
+        ]
+      },
+      "deliveryStatus": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "pending",
+          "loaded",
+          "sent",
+          "failed",
+          null
+        ],
+        "description": "loaded 表示已预加载、等待到点或执行结果；仅 sent 表示平台接受展示。"
+      },
+      "acknowledgedAt": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date-time",
+        "description": "北京时间，固定 +08:00；业务计划时间必须为整分钟。"
+      },
+      "editable": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "occurrenceKey",
+      "scheduleId",
+      "notificationId",
+      "name",
+      "description",
+      "notifyTime",
+      "source",
+      "deliveryStatus",
+      "acknowledgedAt",
+      "editable"
+    ],
+    "x-apifox-orders": [
+      "occurrenceKey",
+      "scheduleId",
+      "notificationId",
+      "name",
+      "description",
+      "notifyTime",
+      "source",
+      "deliveryStatus",
+      "acknowledgedAt",
+      "editable"
+    ]
+  }
+}
