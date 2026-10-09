@@ -1,11 +1,11 @@
 # TimeCue
 
-Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务，Flutter 提供房间与日程本界面。已接通查询、确认、规则操作及分钟预加载/到期调度；系统通知和全期间恢复待后续接入。
+Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务，Flutter 提供房间与日程本界面。已接通查询、确认、规则操作、分钟调度及投递领取/开始/回填协议；Windows 通知执行者和全期间恢复待后续接入。
 
 - [cmd/flutter](cmd/flutter/AGENTS.md)：Go 本机 HTTP 服务启动、组件装配与退出清理。
 - [internal/api](internal/api/AGENTS.md)：HTTP 路由、日程与提醒接口。
 - [internal/middleware](internal/middleware/AGENTS.md)：请求日志、Host 校验、异常恢复与响应适配。
-- [internal/service](internal/service/AGENTS.md)：日程用例、触发时间计算、日期/月历查询与提醒确认。
+- [internal/service](internal/service/AGENTS.md)：日程用例、触发时间计算、查询与确认、运行内投递尝试和重试。
 - [internal/model](internal/model/AGENTS.md)：日程、提醒、查询条件及共享业务类型。
 - [internal/store](internal/store/AGENTS.md)：SQLite 连接、健康检查、日程与提醒持久化。
 - [internal/config](internal/config/AGENTS.md)：配置加载、监听、修改与恢复默认值。
