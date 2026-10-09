@@ -212,6 +212,10 @@ func (s *Scheduler) ScheduleChanged(ctx context.Context, result *model.ScheduleW
 			s.loadBatch(window, batch)
 			if n.NotifyTime.Before(now.Truncate(time.Minute)) && len(batch.EligibleIDs) > 0 {
 				s.addMissing(n.NotifyTime, now.Truncate(time.Minute))
+			} else if len(batch.EligibleIDs) > 0 && s.completed[n.NotifyTime.Truncate(time.Minute).UnixNano()] {
+				// 回拨后新建的未来事实不能被已核验分钟集合永久遮蔽，过期后交恢复。
+				minute := n.NotifyTime.Truncate(time.Minute)
+				s.addMissing(minute, minute.Add(time.Minute))
 			}
 			s.mu.Unlock()
 		}
@@ -268,6 +272,39 @@ func (s *Scheduler) Snapshot() SchedulerSnapshot {
 	sort.Slice(value.Ready, func(i, j int) bool { return value.Ready[i].Minute.Before(value.Ready[j].Minute) })
 	sort.Slice(value.Retry, func(i, j int) bool { return value.Retry[i].Minute.Before(value.Retry[j].Minute) })
 	return value
+}
+
+// TakeRecoveryWindows 正式交接间隙及已过期分组，避免 Ready 被再次逐分钟接纳。
+func (s *Scheduler) TakeRecoveryWindows(through time.Time) []model.NotificationWindow {
+	s.work.Lock()
+	defer s.work.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values := make([]model.NotificationWindow, 0, len(s.missing))
+	remaining := make([]model.NotificationWindow, 0)
+	for _, window := range s.missing {
+		if window.Start.Before(through) {
+			covered := window
+			if covered.End.After(through) {
+				covered.End = through
+			}
+			values = append(values, covered)
+		}
+		if window.End.After(through) {
+			if window.Start.Before(through) {
+				window.Start = through
+			}
+			remaining = append(remaining, window)
+		}
+	}
+	s.missing = remaining
+	for key, g := range s.groups {
+		if g.Minute.Before(through) {
+			values = append(values, model.NotificationWindow{Start: g.Minute, End: g.Minute.Add(time.Minute)})
+			delete(s.groups, key)
+		}
+	}
+	return values
 }
 
 // 以下函数在持有 mu 时调用，不访问数据库。

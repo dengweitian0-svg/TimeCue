@@ -71,6 +71,10 @@ type deliveryTask struct {
 	active         *deliveryAttempt
 	retryAt        time.Time
 	done           bool
+	ready          bool
+	transferred    bool
+	memberVersion  int
+	recovery       *recoveryRound
 }
 type deliveryAttempt struct {
 	task    *deliveryTask
@@ -84,11 +88,13 @@ type deliveryAttempt struct {
 // DeliveryService 的状态仅由 App.operations 串行修改；此锁是业务操作边界，
 // 与 Scheduler 内存锁分离，存储端口不得回调 App 或 Scheduler。
 type DeliveryService struct {
-	repo     DeliveryRepo
-	now      func() time.Time
-	tasks    map[int64]*deliveryTask
-	attempts map[string]*deliveryAttempt
-	stopping bool
+	repo          DeliveryRepo
+	now           func() time.Time
+	tasks         map[int64]*deliveryTask
+	attempts      map[string]*deliveryAttempt
+	stopping      bool
+	recoveryTasks map[string]*deliveryTask
+	memberOwners  map[int]*deliveryTask
 }
 
 // NewDeliveryService 允许测试注入时钟，不启动循环、不创建数据库对象。
@@ -99,7 +105,7 @@ func NewDeliveryService(repo DeliveryRepo, now func() time.Time) (*DeliveryServi
 	if now == nil {
 		now = time.Now
 	}
-	return &DeliveryService{repo: repo, now: now, tasks: make(map[int64]*deliveryTask), attempts: make(map[string]*deliveryAttempt)}, nil
+	return &DeliveryService{repo: repo, now: now, tasks: make(map[int64]*deliveryTask), attempts: make(map[string]*deliveryAttempt), recoveryTasks: make(map[string]*deliveryTask), memberOwners: make(map[int]*deliveryTask)}, nil
 }
 
 func (a *App) delivery() (*DeliveryService, error) {
@@ -135,6 +141,9 @@ func (a *App) ClaimDelivery(ctx context.Context, limit int) ([]DeliveryClaim, er
 		return nil, err
 	}
 	now := d.now().In(model.BeijingLocation())
+	if err := a.prepareRecoveryLocked(ctx, now); err != nil {
+		return nil, err
+	}
 	if a.Scheduler != nil {
 		snapshot := a.Scheduler.Snapshot()
 		for _, g := range append(snapshot.Ready, snapshot.Retry...) {
@@ -144,12 +153,23 @@ func (a *App) ClaimDelivery(ctx context.Context, limit int) ([]DeliveryClaim, er
 			key := g.Minute.UnixNano()
 			if d.tasks[key] == nil {
 				candidates := append(append([]int(nil), g.MemberIDs...), g.RetryIDs...)
+				unowned := make([]int, 0, len(candidates))
+				for _, id := range candidates {
+					if d.memberOwners[id] == nil {
+						unowned = append(unowned, id)
+					}
+				}
 				// 新运行没有旧预算，D2 在接纳边界正式许可当前分钟 failed 重加载。
-				members, err := d.repo.ReadDeliveryMembers(ctx, candidates, now, true)
+				members, err := d.repo.ReadDeliveryMembers(ctx, unowned, now, true)
 				if err != nil {
 					return nil, err
 				}
-				d.tasks[key] = &deliveryTask{id: rand.Text(), minute: g.Minute, facts: append([]int(nil), g.FactIDs...), members: deliveryMemberIDs(members), done: len(members) == 0}
+				d.tasks[key] = &deliveryTask{id: rand.Text(), minute: g.Minute, facts: append([]int(nil), g.FactIDs...), members: deliveryMemberIDs(members), done: len(members) == 0, ready: true}
+				for _, id := range g.FactIDs {
+					if d.memberOwners[id] == nil {
+						d.memberOwners[id] = d.tasks[key]
+					}
+				}
 			}
 		}
 	}
@@ -157,13 +177,21 @@ func (a *App) ClaimDelivery(ctx context.Context, limit int) ([]DeliveryClaim, er
 	for _, task := range d.tasks {
 		ordered = append(ordered, task)
 	}
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].minute.Before(ordered[j].minute) })
+	for _, task := range d.recoveryTasks {
+		ordered = append(ordered, task)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].minute.Equal(ordered[j].minute) {
+			return ordered[i].id < ordered[j].id
+		}
+		return ordered[i].minute.Before(ordered[j].minute)
+	})
 	claims := make([]DeliveryClaim, 0, limit)
 	for _, task := range ordered {
 		if len(claims) == limit {
 			break
 		}
-		if task.done || task.attempts >= 4 || now.Before(task.retryAt) {
+		if task.done || task.transferred || (task.recovery != nil && !task.ready) || task.attempts >= 4 || now.Before(task.retryAt) || task.minute.After(now) {
 			continue
 		}
 		if task.active != nil {
@@ -184,7 +212,11 @@ func (a *App) ClaimDelivery(ctx context.Context, limit int) ([]DeliveryClaim, er
 			}
 		}
 		id := rand.Text()
-		attempt := &deliveryAttempt{task: task, claim: DeliveryClaim{DeliveryTaskID: task.id, TaskType: "minute", AttemptID: id, PlatformID: id, NotifyTime: task.minute}}
+		kind := "minute"
+		if task.recovery != nil {
+			kind = "recovery"
+		}
+		attempt := &deliveryAttempt{task: task, claim: DeliveryClaim{DeliveryTaskID: task.id, TaskType: kind, AttemptID: id, PlatformID: id, NotifyTime: task.minute}}
 		task.active = attempt
 		d.attempts[id] = attempt
 		claims = append(claims, attempt.claim)
@@ -202,6 +234,9 @@ func (a *App) StartDelivery(ctx context.Context, id string) (DeliveryStart, erro
 	}
 	if d.stopping {
 		return DeliveryStart{}, ErrDeliveryStopping
+	}
+	if err := a.prepareRecoveryLocked(ctx, d.now()); err != nil {
+		return DeliveryStart{}, err
 	}
 	at := d.attempts[id]
 	if at == nil {
@@ -222,7 +257,9 @@ func (a *App) StartDelivery(ctx context.Context, id string) (DeliveryStart, erro
 		at.task.attempts++
 		start.AttemptNumber = at.task.attempts
 		start.Title = "日程提醒"
-		if len(members) == 1 {
+		if at.task.recovery != nil {
+			start.Body = fmt.Sprintf("有 %d 项错过的日程需要处理", len(members))
+		} else if len(members) == 1 {
 			start.Body = fmt.Sprintf("%s %s", *members[0].NameSnapshot, members[0].NotifyTime.In(model.BeijingLocation()).Format("2006-01-02 15:04"))
 		} else {
 			start.Body = fmt.Sprintf("有 %d 项日程需要处理", len(members))
@@ -306,7 +343,7 @@ func (a *App) DeliveryExecutorExited() {
 		return
 	}
 	d := a.Delivery
-	for _, task := range d.tasks {
+	for _, task := range d.allTasks() {
 		at := task.active
 		if task.done || at == nil || at.unknown {
 			continue
@@ -338,7 +375,10 @@ func (a *App) DeliverySnapshot() []DeliveryTaskView {
 	if a.Delivery == nil {
 		return views
 	}
-	for _, task := range a.Delivery.tasks {
+	for _, task := range a.Delivery.allTasks() {
+		if task.transferred {
+			continue
+		}
 		v := DeliveryTaskView{DeliveryTaskID: task.id, Minute: task.minute, FactIDs: append([]int(nil), task.facts...), MemberIDs: append([]int(nil), task.members...), Attempts: task.attempts, RetryAt: task.retryAt, Completed: task.done}
 		if at := task.active; at != nil {
 			v.AttemptID = at.claim.AttemptID
@@ -354,6 +394,17 @@ func (a *App) DeliverySnapshot() []DeliveryTaskView {
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].Minute.Before(views[j].Minute) })
 	return views
+}
+
+func (d *DeliveryService) allTasks() []*deliveryTask {
+	values := make([]*deliveryTask, 0, len(d.tasks)+len(d.recoveryTasks))
+	for _, task := range d.tasks {
+		values = append(values, task)
+	}
+	for _, task := range d.recoveryTasks {
+		values = append(values, task)
+	}
+	return values
 }
 
 // DeliveryAttemptMembers 为 D3 的尝试成员查询返回独立副本，不依赖当前候选。

@@ -33,6 +33,7 @@ type App struct {
 	Config     *config.Manager
 	Scheduler  *Scheduler
 	Delivery   *DeliveryService
+	Recovery   *RecoveryService
 	operations sync.Mutex // 正式写入、开始冻结和回填共用操作边界，避免提交后回调竞争。
 }
 
@@ -177,19 +178,33 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 	if err != nil {
 		return fmt.Errorf("listen on 127.0.0.1:10086: %w", err)
 	}
+	if a.Recovery == nil {
+		repo, ok := a.Notify.(RecoveryRepo)
+		if !ok {
+			_ = listener.Close()
+			return fmt.Errorf("[app] notification repo does not support recovery")
+		}
+		a.Recovery, err = NewRecoveryService(repo, SchedulerOptions{OnError: func(err error) { log.Error("[recovery] background operation failed", "error", err) }})
+		if err != nil {
+			_ = listener.Close()
+			return err
+		}
+	}
 	runCtx, stop := context.WithCancel(ctx)
 	schedulerDone := make(chan error, 1)
 	go func() { schedulerDone <- a.Scheduler.Run(runCtx) }()
+	recoveryDone := make(chan error, 1)
+	go func() { recoveryDone <- a.RunRecovery(runCtx) }()
 	requests := &requestTracker{handler: options.Handler}
+	// 请求上下文由 HTTP 连接管理；退出只取消后台工作，已接收回填保留优雅窗口。
 	server := &http.Server{
 		Handler:           requests,
-		BaseContext:       func(net.Listener) context.Context { return runCtx },
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
 		WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
 	defer func() {
-		a.StopDelivery()
 		stop()
+		a.StopDelivery()
 		requests.stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -198,6 +213,7 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 		}
 		requests.active.Wait()
 		<-schedulerDone
+		<-recoveryDone
 	}()
 	serveErrors := make(chan error, 1)
 	go func() { serveErrors <- server.Serve(listener) }()

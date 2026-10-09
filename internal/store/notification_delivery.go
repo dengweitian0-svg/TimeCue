@@ -46,7 +46,8 @@ func (s *NotificationStore) ReadDeliveryMembers(ctx context.Context, ids []int, 
 			continue
 		}
 		var eligible bool
-		if err = tx.QueryRowContext(ctx, `SELECT deleted = 0 AND cancelled = 0 AND (type = 'single' OR period_open = 1) FROM schedules WHERE id = ?`, n.ScheduleID).Scan(&eligible); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT deleted = 0 AND cancelled = 0 AND (type = 'single' OR period_open = 1)
+			AND (type != 'single' OR single_notify_time % 60000000000 = 0) FROM schedules WHERE id = ?`, n.ScheduleID).Scan(&eligible); err != nil {
 			return nil, err
 		}
 		if !eligible {
