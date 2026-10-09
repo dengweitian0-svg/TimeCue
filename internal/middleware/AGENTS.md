@@ -15,3 +15,4 @@
 - `HTTPResult.SuccessMessage` 仅覆盖正常完成时的成功消息，幂等重放使用 `schedule write replayed`；内部错误、panic 和 4xx 始终优先使用失败消息及对应级别。内部素材仅用于日志，不进入响应 JSON。
 - `HTTPLogger` 在 Host 校验和异常恢复前注册，每请求最多一条 `[http]` 日志。查询/健康检查成功为 Debug，创建/更新/删除/确认为 Info，4xx 为 Warn，内部错误/panic 为 Error。
 - 日志不记录请求/响应体、查询字符串或日程说明；使用全局 logger 的测试不并行运行。
+- 投递 claim 成功使用 Debug，start/results 使用 Info；事件覆盖包含分组前缀的完整路由模板，运行身份、数量、次数及结果来自 handler 的 LogFields，不记录展示文案。

@@ -7,6 +7,7 @@
 - `router.go`：注册健康检查、日程创建/更新/启停/删除及提醒路由，装配中间件、404/405 响应及请求日志字段提取。
 - [handler](handler/AGENTS.md)：请求解析与校验、服务调用、响应 DTO 和业务错误映射。
 - `router_test.go`：验证路由、输入校验、响应协议和 HTTP 日志。
+- `delivery_test.go`：投递三接口严格输入、空队列、当前运行身份、真实数据库正向流程和日志隐私测试。
 - `schedule_logging_test.go`：使用真实 SQLite 验证创建、更新、启停、删除、幂等重放及提交后响应失败的日志；`http_log_helpers_test.go` 复用 API 路由装配，提供日志捕获、断言和响应短写模拟。
 
 工程约束：
@@ -16,6 +17,8 @@
 - DTO 或响应分支变化时同步字段提取函数；不解析请求/响应 JSON，不记录名称、说明或完整批量 ID 集合。
 - 中间件顺序为 `HTTPLogger` → `HostGuard` → `Recovery`。路由测试覆盖事件消息、日志级别、业务字段及失败时的字段遗漏。
 - 日程变更日志的完整链路测试归 API；日志素材保留、序列化失败、panic 和请求隔离等通用测试归 middleware。使用全局日志器的测试不并行执行。
+- POST notifications/claim 领取完整任务，delivery-attempts/:id/start 冻结执行决定，delivery-attempts/:id/results 回填 sent/failed；只支持单执行者。不存在或旧进程身份返回 404，未开始回填及矛盾结果返回 409，停止接纳返回 503。
+- 三条投递路由由 handler 直接附加 HTTPResult.LogFields，包含运行身份、数量和次数，不包含文案及成员列表；响应失败仍保留已提交操作事实。
 
 - `schedule_change_test.go`：原子暂停创建、分钟精度、版本冲突、类型边界、创建/更新幂等重放和已删除规则拒绝更新。
 
