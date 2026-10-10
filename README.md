@@ -8,8 +8,8 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 | 部分 | 仓库中的现状 |
 | --- | --- |
-| 启动入口 | main 装配适配器并调用 service.App.Run；App 加载配置、打开 SQLite、检查结构，再运行 HTTP 与调度，退出后关闭依赖资源。 |
-| 配置 | 从内嵌的 `internal/config/default.yaml` 加载默认值，以工作目录下的 `config.yaml` 覆盖；支持文件监听、配置快照、修改用户配置和恢复默认值。 |
+| 启动入口 | main 校验数据目录和运行身份并调用 service.App.Run；托管模式提供 ready 与父端 shutdown/EOF 控制，App 沿用原生命周期清理。 |
+| 配置 | Flutter 负责用户 config.yaml 的原子写入；Go 合并原有内嵌默认值、发布快照并监听。相对数据库/日志路径使用同一数据目录。 |
 | 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
 | 日程与提醒 | 已有规则操作、查询与确认；D1 开放完整分钟分组，D2 提供领取、开始、结果回填和有限重试，D3 按历史版本分批恢复、开放唯一遗漏汇总并查询成员/进度。Windows 展示与恢复界面待 D5/D6 接入。 |
 | SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；表结构由独立 SQL 迁移建立，入口检查迁移版本和表结构但不自动执行迁移。 |
@@ -33,6 +33,8 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 阶段 D 的实施顺序见[开发规划](docs/design/phase-d-development-plan.md)；已实现的 D1 及 D2/D3 接入契约见[分钟调度方案](docs/design/phase-d1-minute-scheduler.md)。loaded 表示加载/等待执行，只有 sent 表示平台接受展示，用户确认保持独立。
 
+D4 的 [Go 托管启动](docs/design/phase-d4-managed-startup.md)已完成数据目录、运行身份、ready 及父进程停止管道；Go 检查与 Apifox 健康扩展、D2/D3 回归均已通过，见[验收记录](docs/design/phase-d4-validation.md)。Flutter 隐藏启动、进程句柄与 Job Object 由 D8 接入。
+
 D2 已实现三接口协议、开始资格及成员冻结、原子结果回填和运行内有限重试，核心实现见[投递服务](internal/service/notification_delivery.go)。任务及尝试不持久化，数据库继续使用原四张表和版本 2；Apifox 验收报告保留在本地 `.apifox/d2/reports/`。
 
 D3 已接入启动和运行间隙的全期间恢复：每事务最多补齐 500 条可证明的历史触发，排除暂停区间并保留旧文本和永久停止。整理完成后只开放一个 recovery 汇总；未开始旧分钟及连续遗漏的旧汇总合入新汇总，已开始任务保留身份和本运行预算。任务及 attempt 成员每页 50 条，组合快照区分恢复进度和投递结果；完整遗漏总数未确定时返回 null。设计和任务见[D3 契约](docs/design/phase-d3-recovery-query.md)，Go/race 和 Apifox 结果见[验收记录](docs/design/phase-d3-validation.md)。
@@ -41,7 +43,7 @@ D1 的 Go/race、Flutter 测试与 Windows release 构建、Apifox 接口验收�
 
 ## 配置
 
-默认配置内嵌在 [`internal/config/default.yaml`](internal/config/default.yaml)。程序从**当前工作目录**读取 `config.yaml`；文件不存在时使用默认值。用户配置只需写需要覆盖的字段。例如：
+默认配置内嵌在 [`internal/config/default.yaml`](internal/config/default.yaml)。程序从 `--data-dir` 指定目录读取 `config.yaml`，省略时使用 Go 可执行文件所在目录；文件不存在时使用默认值。用户配置只需写需要覆盖的字段。例如：
 
 ```yaml
 log:
@@ -52,7 +54,7 @@ db:
   db_path: ./db/timecue.db
 ```
 
-`app.name` 和 `app.version` 也定义在默认配置中，属于应用元数据。相对路径目前按 Go 进程的工作目录解释；Windows 发布版的固定工作目录尚未接入启动流程。
+`app.name` 和 `app.version` 也定义在默认配置中，属于应用元数据。数据库和日志的相对路径按 data-dir 解释，绝对路径与 SQLite `:memory:` / `file:` 数据源沿用原值；启动不调用 Chdir，不改写配置中的相对路径文本。正式用户目录默认值留给阶段 E。
 
 `log.log_path` 是日志目录。程序加载配置后创建目录，并以追加模式写入其中的 `timecue.jsonl`；每行是一条 JSON 记录。如果日志文件无法打开，错误会输出到标准错误。
 
@@ -64,15 +66,17 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 
 配置文件变动会触发重新解析，并以原子方式发布新的配置快照。**目前实际作用到运行组件的热更新只有 `log.level`**。`db.db_path` 的新值可以进入配置快照，但尚无数据库连接切换或数据迁移，因此不能把修改配置文件当作已搬迁数据库。后续的热更新范围限定为 `log.level` 和 `db.db_path`；`log.log_path` 计划只在启动时读取。
 
+用户配置由 Flutter 的 `ConfigFileStore` 管理，可读取覆盖值、修改日志级别/日志路径/数据库路径，并恢复这三个运行字段。保存保留 YAML 注释、app、desktop 和未知字段；Go 只读取和监听。未配置值交由原有内嵌 default.yaml 决定，该文件不由前端读取或写入。路径字段保存结果标记为下次启动应用，保存配置不执行数据库搬迁。当前提供配置存储组件，设置页面尚未接入。
+
 当前根目录的 `config.yaml` 还包含旧版的 `backup`、`window` 字段。现行配置结构不使用它们，也没有相应的备份或窗口行为。配置写入会保留已有的未知字段，但不会让这些字段生效。
 
 ## 本地 HTTP API
 
-首次使用空数据库时，先按[迁移说明](migrations/README.md)依次手动执行当前 `001_initial.up.sql`、`002_schedule_changes.up.sql`，再运行 `go run ./cmd/flutter`。版本仍为 2；旧库若 status CHECK 不支持 loaded，将明确拒绝启动，修改 SQL 文件不会自动修改旧库。服务固定监听 `http://127.0.0.1:10086`，仅接受 `Host: 127.0.0.1:10086`，不启用浏览器 CORS 或应用令牌。启动前和 `GET /health` 检查版本、结构及 loaded 约束。
+首次使用空数据库时，先按[迁移说明](migrations/README.md)依次手动执行当前 `001_initial.up.sql`、`002_schedule_changes.up.sql`，再运行 `go run ./cmd/flutter --data-dir .`。版本仍为 2；旧库若 status CHECK 不支持 loaded，将明确拒绝启动，修改 SQL 文件不会自动修改旧库。服务固定监听 `http://127.0.0.1:10086`，仅接受 `Host: 127.0.0.1:10086`，不启用浏览器 CORS 或应用令牌。启动前和 `GET /health` 检查版本、结构及 loaded 约束。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/health` | 数据库及迁移健康检查 |
+| GET | `/health` | 数据库及迁移健康检查，附运行身份、PID、HTTP 版本和已实现能力 |
 | POST | `/api/v1/scheduler/schedules` | 创建单次或周期日程；请求体最大 1 MiB |
 | GET | `/api/v1/scheduler/schedules` | 查询未删除日程；支持 `name`、`type`、`limit`、`offset` |
 | GET | `/api/v1/scheduler/schedules/:id` | 查看未删除日程 |
@@ -101,10 +105,14 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 
 ## 开发与检查
 
+打包后的 Go 服务直接启动时，默认读取可执行文件目录下的 config.yaml，默认数据库为 db/timecue.db，日志为 log/timecue.jsonl。开发手动启动可使用 `go run ./cmd/flutter --data-dir .`；显式目录允许从其他工作目录启动。托管启动使用编译后的 Go 可执行文件：`timecue.exe --data-dir "D:\TimeCue 数据" --instance-id launch_123`，身份每次由父进程生成，允许 1–128 个 ASCII 字母、数字、连字符或下划线。托管模式 stdout 仅有一行 JSON ready；父端须同时核对健康响应的身份、PID、版本及能力。ready 不代表历史整理完成或通知已展示。
+
+托管父端通过专用 stdin 管道发送 `{"command":"shutdown"}` 加换行，或关闭写端请求退出。非法/超长/不完整命令及管道故障返回非零退出码；手动运行不受 stdin EOF 影响。Go 优雅关闭保护已接收请求，HTTP 5 秒超时后关闭连接，等待仍在使用数据库的工作结束。D8 的总计 5 秒退出预算、自有进程强退和 Job Object 由 Flutter 负责。固定端口的跨包进程与生命周期测试使用 `go test -p 1 ./...` 串行执行。
+
 当前 Go 模块要求 `go.mod` 所列的 Go 版本。在仓库根目录可以运行：
 
 ```powershell
-go run ./cmd/flutter
+go run ./cmd/flutter --data-dir .
 ```
 
 这会启动本地 HTTP 服务，不会打开桌面窗口。SQLite 初始迁移的执行方法见 [`migrations/README.md`](migrations/README.md)；`Sqlite.Connect` 不会自动执行迁移。
@@ -124,7 +132,7 @@ flutter pub get
 flutter run -d windows --dart-define=TIMECUE_DEMO=true
 ```
 
-Widget 关系、状态所有权与验证命令见 [Flutter 工程说明](desktop/README.md)。CI 已替换为 Windows Flutter 格式、分析、测试与 Release 构建，保留 Go 检查。
+Widget 关系、状态所有权与验证命令见 [Flutter 工程说明](desktop/README.md)。Go 与 Flutter CI 均在 Windows 执行；Go 检查格式、vet 和串行测试，Flutter 检查格式、分析、测试并构建 Release。
 
 
 分支与 Pull Request 流程、Go 与 Flutter CI 约定见[贡献规范](docs/CONTRIBUTING.md)。

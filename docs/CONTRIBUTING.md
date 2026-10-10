@@ -111,12 +111,12 @@ git switch -c feat/12-recurring-reminder
 
 ## CI 规则
 
-向 `dev` 提交 Pull Request 时，`.github/workflows/ci.yml` 执行 Go 检查和 Windows Flutter 检查。Flutter 工程位于 `desktop/`。
+向 `dev` 提交 Pull Request 时，`.github/workflows/ci.yml` 的 Go 和 Flutter 检查均运行在 Windows runner，与应用目标平台一致。Go 工作流脚本使用 PowerShell；Flutter 工程位于 `desktop/`。
 
-- Go：`gofmt`、`go vet ./...`、`go test ./...`。
+- Go：`gofmt`、`go vet ./...`、`go test -p 1 ./...`；固定业务端口的跨包测试串行运行。
 - Flutter：`flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。
 - Windows 构建：`flutter build windows --release`，默认连接手动启动的 Go 服务。
-- 本地运行：先在根目录运行 `go run ./cmd/flutter`，再在 `desktop/` 执行 `flutter run -d windows`；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
+- 本地运行：先在根目录运行 `go run ./cmd/flutter --data-dir .`，再在 `desktop/` 执行 `flutter run -d windows`；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
 CI 通过后再合并 PR。
 
 ## main 分支策略
