@@ -127,6 +127,19 @@ type RuntimeOptions struct {
 	Log      *logger.Logger
 }
 
+// RuntimeInfo 是本次启动的公开身份；入口构造后不再修改，健康与握手读取同一值。
+type RuntimeInfo struct {
+	InstanceID   string   `json:"instanceId"`
+	PID          int      `json:"pid"`
+	APIVersion   string   `json:"apiVersion"`
+	Capabilities []string `json:"capabilities"`
+}
+
+func NewRuntimeInfo(instanceID string) RuntimeInfo {
+	return RuntimeInfo{InstanceID: instanceID, PID: os.Getpid(), APIVersion: "v1",
+		Capabilities: []string{"delivery-v1", "recovery-v1", "task-members-v1", "managed-lifecycle-v1"}}
+}
+
 // Run 管理配置、日志、数据库、HTTP 与调度生命周期，退出后才释放依赖资源。
 func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 	if a.Config == nil || options.Database == nil || options.Handler == nil {

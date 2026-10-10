@@ -11,7 +11,7 @@ import (
 )
 
 // NewRouter 注册本地健康检查和日程 HTTP 接口。
-func NewRouter(app *service.App, healthCheck handler.HealthCheck) *gin.Engine {
+func NewRouter(app *service.App, healthCheck handler.HealthCheck, info ...service.RuntimeInfo) *gin.Engine {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 	router.RedirectTrailingSlash = false
@@ -24,7 +24,7 @@ func NewRouter(app *service.App, healthCheck handler.HealthCheck) *gin.Engine {
 	router.NoMethod(middleware.WrapHTTPHandler(func(*gin.Context) middleware.HTTPResult {
 		return handler.MethodNotAllowedResult()
 	}, nil))
-	router.GET("/health", middleware.WrapHTTPHandler(handler.HealthHandler(healthCheck), healthFields))
+	router.GET("/health", middleware.WrapHTTPHandler(handler.HealthHandler(healthCheck, info...), healthFields))
 
 	scheduler := router.Group("/api/v1/scheduler")
 	scheduler.POST("/schedules", middleware.WrapHTTPHandler(handler.CreateScheduleHandler(app), nil))

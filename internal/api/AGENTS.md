@@ -7,11 +7,14 @@
 - `router.go`：注册健康检查、日程创建/更新/启停/删除及提醒路由，装配中间件、404/405 响应及请求日志字段提取。
 - [handler](handler/AGENTS.md)：请求解析与校验、服务调用、响应 DTO 和业务错误映射。
 - `router_test.go`：验证路由、输入校验、响应协议和 HTTP 日志。
+- `health_runtime_test.go`：健康成功及两类失败的运行身份、PID、版本、能力和 HostGuard 回归。
 - `delivery_test.go`：投递三接口严格输入、空队列、当前运行身份、真实数据库正向流程和日志隐私测试。
 - `recovery_test.go`：真实 SQLite 的恢复摘要、任务及 attempt 成员查询、参数组合、旧身份和投递/确认独立性 HTTP 回归。
 - `schedule_logging_test.go`：使用真实 SQLite 验证创建、更新、启停、删除、幂等重放及提交后响应失败的日志；`http_log_helpers_test.go` 复用 API 路由装配，提供日志捕获、断言和响应短写模拟。
 
 工程约束：
+
+- NewRouter 可选注入 RuntimeInfo，保留原两参数调用及 nil App 健康检查测试。生产入口注入的运行信息在 `/health` 成功和失败中一致，沿用 200/503、data.error、错误码及 healthFields；不增加停止路由。
 
 - 新增或修改路由时，同步 `router.go` 的 handler/`HTTPResultFields` 注册和 [middleware/logger.go](../middleware/logger.go) 的 `httpEvents`；事件键使用 HTTP 方法与包含分组前缀的完整路由模板。日程创建/更新/删除由 handler 附加正式操作摘要，注册时无需再从响应 DTO 提取。
 - `WrapHTTPHandler(handler, fields)` 的字段提取函数读取明确响应 DTO；先判断响应状态，失败不提取成功字段。健康检查失败可提取公开错误码。已提交的日程变更通过 `HTTPResult.LogFields` 独立传递，响应失败仍须保留。

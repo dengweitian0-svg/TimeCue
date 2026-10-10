@@ -7,7 +7,7 @@
 - `notifications_handler.go`、`notification_handler.go`：历史待确认分页、任务/attempt 成员分页与提醒详情。
 - `acknowledgements_handler.go`：单条及批量提醒确认。
 - `claim_delivery_handler.go`、`start_delivery_handler.go`、`delivery_results_handler.go`：完整任务领取、展示开始和结果回填；`delivery_http_helpers.go`：严格 JSON 解析、业务错误映射及受控日志字段。
-- `health_handler.go`：数据库健康检查响应。
+- `health_handler.go`：数据库健康复查和成功/失败响应，可选携带与 ready 相同的不可变运行身份、PID、HTTP 版本及已实现能力。
 - `error.go`：业务错误码、错误映射和公共参数解析。
 
 # 工程约束
