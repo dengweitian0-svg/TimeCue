@@ -25,6 +25,7 @@ func TestLoadConfigUsesImmutableDefaultsAndUserOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
+	t.Cleanup(manager.Close)
 	if err := manager.LoadConfig(); err != nil {
 		t.Fatalf("load config: %v", err)
 	}
@@ -54,6 +55,7 @@ func TestLoadConfigUsesDefaultsWhenConfigFileIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
+	t.Cleanup(manager.Close)
 	if err := manager.LoadConfig(); err != nil {
 		t.Fatalf("load defaults without config file: %v", err)
 	}
@@ -86,6 +88,7 @@ func TestReloadConfigKeepsPreviousSnapshotOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
+	t.Cleanup(manager.Close)
 	if err := manager.LoadConfig(); err != nil {
 		t.Fatalf("load config: %v", err)
 	}
@@ -140,6 +143,7 @@ func TestLoadConfigStartsConfigYamlWatcher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
+	t.Cleanup(manager.Close)
 	if err := manager.LoadConfig(); err != nil {
 		t.Fatalf("load config: %v", err)
 	}
@@ -156,113 +160,116 @@ func TestLoadConfigStartsConfigYamlWatcher(t *testing.T) {
 	t.Fatalf("watcher did not reload config.yaml; current config = %#v", manager.currentCfg.Load())
 }
 
-func TestChangeConfigCreatesAndUpdatesUserConfigWithoutDefaults(t *testing.T) {
+// TestFixedDirectoryAndAtomicReplacement 从其他工作目录验证外部原子替换、清空及重建后持续监听。
+func TestFixedDirectoryAndAtomicReplacement(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "中文 空格")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, configFileName)
+	if err := os.WriteFile(path, []byte("desktop:\n  start_on_login: true\nlog:\n  level: info\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(t.TempDir())
-
-	manager, err := NewManager()
-	if err != nil {
-		t.Fatalf("new manager: %v", err)
+	t.Cleanup(manager.Close)
+	if err := manager.LoadConfig(); err != nil {
+		t.Fatal(err)
 	}
-	if err := manager.ChangeDB("db_path", "./new.db"); err != nil {
-		t.Fatalf("create config through ChangeDB: %v", err)
+	for _, level := range []string{"warn", "debug"} {
+		replaceTestConfig(t, path, "desktop:\n  start_on_login: true\nlog:\n  level: "+level+"\n")
+		waitTestLogLevel(t, manager, level)
 	}
-
-	contents, err := os.ReadFile(configFileName)
-	if err != nil {
-		t.Fatalf("read created config: %v", err)
+	contents, err := os.ReadFile(path)
+	if err != nil || !bytes.Contains(contents, []byte("start_on_login: true")) {
+		t.Fatal("读取配置时改写了外部字段", string(contents), err)
 	}
-	if bytes.Contains(contents, []byte("app:")) {
-		t.Fatalf("created config unexpectedly contains defaults: %s", contents)
+	replaceTestConfig(t, path, "")
+	waitTestLogLevel(t, manager, "info")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
 	}
-	if !bytes.Contains(contents, []byte("db_path: ./new.db")) {
-		t.Fatalf("created config does not contain changed key: %s", contents)
+	replaceTestConfig(t, path, "log:\n  level: debug\n")
+	waitTestLogLevel(t, manager, "debug")
+	if _, err := os.Stat(configFileName); !os.IsNotExist(err) {
+		t.Fatal("写入了工作目录配置", err)
 	}
-
-	if err := manager.ChangeDB("db_path", "./updated.db"); err != nil {
-		t.Fatalf("update config through ChangeDB: %v", err)
+	for _, item := range []struct{ input, want string }{
+		{"./db/timecue.db", filepath.Join(directory, "db", "timecue.db")},
+		{path, path}, {":memory:", ":memory:"}, {"file:test?mode=memory", "file:test?mode=memory"}, {"", ""},
+	} {
+		if got := manager.ResolveDatabasePath(item.input); got != item.want {
+			t.Fatalf("%q: %q != %q", item.input, got, item.want)
+		}
 	}
-	updated, err := os.ReadFile(configFileName)
-	if err != nil {
-		t.Fatalf("read updated config: %v", err)
-	}
-	if !bytes.Contains(updated, []byte("db_path: ./updated.db")) {
-		t.Fatalf("updated config does not contain new value: %s", updated)
-	}
-	if bytes.Contains(updated, []byte("./new.db")) {
-		t.Fatalf("updated config still contains old value: %s", updated)
-	}
-
-	current, err := manager.CurrentConfig()
-	if err != nil {
-		t.Fatalf("get current config after change: %v", err)
-	}
-	if current.DB.DBPath != "./updated.db" {
-		t.Fatalf("db.db_path = %q, want %q", current.DB.DBPath, "./updated.db")
+	cfg, _ := manager.CurrentConfig()
+	if cfg.DB.DBPath != "./db/timecue.db" {
+		t.Fatal("配置路径文本被改写", cfg)
 	}
 }
 
-func TestChangeConfigPreservesExistingKeysAndRejectsApp(t *testing.T) {
-	t.Chdir(t.TempDir())
-	writeTestConfig(t, "log:\n  level: info\n  custom: old\n")
-
-	manager, err := NewManager()
+// replaceTestConfig 模拟外部写入方保存并原子替换，不属于 Manager 的生产职责。
+func replaceTestConfig(t *testing.T, path, contents string) {
+	t.Helper()
+	file, err := os.CreateTemp(filepath.Dir(path), ".config-test-*")
 	if err != nil {
-		t.Fatalf("new manager: %v", err)
+		t.Fatal(err)
 	}
-	if err := manager.ChangeLog("level", "debug"); err != nil {
-		t.Fatalf("update existing key: %v", err)
+	t.Cleanup(func() { _ = os.Remove(file.Name()) })
+	if _, err := file.WriteString(contents); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
 	}
-	if err := manager.ChangeLog("new_key", "new_value"); err != nil {
-		t.Fatalf("add missing key: %v", err)
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
 	}
-
-	contents, err := os.ReadFile(configFileName)
-	if err != nil {
-		t.Fatalf("read config: %v", err)
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
 	}
-	if !bytes.Contains(contents, []byte("level: debug")) ||
-		!bytes.Contains(contents, []byte("custom: old")) ||
-		!bytes.Contains(contents, []byte("new_key: new_value")) {
-		t.Fatalf("config changes were not preserved: %s", contents)
-	}
-
-	if err := manager.ChangeConfig("app", "name", "changed"); err == nil {
-		t.Fatal("expected app config change to fail")
-	}
-	afterReject, err := os.ReadFile(configFileName)
-	if err != nil {
-		t.Fatalf("read config after rejected change: %v", err)
-	}
-	if !bytes.Equal(afterReject, contents) {
-		t.Fatal("app change modified config file")
+	if err := os.Rename(file.Name(), path); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestRestoreDefaultClearsUserConfig(t *testing.T) {
-	t.Chdir(t.TempDir())
-	writeTestConfig(t, "log:\n  level: debug\n")
+func waitTestLogLevel(t *testing.T, manager *Manager, level string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		cfg, err := manager.CurrentConfig()
+		if err == nil && cfg.Log.Level == level {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("未读到外部配置", cfg, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
-	manager, err := NewManager()
+// TestReadConfigDoesNotCreateOrRewriteFile 验证缺少文件时只发布默认值，已有文件保持字节不变。
+func TestReadConfigDoesNotCreateOrRewriteFile(t *testing.T) {
+	directory := t.TempDir()
+	manager, err := NewManager(directory)
 	if err != nil {
-		t.Fatalf("new manager: %v", err)
+		t.Fatal(err)
 	}
-	if err := manager.RestoreDefault(); err != nil {
-		t.Fatalf("restore defaults: %v", err)
+	t.Cleanup(manager.Close)
+	if err := manager.LoadConfig(); err != nil {
+		t.Fatal(err)
 	}
-
-	contents, err := os.ReadFile(configFileName)
-	if err != nil {
-		t.Fatalf("read cleared config: %v", err)
+	path := filepath.Join(directory, configFileName)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("Go 创建了配置文件", err)
 	}
-	if len(contents) != 0 {
-		t.Fatalf("config file is not empty: %q", contents)
-	}
-
-	current, err := manager.CurrentConfig()
-	if err != nil {
-		t.Fatalf("get current config after restoring defaults: %v", err)
-	}
-	if current.Log.Level != "info" {
-		t.Fatalf("log.level = %q, want default %q", current.Log.Level, "info")
+	original := "# 外部注释\nlog:\n  level: debug\ndesktop:\n  start_on_login: true\n"
+	replaceTestConfig(t, path, original)
+	waitTestLogLevel(t, manager, "debug")
+	actual, err := os.ReadFile(path)
+	if err != nil || string(actual) != original {
+		t.Fatal("Go 改写了配置", string(actual), err)
 	}
 }

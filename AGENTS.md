@@ -8,7 +8,7 @@ Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务
 - [internal/service](internal/service/AGENTS.md)：日程用例、触发时间计算、查询与确认、运行内投递尝试和重试。
 - [internal/model](internal/model/AGENTS.md)：日程、提醒、查询条件及共享业务类型。
 - [internal/store](internal/store/AGENTS.md)：SQLite 连接、健康检查、日程与提醒持久化。
-- [internal/config](internal/config/AGENTS.md)：配置加载、监听、修改与恢复默认值。
+- [internal/config](internal/config/AGENTS.md)：只读加载配置、发布快照、目录监听及运行路径解析；用户配置由 Flutter 写入。
 - [internal/log](internal/log/AGENTS.md)：全局日志、JSONL 输出与级别热更新。
 - [desktop](desktop/AGENTS.md)：Flutter 桌面界面、HTTP 数据接入和内存演示。
 

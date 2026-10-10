@@ -8,6 +8,7 @@
 - [lib/app](lib/app/AGENTS.md)：应用、主题与主屏装配。
 - [lib/contracts](lib/contracts/AGENTS.md)：日程 DTO、草稿和仓储操作契约。
 - [lib/data](lib/data/AGENTS.md)：HTTP 快照、分页、确认与内存示例数据。
+- `lib/data/config_file_store.dart`：用户配置文件的 Flutter 写入入口，保留注释及其他字段，只管理运行配置覆盖值。
 - [lib/features/room](lib/features/room/AGENTS.md)：房间背景、时钟、桌面入口与本子显隐。
 - [lib/features/notebook](lib/features/notebook/AGENTS.md)：本子开合、今日/日历页面、跨页选择与查询状态。
 - [lib/features/schedule_editor](lib/features/schedule_editor/AGENTS.md)：日程表单、编辑草稿与时间选择器。
@@ -21,3 +22,4 @@
 ## 工程约束
 
 - Widget/ViewModel 依赖仓储契约，具体实现由 `main.dart` 装配。真实模式通过 Go 正式用例读写，不访问 SQLite、不在 Dart 展开 cron；更新提交编辑时读取的 revision，写入重试使用同一操作标识。结构变更同步 README 的 Widget 与状态索引。
+- `config.yaml` 的应用内写入归 Flutter 文件存储，使用与 Go 相同的 data-dir；Go 消费配置，不写用户配置。配置存储组件只读写 YAML，不迁移数据库或切换运行中的连接；设置页面和登录自启协调由对应功能装配。

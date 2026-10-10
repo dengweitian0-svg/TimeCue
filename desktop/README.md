@@ -1,7 +1,7 @@
 # TimeCue Flutter 桌面端
 
 ```powershell
-go run ./cmd/flutter
+go run ./cmd/flutter --data-dir .
 ```
 
 另一个终端运行桌面界面：
@@ -122,3 +122,11 @@ flowchart LR
 同频率的旧 cron 日期列表可拆成独立可编辑项，包括各时间对应不同日期集合；保存按每个时间真实对应的日期生成 cron，不扩展成日期与时间的笛卡尔积。混合频率的旧 cron 保留原文，只改名称、说明和启停。
 
 每月时间选择与单次共用左右排版，左侧是 1–31 日号网格及短月说明，右侧是时间输入与转盘，底部操作固定。每月仍选择重复日号，不引入具体年月。
+
+## 用户配置存储
+
+`ConfigFileStore(dataDir)` 是 Flutter 的用户配置文件写入入口，dataDir 与启动 Go 时传入的根目录一致。`read()` 只返回日志级别、日志路径和数据库路径的用户覆盖值；null 表示继承 Go 的原有内嵌默认值，前端不复制或修改 default.yaml。
+
+`update(logLevel: ..., logPath: ..., databasePath: ...)` 校验字段并原子保存到 config.yaml，保留 YAML 注释、未知字段及 app/desktop 配置；同一文件的多实例操作串行执行。`restoreRuntimeDefaults()` 只移除三个运行字段，保留其余内容。结果 pathsChanged 表示保存的路径字段发生变化，供设置界面提示下次启动应用；本组件不切换数据库连接、不搬迁文件。
+
+Go config 只读、监听并发布快照，日志级别按现有机制热更新，数据库和日志路径由 Go 启动生命周期应用。存储组件可供后续设置页及桌面配置功能装配；当前没有新增配置 HTTP 接口或编辑页面。

@@ -1,5 +1,7 @@
 # 桌面测试
 
+- `config_file_store_test.dart`：缺少用户文件、未知字段及注释保留、多实例并发、非法输入/文件错误后继续保存、大小写键兼容、恢复运行覆盖值和固定目录测试；检查 Go default.yaml 的字节保持不变。
+
 - `widget_test.dart`：房间入口、本子页面、编辑弹层、焦点、动效与布局测试。
 - `notebook_model_test.dart`：示例数据、提醒确认、分页选择和页面状态测试。
 - `http_notebook_repository_test.dart`：HTTP 路径、快照、分页、确认、错误和刷新测试。
