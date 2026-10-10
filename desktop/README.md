@@ -14,6 +14,16 @@ flutter run -d windows
 
 视觉演示仍可显式使用 `flutter run -d windows --dart-define=TIMECUE_DEMO=true`。示例业务时间固定为北京时间 **2026-10-07 14:32**，数据只在内存，环境时钟使用真实 UTC+8。
 
+## Windows 系统提醒
+
+真实模式启动一个应用级 Windows 通知执行者，连接同一手动 Go 服务，先核对 `/health` 的 v1、delivery-v1 和 recovery-v1。每秒领取最多 20 个完整任务，按 Go 的开始决定调用一次即时通知，再回填 sent/failed；单条、多条和恢复汇总均使用 Go 冻结文案。关闭本子或失去焦点不会停止领取，显式演示不接真实通知。
+
+插件固定为 flutter_local_notifications 22.3.1，平台验收使用 Flutter 3.47.0，保留原本机 master SDK。应用身份固定为 TimeCue.Desktop；初始化失败保留房间窗口并显示连接重试入口。Windows 构建需要正常插件路径支持，缺少符号链接权限的本地环境可在 windows/flutter/ephemeral/.plugin_symlinks 使用指向 Pub 缓存的目录联接；该临时目录不提交。
+
+attempt、平台整数映射和待回填结果只在内存。重复领取、开始或结果重传不追加同 attempt 的展示；平台接受请求才记录 sent，横幅被系统抑制、未阅读或未确认不改变该执行语义。连接失败只重传已知结果，Go 新 attempt 才能再次展示。Go 重启后旧身份失效，Flutter 重启不恢复回执文件；展示后尚未回填即崩溃，后续运行可能再次展示。
+
+宿主退出请求先停止新领取和展示，最多 5 秒尽力提交已知结果；通知桥另提供 stopAndDrain(budget) 供 D8 共用停止预算，不停止手动 Go。系统通知的 payload 只携带运行/任务/尝试/类型身份，点击不确认；点击定位、恢复页面、托盘、单实例、自有 Go 进程及登录自启分别由后续 D6–D9 接入。实现和验收范围见 [D5 规划](../docs/design/phase-d5-windows-notification-bridge.md)。
+
 
 ### HTTP 查询契约
 
@@ -104,6 +114,7 @@ flowchart LR
 | 开合阶段、动画进度、编辑会话 | NotebookOverlay | 内容到位后才可操作；导航时守卫草稿 |
 | 字段、草稿、保存错误 | ScheduleEditorViewModel | 创建弹层、独立修改弹窗与右页编辑复用表单，版本冲突保留草稿 |
 | 真实环境时间 | RoomClockController | 每秒重读 UTC+8，恢复前台立即同步 |
+| 通知执行阶段、Go 运行代次、平台 ID 和待回填结果 | WindowsNotificationBridge | 应用级内存状态；独立于本子轮询，业务结果经 Go 正式接口回流 |
 | 场景已解码图片 | RoomBackdrop | 解码成功再淡入，失败保留旧图 |
 | 入口焦点、本子显隐 | RoomScreen | 合上后回到实际入口；热区裁切后回固定入口 |
 
