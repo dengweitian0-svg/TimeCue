@@ -5,6 +5,7 @@
 - `widget_test.dart`：房间入口、本子页面、编辑弹层、焦点、动效与布局测试。
 - `notebook_model_test.dart`：示例数据、提醒确认、分页选择和页面状态测试。
 - `http_notebook_repository_test.dart`：HTTP 路径、快照、分页、确认、错误和刷新测试。
+- HTTP 投递测试复用原 HttpServer 夹具，覆盖 health 根路径、三条同级通知 POST、JSON、完整 recovery 响应、不改变界面加载状态及矛盾回填/未知任务拒绝。
 - `notebook_time_picker_test.dart`：时间输入、转盘联动与交互测试。
 - `notebook_loaded_status_test.dart`：已加载提醒详情显示待投递，不显示已提醒。
 

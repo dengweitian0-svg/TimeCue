@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import '../contracts/notebook_repository.dart';
+import '../contracts/notification_delivery.dart';
 import '../contracts/schedule_rules.dart';
 
 /// Go 是唯一业务事实来源；本类只保存只读快照，不展开规则。
-class HttpNotebookRepository extends NotebookRepository {
+class HttpNotebookRepository extends NotebookRepository
+    implements NotificationDeliveryGateway {
   HttpNotebookRepository({HttpClient? client, Uri? base})
     : _client = client ?? HttpClient(),
       _base = base ?? Uri.parse('http://127.0.0.1:10086/api/v1/scheduler/');
@@ -117,10 +119,10 @@ class HttpNotebookRepository extends NotebookRepository {
       if (response.statusCode == 204) return null;
       final value = jsonDecode(text) as Map<String, dynamic>;
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        final error = value['error'] ?? value['data']?['error'];
         throw NotebookApiException(
-          value['error']?['code']?.toString() ?? 'request_failed',
-          value['error']?['message']?.toString() ??
-              '请求失败（${response.statusCode}）',
+          error?['code']?.toString() ?? 'request_failed',
+          error?['message']?.toString() ?? '请求失败（${response.statusCode}）',
           status: response.statusCode,
         );
       }
@@ -134,6 +136,43 @@ class HttpNotebookRepository extends NotebookRepository {
 
   void _publish() {
     if (!_disposed) notifyListeners();
+  }
+
+  @override
+  Future<DeliveryRuntime> deliveryRuntime() async =>
+      DeliveryRuntime.fromJson(await _request('/health'));
+
+  @override
+  Future<List<DeliveryClaim>> claimNotifications() async {
+    final data = await _request('notifications/claim', body: {'limit': 20});
+    if (data is! List) throw const FormatException('通知领取响应必须是数组。');
+    return data.map(DeliveryClaim.fromJson).toList(growable: false);
+  }
+
+  @override
+  Future<DeliveryStart> startNotification(
+    String attemptId,
+  ) async => DeliveryStart.fromJson(
+    await _request(
+      'notifications/delivery-attempts/${Uri.encodeComponent(attemptId)}/start',
+      body: <String, dynamic>{},
+    ),
+  );
+
+  @override
+  Future<void> reportNotification(
+    String attemptId,
+    DeliveryOutcome outcome,
+  ) async {
+    final data = await _request(
+      'notifications/delivery-attempts/${Uri.encodeComponent(attemptId)}/results',
+      body: {'outcome': outcome.name},
+    );
+    if (data is! Map<String, dynamic> ||
+        data['attemptId'] != attemptId ||
+        data['outcome'] != outcome.name) {
+      throw const FormatException('通知回填响应与提交身份不一致。');
+    }
   }
 
   @override

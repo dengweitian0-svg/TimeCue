@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timecue_desktop/contracts/notebook_repository.dart';
+import 'package:timecue_desktop/contracts/notification_delivery.dart';
 import 'package:timecue_desktop/features/schedule_editor/schedule_editor.dart';
 import 'package:timecue_desktop/data/http_notebook_repository.dart';
 import 'package:timecue_desktop/features/notebook/notebook_view_model.dart';
@@ -63,7 +64,11 @@ Future<HttpNotebookRepository> serverRepository(
       request.response.headers.contentType = ContentType.json;
       request.response.write(
         jsonEncode(
-          data is Map && data.containsKey('error') ? data : {'data': data},
+          data is Map &&
+                  data.containsKey('error') &&
+                  !data.containsKey('status')
+              ? data
+              : {'data': data},
         ),
       );
       await request.response.close();
@@ -88,6 +93,92 @@ Future<HttpNotebookRepository> serverRepository(
 }
 
 void main() {
+  test('健康失败保留 data.error 的错误码和 503 状态', () async {
+    final repo = await serverRepository((request) {
+      request.response.statusCode = 503;
+      return {
+        'status': 'error',
+        'instanceId': 'go-1',
+        'error': {'code': 'schema_invalid', 'message': '数据库结构不兼容'},
+      };
+    });
+    await expectLater(
+      repo.deliveryRuntime(),
+      throwsA(
+        isA<NotebookApiException>()
+            .having((error) => error.status, 'status', 503)
+            .having((error) => error.code, 'code', 'schema_invalid'),
+      ),
+    );
+  });
+  test('投递协议复用同级路径和 JSON，健康从根读取且不改变本子状态', () async {
+    final requests = <String>[];
+    final task = {
+      'deliveryTaskId': 'task',
+      'taskType': 'recovery',
+      'attemptId': 'attempt',
+      'platformId': 'opaque',
+      'notifyTime': '2026-10-10T09:00:00+08:00',
+    };
+    final repo = await serverRepository((request) async {
+      requests.add(request.uri.path);
+      if (request.uri.path == '/health') {
+        return {
+          'status': 'ok',
+          'instanceId': 'go-1',
+          'apiVersion': 'v1',
+          'capabilities': ['delivery-v1', 'recovery-v1'],
+        };
+      }
+      expect(request.method, 'POST');
+      expect(request.headers.contentType?.mimeType, 'application/json');
+      final body = jsonDecode(await utf8.decoder.bind(request).join());
+      if (request.uri.path.endsWith('/claim')) {
+        expect(body, {'limit': 20});
+        return [task];
+      }
+      if (request.uri.path.endsWith('/start')) {
+        expect(body, {});
+        return {
+          ...task,
+          'shouldDisplay': true,
+          'memberCount': 51,
+          'attemptNumber': 1,
+          'title': 'TimeCue',
+          'body': '有 51 项遗漏',
+        };
+      }
+      expect(body, {'outcome': 'sent'});
+      return {'attemptId': 'attempt', 'outcome': 'sent', 'memberCount': 51};
+    }, basePath: '/api/v1/scheduler/');
+    expect((await repo.deliveryRuntime()).instanceId, 'go-1');
+    expect((await repo.claimNotifications()).single.taskType, 'recovery');
+    expect((await repo.startNotification('attempt')).memberCount, 51);
+    await repo.reportNotification('attempt', DeliveryOutcome.sent);
+    expect(requests, [
+      '/health',
+      '/api/v1/notifications/claim',
+      '/api/v1/notifications/delivery-attempts/attempt/start',
+      '/api/v1/notifications/delivery-attempts/attempt/results',
+    ]);
+    expect(repo.loading, isFalse);
+    expect(repo.hasSnapshot, isFalse);
+  });
+
+  test('投递回填矛盾响应及未知任务类型阻止成功解析', () async {
+    final repo = await serverRepository(
+      (request) => request.uri.path.endsWith('/claim')
+          ? [
+              {'taskType': 'unknown'},
+            ]
+          : {'attemptId': 'other', 'outcome': 'failed'},
+    );
+    await expectLater(repo.claimNotifications(), throwsFormatException);
+    await expectLater(
+      repo.reportNotification('attempt', DeliveryOutcome.sent),
+      throwsFormatException,
+    );
+  });
   test('管理列表查询关闭规则，重新开启提交原 revision 并保留混合周期规则', () async {
     const cron = ['0 9 * * *', '30 18 * * 3'];
     var enabled = false;
