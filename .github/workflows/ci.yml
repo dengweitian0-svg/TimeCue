@@ -10,8 +10,11 @@ permissions:
 
 jobs:
   go-checks:
-    name: Go Checks
-    runs-on: ubuntu-latest
+    name: Go Windows Checks
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
 
     steps:
       - name: 检出代码
@@ -19,14 +22,13 @@ jobs:
 
       - name: 检测 Go 模块
         id: go-module
-        shell: bash
         run: |
-          if [ -f go.mod ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "当前仓库尚未包含 go.mod，暂时跳过 Go 检查。"
-          fi
+          if (Test-Path -LiteralPath go.mod) {
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'exists=true'
+          } else {
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'exists=false'
+            Write-Output '当前仓库尚未包含 go.mod，暂时跳过 Go 检查。'
+          }
 
       - name: 设置 Go 环境
         if: steps.go-module.outputs.exists == 'true'
@@ -37,14 +39,14 @@ jobs:
 
       - name: 检查代码格式
         if: steps.go-module.outputs.exists == 'true'
-        shell: bash
         run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "以下文件未通过 gofmt 检查："
-            echo "$unformatted"
+          $unformatted = @(gofmt -l .)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($unformatted.Count -gt 0) {
+            Write-Output '以下文件未通过 gofmt 检查：'
+            $unformatted
             exit 1
-          fi
+          }
 
       - name: 静态检查
         if: steps.go-module.outputs.exists == 'true'
@@ -52,7 +54,7 @@ jobs:
 
       - name: 运行测试
         if: steps.go-module.outputs.exists == 'true'
-        run: go test ./...
+        run: go test -p 1 ./...
 
   flutter-checks:
     name: Flutter Windows Checks
