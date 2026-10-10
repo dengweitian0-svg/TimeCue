@@ -2,7 +2,7 @@
 
 TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由 Go 管理日程规则、提醒状态和本地数据，由 Flutter 提供桌面界面及系统交互。
 
-> 当前可运行 Flutter 视觉骨架和独立 Go 本机 HTTP API。阶段 B/C 已接通查询、确认及规则创建/更新/启停/删除；系统通知、托盘及发布生命周期仍待实现。
+> 当前可运行 Flutter 房间与日程本和独立 Go 本机 HTTP API。已接通查询、确认、规则操作及 Windows 即时通知桥；托盘、点击定位和发布生命周期仍待后续接入。
 
 ## 当前实现
 
@@ -11,7 +11,7 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 | 启动入口 | main 校验数据目录和运行身份并调用 service.App.Run；托管模式提供 ready 与父端 shutdown/EOF 控制，App 沿用原生命周期清理。 |
 | 配置 | Flutter 负责用户 config.yaml 的原子写入；Go 合并原有内嵌默认值、发布快照并监听。相对数据库/日志路径使用同一数据目录。 |
 | 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
-| 日程与提醒 | 已有规则操作、查询与确认；D1 开放完整分钟分组，D2 提供领取、开始、结果回填和有限重试，D3 按历史版本分批恢复、开放唯一遗漏汇总并查询成员/进度。Windows 展示与恢复界面待 D5/D6 接入。 |
+| 日程与提醒 | 已有规则操作、查询与确认；D1 开放完整分钟分组，D2 提供领取、开始、结果回填和有限重试，D3 按历史版本分批恢复、开放唯一遗漏汇总并查询成员/进度。D5 已接 Windows 即时展示与内存结果重传，完整恢复界面待 D6。 |
 | SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；表结构由独立 SQL 迁移建立，入口检查迁移版本和表结构但不自动执行迁移。 |
 | Flutter | `desktop/` 已实现三时段房间、双页本子及创建/编辑视觉骨架，默认接入 Go 查询、单条/批量确认及真实规则变更，视觉示例仍用显式内存仓储。 |
 
@@ -27,13 +27,15 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 核心业务持久化使用 `schedules` 和 `notifications`，阶段 C 的 `schedule_versions` 与 `schedule_write_receipts` 保存规则区间和幂等回执；Go 查询与确认归入原有日程和提醒模块。Flutter 的日程本是展示方式，没有独立数据库、表或后端业务模型。
 
-阶段 D 的[运行状态方案](docs/design/phase-d0-runtime-state.md)规定：任务分组、展示次数、尝试成员和恢复位置只放内存；预加载状态复用 `notifications.status=loaded`，不增加表、字段、迁移、RuntimeStore、runtime_json、租约或心跳。D1 直接修改原 001 的 status CHECK，仍使用 001 + 002、版本 2；D3 已接入全期间恢复，系统通知待后续任务实现。
+阶段 D 的[运行状态方案](docs/design/phase-d0-runtime-state.md)规定：任务分组、展示次数、尝试成员和恢复位置只放内存；预加载状态复用 `notifications.status=loaded`，不增加表、字段、迁移、RuntimeStore、runtime_json、租约或心跳。D1 直接修改原 001 的 status CHECK，仍使用 001 + 002、版本 2；D3 已接入全期间恢复，D5 通过原投递协议执行 Windows 通知。
 
 重要状态只能经明确的业务操作改变。已发生的提醒应保留可查询的记录；周期表达式只决定未来触发时间，不代替提醒历史或确认状态。
 
 阶段 D 的实施顺序见[开发规划](docs/design/phase-d-development-plan.md)；已实现的 D1 及 D2/D3 接入契约见[分钟调度方案](docs/design/phase-d1-minute-scheduler.md)。loaded 表示加载/等待执行，只有 sent 表示平台接受展示，用户确认保持独立。
 
 D4 的 [Go 托管启动](docs/design/phase-d4-managed-startup.md)已完成数据目录、运行身份、ready 及父进程停止管道；Go 检查与 Apifox 健康扩展、D2/D3 回归均已通过，见[验收记录](docs/design/phase-d4-validation.md)。Flutter 隐藏启动、进程句柄与 Job Object 由 D8 接入。
+
+D5 的 [Windows 通知桥](docs/design/phase-d5-windows-notification-bridge.md)复用原 HTTP 仓储和应用装配，按 attempt 去重并只重传已知结果；真实模式使用固定通知插件，演示模式不领取。Windows 原生单条、分钟合并和恢复汇总请求及 sent 回流已验证，横幅视觉证据待确认；实际检查和限制见[验收记录](docs/design/phase-d5-validation.md)。通知点击不确认，应用退出请求先停止新展示并尽力回填，不停止手动 Go。
 
 D2 已实现三接口协议、开始资格及成员冻结、原子结果回填和运行内有限重试，核心实现见[投递服务](internal/service/notification_delivery.go)。任务及尝试不持久化，数据库继续使用原四张表和版本 2；Apifox 验收报告保留在本地 `.apifox/d2/reports/`。
 
@@ -132,7 +134,7 @@ flutter pub get
 flutter run -d windows --dart-define=TIMECUE_DEMO=true
 ```
 
-Widget 关系、状态所有权与验证命令见 [Flutter 工程说明](desktop/README.md)。Go 与 Flutter CI 均在 Windows 执行；Go 检查格式、vet 和串行测试，Flutter 检查格式、分析、测试并构建 Release。
+Widget 关系、状态所有权与验证命令见 [Flutter 工程说明](desktop/README.md)。Go 与 Flutter CI 均在 Windows 执行；Go 检查格式、vet 和串行测试，Flutter 固定 3.47.0 检查格式、分析、测试并构建 Release，本机 master SDK 保留。
 
 
 分支与 Pull Request 流程、Go 与 Flutter CI 约定见[贡献规范](docs/CONTRIBUTING.md)。
