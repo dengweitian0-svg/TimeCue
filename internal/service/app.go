@@ -125,6 +125,7 @@ type RuntimeOptions struct {
 	Database RuntimeDatabase
 	Handler  http.Handler
 	Log      *logger.Logger
+	OnReady  func() error
 }
 
 // RuntimeInfo 是本次启动的公开身份；入口构造后不再修改，健康与握手读取同一值。
@@ -145,6 +146,10 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 	if a.Config == nil || options.Database == nil || options.Handler == nil {
 		return fmt.Errorf("[app] runtime configuration, database and handler are required")
 	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	defer a.Config.Close()
 	log := options.Log
 	if log == nil {
 		log = logger.Default()
@@ -156,17 +161,18 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 	if err != nil {
 		return fmt.Errorf("get config: %w", err)
 	}
-	logFile, err := openLogFile(cfg.Log.LogPath)
+	logFile, err := openLogFile(a.Config.ResolvePath(cfg.Log.LogPath))
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
 	defer func() {
+		a.Config.Close()
 		if err := logFile.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "close log file: %v\n", err)
 		}
 	}()
 	log.Upgrade(logFile)
-	if err = options.Database.Connect(ctx, cfg.DB.DBPath); err != nil {
+	if err = options.Database.Connect(ctx, a.Config.ResolveDatabasePath(cfg.DB.DBPath)); err != nil {
 		return fmt.Errorf("connect database: %w", err)
 	}
 	defer func() {
@@ -176,6 +182,9 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 	}()
 	if err = options.Database.CheckHealth(ctx); err != nil {
 		return fmt.Errorf("check database schema: %w", err)
+	}
+	if ctx.Err() != nil {
+		return nil
 	}
 	if a.Scheduler == nil {
 		repo, ok := a.Notify.(NotificationSchedulerRepo)
@@ -222,6 +231,7 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Error("[app] HTTP shutdown exceeded graceful window", "error", err)
 			_ = server.Close()
 		}
 		requests.active.Wait()
@@ -229,17 +239,56 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 		<-recoveryDone
 	}()
 	serveErrors := make(chan error, 1)
-	go func() { serveErrors <- server.Serve(listener) }()
-	log.Info("[app] HTTP server listening", "address", listener.Addr().String())
+	serving := &readyListener{Listener: listener, started: make(chan struct{})}
+	go func() { serveErrors <- server.Serve(serving) }()
 	select {
 	case <-ctx.Done():
 		return nil
 	case err := <-serveErrors:
-		if err != nil && err != http.ErrServerClosed {
-			return fmt.Errorf("serve HTTP: %w", err)
-		}
+		return serveError(err)
+	case <-serving.started:
+	}
+	// Serve 已进入接收循环；再次检查故障和取消，避免为失败的启动发送握手。
+	select {
+	case err := <-serveErrors:
+		return serveError(err)
+	default:
+	}
+	if ctx.Err() != nil {
 		return nil
 	}
+	if options.OnReady != nil {
+		if err := options.OnReady(); err != nil {
+			return fmt.Errorf("announce ready: %w", err)
+		}
+	}
+	log.Info("[app] HTTP server listening", "address", listener.Addr().String())
+	select {
+	case <-ctx.Done():
+		log.Info("[app] runtime stop requested", "reason", ctx.Err())
+		return nil
+	case err := <-serveErrors:
+		return serveError(err)
+	}
+}
+
+func serveError(err error) error {
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve HTTP: %w", err)
+	}
+	return nil
+}
+
+// readyListener 以 Serve 的首次接收调用确认循环接入，不以固定等待推测就绪。
+type readyListener struct {
+	net.Listener
+	started chan struct{}
+	once    sync.Once
+}
+
+func (l *readyListener) Accept() (net.Conn, error) {
+	l.once.Do(func() { close(l.started) })
+	return l.Listener.Accept()
 }
 
 func openLogFile(directory string) (*os.File, error) {

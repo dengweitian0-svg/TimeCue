@@ -2,10 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -40,6 +44,225 @@ func TestRequestTrackerWaitsAndRejectsNewRequests(t *testing.T) {
 	close(release)
 	<-joined
 	<-finished
+}
+
+type startupRuntimeDB struct {
+	drainRuntimeDB
+	path  string
+	check func() error
+}
+
+func (d *startupRuntimeDB) Connect(_ context.Context, path string) error { d.path = path; return nil }
+func (d *startupRuntimeDB) CheckHealth(context.Context) error {
+	if d.check != nil {
+		return d.check()
+	}
+	return nil
+}
+
+func runtimeTestApp(t *testing.T) (*App, string) {
+	t.Helper()
+	dir := t.TempDir()
+	manager, err := config.NewManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler, _ := NewScheduler(drainSchedulerRepo{}, SchedulerOptions{})
+	recovery, _ := NewRecoveryService(emptyRecoveryRepo{}, SchedulerOptions{})
+	return &App{Config: manager, Scheduler: scheduler, Recovery: recovery}, dir
+}
+
+// TestRuntimeReadyFailureAndCancellation 验证就绪失败、取消及端口冲突均由原生命周期清理。
+func TestRuntimeReadyFailureAndCancellation(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:10086")
+	if err != nil {
+		t.Skip("固定端口已占用")
+	}
+	_ = probe.Close()
+	for _, kind := range []string{"ready-failed", "canceled", "schema-failed", "occupied"} {
+		t.Run(kind, func(t *testing.T) {
+			app, dir := runtimeTestApp(t)
+			db := &startupRuntimeDB{drainRuntimeDB: drainRuntimeDB{closed: make(chan struct{})}}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if kind == "canceled" {
+				db.check = func() error { cancel(); return nil }
+			}
+			if kind == "schema-failed" {
+				db.check = func() error { return errors.New("invalid schema") }
+			}
+			if kind == "occupied" {
+				listener, err := net.Listen("tcp", "127.0.0.1:10086")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer listener.Close()
+			}
+			calls := 0
+			readyError := errors.New("ready writer failed")
+			err := app.Run(ctx, RuntimeOptions{Database: db, Log: &logger.Logger{}, Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), OnReady: func() error { calls++; return readyError }})
+			if kind == "ready-failed" && (!errors.Is(err, readyError) || calls != 1) {
+				t.Fatal(calls, err)
+			}
+			if kind != "ready-failed" && calls != 0 {
+				t.Fatal("失败启动输出 ready", kind)
+			}
+			if kind == "canceled" && err != nil {
+				t.Fatal("取消不是正常退出", err)
+			}
+			if kind != "canceled" && err == nil {
+				t.Fatal("启动失败被吞掉", kind)
+			}
+			select {
+			case <-db.closed:
+			default:
+				t.Fatal("数据库没有关闭")
+			}
+			if db.path != filepath.Join(dir, "db", "timecue.db") {
+				t.Fatal("数据库相对路径基准错误", db.path)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "log", "timecue.jsonl")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// TestRuntimeShutdownTimeoutCancelsConnection 超时取消连接，但忽略取消的业务仍须结束后再关闭数据库。
+func TestRuntimeShutdownTimeoutCancelsConnection(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:10086")
+	if err != nil {
+		t.Skip("固定端口已占用")
+	}
+	_ = probe.Close()
+	app, dir := runtimeTestApp(t)
+	db := &drainRuntimeDB{closed: make(chan struct{})}
+	ready, entered, connectionCanceled := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+		close(connectionCanceled)
+		<-release
+	})
+	go func() {
+		finished <- app.Run(ctx, RuntimeOptions{Database: db, Handler: handler, Log: &logger.Logger{}, OnReady: func() error { close(ready); return nil }})
+	}()
+	select {
+	case <-ready:
+	case err := <-finished:
+		t.Fatal(err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("没有 ready")
+	}
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		client := &http.Client{Timeout: 9 * time.Second}
+		resp, _ := client.Get("http://127.0.0.1:10086/hold")
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("请求未进入")
+	}
+	cancel()
+	select {
+	case <-connectionCanceled:
+	case <-time.After(7 * time.Second):
+		t.Fatal("超时未关闭连接并取消请求")
+	}
+	select {
+	case <-db.closed:
+		t.Fatal("仍有业务使用数据库却提前关闭")
+	case <-finished:
+		t.Fatal("伪装业务已经退出")
+	default:
+	}
+	unblock()
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	<-clientDone
+	log, err := os.ReadFile(filepath.Join(dir, "log", "timecue.jsonl"))
+	if err != nil || !strings.Contains(string(log), "HTTP shutdown exceeded graceful window") {
+		t.Fatal("缺少退出超时诊断", string(log), err)
+	}
+}
+
+type heldRuntimeRecovery struct {
+	emptyRecoveryRepo
+	entered, canceled, release chan struct{}
+}
+
+func (r heldRuntimeRecovery) RecoveryStart(ctx context.Context, _ time.Time) (time.Time, error) {
+	close(r.entered)
+	<-ctx.Done()
+	close(r.canceled)
+	<-r.release
+	return time.Time{}, ctx.Err()
+}
+
+// TestRuntimeReadyDoesNotWaitForRecovery 就绪不等待历史整理，退出仍等待恢复不再使用数据库。
+func TestRuntimeReadyDoesNotWaitForRecovery(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:10086")
+	if err != nil {
+		t.Skip("固定端口已占用")
+	}
+	_ = probe.Close()
+	app, _ := runtimeTestApp(t)
+	repo := heldRuntimeRecovery{entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{})}
+	var once sync.Once
+	release := func() { once.Do(func() { close(repo.release) }) }
+	defer release()
+	app.Recovery, _ = NewRecoveryService(repo, SchedulerOptions{})
+	app.Delivery, _ = NewDeliveryService(deliveryTestRepo{}, nil)
+	db := &drainRuntimeDB{closed: make(chan struct{})}
+	ready, finished := make(chan struct{}), make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		finished <- app.Run(ctx, RuntimeOptions{Database: db, Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), Log: &logger.Logger{}, OnReady: func() error { close(ready); return nil }})
+	}()
+	select {
+	case <-ready:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ready 等待了历史恢复")
+	}
+	select {
+	case <-repo.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("恢复未接入")
+	}
+	cancel()
+	select {
+	case <-repo.canceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("恢复未协作取消")
+	}
+	select {
+	case <-db.closed:
+		t.Fatal("恢复未结束就关闭数据库")
+	default:
+	}
+	release()
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-db.closed:
+	default:
+		t.Fatal("恢复结束后数据库未关闭")
+	}
 }
 
 type drainRuntimeDB struct{ closed chan struct{} }
