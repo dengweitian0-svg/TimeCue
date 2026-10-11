@@ -10,3 +10,5 @@
 `openScheduleCountOn` 返回该日期完整的启用日程总数；未知快照返回 null。确认状态不影响数量，同一规则多次触发只计一条日程；HTTP 实现读取 Go 的聚合值。
 
 PendingScope 表达今日和历史两个读取范围，pendingFor/pendingTotalFor/pendingPageIndexFor/pendingLoadingFor/pendingErrorFor 分别返回页面状态；pendingTotal 保留房间完整待确认数。pendingCurrent 表示范围快照仍属于当前北京日期；确认始终提交明确 ID。
+
+- DeliveryRuntime 保留可选 PID、API 版本和不可变能力列表，verifyManaged 严格核验预期实例、所持有进程的 PID 及四项 D4 能力；原外连投递调用保持兼容，不将运行身份当作持久业务键。

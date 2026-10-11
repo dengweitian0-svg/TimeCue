@@ -5,3 +5,8 @@
 - `windows_notification_bridge.dart`：WindowsNotificationPlatform 封装插件初始化和即时展示；WindowsNotificationBridge 经投递窄契约推进单个不重叠循环，保存本运行的 attempt 去重、整数平台 ID、结果重传和 Go 身份代次；stopAndDrain 接受宿主剩余停止预算。
 
 通知约束：Go 决定完整成员、冻结文案、次数与重试时间，Flutter 不重建资格和调度。shouldDisplay=false 不展示、不伪造 failed；平台结果已知后只重传原 outcome，未知结果不再次展示。新 attempt 批次及断线/404 后复查原 health，空领取不增加健康心跳。状态只放内存，身份切换不重置本 Flutter 运行的整数 ID 序号；已释放/旧代次的异步结果不发布状态。演示模式不装配真实通知；窗口隐藏不停止执行，点击回调不确认。共享仓储由宿主释放，通知桥不自行关闭 HttpClient。主实例资格由 runner 保持到进程结束，Flutter 不停止外连的手动 Go；明确退出后不自动重启。系统通知冷启动的完整 COM/进程链路不属于当前宿主已验证能力。
+
+- `managed_backend.dart`：BackendConfiguration 读取 runner 的固定绝对路径快照并为配置存储提供同一目录；WindowsOwnedProcessPlatform 封装进程窄接口与代次事件。ManagedBackend 使用安全新身份、16 KiB 单行 ready、完整 health/PID/能力及存活核验，共享 10 秒启动截止；运行中退出使旧资格失效，不自动重启，零预算释放仍回收自有 Job。
+- `timecue_app.dart` 的托管启动门禁只在双重核验后挂载 RoomScreen 和初始化通知桥；失败诊断可滚动并恢复可见窗口，激活仅缓冲最新目标。DesktopLifecycle 的 finalizeOwnedProcess 在所有优雅等待后无条件执行，再释放共享资源并销毁窗口。
+
+- ManagedBackend 在创建每个异步启动操作前检查取消和截止，启动状态监听重入请求退出时不创建 Go；健康错配通过正式 invalidateRuntime 操作撤销整个托管运行。

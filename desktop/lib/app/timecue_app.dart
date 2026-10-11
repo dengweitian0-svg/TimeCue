@@ -9,18 +9,21 @@ import '../features/notebook/notification_reader_dialog.dart';
 import '../theme/notebook_theme.dart';
 import 'windows_notification_bridge.dart';
 import 'desktop_lifecycle.dart';
+import 'managed_backend.dart';
 
 class TimeCueApp extends StatelessWidget {
   const TimeCueApp({
     super.key,
     required this.repository,
     this.notifications,
+    this.backend,
     this.desktop,
     this.notificationViews,
     this.ownsRepository = false,
   });
   final NotebookRepository repository;
   final WindowsNotificationBridge? notifications;
+  final ManagedBackend? backend;
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
   final bool ownsRepository;
@@ -37,6 +40,7 @@ class TimeCueApp extends StatelessWidget {
     home: DesktopShell(
       repository: repository,
       notifications: notifications,
+      backend: backend,
       desktop: desktop,
       notificationViews: notificationViews,
       ownsRepository: ownsRepository,
@@ -50,12 +54,14 @@ class DesktopShell extends StatefulWidget {
     super.key,
     required this.repository,
     this.notifications,
+    this.backend,
     this.desktop,
     this.notificationViews,
     this.ownsRepository = false,
   });
   final NotebookRepository repository;
   final WindowsNotificationBridge? notifications;
+  final ManagedBackend? backend;
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
   final bool ownsRepository;
@@ -67,8 +73,42 @@ class _DesktopShellState extends State<DesktopShell> {
   late final AppLifecycleListener _lifecycle;
   final _historyRequests = ValueNotifier<int>(0);
   bool _readerOpen = false;
+  bool _businessOpened = false;
+  String? _pendingPayload;
   bool _runtimeReleased = false;
   String? _notificationError;
+
+  Future<void> _activate(String payload) async {
+    if (_runtimeReleased || widget.desktop?.stopping == true) return;
+    if (widget.backend != null && !widget.backend!.ready) {
+      _pendingPayload = payload;
+      return;
+    }
+    await widget.notificationViews?.activate(payload);
+  }
+
+  void _backendChanged() {
+    final backend = widget.backend!;
+    if (backend.ready && !_businessOpened) {
+      _businessOpened = true;
+      widget.notifications?.expectedInstanceId = backend.instanceId;
+      unawaited(widget.notifications?.initialize());
+      final payload = _pendingPayload;
+      _pendingPayload = null;
+      if (payload != null) unawaited(_activate(payload));
+    }
+    if (backend.state == BackendState.failed) {
+      unawaited(_revealFailure());
+    }
+    if (mounted && !_runtimeReleased) setState(() {});
+  }
+
+  Future<void> _revealFailure() async {
+    final desktop = widget.desktop;
+    if (desktop == null || desktop.stopping) return;
+    await desktop.initialize();
+    if (!_runtimeReleased && !desktop.stopping) await desktop.openWindow();
+  }
 
   void _runtimeChanged() {
     final error = widget.notifications?.error;
@@ -119,22 +159,35 @@ class _DesktopShellState extends State<DesktopShell> {
     widget.notificationViews?.addListener(_showReader);
     notifications?.addListener(_runtimeChanged);
     _showReader();
-    if (notifications != null) unawaited(notifications.initialize());
+    _businessOpened = widget.backend == null;
+    if (notifications != null && _businessOpened) {
+      unawaited(notifications.initialize());
+    }
     final desktop = widget.desktop;
     if (desktop != null) {
-      desktop.stopNewWork = widget.notifications?.stopClaiming;
+      desktop.onActivate = _activate;
+      desktop.stopNewWork = () {
+        widget.backend?.cancelStart();
+        widget.notifications?.stopClaiming();
+      };
+      desktop.stopOwnedProcess = widget.backend?.stopOwned;
+      desktop.finalizeOwnedProcess = widget.backend?.releaseOwned;
       desktop.drain = widget.notifications?.stopAndDrain;
       desktop.releaseResources = _releaseRuntime;
       unawaited(desktop.initialize());
     }
+    widget.backend?.addListener(_backendChanged);
+    unawaited(widget.backend?.start());
     _lifecycle = AppLifecycleListener(
       onExitRequested: () async {
         if (widget.desktop case final desktop?) {
           await desktop.requestExit();
           return AppExitResponse.cancel;
         }
+        widget.backend?.cancelStart();
         widget.notificationViews?.close();
         await widget.notifications?.stopAndDrain(const Duration(seconds: 5));
+        await widget.backend?.releaseOwned();
         return AppExitResponse.exit;
       },
     );
@@ -143,6 +196,8 @@ class _DesktopShellState extends State<DesktopShell> {
   void _releaseRuntime() {
     if (_runtimeReleased) return;
     _runtimeReleased = true;
+    widget.backend?.removeListener(_backendChanged);
+    widget.backend?.dispose();
     widget.notificationViews?.removeListener(_showReader);
     widget.notifications?.removeListener(_runtimeChanged);
     widget.notificationViews?.dispose();
@@ -163,11 +218,60 @@ class _DesktopShellState extends State<DesktopShell> {
   Widget build(BuildContext context) => Scaffold(
     body: Stack(
       children: [
-        RoomScreen(
-          repository: widget.repository,
-          onRecovery: widget.notificationViews == null ? null : _openRecovery,
-          historyRequests: _historyRequests,
-        ),
+        if (_businessOpened)
+          AbsorbPointer(
+            absorbing: widget.backend != null && !widget.backend!.ready,
+            child: RoomScreen(
+              repository: widget.repository,
+              onRecovery: widget.notificationViews == null
+                  ? null
+                  : _openRecovery,
+              historyRequests: _historyRequests,
+            ),
+          ),
+        if (widget.backend case final backend?)
+          if (!backend.ready)
+            Positioned.fill(
+              child: ColoredBox(
+                color: const Color(0xEEFAF7F0),
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (backend.state == BackendState.starting)
+                          const CircularProgressIndicator(),
+                        const SizedBox(height: 16),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 280),
+                          child: SingleChildScrollView(
+                            child: Text(backend.error ?? '正在启动本地服务…'),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Wrap(
+                          children: [
+                            if (backend.canRetry)
+                              TextButton(
+                                onPressed: () => unawaited(backend.start()),
+                                child: const Text('重试启动'),
+                              ),
+                            if (widget.desktop case final desktop?)
+                              TextButton(
+                                onPressed: desktop.stopping
+                                    ? null
+                                    : () => unawaited(desktop.requestExit()),
+                                child: const Text('退出 TimeCue'),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
         if (widget.desktop case final desktop?)
           Positioned(
             left: 16,

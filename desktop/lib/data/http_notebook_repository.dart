@@ -13,10 +13,31 @@ class HttpNotebookRepository extends NotebookRepository
     HttpClient? client,
     Uri? base,
     DateTime Function()? now,
-  }) : _client = client ?? HttpClient(),
+    bool managed = false,
+  }) : _runtimeAccess = !managed,
+       _client = client ?? HttpClient(),
        _base = base ?? Uri.parse('http://127.0.0.1:10086/api/v1/scheduler/'),
        _clock = now ?? beijingNow,
        _now = (now ?? beijingNow)();
+  bool _runtimeAccess;
+  String? _expectedInstance;
+  int? _expectedPid;
+  void Function()? onManagedRuntimeLost;
+  void enableManagedRuntime(String instanceId, {int? pid}) {
+    if (_disposed) return;
+    _expectedInstance = instanceId;
+    _expectedPid = pid;
+    _runtimeAccess = true;
+  }
+
+  void invalidateManagedRuntime() {
+    final hadAccess = _runtimeAccess;
+    _runtimeAccess = false;
+    _invalidateReads();
+    _loading = false;
+    if (hadAccess) _client.close(force: true);
+  }
+
   final HttpClient _client;
   final Uri _base;
   final DateTime Function() _clock;
@@ -122,6 +143,9 @@ class HttpNotebookRepository extends NotebookRepository
     String? method,
     String? operationKey,
   }) async {
+    if (_disposed || (path != '/health' && !_runtimeAccess)) {
+      throw StateError('自有本地服务尚未就绪或已经结束。');
+    }
     try {
       // 提醒资源与 scheduler 同级，不能沿用日程接口的路径前缀。
       final resourcePath = path.startsWith('notifications') ? '../$path' : path;
@@ -144,8 +168,20 @@ class HttpNotebookRepository extends NotebookRepository
           .transform(utf8.decoder)
           .join()
           .timeout(const Duration(seconds: 5));
+      if (_disposed || (path != '/health' && !_runtimeAccess)) {
+        throw StateError('本次运行已经结束，忽略迟到响应。');
+      }
       if (response.statusCode == 204) return null;
       final value = jsonDecode(text) as Map<String, dynamic>;
+      if (path == '/health' &&
+          _expectedInstance != null &&
+          (value['data']?['instanceId'] != _expectedInstance ||
+              (_expectedPid != null &&
+                  value['data']?['pid'] != _expectedPid))) {
+        invalidateManagedRuntime();
+        onManagedRuntimeLost?.call();
+        throw const FormatException('端口上的服务不是本次自有进程。');
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final error = value['error'] ?? value['data']?['error'];
         throw NotebookApiException(

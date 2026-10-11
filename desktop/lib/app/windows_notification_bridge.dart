@@ -85,6 +85,7 @@ class _Execution {
 /// 单执行者的内存记录；结果重传不会重新执行平台展示。
 class WindowsNotificationBridge extends ChangeNotifier {
   WindowsNotificationBridge({required this.gateway, required this.platform});
+  String? expectedInstanceId;
   final NotificationDeliveryGateway gateway;
   final NotificationPlatform platform;
   final Map<String, _Execution> _executions = {};
@@ -181,11 +182,24 @@ class WindowsNotificationBridge extends ChangeNotifier {
     }
   }
 
+  void invalidateRuntime() {
+    stopClaiming();
+    ++_generation;
+    _executions.clear();
+    _platformIds.clear();
+    _instanceId = null;
+    if (!_disposed) notifyListeners();
+  }
+
   Future<bool> _checkRuntime() async {
     final generation = _generation;
     try {
       final runtime = await gateway.deliveryRuntime();
       if (!_current(generation)) return false;
+      if (expectedInstanceId != null &&
+          runtime.instanceId != expectedInstanceId) {
+        throw const FormatException('本地服务不是当前自有 Go 运行。');
+      }
       final changed = _instanceId != null && _instanceId != runtime.instanceId;
       if (changed) {
         ++_generation;

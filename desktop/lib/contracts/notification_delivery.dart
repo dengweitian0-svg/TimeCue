@@ -9,8 +9,29 @@ abstract interface class NotificationDeliveryGateway {
 enum DeliveryOutcome { sent, failed }
 
 class DeliveryRuntime {
-  const DeliveryRuntime(this.instanceId);
+  const DeliveryRuntime(
+    this.instanceId, {
+    this.pid,
+    this.apiVersion = 'v1',
+    this.capabilities = const [],
+  });
   final String instanceId;
+  final int? pid;
+  final String apiVersion;
+  final List<String> capabilities;
+  void verifyManaged(String expected, int expectedPid) {
+    if (instanceId != expected ||
+        pid != expectedPid ||
+        apiVersion != 'v1' ||
+        !const [
+          'delivery-v1',
+          'recovery-v1',
+          'task-members-v1',
+          'managed-lifecycle-v1',
+        ].every(capabilities.contains)) {
+      throw const FormatException('托管运行身份、PID 或能力不匹配。');
+    }
+  }
 
   factory DeliveryRuntime.fromJson(Object? raw) {
     final value = _object(raw);
@@ -22,7 +43,12 @@ class DeliveryRuntime {
         !capabilities.contains('recovery-v1')) {
       throw const FormatException('本地服务不支持当前投递协议。');
     }
-    return DeliveryRuntime(_identity(value, 'instanceId'));
+    return DeliveryRuntime(
+      _identity(value, 'instanceId'),
+      pid: value['pid'] as int?,
+      apiVersion: value['apiVersion'] as String,
+      capabilities: List<String>.unmodifiable(capabilities.cast<String>()),
+    );
   }
 }
 

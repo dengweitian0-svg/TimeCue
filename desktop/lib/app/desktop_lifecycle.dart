@@ -91,6 +91,7 @@ class DesktopLifecycle extends ChangeNotifier {
   VoidCallback? stopNewWork;
   Future<void> Function(Duration budget)? drain;
   Future<void> Function(Duration budget)? stopOwnedProcess;
+  Future<void> Function()? finalizeOwnedProcess;
   VoidCallback? releaseResources;
   Future<void>? _initialization, _trayWork, _exit;
   Future<void> _windowWork = Future<void>.value();
@@ -305,6 +306,12 @@ class DesktopLifecycle extends ChangeNotifier {
     await bounded((_) async {
       await _trayWork;
     });
+    try {
+      // 自有 Job 回收不属于优雅等待，零预算也必须执行。
+      await finalizeOwnedProcess?.call();
+    } catch (failure) {
+      _error = '自有进程最终回收失败：$failure';
+    }
     try {
       releaseResources?.call();
     } catch (failure) {
