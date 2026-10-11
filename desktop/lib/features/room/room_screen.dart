@@ -56,7 +56,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     }
   }
 
-  // 房间只在前台且有进行中的恢复时复用普通五秒刷新。
+  // 房间前台继续观察整理或尚未确认的遗漏，全部确认后停止轮询。
   void _coordinateRecoveryPolling() {
     final state = WidgetsBinding.instance.lifecycleState;
     final progress = widget.repository.recovery;
@@ -64,7 +64,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         !bookVisible &&
         (state == null || state == AppLifecycleState.resumed) &&
         progress != null &&
-        progress.state != 'completed';
+        (progress.state != 'completed' || progress.unacknowledgedCount != 0);
     if (!shouldPoll) {
       _recoveryPoll?.cancel();
       _recoveryPoll = null;
@@ -241,6 +241,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                   final progress = widget.repository.recovery;
                   if (progress == null ||
                       (progress.missedTotal ?? 0) <= 0 ||
+                      (progress.unacknowledgedCount ?? 0) <= 0 ||
                       progress.recoveryId == _dismissedRecoveryId) {
                     return const SizedBox.shrink();
                   }
@@ -249,7 +250,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                     borderRadius: BorderRadius.circular(12),
                     child: ListTile(
                       leading: const Icon(Icons.history),
-                      title: Text('有 ${progress.missedTotal} 条遗漏提醒'),
+                      title: Text('有 ${progress.unacknowledgedCount} 条遗漏提醒'),
                       subtitle: widget.repository.refreshError != null
                           ? const Text('上次读取结果 · 连接恢复后更新')
                           : null,

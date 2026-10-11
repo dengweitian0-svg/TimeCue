@@ -63,6 +63,76 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     repo.dispose();
   });
+  testWidgets('本轮两条确认后计数 2 到 1 到 0，其他未确认不影响本轮提示', (tester) async {
+    sizeWindow(tester);
+    final repository = _RecoveryRepository()
+      ..completeRound(2, unacknowledged: 2, displayable: 0);
+    await tester.pumpWidget(TimeCueApp(repository: repository));
+    await tester.pumpAndSettle();
+    expect(find.text('有 2 条遗漏提醒'), findsOneWidget);
+    repository.completeRound(2, unacknowledged: 1, displayable: 0);
+    await tester.pump();
+    expect(find.text('有 1 条遗漏提醒'), findsOneWidget);
+    expect(find.text('有 2 条遗漏提醒'), findsNothing);
+    repository.completeRound(2, unacknowledged: 0, displayable: 0);
+    await tester.pump();
+    expect(find.textContaining('条遗漏提醒'), findsNothing);
+    expect(find.text('日程本  6'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    repository.dispose();
+  });
+
+  testWidgets('全确认的历史首次启动不提示，sent 未确认仍提示且恢复详情保留', (tester) async {
+    sizeWindow(tester);
+    final repository = _RecoveryRepository()
+      ..completeRound(2, unacknowledged: 0, displayable: 0);
+    final gateway = fixture.QueryFixture();
+    gateway.onMembers = (_, _, _) => fixture.memberPage([
+      fixture.member('1', acknowledged: DateTime.utc(2026, 10, 11)),
+      fixture.member('2', acknowledged: DateTime.utc(2026, 10, 11)),
+    ], recovery: repository.recovery);
+    final model = NotificationViewModel(gateway);
+    await tester.pumpWidget(
+      TimeCueApp(repository: repository, notificationViews: model),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('条遗漏提醒'), findsNothing);
+    await model.openRecovery(repository.recovery);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('完整遗漏 2 条'), findsOneWidget);
+    expect(find.text('其中未确认 0 条'), findsOneWidget);
+    expect(find.text('成员 1'), findsOneWidget);
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    repository.completeRound(2, unacknowledged: 1, displayable: 0);
+    await tester.pump();
+    expect(find.text('有 1 条遗漏提醒'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    repository.dispose();
+  });
+
+  testWidgets('整理完成后继续刷新未确认遗漏，全部确认后停止房间轮询', (tester) async {
+    sizeWindow(tester);
+    final repository = _PollingRecoveryRepository()
+      ..completeRound(2, unacknowledged: 2, displayable: 0);
+    await tester.pumpWidget(TimeCueApp(repository: repository));
+    await tester.pumpAndSettle();
+    final before = repository.refreshes;
+    await tester.pump(const Duration(seconds: 5));
+    expect(repository.refreshes, greaterThan(before));
+    repository.invalidateCount();
+    final unknown = repository.refreshes;
+    await tester.pump(const Duration(seconds: 5));
+    expect(repository.refreshes, greaterThan(unknown));
+    repository.completeRound(2, unacknowledged: 0, displayable: 0);
+    await tester.pump();
+    final stopped = repository.refreshes;
+    await tester.pump(const Duration(seconds: 10));
+    expect(repository.refreshes, stopped);
+    expect(find.textContaining('条遗漏提醒'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    repository.dispose();
+  });
   testWidgets('已确认的失败详情保留真实投递状态，长内容可滚动', (tester) async {
     sizeWindow(tester, size: const Size(480, 400));
     final entry = TriggerSummary(
@@ -236,13 +306,32 @@ class _RecoveryRepository extends DemoNotebookRepository {
   @override
   RecoveryProgress get recovery => _progress;
   void republish() => notifyListeners();
-  void completeRound(int total) {
-    _progress = fixture.recovery(state: 'completed', total: total);
+  void invalidateCount() {
+    _progress = _progress.invalidateUnacknowledgedCount();
+    notifyListeners();
+  }
+
+  void completeRound(int total, {int? unacknowledged, int displayable = 480}) {
+    _progress = fixture.recovery(
+      state: 'completed',
+      total: total,
+      unacknowledged: unacknowledged,
+      displayable: displayable,
+    );
     notifyListeners();
   }
 
   void nextRound() {
     _progress = fixture.recovery(state: 'completed', total: 2, task: 'task-2');
+    notifyListeners();
+  }
+}
+
+class _PollingRecoveryRepository extends _RecoveryRepository {
+  int refreshes = 0;
+  @override
+  Future<void> refresh({DateTime? date, DateTime? month}) async {
+    refreshes++;
     notifyListeners();
   }
 }

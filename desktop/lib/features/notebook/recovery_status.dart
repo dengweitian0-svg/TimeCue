@@ -28,6 +28,12 @@ class RecoveryStatus extends StatelessWidget {
             : '完整遗漏 ${progress.missedTotal} 条 · 可投递 ${progress.displayableCount} 条',
       ),
       const SizedBox(height: 8),
+      Text(
+        progress.unacknowledgedCount == null
+            ? '未确认数量待刷新'
+            : '其中未确认 ${progress.unacknowledgedCount} 条',
+      ),
+      const SizedBox(height: 8),
       Text('本轮整理上界 · ${plannedTimeLabel(progress.through)} · 北京时间'),
       if (stale)
         const Padding(

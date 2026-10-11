@@ -567,6 +567,9 @@ class HttpNotebookRepository extends NotebookRepository
       state.total = (state.total - count).clamp(0, state.total);
     }
     _total = (_total - times.length).clamp(0, _total);
+    // 不能按本次确认总数扣恢复计数：其中可能有不属于本轮的提醒。
+    // 等正式刷新取得新统计；刷新失败时也不继续展示旧未确认数量。
+    _recovery = _recovery?.invalidateUnacknowledgedCount();
     for (final id in ids) {
       _pendingMembership.remove(id);
     }

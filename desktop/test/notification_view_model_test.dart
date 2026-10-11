@@ -48,13 +48,16 @@ RecoveryProgress recovery({
   String state = 'running',
   int? total,
   String task = 'task-1',
+  int? unacknowledged,
+  int displayable = 480,
 }) => RecoveryProgress(
   recoveryId: 'round-$task',
   state: state,
   through: DateTime.utc(2026, 10, 8, 14),
   materializedCount: 500,
   missedTotal: total,
-  displayableCount: 480,
+  displayableCount: displayable,
+  unacknowledgedCount: unacknowledged ?? total ?? 500,
   deliveryTaskId: task,
 );
 

@@ -9,6 +9,7 @@ Map<String, Object?> recoveryJson({String state = 'running', int? missed}) => {
   'materializedCount': 500,
   'missedTotal': missed,
   'displayableCount': 480,
+  'unacknowledgedCount': missed ?? 500,
   'deliveryTaskId': 'task-1',
 };
 
@@ -117,8 +118,55 @@ void main() {
     await expectLater(repo.notificationDetails('7'), throwsFormatException);
   });
 
+  test('确认成功后刷新失败废弃旧恢复计数，再次刷新读取真实剩余量', () async {
+    var acknowledged = false, failRefresh = false;
+    final repo = await fixture.serverRepository((request) {
+      if (request.uri.path.endsWith('/acknowledgements')) {
+        acknowledged = true;
+        failRefresh = true;
+        return [
+          {'notificationId': 1, 'acknowledgedAt': '2026-10-08T14:33:00+08:00'},
+        ];
+      }
+      if (failRefresh) throw StateError('断线');
+      return fixture.snapshot(
+          pending: [fixture.occurrence(2)],
+          total: acknowledged ? 1 : 2,
+        )
+        ..['recovery'] = (recoveryJson(state: 'completed', missed: 2)
+          ..['unacknowledgedCount'] = acknowledged ? 1 : 2);
+    });
+    await repo.refresh();
+    expect(repo.recovery!.unacknowledgedCount, 2);
+    await repo.confirm({'1'});
+    expect(repo.recovery!.missedTotal, 2);
+    expect(repo.recovery!.unacknowledgedCount, isNull);
+    expect(repo.refreshError, isNotNull);
+    failRefresh = false;
+    await repo.refresh();
+    expect(repo.recovery!.unacknowledgedCount, 1);
+  });
+
   test('恢复摘要校验状态与数量，保留未知总数', () {
     expect(RecoveryProgress.fromJson(null), isNull);
+    expect(
+      RecoveryProgress.fromJson(
+        recoveryJson()..remove('unacknowledgedCount'),
+      )!.unacknowledgedCount,
+      isNull,
+    );
+    expect(
+      RecoveryProgress.fromJson(
+        recoveryJson()..['unacknowledgedCount'] = 0,
+      )!.unacknowledgedCount,
+      0,
+    );
+    expect(
+      () => RecoveryProgress.fromJson(
+        recoveryJson()..['unacknowledgedCount'] = -1,
+      ),
+      throwsFormatException,
+    );
     expect(
       RecoveryProgress.fromJson(recoveryJson(state: 'failed'))!.state,
       'failed',

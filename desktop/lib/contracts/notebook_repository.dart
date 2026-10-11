@@ -131,11 +131,23 @@ class RecoveryProgress {
     required this.missedTotal,
     required this.displayableCount,
     required this.deliveryTaskId,
+    this.unacknowledgedCount,
   });
   final String recoveryId, state, deliveryTaskId;
   final DateTime through;
   final int materializedCount, displayableCount;
-  final int? missedTotal;
+  final int? missedTotal, unacknowledgedCount;
+
+  // 确认已成功但新快照尚未取得时，旧未确认数量不能继续用于提示。
+  RecoveryProgress invalidateUnacknowledgedCount() => RecoveryProgress(
+    recoveryId: recoveryId,
+    state: state,
+    through: through,
+    materializedCount: materializedCount,
+    missedTotal: missedTotal,
+    displayableCount: displayableCount,
+    deliveryTaskId: deliveryTaskId,
+  );
 
   static RecoveryProgress? fromJson(dynamic value) {
     if (value == null) return null;
@@ -168,6 +180,9 @@ class RecoveryProgress {
       materializedCount: count('materializedCount'),
       missedTotal: value['missedTotal'] == null ? null : count('missedTotal'),
       displayableCount: count('displayableCount'),
+      unacknowledgedCount: value['unacknowledgedCount'] == null
+          ? null
+          : count('unacknowledgedCount'),
       deliveryTaskId: identity('deliveryTaskId'),
     );
   }
