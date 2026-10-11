@@ -3,6 +3,7 @@ import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import '../contracts/notebook_repository.dart';
+import '../data/config_file_store.dart';
 import '../features/room/room_screen.dart';
 import '../features/notebook/notification_view_model.dart';
 import '../features/notebook/notification_reader_dialog.dart';
@@ -19,6 +20,7 @@ class TimeCueApp extends StatelessWidget {
     this.backend,
     this.desktop,
     this.notificationViews,
+    this.configFiles,
     this.ownsRepository = false,
   });
   final NotebookRepository repository;
@@ -26,6 +28,7 @@ class TimeCueApp extends StatelessWidget {
   final ManagedBackend? backend;
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
+  final ConfigFileStore? configFiles;
   final bool ownsRepository;
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -43,6 +46,7 @@ class TimeCueApp extends StatelessWidget {
       backend: backend,
       desktop: desktop,
       notificationViews: notificationViews,
+      configFiles: configFiles,
       ownsRepository: ownsRepository,
     ),
   );
@@ -57,6 +61,7 @@ class DesktopShell extends StatefulWidget {
     this.backend,
     this.desktop,
     this.notificationViews,
+    this.configFiles,
     this.ownsRepository = false,
   });
   final NotebookRepository repository;
@@ -64,6 +69,7 @@ class DesktopShell extends StatefulWidget {
   final ManagedBackend? backend;
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
+  final ConfigFileStore? configFiles;
   final bool ownsRepository;
   @override
   State<DesktopShell> createState() => _DesktopShellState();
@@ -223,6 +229,7 @@ class _DesktopShellState extends State<DesktopShell> {
             absorbing: widget.backend != null && !widget.backend!.ready,
             child: RoomScreen(
               repository: widget.repository,
+              configFiles: widget.configFiles,
               onRecovery: widget.notificationViews == null
                   ? null
                   : _openRecovery,

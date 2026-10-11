@@ -2,10 +2,12 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
+import '../../data/config_file_store.dart';
 import '../notebook/notebook_overlay.dart';
 import '../notebook/notebook_view_model.dart';
 import '../notebook/schedule_management_dialog.dart';
 import '../schedule_editor/schedule_editor.dart';
+import '../settings/settings_dialog.dart';
 import 'desk_notebook_hotspot.dart';
 import 'room_backdrop.dart';
 import 'room_clock.dart';
@@ -17,10 +19,12 @@ class RoomScreen extends StatefulWidget {
     required this.repository,
     this.onRecovery,
     this.historyRequests,
+    this.configFiles,
   });
   final NotebookRepository repository;
   final VoidCallback? onRecovery;
   final ValueListenable<int>? historyRequests;
+  final ConfigFileStore? configFiles;
   @override
   State<RoomScreen> createState() => _RoomScreenState();
 }
@@ -114,6 +118,16 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> settings() async {
+    final store = widget.configFiles;
+    if (store == null) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => SettingsDialog(store: store),
+    );
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -158,6 +172,19 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
+          Positioned(
+            top: 24,
+            left: 24,
+            child: Tooltip(
+              message: widget.configFiles == null ? '演示模式不修改本地配置' : '应用设置',
+              child: FilledButton.icon(
+                onPressed: widget.configFiles == null ? null : settings,
+                style: _roomActionStyle,
+                icon: const Icon(Icons.settings_outlined, size: 17),
+                label: const Text('设置'),
+              ),
+            ),
+          ),
           Positioned(
             top: 24,
             right: 24,

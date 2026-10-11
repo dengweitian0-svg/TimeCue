@@ -68,6 +68,7 @@ Future<void> main() async {
       notificationViews: views,
       notifications: notifications,
       backend: backend,
+      configFiles: configuration.configFiles,
       ownsRepository: true,
     ),
   );

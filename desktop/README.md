@@ -14,6 +14,12 @@ flutter run -d windows -a --backend=external -a --data-dir=D:\go_project\src\Tim
 
 视觉演示仍可显式使用 `flutter run -d windows --dart-define=TIMECUE_DEMO=true`。示例业务时间固定为北京时间 **2026-10-07 14:32**，数据只在内存，环境时钟使用真实 UTC+8。
 
+## 应用设置
+
+点击房间左上角“设置”，可修改日志级别、日志目录和数据库路径。设置读取与保存使用启动参数确定的同一个 data-dir 下的 config.yaml；未配置字段显示使用默认配置，只保存本次修改的字段。日志级别由 Go 自动加载，日志目录及数据库路径在下次启动生效，已有数据不会自动搬迁。配置文件路径可选中复制。
+
+“恢复默认设置”确认后移除这三项运行覆盖值，保留其他字段及注释。关闭未保存修改时可取消或舍弃；读取失败可重试，保存失败保留草稿。演示模式的设置入口禁用，不修改本地配置。
+
 ## Windows 系统提醒
 
 真实模式启动一个应用级 Windows 通知执行者；external 连接手动 Go，managed 在自有 Go 的 ready/health 双重核验后开放业务，先核对 `/health` 的 v1、delivery-v1 和 recovery-v1。每秒领取最多 20 个完整任务，按 Go 的开始决定调用一次即时通知，再回填 sent/failed；单条、多条和恢复汇总均使用 Go 冻结文案。关闭本子或失去焦点不会停止领取，显式演示不接真实通知。
@@ -71,6 +77,7 @@ TimeCueApp                              MaterialApp、主题、构造注入
       ├─ RoomClock                      独立 ValueListenableBuilder
       ├─ DeskNotebookHotspot            原图本子的透明家具入口
       ├─ RoomActions                    固定入口、待确认数量
+      ├─ 设置按钮                        独立配置弹窗，演示模式禁用
       ├─ 添加日程 / 管理日程按钮（包含已暂停）
       └─ NotebookOverlay                焦点作用域、单控制器开合、遮罩
          └─ NotebookFrame               书封、页脚固定管理入口、标签、关闭按钮
@@ -88,6 +95,7 @@ TimeCueApp                              MaterialApp、主题、构造注入
                   └─ EditingPage        ScheduleEditor（完整规则及 revision）
 
 RoomScreen → showDialog
+├─ SettingsDialog                       日志级别/日志目录/数据库路径、保存与恢复默认
 ├─ ScheduleManagementDialog             含已暂停规则、分页和详情读取
 │  └─ ScheduleEditDialog                独立修改弹窗，保存/恢复/删除后刷新列表
 └─ ScheduleCreateDialog                 草稿、关闭守卫、弹层焦点
@@ -131,6 +139,7 @@ flowchart LR
 | 激活目标、任务/attempt 分页、只读详情及读取代次 | NotificationViewModel | 宿主唯一只读弹窗，不写业务；过期身份提示和持久详情分别处理 |
 | 场景已解码图片 | RoomBackdrop | 解码成功再淡入，失败保留旧图 |
 | 入口焦点、本子显隐 | RoomScreen | 合上后回到实际入口；热区裁切后回固定入口 |
+| 配置覆盖草稿、读取/保存状态及关闭守卫 | SettingsDialog | 通过注入的 ConfigFileStore 读写，保留未知字段；路径下次启动生效 |
 
 业务快照不与表单共享可变对象。每次确认针对触发 ID；失败投递也可确认，确认不会将失败改成成功。全选只选择点击时本页记录，跨页保留，确认没有撤销。删除与未来编辑保留历史。
 

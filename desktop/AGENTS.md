@@ -13,6 +13,7 @@
 - [lib/features/room](lib/features/room/AGENTS.md)：房间背景、时钟、桌面入口与本子显隐。
 - [lib/features/notebook](lib/features/notebook/AGENTS.md)：本子开合、今日/日历页面、跨页选择与查询状态。
 - [lib/features/schedule_editor](lib/features/schedule_editor/AGENTS.md)：日程表单、编辑草稿与时间选择器。
+- [lib/features/settings](lib/features/settings/AGENTS.md)：日志与数据设置弹窗、配置保存与恢复默认。
 - [lib/theme](lib/theme/AGENTS.md)：纸张主题、视觉参数与通用页面组件。
 - [assets](assets/AGENTS.md)：房间背景资源。
 - [windows](windows/AGENTS.md)：Windows 原生窗口与 Flutter 构建集成。
@@ -23,7 +24,7 @@
 ## 工程约束
 
 - Widget/ViewModel 依赖仓储契约，具体实现由 `main.dart` 装配。真实模式通过 Go 正式用例读写，不访问 SQLite、不在 Dart 展开 cron；更新提交编辑时读取的 revision，写入重试使用同一操作标识。结构变更同步 README 的 Widget 与状态索引。
-- `config.yaml` 的应用内写入归 Flutter 文件存储，使用与 Go 相同的 data-dir；Go 消费配置，不写用户配置。配置存储组件只读写 YAML，不迁移数据库或切换运行中的连接；设置页面和登录自启协调由对应功能装配。
+- `config.yaml` 的应用内写入归 Flutter 文件存储，使用与 Go 相同的 data-dir；Go 消费配置，不写用户配置。房间设置弹窗编辑日志级别、日志目录及数据库路径，支持恢复默认和草稿守卫；路径下次启动生效，不迁移数据库或切换运行中的连接。演示模式禁用设置写入，登录自启协调由对应功能装配。
 
 日程本提供“今天｜历史待确认｜日历”三标签，今日安排与两类待确认分开读取。今日/历史各自分页与选择，房间总数继续包含全部到期未确认。跨北京日期废弃旧分页、重读两范围并清理旧范围选择；查询和标签切换只读，不调用平台投递。
 
