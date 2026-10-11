@@ -28,11 +28,36 @@ type NextNotify interface {
 
 // QueryUnacknowledged 分页读取全历史到期未确认记录，不检查父日程启停或投递成功。
 func (a *App) QueryUnacknowledged(ctx context.Context, rawCursor string, now time.Time) (OccurrencePage, error) {
-	cursor, err := queryCursor(rawCursor, "pending", now)
+	return a.QueryUnacknowledgedScope(ctx, "", rawCursor, now)
+}
+
+// QueryUnacknowledgedScope 按原计划时间分类，续页绑定范围和北京时间日期。
+func (a *App) QueryUnacknowledgedScope(ctx context.Context, scope, rawCursor string, now time.Time) (OccurrencePage, error) {
+	if scope != "" && scope != "today" && scope != "history" {
+		return OccurrencePage{}, ErrInvalidQuery
+	}
+	now = now.In(model.BeijingLocation())
+	purpose := "pending"
+	if scope != "" {
+		purpose += ":" + scope + ":" + now.Format("2006-01-02")
+	}
+	cursor, err := queryCursor(rawCursor, purpose, now)
 	if err != nil {
 		return OccurrencePage{}, err
 	}
-	schedules, _, pending, total, err := a.Schedule.ReadScheduleState(ctx, cursor.AsOf, cursor.AsOf, cursor.AsOf, model.NotificationPosition{Time: cursor.Time, ID: cursor.ID}, 51)
+	rangeQuery := model.UnacknowledgedRange{AsOf: cursor.AsOf}
+	if scope != "" {
+		if cursor.AsOf.Format("2006-01-02") != now.Format("2006-01-02") {
+			return OccurrencePage{}, ErrInvalidQuery
+		}
+		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, model.BeijingLocation())
+		if scope == "today" {
+			rangeQuery.Start = midnight
+		} else {
+			rangeQuery.End = midnight
+		}
+	}
+	schedules, pending, total, err := a.Schedule.ReadUnacknowledged(ctx, rangeQuery, model.NotificationPosition{Time: cursor.Time, ID: cursor.ID}, 51)
 	if err != nil {
 		return OccurrencePage{}, err
 	}

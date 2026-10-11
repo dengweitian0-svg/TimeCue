@@ -317,28 +317,78 @@ func (s *ScheduleStore) ReadScheduleState(ctx context.Context, start, end, asOf 
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM notifications WHERE deleted = 0 AND acknowledged_at IS NULL AND notify_time <= ?`, asOf.UnixNano()).Scan(&total); err != nil {
+	pending, total, err = readUnacknowledged(ctx, tx, model.UnacknowledgedRange{AsOf: asOf}, after, limit)
+	if err != nil {
 		return nil, nil, nil, 0, err
-	}
-	if limit > 0 {
-		statement := notificationSelect + ` WHERE deleted = 0 AND acknowledged_at IS NULL AND notify_time <= ?`
-		args := []any{asOf.UnixNano()}
-		if after.ID > 0 {
-			statement += ` AND (notify_time > ? OR (notify_time = ? AND id > ?))`
-			args = append(args, after.Time.UnixNano(), after.Time.UnixNano(), after.ID)
-		}
-		rows, err = tx.QueryContext(ctx, statement+` ORDER BY notify_time, id LIMIT ?`, append(args, limit)...)
-		if err != nil {
-			return nil, nil, nil, 0, fmt.Errorf("[store] cannot read unacknowledged page: %w", err)
-		}
-		pending, err = scanNotifications(rows)
-		rows.Close()
-		if err != nil {
-			return nil, nil, nil, 0, err
-		}
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, nil, nil, 0, err
 	}
 	return schedules, occurrences, pending, total, nil
+}
+
+// readUnacknowledged 先按范围统计，再给页数据追加稳定位置，二者共用读取事务。
+func readUnacknowledged(ctx context.Context, tx *sql.Tx, query model.UnacknowledgedRange, after model.NotificationPosition, limit int) ([]*model.Notification, int, error) {
+	filter := ` WHERE deleted = 0 AND acknowledged_at IS NULL AND notify_time <= ?`
+	args := []any{query.AsOf.UnixNano()}
+	if !query.Start.IsZero() {
+		filter += ` AND notify_time >= ?`
+		args = append(args, query.Start.UnixNano())
+	}
+	if !query.End.IsZero() {
+		filter += ` AND notify_time < ?`
+		args = append(args, query.End.UnixNano())
+	}
+	var total int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM notifications`+filter, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 {
+		return []*model.Notification{}, total, nil
+	}
+	if after.ID > 0 {
+		filter += ` AND (notify_time > ? OR (notify_time = ? AND id > ?))`
+		args = append(args, after.Time.UnixNano(), after.Time.UnixNano(), after.ID)
+	}
+	rows, err := tx.QueryContext(ctx, notificationSelect+filter+` ORDER BY notify_time, id LIMIT ?`, append(args, limit)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	values, err := scanNotifications(rows)
+	return values, total, err
+}
+
+// ReadUnacknowledged 只读取有界提醒页和对应父日程，包括已暂停或删除的父日程。
+func (s *ScheduleStore) ReadUnacknowledged(ctx context.Context, query model.UnacknowledgedRange, after model.NotificationPosition, limit int) ([]*model.Schedule, []*model.Notification, int, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	defer tx.Rollback()
+	pending, total, err := readUnacknowledged(ctx, tx, query, after, limit)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	rules := []*model.Schedule{}
+	seen := map[int]bool{}
+	for _, n := range pending {
+		if seen[n.ScheduleID] {
+			continue
+		}
+		rule, err := scanSchedule(tx.QueryRowContext(ctx, scheduleSelect+` WHERE id = ?`, n.ScheduleID))
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		rules = append(rules, rule)
+		seen[n.ScheduleID] = true
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, 0, err
+	}
+	return rules, pending, total, nil
 }

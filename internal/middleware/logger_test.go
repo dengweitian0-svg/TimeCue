@@ -316,6 +316,10 @@ func (r failingScheduleRepo) DeleteScheduleByID(context.Context, int) (*model.Sc
 	return nil, r.cause
 }
 
+func (r failingScheduleRepo) ReadUnacknowledged(context.Context, model.UnacknowledgedRange, model.NotificationPosition, int) ([]*model.Schedule, []*model.Notification, int, error) {
+	return nil, nil, 0, r.cause
+}
+
 func (r failingScheduleRepo) ReadScheduleState(context.Context, time.Time, time.Time, time.Time, model.NotificationPosition, int) ([]*model.Schedule, []*model.Notification, []*model.Notification, int, error) {
 	return nil, nil, nil, 0, r.cause
 }

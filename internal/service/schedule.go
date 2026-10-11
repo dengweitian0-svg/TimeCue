@@ -14,6 +14,8 @@ import (
 
 // ScheduleRepo 定义日程持久化操作。
 type ScheduleRepo interface {
+	// ReadUnacknowledged 在同一事务读取范围总数、提醒页及父日程。
+	ReadUnacknowledged(context.Context, model.UnacknowledgedRange, model.NotificationPosition, int) ([]*model.Schedule, []*model.Notification, int, error)
 	ApplyScheduleChange(context.Context, model.ScheduleChange, model.PrepareScheduleChange) (*model.ScheduleWrite, error)
 	// ReadScheduleState 在同一读取事务获取日程规则与提醒事实，保持响应一致。
 	ReadScheduleState(context.Context, time.Time, time.Time, time.Time, model.NotificationPosition, int) ([]*model.Schedule, []*model.Notification, []*model.Notification, int, error)
@@ -239,7 +241,7 @@ func pendingPage(rules []*model.Schedule, notifications []*model.Notification, t
 	for i, n := range notifications {
 		if i == limit {
 			last := notifications[i-1]
-			page.NextCursor = encodeQueryCursor(queryPosition{Scope: "pending", AsOf: cursor.AsOf, Time: last.NotifyTime, ID: last.ID})
+			page.NextCursor = encodeQueryCursor(queryPosition{Scope: cursor.Scope, AsOf: cursor.AsOf, Time: last.NotifyTime, ID: last.ID})
 			break
 		}
 		page.Items = append(page.Items, occurrence(schedules[n.ScheduleID], n, n.NotifyTime, cursor.AsOf))

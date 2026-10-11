@@ -29,3 +29,5 @@
 - `schedule_change_test.go`：13:00 → 17:00、历史名称及失败结果、暂停/恢复与重启、删除后确认、并发版本、事务回滚、已到期单次与未来唯一键复用。
 
 - `open_schedule_count_test.go`：用实际 SQLite 读取验证日期的完整启用日程数，覆盖超过 50 条分页、同日多次去重、已确认单次/周期、暂停/删除/取消及空日期。
+
+ReadUnacknowledged 在同一事务读取范围完整总数、有界提醒页及对应父日程。readUnacknowledged 与 ReadScheduleState 共用未确认、未删除、到期及排序条件，位置只影响页数据；不以父日程或投递状态过滤。unacknowledged_scope_test.go 使用真实 SQLite 验证零点、分页、状态保留、确认及游标日期隔离。

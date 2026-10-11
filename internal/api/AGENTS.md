@@ -29,3 +29,5 @@
 - `schedule_change_test.go`：原子暂停创建、分钟精度、版本冲突、类型边界、创建/更新幂等重放和已删除规则拒绝更新。
 
 日期视图及组合快照的 occurrences 页增加 openScheduleCount，表示全部分页中的当前启用日程数（按 Schedule ID 去重，不筛确认状态）；提醒待确认页不携带此字段。路由和日志字段提取的响应类型不变。
+
+待确认查询支持可选 scope=today/history，按原计划时间及固定 UTC+8 零点分类；缺省仍读取全部到期未确认记录。范围总数先于分页，跨范围及跨北京日期游标返回 invalid_request 400；不改写确认、投递或父日程事实。unacknowledged_scope_test.go 验证参数、旧查询兼容和游标隔离。
