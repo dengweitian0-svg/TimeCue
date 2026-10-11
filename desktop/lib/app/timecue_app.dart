@@ -8,17 +8,20 @@ import '../features/notebook/notification_view_model.dart';
 import '../features/notebook/notification_reader_dialog.dart';
 import '../theme/notebook_theme.dart';
 import 'windows_notification_bridge.dart';
+import 'desktop_lifecycle.dart';
 
 class TimeCueApp extends StatelessWidget {
   const TimeCueApp({
     super.key,
     required this.repository,
     this.notifications,
+    this.desktop,
     this.notificationViews,
     this.ownsRepository = false,
   });
   final NotebookRepository repository;
   final WindowsNotificationBridge? notifications;
+  final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
   final bool ownsRepository;
   @override
@@ -34,6 +37,7 @@ class TimeCueApp extends StatelessWidget {
     home: DesktopShell(
       repository: repository,
       notifications: notifications,
+      desktop: desktop,
       notificationViews: notificationViews,
       ownsRepository: ownsRepository,
     ),
@@ -46,11 +50,13 @@ class DesktopShell extends StatefulWidget {
     super.key,
     required this.repository,
     this.notifications,
+    this.desktop,
     this.notificationViews,
     this.ownsRepository = false,
   });
   final NotebookRepository repository;
   final WindowsNotificationBridge? notifications;
+  final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
   final bool ownsRepository;
   @override
@@ -61,8 +67,14 @@ class _DesktopShellState extends State<DesktopShell> {
   late final AppLifecycleListener _lifecycle;
   final _historyRequests = ValueNotifier<int>(0);
   bool _readerOpen = false;
+  bool _runtimeReleased = false;
+  String? _notificationError;
 
   void _runtimeChanged() {
+    final error = widget.notifications?.error;
+    if (mounted && error != _notificationError) {
+      setState(() => _notificationError = error);
+    }
     final instance = widget.notifications?.instanceId;
     if (instance != null) widget.notificationViews?.observeRuntime(instance);
   }
@@ -73,7 +85,7 @@ class _DesktopShellState extends State<DesktopShell> {
     }
     _readerOpen = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
+      if (!mounted || _runtimeReleased) return;
       final views = widget.notificationViews!;
       if (!views.active) {
         _readerOpen = false;
@@ -86,7 +98,7 @@ class _DesktopShellState extends State<DesktopShell> {
           onHistory: () => _historyRequests.value++,
         ),
       );
-      if (!mounted) return;
+      if (!mounted || _runtimeReleased) return;
       _readerOpen = false;
       views.close();
     });
@@ -108,8 +120,19 @@ class _DesktopShellState extends State<DesktopShell> {
     notifications?.addListener(_runtimeChanged);
     _showReader();
     if (notifications != null) unawaited(notifications.initialize());
+    final desktop = widget.desktop;
+    if (desktop != null) {
+      desktop.stopNewWork = widget.notifications?.stopClaiming;
+      desktop.drain = widget.notifications?.stopAndDrain;
+      desktop.releaseResources = _releaseRuntime;
+      unawaited(desktop.initialize());
+    }
     _lifecycle = AppLifecycleListener(
       onExitRequested: () async {
+        if (widget.desktop case final desktop?) {
+          await desktop.requestExit();
+          return AppExitResponse.cancel;
+        }
         widget.notificationViews?.close();
         await widget.notifications?.stopAndDrain(const Duration(seconds: 5));
         return AppExitResponse.exit;
@@ -117,15 +140,22 @@ class _DesktopShellState extends State<DesktopShell> {
     );
   }
 
-  @override
-  void dispose() {
-    _lifecycle.dispose();
+  void _releaseRuntime() {
+    if (_runtimeReleased) return;
+    _runtimeReleased = true;
     widget.notificationViews?.removeListener(_showReader);
     widget.notifications?.removeListener(_runtimeChanged);
     widget.notificationViews?.dispose();
-    _historyRequests.dispose();
     widget.notifications?.dispose();
     if (widget.ownsRepository) widget.repository.dispose();
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    widget.desktop?.dispose();
+    _releaseRuntime();
+    _historyRequests.dispose();
     super.dispose();
   }
 
@@ -138,6 +168,47 @@ class _DesktopShellState extends State<DesktopShell> {
           onRecovery: widget.notificationViews == null ? null : _openRecovery,
           historyRequests: _historyRequests,
         ),
+        if (widget.desktop case final desktop?)
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: widget.notifications?.error == null ? 16 : 92,
+            child: ListenableBuilder(
+              listenable: desktop,
+              builder: (_, _) => desktop.error == null
+                  ? const SizedBox.shrink()
+                  : Material(
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Row(
+                          children: [
+                            Expanded(child: Text(desktop.error!)),
+                            TextButton(
+                              onPressed: desktop.stopping
+                                  ? null
+                                  : () => unawaited(
+                                      desktop.windowFailed
+                                          ? desktop.openWindow()
+                                          : desktop.retryTray(),
+                                    ),
+                              child: Text(
+                                desktop.windowFailed ? '重试窗口' : '重试托盘',
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: desktop.stopping
+                                  ? null
+                                  : () => unawaited(desktop.requestExit()),
+                              child: const Text('退出 TimeCue'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+            ),
+          ),
         if (widget.notifications case final notifications?)
           Positioned(
             left: 16,
