@@ -2,6 +2,7 @@
 #define RUNNER_SINGLE_INSTANCE_H_
 
 #include <windows.h>
+#include "launch_configuration.h"
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -32,6 +33,7 @@ class SingleInstance {
   void BeginExit();
   const std::wstring& error() const { return error_; }
   HWND handle() const { return receiver_; }
+  const LaunchConfiguration& configuration() const { return configuration_; }
 
  private:
   static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
@@ -42,6 +44,7 @@ class SingleInstance {
   bool owns_mutex_ = false, exiting_ = false;
   std::wstring identity_, class_name_, error_;
   DesktopLaunch initial_;
+  LaunchConfiguration configuration_;
   std::optional<DesktopLaunch> pending_activation_, pending_open_;
   std::deque<uint64_t> recent_;
   std::function<void(const DesktopLaunch&)> handler_;

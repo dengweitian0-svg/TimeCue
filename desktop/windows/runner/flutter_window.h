@@ -8,6 +8,7 @@
 #include <flutter/method_channel.h>
 #include <flutter/encodable_value.h>
 #include "single_instance.h"
+#include "managed_process.h"
 
 #include "win32_window.h"
 
@@ -28,6 +29,8 @@ class FlutterWindow : public Win32Window {
  private:
   SingleInstance* instance_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> desktop_channel_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> process_channel_;
+  std::unique_ptr<ManagedProcess> managed_process_;
   bool host_ready_ = false;
   bool exiting_ = false;
   UINT taskbar_created_ = RegisterWindowMessageW(L"TaskbarCreated");

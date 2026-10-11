@@ -51,6 +51,12 @@ int Child(const std::wstring& mode, const std::wstring& key) {
     if (!event || WaitForSingleObject(event, 4000) != WAIT_OBJECT_0) return 90;
     CloseHandle(event);
   }
+  if (mode == L"path-client") {
+    wchar_t directory[MAX_PATH]{};
+    Require(GetTempPathW(MAX_PATH, directory) != 0 && SetCurrentDirectoryW(directory), "sender directory");
+    SingleInstance sender(key);
+    return sender.Start({"--data-dir=."}) == SingleInstance::Result::forwarded ? 0 : 2;
+  }
   SingleInstance instance(key);
   const auto result = instance.Start(mode == L"client" ? std::vector<std::string>{kPayload} : std::vector<std::string>{});
   if (mode == L"client") return result == SingleInstance::Result::forwarded ? 0 : 2;
@@ -89,7 +95,8 @@ void Codec() {
   altered = encoded;
   altered.push_back(0);
   Require(!DecodeDesktopLaunch(altered.data(), altered.size()), "trailing data accepted");
-  Require(EncodeDesktopLaunch({1, 0, {"--data-dir=其他目录"}}).empty(), "configuration switch accepted");
+  Require(!EncodeDesktopLaunch({1, 0, {"--data-dir=其他目录"}}).empty(), "configuration option rejected");
+  Require(EncodeDesktopLaunch({1, 0, {"--data-dir="}}).empty(), "empty configuration accepted");
   Require(EncodeDesktopLaunch({1, 1, {"--activation-payload=" + std::string(33000, 'x')}}).empty(), "oversized accepted");
   Require(EncodeDesktopLaunch({1, 1, {kPayload, kPayload}}).empty(), "duplicate argument accepted");
   Require(EncodeDesktopLaunch({1, 1, {std::string("--activation-payload=\xff")}}).empty(), "invalid UTF8 accepted");
@@ -122,6 +129,14 @@ void WindowVisibility() {
 void Forwarding(const std::wstring& key) {
   SingleInstance primary(key);
   Require(primary.Start({}) == SingleInstance::Result::primary, "initial primary");
+  auto options = EncodeDesktopLaunch({991, 2, {"--login-start", "--backend=external"}});
+  COPYDATASTRUCT configuration_copy{kMagic, static_cast<DWORD>(options.size()), options.data()};
+  Require(SendMessageW(primary.handle(), WM_COPYDATA, reinterpret_cast<WPARAM>(primary.handle()),
+      reinterpret_cast<LPARAM>(&configuration_copy)) == 1, "compatible configuration rejected");
+  options = EncodeDesktopLaunch({992, 2, {"--login-start", "--backend=managed"}});
+  configuration_copy.cbData = static_cast<DWORD>(options.size()); configuration_copy.lpData = options.data();
+  Require(SendMessageW(primary.handle(), WM_COPYDATA, reinterpret_cast<WPARAM>(primary.handle()),
+      reinterpret_cast<LPARAM>(&configuration_copy)) == 0, "conflicting configuration accepted");
   Require(WaitChild(Spawn(L"client", key)) == 0, "pre-ready forwarding");
   int calls = 0;
   auto pending = primary.Ready([&](const DesktopLaunch& launch) {
@@ -146,6 +161,21 @@ void Forwarding(const std::wstring& key) {
   std::puts("PASS IPC: pre-ready, concurrent senders, duplicate ACK, malformed reject, exiting reject");
 }
 
+void CrossDirectory(const std::wstring& key) {
+  wchar_t temporary[MAX_PATH]{};
+  Require(GetTempPathW(MAX_PATH, temporary) != 0, "temporary directory");
+  const int count = WideCharToMultiByte(CP_UTF8, 0, temporary, -1, nullptr, 0, nullptr, nullptr);
+  std::string directory(count, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, temporary, -1, directory.data(), count, nullptr, nullptr);
+  directory.pop_back();
+  SingleInstance primary(key);
+  Require(primary.Start({"--data-dir=" + directory}) == SingleInstance::Result::primary, "directory primary");
+  Require(WaitChild(Spawn(L"path-client", key)) == 0, "sender-relative path reinterpreted by receiver");
+  auto pending = primary.Ready([](const DesktopLaunch&) {});
+  Require(pending.size() == 2, "directory request lost");
+  Require(pending[1].arguments[0] != "--data-dir=.", "raw relative path forwarded");
+  std::puts("PASS configuration: sender resolves path before forwarding across working directories");
+}
 void Race(const std::wstring& key) {
   HANDLE gate = CreateEventW(nullptr, TRUE, FALSE, EventName(key).c_str());
   Require(gate != nullptr, "race gate");
@@ -186,6 +216,7 @@ int wmain(int argc, wchar_t** argv) {
     Codec();
     WindowVisibility();
     Forwarding(key + L".forward");
+    CrossDirectory(key + L".directory");
     Race(key + L".race");
     HungAndCrash(key + L".hung");
     std::puts("All D7 native checks passed.");

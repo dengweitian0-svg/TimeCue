@@ -59,6 +59,7 @@ bool Read32(const uint8_t*& current, const uint8_t* end, uint32_t& value) {
 
 bool ValidateDesktopLaunch(const DesktopLaunch& launch) {
   if (!launch.id || launch.source > 2 || launch.arguments.size() > kMaxArguments) return false;
+  if (!ParseLaunchConfiguration(launch.arguments)) return false;
   bool notification = false, login = false, hidden = false;
   size_t size = 24;
   for (const auto& argument : launch.arguments) {
@@ -74,7 +75,8 @@ bool ValidateDesktopLaunch(const DesktopLaunch& launch) {
     } else if (argument.rfind("--activation-payload=", 0) == 0) {
       if (notification) return false;
       notification = true;
-    } else {
+    } else if (argument.rfind("--backend=", 0) != 0 && argument.rfind("--data-dir=", 0) != 0 &&
+        argument.rfind("--go-executable=", 0) != 0) {
       return false;
     }
   }
@@ -153,6 +155,14 @@ SingleInstance::Result SingleInstance::Start(const std::vector<std::string>& arg
   initial_.id = static_cast<uint64_t>(clock.QuadPart) ^ (static_cast<uint64_t>(GetCurrentProcessId()) << 32);
   if (!initial_.id) initial_.id = 1;
   initial_.arguments = arguments;
+  const auto configuration = ParseLaunchConfiguration(arguments);
+  if (!configuration) { error_ = L"启动配置无效。"; return Result::error; }
+  configuration_ = *configuration;
+  // 在发送端固定路径，接收端不能用自己的工作目录重新解释相对参数。
+  for (auto& argument : initial_.arguments) {
+    if (argument.rfind("--data-dir=", 0) == 0) argument = "--data-dir=" + configuration_.data_dir;
+    if (argument.rfind("--go-executable=", 0) == 0) argument = "--go-executable=" + configuration_.executable;
+  }
   for (const auto& argument : arguments) {
     if (argument == "--login-start") initial_.source = 2;
     if (argument.rfind("--activation-payload=", 0) == 0) { initial_.source = 1; break; }
@@ -205,6 +215,8 @@ bool SingleInstance::Receive(HWND sender, const COPYDATASTRUCT* copy) {
   if (!owns_mutex_ || exiting_ || !copy || copy->dwData != kMagic || !SameUserSession(sender)) return false;
   auto launch = DecodeDesktopLaunch(copy->lpData, copy->cbData);
   if (!launch) return false;
+  const auto requested = ParseLaunchConfiguration(launch->arguments);
+  if (!requested || !CompatibleLaunchConfiguration(configuration_, *requested)) return false;
   if (std::find(recent_.begin(), recent_.end(), launch->id) != recent_.end()) return true;
   recent_.push_back(launch->id);
   if (recent_.size() > 128) recent_.pop_front();

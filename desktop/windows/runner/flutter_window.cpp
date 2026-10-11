@@ -9,9 +9,14 @@
 
 namespace {
 constexpr UINT kDestroyDesktop = WM_APP + 73;
+constexpr UINT kProcessEvents = WM_APP + 74;
 flutter::EncodableValue LaunchValue(const DesktopLaunch& launch) {
   flutter::EncodableList arguments;
-  for (const auto& argument : launch.arguments) arguments.emplace_back(argument);
+  for (const auto& argument : launch.arguments) {
+    if (argument.rfind("--backend=", 0) == 0 || argument.rfind("--data-dir=", 0) == 0 ||
+        argument.rfind("--go-executable=", 0) == 0) continue;
+    arguments.emplace_back(argument);
+  }
   return flutter::EncodableValue(flutter::EncodableMap{
       {flutter::EncodableValue("version"), flutter::EncodableValue(1)},
       {flutter::EncodableValue("id"), flutter::EncodableValue(std::to_string(launch.id))},
@@ -73,6 +78,65 @@ bool FlutterWindow::OnCreate() {
       result->NotImplemented();
     }
   });
+  managed_process_ = std::make_unique<ManagedProcess>([this] {
+    PostMessageW(GetHandle(), kProcessEvents, 0, 0);
+  });
+  process_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "timecue/process",
+      &flutter::StandardMethodCodec::GetInstance());
+  process_channel_->SetMethodCallHandler([this](const auto& call, auto result) {
+    if (call.method_name() == "configuration") {
+      const auto& configuration = instance_->configuration();
+      result->Success(flutter::EncodableValue(flutter::EncodableMap{
+          {flutter::EncodableValue("backend"), flutter::EncodableValue(configuration.backend)},
+          {flutter::EncodableValue("dataDir"), flutter::EncodableValue(configuration.data_dir)},
+          {flutter::EncodableValue("executable"), flutter::EncodableValue(configuration.executable)}}));
+    } else if (call.method_name() == "start") {
+      if (exiting_) { result->Error("exiting", "宿主正在退出。"); return; }
+      const auto* arguments = std::get_if<flutter::EncodableMap>(call.arguments());
+      auto text = [&](const char* key) -> std::string {
+        if (!arguments) return "";
+        const auto found = arguments->find(flutter::EncodableValue(key));
+        if (found == arguments->end()) return "";
+        const auto* value = std::get_if<std::string>(&found->second);
+        return value ? *value : "";
+      };
+      const auto id = text("instanceId");
+      const auto generation_text = text("generation");
+      uint64_t generation = 0;
+      if (!generation_text.empty() && generation_text.find_first_not_of("0123456789") == std::string::npos) {
+        try { generation = std::stoull(generation_text); } catch (...) {}
+      }
+      const auto& configuration = instance_->configuration();
+      if (configuration.backend != "managed" || configuration.data_dir.empty() ||
+          configuration.executable.empty() || !generation || id.empty() || id.size() > 128 ||
+          id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != std::string::npos) {
+        result->Error("configuration", "托管参数无效。"); return;
+      }
+      DWORD pid = 0;
+      std::wstring failure;
+      if (!managed_process_->Start(LaunchWide(configuration.executable),
+          {L"--data-dir", LaunchWide(configuration.data_dir), L"--instance-id", LaunchWide(id)},
+          generation, pid, failure)) {
+        const int size = WideCharToMultiByte(CP_UTF8, 0, failure.data(), static_cast<int>(failure.size()),
+            nullptr, 0, nullptr, nullptr);
+        std::string message(size, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, failure.data(), static_cast<int>(failure.size()),
+            message.data(), size, nullptr, nullptr);
+        result->Error("start_failed", message);
+        return;
+      }
+      result->Success(flutter::EncodableValue(static_cast<int64_t>(pid)));
+    } else if (call.method_name() == "shutdown") {
+      managed_process_->Shutdown(); result->Success();
+    } else if (call.method_name() == "alive") {
+      result->Success(flutter::EncodableValue(managed_process_->Alive()));
+    } else if (call.method_name() == "release") {
+      managed_process_->Release(); result->Success();
+    } else {
+      result->NotImplemented();
+    }
+  });
   // 首次可见性由已初始化的 Dart 宿主决定，不再无条件首帧 Show。
   flutter_controller_->ForceRedraw();
   return true;
@@ -81,6 +145,12 @@ bool FlutterWindow::OnCreate() {
 void FlutterWindow::OnDestroy() {
   // Win32Window::Create 首先调用空清理，只有实际引擎释放才结束接纳。
   if (flutter_controller_ || desktop_channel_) instance_->BeginExit();
+  if (managed_process_) managed_process_->Release();
+  if (process_channel_) {
+    process_channel_->SetMethodCallHandler(nullptr);
+    process_channel_ = nullptr;
+  }
+  managed_process_ = nullptr;
   if (desktop_channel_) {
     desktop_channel_->SetMethodCallHandler(nullptr);
     desktop_channel_ = nullptr;
@@ -91,6 +161,18 @@ void FlutterWindow::OnDestroy() {
 
 LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message,
                                      WPARAM wparam, LPARAM lparam) noexcept {
+  if (message == kProcessEvents) {
+    if (managed_process_ && process_channel_) {
+      for (const auto& event : managed_process_->TakeEvents()) {
+        process_channel_->InvokeMethod("event", std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+            {flutter::EncodableValue("generation"), flutter::EncodableValue(std::to_string(event.generation))},
+            {flutter::EncodableValue("type"), flutter::EncodableValue(event.type)},
+            {flutter::EncodableValue("bytes"), flutter::EncodableValue(event.bytes)},
+            {flutter::EncodableValue("exitCode"), flutter::EncodableValue(static_cast<int64_t>(event.exit_code))}}));
+      }
+    }
+    return 0;
+  }
   if (message == kDestroyDesktop) {
     if (exiting_) Destroy();
     return 0;
