@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
 import '../notebook/notebook_overlay.dart';
@@ -10,14 +12,27 @@ import 'room_clock.dart';
 import 'room_geometry.dart';
 
 class RoomScreen extends StatefulWidget {
-  const RoomScreen({super.key, required this.repository});
+  const RoomScreen({
+    super.key,
+    required this.repository,
+    this.onRecovery,
+    this.historyRequests,
+  });
   final NotebookRepository repository;
+  final VoidCallback? onRecovery;
+  final ValueListenable<int>? historyRequests;
   @override
   State<RoomScreen> createState() => _RoomScreenState();
 }
 
 class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
-  late final notebook = NotebookViewModel(widget.repository);
+  late final notebook = NotebookViewModel(
+    widget.repository,
+    onRecovery: widget.onRecovery,
+  );
+  Timer? _recoveryPoll;
+  int _historyRequest = 0;
+  String? _dismissedRecoveryId;
   late final clock = RoomClockController();
   final deskFocus = FocusNode(debugLabel: '桌面本子入口');
   final actionFocus = FocusNode(debugLabel: '固定本子入口');
@@ -27,7 +42,37 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.historyRequests?.addListener(openHistory);
+    widget.repository.addListener(_coordinateRecoveryPolling);
     widget.repository.refresh();
+  }
+
+  void openHistory() {
+    if (!bookVisible) {
+      open(false);
+      notebook.changeTab(NotebookTab.history);
+    } else {
+      setState(() => ++_historyRequest);
+    }
+  }
+
+  // 房间只在前台且有进行中的恢复时复用普通五秒刷新。
+  void _coordinateRecoveryPolling() {
+    final state = WidgetsBinding.instance.lifecycleState;
+    final progress = widget.repository.recovery;
+    final shouldPoll =
+        !bookVisible &&
+        (state == null || state == AppLifecycleState.resumed) &&
+        progress != null &&
+        progress.state != 'completed';
+    if (!shouldPoll) {
+      _recoveryPoll?.cancel();
+      _recoveryPoll = null;
+      return;
+    }
+    _recoveryPoll ??= Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!widget.repository.loading) unawaited(widget.repository.refresh());
+    });
   }
 
   @override
@@ -41,6 +86,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     } else {
       notebook.close();
     }
+    _coordinateRecoveryPolling();
   }
 
   void open(bool desk) {
@@ -50,6 +96,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       fromDesk = desk;
       bookVisible = true;
     });
+    _coordinateRecoveryPolling();
   }
 
   Future<void> create() async {
@@ -70,6 +117,9 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.historyRequests?.removeListener(openHistory);
+    widget.repository.removeListener(_coordinateRecoveryPolling);
+    _recoveryPoll?.cancel();
     notebook.dispose();
     clock.dispose();
     deskFocus.dispose();
@@ -168,13 +218,53 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 origin: fromDesk && geometry.notebookVisible
                     ? geometry.visibleNotebookBounds.center
                     : fixedOrigin,
+                historyRequest: _historyRequest,
                 onClosed: () {
                   notebook.close();
                   setState(() => bookVisible = false);
+                  _coordinateRecoveryPolling();
                   (fromDesk && geometry.notebookVisible
                           ? deskFocus
                           : actionFocus)
                       .requestFocus();
+                },
+              ),
+            ),
+          if (!bookVisible)
+            Positioned(
+              left: 24,
+              bottom: constraints.maxWidth < 800 ? 84 : 24,
+              width: (constraints.maxWidth - 48).clamp(0.0, 380.0),
+              child: ListenableBuilder(
+                listenable: widget.repository,
+                builder: (context, _) {
+                  final progress = widget.repository.recovery;
+                  if (progress == null ||
+                      (progress.missedTotal ?? 0) <= 0 ||
+                      progress.recoveryId == _dismissedRecoveryId) {
+                    return const SizedBox.shrink();
+                  }
+                  return Material(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    child: ListTile(
+                      leading: const Icon(Icons.history),
+                      title: Text('有 ${progress.missedTotal} 条遗漏提醒'),
+                      subtitle: widget.repository.refreshError != null
+                          ? const Text('上次读取结果 · 连接恢复后更新')
+                          : null,
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: widget.onRecovery == null
+                          ? null
+                          : () {
+                              setState(
+                                () =>
+                                    _dismissedRecoveryId = progress.recoveryId,
+                              );
+                              widget.onRecovery!();
+                            },
+                    ),
+                  );
                 },
               ),
             ),
