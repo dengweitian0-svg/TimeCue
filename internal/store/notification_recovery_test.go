@@ -539,3 +539,72 @@ func TestRecoveryFindsNewLoadedAfterClockRollback(t *testing.T) {
 		t.Fatal("恢复重展示旧 sent", ids, err)
 	}
 }
+
+// TestRecoveryUnacknowledgedCount 验证确认只减少待处理数，不改完整历史与真实投递事实。
+func TestRecoveryUnacknowledgedCount(t *testing.T) {
+	for _, confirmedBeforeRecovery := range []bool{false, true} {
+		t.Run(fmt.Sprint(confirmedBeforeRecovery), func(t *testing.T) {
+			_, _, notify, app, clock := schedulerFixture(t)
+			ctx := context.Background()
+			first := writeRule(t, app, "遗漏一", "0 9 * * *")
+			second := writeRule(t, app, "遗漏二", "0 9 * * *")
+			clock.set(clock.now().Add(3 * time.Minute))
+			if confirmedBeforeRecovery {
+				if _, err := app.AcknowledgeNotifications(ctx, []int{first.Notification.ID, second.Notification.ID}, clock.now()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			enableRecovery(t, app, notify, clock)
+			view := completeRecovery(t, app, clock)
+			if view == nil || view.MissedTotal == nil || *view.MissedTotal != 2 {
+				t.Fatal("完整历史改变", view)
+			}
+			if confirmedBeforeRecovery {
+				if view.UnacknowledgedCount != 0 || view.DisplayableCount != 0 {
+					t.Fatal("已确认历史被提示", view)
+				}
+			} else {
+				if view.UnacknowledgedCount != 2 {
+					t.Fatal("未确认历史未统计", view)
+				}
+				claim := claimOne(t, app)
+				if _, err := app.StartDelivery(ctx, claim.AttemptID); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifySent); err != nil {
+					t.Fatal(err)
+				}
+				view, _ = app.RecoverySnapshot(ctx, clock.now())
+				if view.UnacknowledgedCount != 2 || view.DisplayableCount != 0 {
+					t.Fatal("sent 被误当确认", view)
+				}
+				if _, err := app.AcknowledgeNotifications(ctx, []int{first.Notification.ID}, clock.now()); err != nil {
+					t.Fatal(err)
+				}
+				view, _ = app.RecoverySnapshot(ctx, clock.now())
+				if view.UnacknowledgedCount != 1 || *view.MissedTotal != 2 {
+					t.Fatal("部分确认计数不准确", view)
+				}
+				if _, err := app.AcknowledgeNotifications(ctx, []int{second.Notification.ID}, clock.now()); err != nil {
+					t.Fatal(err)
+				}
+				view, _ = app.RecoverySnapshot(ctx, clock.now())
+				if view.UnacknowledgedCount != 0 || *view.MissedTotal != 2 {
+					t.Fatal("全部确认后仍提示", view)
+				}
+			}
+			page, err := app.QueryDeliveryMembers(ctx, view.DeliveryTaskID, "", "", clock.now())
+			if err != nil || page.Total != 2 || page.Recovery.UnacknowledgedCount != 0 {
+				t.Fatal("确认后历史丢失", page, err)
+			}
+			for _, item := range page.Items {
+				if item.AcknowledgedAt == nil {
+					t.Fatal("确认事实丢失", item)
+				}
+			}
+			if claims, err := app.ClaimDelivery(ctx, 20); err != nil || len(claims) != 0 {
+				t.Fatal("已确认提醒重复投递", claims, err)
+			}
+		})
+	}
+}

@@ -11,7 +11,7 @@
 - `notification.go`：提醒存储接口、历史待确认查询、提醒详情与单条/批量确认。
 - `notification_delivery.go`：完整分钟任务接纳、领取、开始资格重检、文案及实际成员冻结、原子结果回填、四次预算和 5/30/120 秒重试、明确执行者退出及只读运行/尝试成员视图。
 - `recovery_candidates.go`：按单个历史有效版本有界展开，保留继续位置，不扫描多年空分钟；对应测试覆盖版本端点、重合去重及 500/501 条边界。
-- `notification_recovery.go`：启动与运行间隙恢复、固定终点和运行内进度、批次交接、未开始旧分钟封存及完整 recovery 汇总；对应测试验证空历史和取消等待。
+- `notification_recovery.go`：启动与运行间隙恢复、固定终点和运行内进度、批次交接、未开始旧分钟封存及完整 recovery 汇总；恢复摘要分别统计完整历史、当前未确认及可投递数量，确认只减少未确认数；对应测试验证空历史和取消等待。
 - `notification_members.go`：当前任务历史及 attempt 冻结成员分页、成员版本游标和恢复摘要，复用 OccurrenceView。
 - `notification_delivery_test.go`：完整任务领取上限及未来任务拒绝测试；真实 SQLite 投递竞争、重启和重传测试位于 store。
 - `next_notify_test.go`：规则解析与触发时间计算测试。

@@ -45,6 +45,24 @@ func (s *NotificationStore) CountRecoveryMembers(ctx context.Context, ids []int,
 	return count, err
 }
 
+// CountUnacknowledgedRecoveryMembers 只统计本轮已到期、未删除且未确认的历史事实。
+// sent、投递停止及父规则暂停/删除都不取消历史的手动确认资格。
+func (s *NotificationStore) CountUnacknowledgedRecoveryMembers(ctx context.Context, ids []int, now time.Time) (int, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return 0, err
+	}
+	data, err := json.Marshal(ids)
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	err = db.QueryRowContext(ctx, `SELECT count(*) FROM notifications
+		WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0
+		AND acknowledged_at IS NULL AND notify_time <= ?`, string(data), now.UnixNano()).Scan(&count)
+	return count, err
+}
+
 // ReadNotificationMembers 在一个读取事务内分页，单个 JSON 参数避免 SQLite 变量上限。
 func (s *NotificationStore) ReadNotificationMembers(ctx context.Context, ids []int, after model.NotificationPosition, limit int) ([]*model.Schedule, []*model.Notification, int, error) {
 	if limit < 1 || limit > 51 {

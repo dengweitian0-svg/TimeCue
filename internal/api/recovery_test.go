@@ -90,6 +90,23 @@ func TestRecoveryHTTPQueries(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || *page.Data.Items[0].DeliveryStatus != model.NotifySent || page.Data.Items[0].AcknowledgedAt != nil {
 		t.Fatal("真实结果与确认混淆", response.Body.String(), err)
 	}
+	if page.Data.Recovery == nil || page.Data.Recovery.UnacknowledgedCount != 3 {
+		t.Fatal("平台成功被当作历史确认", response.Body.String())
+	}
+	ids := make([]int, 0, len(page.Data.Items))
+	for _, item := range page.Data.Items {
+		ids = append(ids, *item.NotificationID)
+	}
+	body, _ := json.Marshal(map[string]any{"notificationIds": ids})
+	requireStatus(t, request(router, http.MethodPost, "/api/v1/notifications/acknowledgements", string(body), "application/json"), 200)
+	snapshot = request(router, http.MethodGet, "/api/v1/scheduler/schedules?view=occurrences&include=unacknowledged", "", "")
+	if err := json.Unmarshal(snapshot.Body.Bytes(), &combined); err != nil || combined.Data.Recovery.UnacknowledgedCount != 0 || *combined.Data.Recovery.MissedTotal != 3 {
+		t.Fatal("确认后历史待处理计数未归零或历史总数改变", snapshot.Body.String(), err)
+	}
+	response = request(router, http.MethodGet, base, "", "")
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || page.Data.Total != 3 || page.Data.Recovery.UnacknowledgedCount != 0 {
+		t.Fatal("确认后历史分页错误", response.Body.String(), err)
+	}
 }
 
 func newRecoveryAPIDatabase(t *testing.T) (*store.Sqlite, *sql.DB) {

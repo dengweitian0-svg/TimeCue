@@ -8,7 +8,7 @@
 - `notification_loading.go`：取得写锁后读取完整规则版本并纯计算候选，幂等预加载和到期快照、停止版本校验、完整分钟事务。
 - `notification_delivery.go`：同一事务重检到期/快照/停止/确认及父规则资格，按 D2 许可重加载 failed；原子回填冻结成员，保护 sent 并保留确认和停止事实。
 - `notification_recovery.go`：写锁内按版本继续位置补齐至多 500 条历史事实，复用唯一键、冻结可靠历史文本并核验触发后的停止版本；提交后返回继续位置。
-- `notification_members.go`：最早恢复边界、当前可展示成员数量及任务成员事务分页；使用 json_each 的单参数集合，避免 SQLite 变量上限。
+- `notification_members.go`：最早恢复边界、本轮历史未确认数量、当前可展示成员数量及任务成员事务分页；未确认统计只看本轮已到期、未删除且未确认的事实，不按投递状态或父规则资格过滤；使用 json_each 的单参数集合，避免 SQLite 变量上限。
 - `notification_recovery_test.go`：长历史、恢复中删除、暂停/恢复快照、预算保留、事务回滚、重启、分页、停止竞争、跨轮次去重及恢复期间实时投递测试。
 - `notification_delivery_test.go`：大组不拆分、原子回滚、结果重传、并发开始与确认、当前分钟失败重启及原四张表结构保护测试。
 - `notification_loading_test.go`：近期即时入队、整分钟大组、版本快照、规则/停止竞争、失败、重启、回拨、回滚和表约束测试。

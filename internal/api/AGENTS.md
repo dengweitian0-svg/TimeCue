@@ -24,7 +24,7 @@
 - POST notifications/claim 领取完整任务，delivery-attempts/:id/start 冻结执行决定，delivery-attempts/:id/results 回填 sent/failed；只支持单执行者。不存在或旧进程身份返回 404，未开始回填及矛盾结果返回 409，停止接纳返回 503。
 - 三条投递路由由 handler 直接附加 HTTPResult.LogFields，包含运行身份、数量和次数，不包含文案及成员列表；响应失败仍保留已提交操作事实。
 - 领取和开始支持 minute/recovery；recovery 全部整理完成才开放，开始文案仅含实际数量。GET notifications 通过 deliveryTaskId 及可选 attemptId 查询当前任务历史或冻结成员；与 state 模式互斥，未开始尝试及成员版本变化返回 409，旧身份返回 404。
-- 组合快照增加 recovery（无轮次为 null），recovery 任务分页附加对应轮次进度；未知 missedTotal 为 null，原 total 与 openScheduleCount 的统计范围不变。查询日志只追加恢复身份、阶段和已整理数，不记录文案、游标或成员集合。
+- 组合快照增加 recovery（无轮次为 null），recovery 任务分页附加对应轮次进度；未知 missedTotal 为 null，unacknowledgedCount 返回本轮已整理历史中尚未确认的数量，与完整遗漏及可投递统计独立；确认后可归零而历史仍保留。原 total 与 openScheduleCount 的统计范围不变。查询日志只追加恢复身份、阶段和已整理数，不记录文案、游标或成员集合。
 
 - `schedule_change_test.go`：原子暂停创建、分钟精度、版本冲突、类型边界、创建/更新幂等重放和已删除规则拒绝更新。
 

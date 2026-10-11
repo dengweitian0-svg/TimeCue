@@ -15,17 +15,19 @@ type RecoveryRepo interface {
 	RecoveryStart(context.Context, time.Time) (time.Time, error)
 	RecoverNotifications(context.Context, model.RecoveryWindow, model.PrepareRecoveryVersion) (*model.RecoveryBatch, error)
 	CountRecoveryMembers(context.Context, []int, time.Time) (int, error)
+	CountUnacknowledgedRecoveryMembers(context.Context, []int, time.Time) (int, error)
 }
 
 // RecoveryView 区分历史整理与真实投递，未知总数固定为 null。
 type RecoveryView struct {
-	RecoveryID        string    `json:"recoveryId"`
-	State             string    `json:"state"`
-	Through           time.Time `json:"through"`
-	MaterializedCount int       `json:"materializedCount"`
-	MissedTotal       *int      `json:"missedTotal"`
-	DisplayableCount  int       `json:"displayableCount"`
-	DeliveryTaskID    string    `json:"deliveryTaskId"`
+	RecoveryID          string    `json:"recoveryId"`
+	State               string    `json:"state"`
+	Through             time.Time `json:"through"`
+	MaterializedCount   int       `json:"materializedCount"`
+	MissedTotal         *int      `json:"missedTotal"`
+	DisplayableCount    int       `json:"displayableCount"`
+	UnacknowledgedCount int       `json:"unacknowledgedCount"`
+	DeliveryTaskID      string    `json:"deliveryTaskId"`
 }
 
 type recoveryRound struct {
@@ -269,7 +271,16 @@ func (a *App) recoveryViewLocked(ctx context.Context, r *recoveryRound, now time
 	if err != nil {
 		return nil, err
 	}
-	view := &RecoveryView{RecoveryID: r.id, State: r.state, Through: r.through, MaterializedCount: len(r.seen), DisplayableCount: count, DeliveryTaskID: r.task.id}
+	// 房间待处理提示按本轮完整历史中的确认事实统计，与展示资格独立。
+	ids := make([]int, 0, len(r.seen))
+	for id := range r.seen {
+		ids = append(ids, id)
+	}
+	unacknowledged, err := a.Recovery.repo.CountUnacknowledgedRecoveryMembers(ctx, ids, now)
+	if err != nil {
+		return nil, err
+	}
+	view := &RecoveryView{RecoveryID: r.id, State: r.state, Through: r.through, MaterializedCount: len(r.seen), DisplayableCount: count, UnacknowledgedCount: unacknowledged, DeliveryTaskID: r.task.id}
 	if r.state == "completed" {
 		total := len(r.seen)
 		view.MissedTotal = &total

@@ -22,6 +22,10 @@ func (emptyRecoveryRepo) CountRecoveryMembers(context.Context, []int, time.Time)
 	return 0, nil
 }
 
+func (emptyRecoveryRepo) CountUnacknowledgedRecoveryMembers(context.Context, []int, time.Time) (int, error) {
+	return 0, nil
+}
+
 // TestRecoveryRunCancellation 验证空历史不提交批次且取消立即结束等待。
 func TestRecoveryRunCancellation(t *testing.T) {
 	if err := (&App{}).RunRecovery(context.Background()); err == nil {
