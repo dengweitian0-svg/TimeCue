@@ -12,3 +12,5 @@
 
 - `launch_configuration.*`：统一解析 backend/data-dir/go-executable 与 Windows 路径；单实例原始快照固定，重复启动显式冲突在接纳前拒绝，省略选项表示复用。转交到 Dart 的激活信封只包含原有窗口/通知意图。
 - `managed_process.*`：单一所有者创建自有 Go；CreateProcessW/CREATE_NO_WINDOW、限定继承匿名管道及创建时 Job 列表，kill-on-close 且 Job 不继承；后台排空有界 stdout/stderr、观察退出。shutdown/EOF 优雅取消，Release 幂等回收管道、线程及句柄；timecue/process 通道由 FlutterWindow 接入，原生销毁也回收 Job。
+
+约束：C++ 所有代码注释使用中文；每个函数仅保留一处用途、参数方向和返回值说明，优先放在头文件，文件内函数及回调在定义处说明；使用四空格缩进。

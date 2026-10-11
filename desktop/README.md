@@ -164,6 +164,8 @@ window_manager/tray_manager 均固定 0.5.2。原生 runner 在创建 Flutter �
 
 原生参数白名单为 `--start-hidden`、`--login-start`、`--activation-payload=<原 JSON>` 及首次装配的 `--backend=managed|external`、`--data-dir=<目录>`、`--go-executable=<绝对文件>`。首次隐藏/登录意图只有托盘可用才隐藏；重复普通启动唤回，重复登录意图保持当前可见性。显式 payload 只用于适配/调试，原始 instance/task/attempt/type 经同一 D6 入口核验；重复启动省略运行选项表示复用；显式目录、exe 或模式冲突在原生接纳前拒绝，不能切换当前运行。这些入口不读取自启配置、不注册启动项，也不保证系统通知可以冷启动已退出应用。
 
+Windows C++ 每个函数仅保留一处中文用途、入参及出参说明，优先放在头文件；文件内函数及回调在定义处说明。`windows/.clang-format` 统一每级四空格缩进；Flutter 自动生成的插件注册文件重新生成后会覆盖手工注释及格式。
+
 在 desktop 验证原生协议与进程：
 
 ```powershell
