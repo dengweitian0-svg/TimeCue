@@ -22,7 +22,7 @@ flutter run -d windows
 
 attempt、平台整数映射和待回填结果只在内存。重复领取、开始或结果重传不追加同 attempt 的展示；平台接受请求才记录 sent，横幅被系统抑制、未阅读或未确认不改变该执行语义。连接失败只重传已知结果，Go 新 attempt 才能再次展示。Go 重启后旧身份失效，Flutter 重启不恢复回执文件；展示后尚未回填即崩溃，后续运行可能再次展示。
 
-宿主退出请求先停止新领取和展示，最多 5 秒尽力提交已知结果；通知桥另提供 stopAndDrain(budget) 供 D8 共用停止预算，不停止手动 Go。系统通知的 payload 只携带运行/任务/尝试/类型身份，点击不确认；点击定位、恢复页面、托盘、单实例、自有 Go 进程及登录自启分别由后续 D6–D9 接入。实现和验收范围见 [D5 规划](../docs/design/phase-d5-windows-notification-bridge.md)。
+宿主退出请求先停止新领取和展示，最多 5 秒尽力提交已知结果；通知桥另提供 stopAndDrain(budget) 供 D8 共用停止预算，不停止手动 Go。系统通知的 payload 只携带运行/任务/尝试/类型身份，点击不确认；点击定位与恢复页面已由 D6 接入；D7 已接入托盘、单实例及明确退出，自有 Go 进程与登录自启仍由 D8/D9 接入。实现和验收范围见 [D5 规划](../docs/design/phase-d5-windows-notification-bridge.md)。
 
 
 ### HTTP 查询契约
@@ -44,7 +44,7 @@ attempt、平台整数映射和待回填结果只在内存。重复领取、开�
 
 提醒 deliveryStatus 为 pending/loaded/sent/failed。loaded 是 Go 预加载/等待执行状态，详情与 pending 一样显示待投递；用户确认独立于平台展示结果。该枚举已通过 D1 Apifox 验收后接入界面。
 
-通知点击读取 payload 中的 instanceId、deliveryTaskId、attemptId、taskType；核对 `/health` 后打开唯一只读视图，单条 minute 显示完整详情，多条/recovery 显示本次冻结成员。旧运行提示定位失效，不自动改查全量待确认；已知 notificationId 仍可独立读取持久详情。查看、刷新及翻页不确认，不改变投递执行者或本子草稿/选择。实际系统横幅点击仍待真机确认，冷启动及单实例转交由 D7/D8 接入。
+通知点击读取 payload 中的 instanceId、deliveryTaskId、attemptId、taskType；核对 `/health` 后打开唯一只读视图，单条 minute 显示完整详情，多条/recovery 显示本次冻结成员。旧运行提示定位失效，不自动改查全量待确认；已知 notificationId 仍可独立读取持久详情。查看、刷新及翻页不确认，不改变投递执行者或本子草稿/选择。实际系统横幅点击仍待真机确认，窗口唤回及显式激活参数转交已由 D7 接入；系统通知完整冷启动链路仍由 D8/E 核验。
 
 组合快照的 recovery 摘要用于房间卡片及本子入口；running/failed/completed 描述历史整理，未知 missedTotal 保持未知，through 为本轮整理上界。恢复入口不附 attemptId，分页读取完整任务历史；整理中空页不表示没有遗漏。成员页 409 有界重读首页，400 废弃游标，断线保留旧内容并允许重试。只读列表前台每五秒刷新当前页，关闭/后台停止普通查询，恢复前台重读首页；房间在未完成整理时继续前台普通刷新。
 
@@ -155,3 +155,21 @@ flowchart LR
 `update(logLevel: ..., logPath: ..., databasePath: ...)` 校验字段并原子保存到 config.yaml，保留 YAML 注释、未知字段及 app/desktop 配置；同一文件的多实例操作串行执行。`restoreRuntimeDefaults()` 只移除三个运行字段，保留其余内容。结果 pathsChanged 表示保存的路径字段发生变化，供设置界面提示下次启动应用；本组件不切换数据库连接、不搬迁文件。
 
 Go config 只读、监听并发布快照，日志级别按现有机制热更新，数据库和日志路径由 Go 启动生命周期应用。存储组件可供后续设置页及桌面配置功能装配；当前没有新增配置 HTTP 接口或编辑页面。
+
+## 托盘与单实例
+
+window_manager/tray_manager 均固定 0.5.2。原生 runner 在创建 Flutter 引擎前选择当前用户/会话的唯一宿主；重复启动只向已有实例转交请求，不创建第二个业务执行者。托盘左键与“打开 TimeCue”复用原窗口，右键提供打开/退出菜单。标题栏关闭及 Alt+F4 隐藏到托盘，最小化保持普通行为；提醒执行不随隐藏停止。托盘缺失/失效时保持可见窗口，提供重试及明确退出。窗口显示由原生线程同步完成后返回可见性，窗口故障提供“重试窗口”，成功重试移除旧提示。
+
+“退出 TimeCue”先停止新工作，在总计 5 秒内尽力回填已知结果，再释放共享资源并销毁窗口；开发外连的手动 Go 保持运行。运行状态、激活意图和转交去重都不落盘。窗口状态只读，插件结果及原生图标核验经生命周期正式操作更新，迟到事件不重新打开已退出的窗口。
+
+原生参数白名单为 `--start-hidden`、`--login-start`、`--activation-payload=<原 JSON>`。首次隐藏/登录意图只有托盘可用才隐藏；重复普通启动唤回，重复登录意图保持当前可见性。显式 payload 只用于适配/调试，原始 instance/task/attempt/type 经同一 D6 入口核验；不能通过重复启动切换 data-dir、API 地址或模式。这些入口不读取自启配置、不注册启动项，也不保证系统通知可以冷启动已退出应用。
+
+在 desktop 验证原生协议与进程：
+
+```powershell
+cmake -S test/native -B build/d7-native -A x64
+cmake --build build/d7-native --config Release
+ctest --test-dir build/d7-native -C Release --output-on-failure
+```
+
+原生测试使用独立锁名、自有隐藏子进程与真实 Win32 消息，覆盖并发选主、Unicode、缓冲/去重、非法参数、无响应及崩溃恢复，不触及已有用户实例。实际系统横幅点击与真正 Explorer 重启须另外进行人工验收，不能由合成消息替代。任务及证据见 [D7 规划](../docs/design/phase-d7-tray-single-instance.md)和[D7 验收记录](../docs/design/phase-d7-validation.md)。

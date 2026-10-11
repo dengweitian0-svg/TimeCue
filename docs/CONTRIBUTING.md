@@ -115,7 +115,7 @@ git switch -c feat/12-recurring-reminder
 
 - Go：`gofmt`、`go vet ./...`、`go test -p 1 ./...`；固定业务端口的跨包测试串行运行。
 - Flutter：CI 固定 Flutter 3.47.0，保留本机 master SDK；运行 `flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`，通知插件及传递依赖提交 lockfile。
-- Windows 构建：`flutter build windows --release`，默认连接手动启动的 Go 服务。
+- Windows 构建：`flutter build windows --release`，默认连接手动启动的 Go 服务；在 desktop 执行 `cmake -S test/native -B build/d7-native -A x64`、`cmake --build build/d7-native --config Release` 和 `ctest --test-dir build/d7-native -C Release --output-on-failure` 验证原生单实例及 IPC。
 - 本地运行：先在根目录运行 `go run ./cmd/flutter --data-dir .`，再在 `desktop/` 执行 `flutter run -d windows`；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
 CI 通过后再合并 PR。
 
