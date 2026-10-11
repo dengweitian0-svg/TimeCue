@@ -37,11 +37,20 @@ attempt、平台整数映射和待回填结果只在内存。重复领取、开�
 | `GET /notifications?state=unacknowledged&cursor=...` | 待确认续页 |
 | `GET /notifications?state=unacknowledged&scope=today&cursor=...` | 今日首/续页及完整 total；scope=history 为昨日及更早，跨范围/北京日期游标返回 400 |
 | `GET /notifications/:id` | 持久化提醒详情 |
+| `GET /notifications?deliveryTaskId=...&attemptId=...&cursor=...` | 查看本次通知的冻结成员；不附 attemptId 时读取本轮任务历史，每页 50 条 |
 | `POST /notifications/acknowledgements` | `notificationIds` 数组，单条和批量走同一事务操作 |
 
 日期投影的 include 只接受 unacknowledged，组合快照不能附 cursor；续页调用独立的日期或待确认查询。投影视图不混用规则列表的 name/type/limit/offset 参数，不支持参数时返回 400。
 
 提醒 deliveryStatus 为 pending/loaded/sent/failed。loaded 是 Go 预加载/等待执行状态，详情与 pending 一样显示待投递；用户确认独立于平台展示结果。该枚举已通过 D1 Apifox 验收后接入界面。
+
+通知点击读取 payload 中的 instanceId、deliveryTaskId、attemptId、taskType；核对 `/health` 后打开唯一只读视图，单条 minute 显示完整详情，多条/recovery 显示本次冻结成员。旧运行提示定位失效，不自动改查全量待确认；已知 notificationId 仍可独立读取持久详情。查看、刷新及翻页不确认，不改变投递执行者或本子草稿/选择。实际系统横幅点击仍待真机确认，冷启动及单实例转交由 D7/D8 接入。
+
+组合快照的 recovery 摘要用于房间卡片及本子入口；running/failed/completed 描述历史整理，未知 missedTotal 保持未知，through 为本轮整理上界。恢复入口不附 attemptId，分页读取完整任务历史；整理中空页不表示没有遗漏。成员页 409 有界重读首页，400 废弃游标，断线保留旧内容并允许重试。只读列表前台每五秒刷新当前页，关闭/后台停止普通查询，恢复前台重读首页；房间在未完成整理时继续前台普通刷新。
+
+点击房间恢复卡片打开记录后，该轮提示在当前运行内隐藏，关闭详情或刷新同轮状态不会重新显示；新的恢复轮次重新显示。本子中的恢复记录入口仍可随时打开。
+
+房间卡片仅提示“有 N 条遗漏提醒”；遗漏为零或总数尚未确定时不显示，整理进度与可投递数量在记录视图内查看。
 
 ### 快照、分页与失败行为
 
@@ -119,6 +128,7 @@ flowchart LR
 | 字段、草稿、保存错误 | ScheduleEditorViewModel | 创建弹层、独立修改弹窗与右页编辑复用表单，版本冲突保留草稿 |
 | 真实环境时间 | RoomClockController | 每秒重读 UTC+8，恢复前台立即同步 |
 | 通知执行阶段、Go 运行代次、平台 ID 和待回填结果 | WindowsNotificationBridge | 应用级内存状态；独立于本子轮询，业务结果经 Go 正式接口回流 |
+| 激活目标、任务/attempt 分页、只读详情及读取代次 | NotificationViewModel | 宿主唯一只读弹窗，不写业务；过期身份提示和持久详情分别处理 |
 | 场景已解码图片 | RoomBackdrop | 解码成功再淡入，失败保留旧图 |
 | 入口焦点、本子显隐 | RoomScreen | 合上后回到实际入口；热区裁切后回固定入口 |
 
