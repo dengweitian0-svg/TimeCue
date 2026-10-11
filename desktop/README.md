@@ -9,20 +9,20 @@ go run ./cmd/flutter --data-dir .
 ```powershell
 cd D:\go_project\src\TimeCue\desktop
 flutter pub get
-flutter run -d windows
+flutter run -d windows -a --backend=external -a --data-dir=D:\go_project\src\TimeCue
 ```
 
 视觉演示仍可显式使用 `flutter run -d windows --dart-define=TIMECUE_DEMO=true`。示例业务时间固定为北京时间 **2026-10-07 14:32**，数据只在内存，环境时钟使用真实 UTC+8。
 
 ## Windows 系统提醒
 
-真实模式启动一个应用级 Windows 通知执行者，连接同一手动 Go 服务，先核对 `/health` 的 v1、delivery-v1 和 recovery-v1。每秒领取最多 20 个完整任务，按 Go 的开始决定调用一次即时通知，再回填 sent/failed；单条、多条和恢复汇总均使用 Go 冻结文案。关闭本子或失去焦点不会停止领取，显式演示不接真实通知。
+真实模式启动一个应用级 Windows 通知执行者；external 连接手动 Go，managed 在自有 Go 的 ready/health 双重核验后开放业务，先核对 `/health` 的 v1、delivery-v1 和 recovery-v1。每秒领取最多 20 个完整任务，按 Go 的开始决定调用一次即时通知，再回填 sent/failed；单条、多条和恢复汇总均使用 Go 冻结文案。关闭本子或失去焦点不会停止领取，显式演示不接真实通知。
 
 插件固定为 flutter_local_notifications 22.3.1，CI 和平台验收使用 Flutter 3.47.0，保留原本机 master SDK。应用身份固定为 TimeCue.Desktop；初始化失败保留房间窗口并显示连接重试入口。Windows 构建需要正常插件路径支持，缺少符号链接权限的本地环境可在 windows/flutter/ephemeral/.plugin_symlinks 使用指向 Pub 缓存的目录联接；该临时目录不提交。
 
 attempt、平台整数映射和待回填结果只在内存。重复领取、开始或结果重传不追加同 attempt 的展示；平台接受请求才记录 sent，横幅被系统抑制、未阅读或未确认不改变该执行语义。连接失败只重传已知结果，Go 新 attempt 才能再次展示。Go 重启后旧身份失效，Flutter 重启不恢复回执文件；展示后尚未回填即崩溃，后续运行可能再次展示。
 
-宿主退出请求先停止新领取和展示，最多 5 秒尽力提交已知结果；通知桥另提供 stopAndDrain(budget) 供 D8 共用停止预算，不停止手动 Go。系统通知的 payload 只携带运行/任务/尝试/类型身份，点击不确认；点击定位与恢复页面已由 D6 接入；D7 已接入托盘、单实例及明确退出，自有 Go 进程与登录自启仍由 D8/D9 接入。实现和验收范围见 [D5 规划](../docs/design/phase-d5-windows-notification-bridge.md)。
+宿主退出请求先停止新领取和展示，最多 5 秒尽力提交已知结果；通知桥另提供 stopAndDrain(budget) 供 D8 共用停止预算，不停止手动 Go。系统通知的 payload 只携带运行/任务/尝试/类型身份，点击不确认；点击定位与恢复页面已由 D6 接入；D7 已接入托盘、单实例及明确退出，D8 已接入自有 Go 进程与 Job 清理；登录自启仍由 D9 接入。实现和验收范围见 [D5 规划](../docs/design/phase-d5-windows-notification-bridge.md)。
 
 
 ### HTTP 查询契约
@@ -162,7 +162,7 @@ window_manager/tray_manager 均固定 0.5.2。原生 runner 在创建 Flutter �
 
 “退出 TimeCue”先停止新工作，在总计 5 秒内尽力回填已知结果，再释放共享资源并销毁窗口；开发外连的手动 Go 保持运行。运行状态、激活意图和转交去重都不落盘。窗口状态只读，插件结果及原生图标核验经生命周期正式操作更新，迟到事件不重新打开已退出的窗口。
 
-原生参数白名单为 `--start-hidden`、`--login-start`、`--activation-payload=<原 JSON>`。首次隐藏/登录意图只有托盘可用才隐藏；重复普通启动唤回，重复登录意图保持当前可见性。显式 payload 只用于适配/调试，原始 instance/task/attempt/type 经同一 D6 入口核验；不能通过重复启动切换 data-dir、API 地址或模式。这些入口不读取自启配置、不注册启动项，也不保证系统通知可以冷启动已退出应用。
+原生参数白名单为 `--start-hidden`、`--login-start`、`--activation-payload=<原 JSON>` 及首次装配的 `--backend=managed|external`、`--data-dir=<目录>`、`--go-executable=<绝对文件>`。首次隐藏/登录意图只有托盘可用才隐藏；重复普通启动唤回，重复登录意图保持当前可见性。显式 payload 只用于适配/调试，原始 instance/task/attempt/type 经同一 D6 入口核验；重复启动省略运行选项表示复用；显式目录、exe 或模式冲突在原生接纳前拒绝，不能切换当前运行。这些入口不读取自启配置、不注册启动项，也不保证系统通知可以冷启动已退出应用。
 
 在 desktop 验证原生协议与进程：
 
@@ -173,3 +173,34 @@ ctest --test-dir build/d7-native -C Release --output-on-failure
 ```
 
 原生测试使用独立锁名、自有隐藏子进程与真实 Win32 消息，覆盖并发选主、Unicode、缓冲/去重、非法参数、无响应及崩溃恢复，不触及已有用户实例。实际系统横幅点击与真正 Explorer 重启须另外进行人工验收，不能由合成消息替代。任务及证据见 [D7 规划](../docs/design/phase-d7-tray-single-instance.md)和[D7 验收记录](../docs/design/phase-d7-validation.md)。
+
+## 自有 Go 子进程
+
+真实模式显式提供绝对 data-dir。默认 backend 保持 external，不拥有手动 Go；managed 还需指定已编译 Go 的绝对路径。编译和运行示例（先在仓库根目录，数据库已手动迁移）：
+
+```powershell
+$timecueDataDir = (Resolve-Path .).Path
+New-Item -ItemType Directory -Force .gotmp-d8 | Out-Null
+go build -o .gotmp-d8/timecue-go.exe ./cmd/flutter
+$timecueGoExe = (Resolve-Path .gotmp-d8/timecue-go.exe).Path
+cd desktop
+flutter build windows --release
+& .\build\windows\x64\runner\Release\timecue_desktop.exe --backend=managed "--data-dir=$timecueDataDir" "--go-executable=$timecueGoExe"
+```
+
+Go 隐藏创建且在创建时进入自有 Job；子端仅继承 stdin/stdout/stderr 管道。ready 单行上限 16 KiB，创建、ready、/health 和存活核验共用 10 秒，核对新 instanceId、持有进程 PID、固定地址、v1 与四项 D4 能力。握手前不挂载业务房间、不领取或展示；启动错误保持窗口可见，可显式重试或退出。配置存储从同一启动快照取 data-dir，不自动初始化或迁移数据库。
+
+明确退出先停新工作并尽力回填原结果，再以剩余 5 秒共享预算发送 shutdown/EOF 和等待；最终回收不受零预算影响，关闭 Job 并释放句柄。宿主崩溃由内核 Job 清理自有 Go/后代。运行中 Go 退出后旧任务与异步结果失效，不自动重启、不接管其他端口服务；外连模式仍可跟随手动 Go 的新运行，退出 Flutter 不停止它。
+
+`tool/d8_host_smoke.dart` 是隔离联调入口，必须传入新建且手动迁移的测试目录。测试构建用 `flutter build windows --release --target=tool/d8_host_smoke.dart`；正常发行构建恢复为 `flutter build windows --release`。真实平台接受请求和结果回流可由该入口证明，系统横幅视觉、点击、休眠/关机与完整冷启动仍需单独取得证据；当前插件未注册 LocalServer32，不宣称已完成系统通知冷启动。详情见 [D8 任务](../docs/design/phase-d8-process-management.md)与[验收记录](../docs/design/phase-d8-validation.md)。
+
+复跑完整宿主联调（从 desktop 执行；Go exe 为上文编译的文件）：
+
+```powershell
+flutter build windows --release --target=tool/d8_host_smoke.dart
+python tool/d8_host_smoke.py --go ../.gotmp-d8/timecue-go.exe
+python tool/d8_native_go_smoke.py --go ../.gotmp-d8/timecue-go.exe --driver build/desktop-native/Release/d8_native_tests.exe
+flutter build windows --release --target=lib/main.dart
+```
+
+Python 脚本自行建立并手动迁移新的测试数据库，不接收业务数据库路径。运行时需空闲的 10086 端口；不结束端口占用者。父测试通过隔离文件握手取得自有 Go 观察句柄，再允许宿主完成退出，避免快速退出产生缺失证据。原生驱动路径按实际 CMake build 目录调整。

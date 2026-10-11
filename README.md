@@ -2,7 +2,7 @@
 
 TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由 Go 管理日程规则、提醒状态和本地数据，由 Flutter 提供桌面界面及系统交互。
 
-> 当前可运行 Flutter 房间与日程本和独立 Go 本机 HTTP API。已接通查询、确认、规则操作、Windows 即时通知桥、通知点击只读定位及恢复展示；托盘、冷启动激活和发布生命周期仍待后续接入。
+> 当前可运行 Flutter 房间与日程本和独立 Go 本机 HTTP API。已接通查询、确认、规则操作、Windows 即时通知桥、通知点击只读定位及恢复展示；已接入托盘单实例与自有 Go 进程管理；系统通知完整冷启动及安装交付仍待后续核验。
 
 ## 当前实现
 
@@ -35,7 +35,7 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 阶段 D 的实施顺序见[开发规划](docs/design/phase-d-development-plan.md)；已实现的 D1 及 D2/D3 接入契约见[分钟调度方案](docs/design/phase-d1-minute-scheduler.md)。loaded 表示加载/等待执行，只有 sent 表示平台接受展示，用户确认保持独立。
 
-D4 的 [Go 托管启动](docs/design/phase-d4-managed-startup.md)已完成数据目录、运行身份、ready 及父进程停止管道；Go 检查与 Apifox 健康扩展、D2/D3 回归均已通过，见[验收记录](docs/design/phase-d4-validation.md)。Flutter 隐藏启动、进程句柄与 Job Object 由 D8 接入。
+D4 的 [Go 托管启动](docs/design/phase-d4-managed-startup.md)已完成数据目录、运行身份、ready 及父进程停止管道；Go 检查与 Apifox 健康扩展、D2/D3 回归均已通过，见[验收记录](docs/design/phase-d4-validation.md)。Flutter 隐藏启动、身份门禁、共享退出及 Job Object 已由 D8 接入，见[D8 验收记录](docs/design/phase-d8-validation.md)。
 
 D5 的 [Windows 通知桥](docs/design/phase-d5-windows-notification-bridge.md)复用原 HTTP 仓储和应用装配，按 attempt 去重并只重传已知结果；真实模式使用固定通知插件，演示模式不领取。Windows 原生单条、分钟合并和恢复汇总请求及 sent 回流已验证，横幅视觉证据待确认；实际检查和限制见[验收记录](docs/design/phase-d5-validation.md)。通知点击不确认，应用退出请求先停止新展示并尽力回填，不停止手动 Go。
 

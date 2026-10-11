@@ -40,13 +40,34 @@ jobs:
       - name: 检查代码格式
         if: steps.go-module.outputs.exists == 'true'
         run: |
-          $unformatted = @(gofmt -l .)
+          $unformatted = @()
+          $taskUtf8 = [System.Text.UTF8Encoding]::new($false)
+          $goFiles = @(git ls-files -- '*.go')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($goFile in $goFiles) {
+            $source = [System.IO.File]::ReadAllText($goFile).Replace("`r`n", "`n")
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = (Get-Command gofmt).Source
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.StandardInputEncoding = $taskUtf8
+            $startInfo.StandardOutputEncoding = $taskUtf8
+            $formatter = [System.Diagnostics.Process]::Start($startInfo)
+            $formatter.StandardInput.Write($source)
+            $formatter.StandardInput.Close()
+            $formatted = $formatter.StandardOutput.ReadToEnd()
+            $formatter.WaitForExit()
+            if ($formatter.ExitCode -ne 0) { throw "gofmt 检查失败：$goFile" }
+            if ($formatted -cne $source) { $unformatted += $goFile }
+            $formatter.Dispose()
+          }
           if ($unformatted.Count -gt 0) {
             Write-Output '以下文件未通过 gofmt 检查：'
             $unformatted
             exit 1
           }
+          Write-Output ("Go 格式通过：{0} 个受版本控制文件，按 LF 比较 gofmt 输出。" -f $goFiles.Count)
 
       - name: 静态检查
         if: steps.go-module.outputs.exists == 'true'
@@ -81,9 +102,9 @@ jobs:
         run: flutter test
       - name: 构建 Windows 桌面端
         run: flutter build windows --release
-      - name: 构建 Windows 单实例原生测试
-        run: cmake -S test/native -B build/d7-native -A x64
-      - name: 编译 Windows 单实例原生测试
-        run: cmake --build build/d7-native --config Release
-      - name: 验证 Windows 单实例与参数转交
-        run: ctest --test-dir build/d7-native -C Release --output-on-failure
+      - name: 构建 Windows 单实例与进程原生测试
+        run: cmake -S test/native -B build/desktop-native -A x64
+      - name: 编译 Windows 单实例与进程原生测试
+        run: cmake --build build/desktop-native --config Release
+      - name: 验证 Windows 单实例、参数转交与 Job 清理
+        run: ctest --test-dir build/desktop-native -C Release --output-on-failure
