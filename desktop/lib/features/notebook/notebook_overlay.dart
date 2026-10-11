@@ -202,16 +202,22 @@ class _NotebookOverlayState extends State<NotebookOverlay>
                                         child: ExcludeFocus(
                                           excluding:
                                               phase != NotebookPhase.open,
-                                          child:
-                                              widget.model.tab ==
-                                                  NotebookTab.today
-                                              ? TodaySpread(model: widget.model)
-                                              : CalendarSpread(
-                                                  model: widget.model,
-                                                  onNavigate: navigate,
-                                                  onManage: manage,
-                                                  editor: buildEditor(),
-                                                ),
+                                          child: switch (widget.model.tab) {
+                                            NotebookTab.today => TodaySpread(
+                                              model: widget.model,
+                                            ),
+                                            NotebookTab.history =>
+                                              HistorySpread(
+                                                model: widget.model,
+                                              ),
+                                            NotebookTab.calendar =>
+                                              CalendarSpread(
+                                                model: widget.model,
+                                                onNavigate: navigate,
+                                                onManage: manage,
+                                                editor: buildEditor(),
+                                              ),
+                                          },
                                         ),
                                       ),
                                     );

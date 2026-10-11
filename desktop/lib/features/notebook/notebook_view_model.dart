@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../contracts/notebook_repository.dart';
 
-enum NotebookTab { today, calendar }
+enum NotebookTab { today, history, calendar }
 
 sealed class CalendarRightPage {
   const CalendarRightPage();
@@ -47,7 +47,8 @@ class ScheduleErrorPage extends CalendarRightPage {
 
 class NotebookViewModel extends ChangeNotifier {
   NotebookViewModel(this.repository)
-    : month = DateTime.utc(repository.demoNow.year, repository.demoNow.month) {
+    : month = DateTime.utc(repository.demoNow.year, repository.demoNow.month),
+      _pendingDate = repository.demoNow {
     repository.addListener(_refresh);
   }
   final NotebookRepository repository;
@@ -65,29 +66,60 @@ class NotebookViewModel extends ChangeNotifier {
     ScheduleErrorPage(:final date) => date,
     _ => null,
   };
-  final Set<String> _selected = {};
+  PendingScope get pendingScope =>
+      _tab == NotebookTab.history ? PendingScope.history : PendingScope.today;
+  final _selections = {
+    for (final scope in PendingScope.values) scope: <String>{},
+  };
+  final _pages = {for (final scope in PendingScope.values) scope: 0};
+  DateTime _pendingDate;
+  Set<String> get _selected => _selections[pendingScope]!;
   Set<String> get selected => Set.unmodifiable(_selected);
-  int page = 0;
+  int get page => _pages[pendingScope]!;
+  set page(int value) => _pages[pendingScope] = value;
   static const pageSize = 3;
   bool busy = false;
-  String? error;
+  final _errors = <PendingScope, String?>{};
+  String? get error => _errors[pendingScope];
   Timer? _poll;
   bool _disposed = false;
   int _dateRequest = 0;
-  int get pageCount => (repository.pendingTotal / repository.pendingPageSize)
-      .ceil()
-      .clamp(1, 1000000);
+  int get pendingTotal => repository.pendingTotalFor(pendingScope);
+  bool get pendingLoading => repository.pendingLoadingFor(pendingScope);
+  String? get pendingError => repository.pendingErrorFor(pendingScope);
+  int get pageCount =>
+      (pendingTotal / repository.pendingPageSize).ceil().clamp(1, 1000000);
   List<TriggerSummary> get pendingPage => repository.serverPagination
-      ? repository.pending
-      : repository.pending
-            .skip(page * pageSize)
-            .take(pageSize)
+      ? repository.pendingFor(pendingScope)
+      : repository
+            .pendingFor(pendingScope)
+            .skip(page * repository.pendingPageSize)
+            .take(repository.pendingPageSize)
             .toList(growable: false);
   void _refresh() {
-    if (repository.serverPagination) page = repository.pendingPageIndex;
-    page = page.clamp(0, pageCount - 1);
-    if (!repository.serverPagination) {
-      _selected.retainAll(repository.pending.map((e) => e.id));
+    if (!sameDay(_pendingDate, repository.demoNow)) {
+      _pendingDate = repository.demoNow;
+      for (final scope in PendingScope.values) {
+        _selections[scope]!.clear();
+        _errors.remove(scope);
+        _pages[scope] = 0;
+      }
+    }
+    for (final scope in PendingScope.values) {
+      final count =
+          (repository.pendingTotalFor(scope) / repository.pendingPageSize)
+              .ceil()
+              .clamp(1, 1000000);
+      _pages[scope] =
+          (repository.serverPagination
+                  ? repository.pendingPageIndexFor(scope)
+                  : _pages[scope]!)
+              .clamp(0, count - 1);
+      if (!repository.serverPagination) {
+        _selections[scope]!.retainAll(
+          repository.pendingFor(scope).map((entry) => entry.id),
+        );
+      }
     }
     notifyListeners();
   }
@@ -173,13 +205,13 @@ class NotebookViewModel extends ChangeNotifier {
   }
 
   void toggle(String id) {
-    if (busy) return;
+    if (busy || !repository.pendingCurrent) return;
     _selected.contains(id) ? _selected.remove(id) : _selected.add(id);
     notifyListeners();
   }
 
   void selectPage() {
-    if (!busy) {
+    if (!busy && !pendingLoading && repository.pendingCurrent) {
       _selected.addAll(pendingPage.map((e) => e.id));
       notifyListeners();
     }
@@ -193,9 +225,9 @@ class NotebookViewModel extends ChangeNotifier {
   }
 
   void turnPage(int delta) {
-    if (busy || repository.loading) return;
+    if (busy || pendingLoading) return;
     if (repository.serverPagination) {
-      repository.loadPendingPage(page + delta);
+      repository.loadPendingPage(page + delta, scope: pendingScope);
       return;
     }
     page = (page + delta).clamp(0, pageCount - 1);
@@ -203,16 +235,25 @@ class NotebookViewModel extends ChangeNotifier {
   }
 
   Future<void> confirm(Set<String> ids) async {
-    if (busy || ids.isEmpty || repository.loading) return;
+    if (busy || ids.isEmpty || pendingLoading || !repository.pendingCurrent) {
+      return;
+    }
+    if (ids.length > 500) {
+      _errors[pendingScope] = '一次最多确认 500 条，请减少选择后重试。';
+      notifyListeners();
+      return;
+    }
+    final scope = pendingScope;
     busy = true;
-    error = null;
+    _errors[scope] = null;
     notifyListeners();
     final frozen = Set<String>.of(ids);
+    final selection = _selected;
     try {
       await repository.confirm(frozen);
-      _selected.removeAll(frozen);
+      selection.removeAll(frozen);
     } catch (e) {
-      error = '$e';
+      _errors[scope] = '$e';
     }
     if (_disposed) return;
     busy = false;

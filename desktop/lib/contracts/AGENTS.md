@@ -6,3 +6,5 @@
 - `notification_delivery.dart`：NotificationDeliveryGateway 定义 health、领取、开始和结果回填；DeliveryRuntime/Claim/Start 校验 Go 运行能力、任务身份和展示决定，DeliveryOutcome 仅含 sent/failed。该窄契约独立于 NotebookRepository，演示仓储不承担真实平台投递，不定义成员、预算或跨重启回执。
 
 `openScheduleCountOn` 返回该日期完整的启用日程总数；未知快照返回 null。确认状态不影响数量，同一规则多次触发只计一条日程；HTTP 实现读取 Go 的聚合值。
+
+PendingScope 表达今日和历史两个读取范围，pendingFor/pendingTotalFor/pendingPageIndexFor/pendingLoadingFor/pendingErrorFor 分别返回页面状态；pendingTotal 保留房间完整待确认数。pendingCurrent 表示范围快照仍属于当前北京日期；确认始终提交明确 ID。

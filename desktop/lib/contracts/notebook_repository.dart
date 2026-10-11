@@ -119,6 +119,8 @@ class TriggerSummary {
   );
 }
 
+enum PendingScope { today, history }
+
 abstract class NotebookRepository extends ChangeNotifier {
   bool get supportsRuleChanges => true;
   bool get canWrite =>
@@ -128,6 +130,18 @@ abstract class NotebookRepository extends ChangeNotifier {
   int get pendingTotal => pending.length;
   int get pendingPageIndex => 0;
   int get pendingPageSize => 3;
+  // 房间总数保持完整集合；页面按范围分别读取，演示仓储仅分类已有事实。
+  List<TriggerSummary> pendingFor(PendingScope scope) => List.unmodifiable(
+    pending.where(
+      (entry) =>
+          sameDay(entry.plannedAt, demoNow) == (scope == PendingScope.today),
+    ),
+  );
+  int pendingTotalFor(PendingScope scope) => pendingFor(scope).length;
+  int pendingPageIndexFor(PendingScope scope) => 0;
+  bool pendingLoadingFor(PendingScope scope) => loading;
+  String? pendingErrorFor(PendingScope scope) => refreshError;
+  bool get pendingCurrent => true;
   bool get loading => false;
   String? get refreshError => null;
   bool get hasSnapshot => true;
@@ -142,7 +156,10 @@ abstract class NotebookRepository extends ChangeNotifier {
       .toSet()
       .length;
   Future<void> refresh({DateTime? month, DateTime? date}) async {}
-  Future<void> loadPendingPage(int page) async {}
+  Future<void> loadPendingPage(
+    int page, {
+    PendingScope scope = PendingScope.today,
+  }) async {}
   bool hasMoreOn(DateTime date) => false;
   Future<void> loadMoreOn(DateTime date) async {}
   DateTime get demoNow;

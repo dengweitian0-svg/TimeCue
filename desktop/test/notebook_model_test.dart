@@ -79,6 +79,7 @@ void main() {
       vm.dispose();
       repo.dispose();
     });
+    vm.changeTab(NotebookTab.history);
     vm.selectPage();
     final first = vm.selected;
     expect(first.length, 3);

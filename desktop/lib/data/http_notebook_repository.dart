@@ -8,24 +8,32 @@ import '../contracts/schedule_rules.dart';
 /// Go 是唯一业务事实来源；本类只保存只读快照，不展开规则。
 class HttpNotebookRepository extends NotebookRepository
     implements NotificationDeliveryGateway {
-  HttpNotebookRepository({HttpClient? client, Uri? base})
-    : _client = client ?? HttpClient(),
-      _base = base ?? Uri.parse('http://127.0.0.1:10086/api/v1/scheduler/');
+  HttpNotebookRepository({
+    HttpClient? client,
+    Uri? base,
+    DateTime Function()? now,
+  }) : _client = client ?? HttpClient(),
+       _base = base ?? Uri.parse('http://127.0.0.1:10086/api/v1/scheduler/'),
+       _clock = now ?? beijingNow,
+       _now = (now ?? beijingNow)();
   final HttpClient _client;
   final Uri _base;
+  final DateTime Function() _clock;
   int _generation = 0;
   bool _disposed = false, _loading = false, _hasSnapshot = false;
   String? _error;
-  DateTime _now = beijingNow();
+  DateTime _now;
   DateTime? _month, _date;
   List<TriggerSummary> _today = const [], _pending = const [];
   final Map<String, List<TriggerSummary>> _dates = {};
   final Map<String, String> _dateCursors = {};
   final Map<String, int> _openScheduleCounts = {};
   Set<String> _marks = {};
-  int _total = 0, _page = 0;
-  List<String> _pendingCursors = [''];
-  String _nextPending = '';
+  int _total = 0;
+  final Map<String, PendingScope> _pendingMembership = {};
+  final _pendingScopes = {
+    for (final scope in PendingScope.values) scope: _PendingState(),
+  };
 
   @override
   bool get supportsRuleChanges => true;
@@ -34,7 +42,8 @@ class HttpNotebookRepository extends NotebookRepository
   @override
   bool get hasSnapshot => _hasSnapshot;
   @override
-  bool get loading => _loading;
+  bool get loading =>
+      _loading || _pendingScopes.values.any((state) => state.loading);
   @override
   String? get refreshError => _error;
   @override
@@ -46,9 +55,24 @@ class HttpNotebookRepository extends NotebookRepository
   @override
   int get pendingTotal => _total;
   @override
-  int get pendingPageIndex => _page;
+  int get pendingPageIndex => pendingPageIndexFor(PendingScope.today);
   @override
   int get pendingPageSize => 50;
+  @override
+  List<TriggerSummary> pendingFor(PendingScope scope) =>
+      _pendingScopes[scope]!.items;
+  @override
+  int pendingTotalFor(PendingScope scope) => _pendingScopes[scope]!.total;
+  @override
+  int pendingPageIndexFor(PendingScope scope) => _pendingScopes[scope]!.page;
+  @override
+  bool pendingLoadingFor(PendingScope scope) =>
+      _loading || _pendingScopes[scope]!.loading;
+  @override
+  String? pendingErrorFor(PendingScope scope) =>
+      _error ?? _pendingScopes[scope]!.error;
+  @override
+  bool get pendingCurrent => _hasSnapshot && dateKey(_now) == dateKey(_clock());
   static String dateKey(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   @override
@@ -134,6 +158,14 @@ class HttpNotebookRepository extends NotebookRepository
     }
   }
 
+  void _invalidateReads() {
+    ++_generation;
+    for (final state in _pendingScopes.values) {
+      ++state.generation;
+      state.loading = false;
+    }
+  }
+
   void _publish() {
     if (!_disposed) notifyListeners();
   }
@@ -175,57 +207,131 @@ class HttpNotebookRepository extends NotebookRepository
     }
   }
 
+  // 每次刷新从新首分页重建当前范围位置，避免确认后复用过期链。
+  Future<_PendingState> _readPending(
+    PendingScope scope,
+    String date,
+    int target,
+  ) async {
+    final result = _PendingState();
+    for (var index = 0; index <= target; index++) {
+      final cursor = index == 0 ? '' : result.next;
+      if (index > 0 && cursor.isEmpty) break;
+      final data = await _request(
+        'notifications',
+        query: {
+          'state': 'unacknowledged',
+          'scope': scope.name,
+          if (cursor.isNotEmpty) 'cursor': cursor,
+        },
+      );
+      if (dateKey(wallTime(data['asOf'] as String)) != date ||
+          dateKey(_clock()) != date) {
+        throw const _PendingDateChanged();
+      }
+      final values = items(data);
+      if (index > 0 && values.isEmpty) break;
+      result.items = values;
+      result.total = data['total'] as int;
+      result.next = data['nextCursor'] as String;
+      result.page = index;
+      if (index > 0) result.cursors.add(cursor);
+    }
+    return result;
+  }
+
+  void _rememberPending(PendingScope scope) {
+    final state = _pendingScopes[scope]!;
+    for (final entry in state.items) {
+      _pendingMembership[entry.id] = scope;
+    }
+  }
+
   @override
-  Future<void> refresh({DateTime? month, DateTime? date}) async {
+  Future<void> refresh({DateTime? month, DateTime? date}) =>
+      _refreshSnapshot(month: month, date: date);
+
+  Future<void> _refreshSnapshot({
+    DateTime? month,
+    DateTime? date,
+    bool resetPending = false,
+  }) async {
     _month = month ?? _month;
     _date = date ?? _date;
-    final generation = ++_generation;
+    _invalidateReads();
+    final generation = _generation;
     _loading = true;
     _error = null;
     _publish();
     try {
-      final snapshot = await _request(
-        'schedules',
-        query: {'view': 'occurrences', 'include': 'unacknowledged'},
-      );
-      final now = wallTime(snapshot['asOf'] as String);
-      final requestedMonth = _month ?? DateTime.utc(now.year, now.month);
-      final monthKey = dateKey(requestedMonth).substring(0, 7);
-      final marks = await _request(
-        'schedules',
-        query: {'view': 'calendar', 'month': monthKey},
-      );
-      final selected = _date;
-      final datePage = selected == null || sameDay(selected, now)
-          ? null
-          : await _request(
-              'schedules',
-              query: {'view': 'occurrences', 'date': dateKey(selected)},
-            );
-      if (_disposed || generation != _generation) return;
-      _now = now;
-      _today = items(snapshot['occurrences']);
-      _pending = items(snapshot['unacknowledged']);
-      _total = snapshot['unacknowledged']['total'] as int;
-      _page = 0;
-      _pendingCursors = [''];
-      _nextPending = snapshot['unacknowledged']['nextCursor'] as String;
-      _marks = (marks as List).cast<String>().toSet();
-      _dates.clear();
-      _dateCursors.clear();
-      _openScheduleCounts.clear();
-      _dates[dateKey(now)] = _today;
-      final todayCount = snapshot['occurrences']['openScheduleCount'] as int?;
-      if (todayCount != null) _openScheduleCounts[dateKey(now)] = todayCount;
-      _dateCursors[dateKey(now)] =
-          snapshot['occurrences']['nextCursor'] as String;
-      if (selected != null && datePage != null) {
-        _dates[dateKey(selected)] = items(datePage);
-        final count = datePage['openScheduleCount'] as int?;
-        if (count != null) _openScheduleCounts[dateKey(selected)] = count;
-        _dateCursors[dateKey(selected)] = datePage['nextCursor'] as String;
+      // 两类首分页跨午夜时只重试一次；不发布不同日期的组合。
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          final snapshot = await _request(
+            'schedules',
+            query: {'view': 'occurrences', 'include': 'unacknowledged'},
+          );
+          final now = wallTime(snapshot['asOf'] as String);
+          final day = dateKey(now);
+          final requestedMonth = _month ?? DateTime.utc(now.year, now.month);
+          final marks = await _request(
+            'schedules',
+            query: {
+              'view': 'calendar',
+              'month': dateKey(requestedMonth).substring(0, 7),
+            },
+          );
+          final selected = _date;
+          final datePage = selected == null || sameDay(selected, now)
+              ? null
+              : await _request(
+                  'schedules',
+                  query: {'view': 'occurrences', 'date': dateKey(selected)},
+                );
+          final sameDate = !resetPending && _hasSnapshot && sameDay(_now, now);
+          final scoped = await Future.wait([
+            for (final scope in PendingScope.values)
+              _readPending(
+                scope,
+                day,
+                sameDate ? _pendingScopes[scope]!.page : 0,
+              ),
+          ]);
+          if (_disposed || generation != _generation) return;
+          if (dateKey(_clock()) != day) throw const _PendingDateChanged();
+          if (!sameDay(_now, now)) _pendingMembership.clear();
+          _now = now;
+          _today = items(snapshot['occurrences']);
+          _pending = items(snapshot['unacknowledged']);
+          _total = snapshot['unacknowledged']['total'] as int;
+          for (var index = 0; index < PendingScope.values.length; index++) {
+            final scope = PendingScope.values[index];
+            final state = scoped[index];
+            state.generation = _pendingScopes[scope]!.generation;
+            _pendingScopes[scope] = state;
+            _rememberPending(scope);
+          }
+          _marks = (marks as List).cast<String>().toSet();
+          _dates.clear();
+          _dateCursors.clear();
+          _openScheduleCounts.clear();
+          _dates[day] = _today;
+          final todayCount =
+              snapshot['occurrences']['openScheduleCount'] as int?;
+          if (todayCount != null) _openScheduleCounts[day] = todayCount;
+          _dateCursors[day] = snapshot['occurrences']['nextCursor'] as String;
+          if (selected != null && datePage != null) {
+            _dates[dateKey(selected)] = items(datePage);
+            final count = datePage['openScheduleCount'] as int?;
+            if (count != null) _openScheduleCounts[dateKey(selected)] = count;
+            _dateCursors[dateKey(selected)] = datePage['nextCursor'] as String;
+          }
+          _hasSnapshot = true;
+          break;
+        } on _PendingDateChanged {
+          if (attempt == 1) rethrow;
+        }
       }
-      _hasSnapshot = true;
     } catch (e) {
       if (generation == _generation && !_disposed) _error = '$e';
     } finally {
@@ -237,35 +343,77 @@ class HttpNotebookRepository extends NotebookRepository
   }
 
   @override
-  Future<void> loadPendingPage(int page) async {
-    if (_loading || page < 0 || page == _page) return;
-    if (page > _page && _nextPending.isEmpty) return;
-    if (page == _pendingCursors.length) _pendingCursors.add(_nextPending);
-    if (page >= _pendingCursors.length) return;
-    final generation = ++_generation;
-    _loading = true;
-    _error = null;
+  Future<void> loadPendingPage(
+    int page, {
+    PendingScope scope = PendingScope.today,
+  }) async {
+    final state = _pendingScopes[scope]!;
+    if (_loading || state.loading || page < 0) return;
+    if (!pendingCurrent) {
+      await refresh();
+      return;
+    }
+    if (page == state.page) return;
+    if (page > state.page && state.next.isEmpty) return;
+    final cursors = List<String>.of(state.cursors);
+    if (page == cursors.length) cursors.add(state.next);
+    if (page >= cursors.length) return;
+    final generation = _generation, request = ++state.generation;
+    state.loading = true;
+    state.error = null;
     _publish();
+    bool current() =>
+        !_disposed &&
+        generation == _generation &&
+        identical(state, _pendingScopes[scope]) &&
+        request == state.generation;
     try {
       final data = await _request(
         'notifications',
-        query: {'state': 'unacknowledged', 'cursor': _pendingCursors[page]},
+        query: {
+          'state': 'unacknowledged',
+          'scope': scope.name,
+          if (cursors[page].isNotEmpty) 'cursor': cursors[page],
+        },
       );
-      if (_disposed || generation != _generation) return;
-      if ((data['items'] as List).isEmpty && page > 0) {
+      if (!current()) return;
+      if (!pendingCurrent ||
+          dateKey(wallTime(data['asOf'] as String)) != dateKey(_now)) {
         await refresh();
         return;
       }
-      _pending = items(data);
-      _total = data['total'] as int;
-      _page = page;
-      _nextPending = data['nextCursor'] as String;
-      _pendingCursors = _pendingCursors.take(page + 1).toList();
+      if ((data['items'] as List).isEmpty && page > 0) {
+        final first = await _readPending(scope, dateKey(_now), 0);
+        if (!current()) return;
+        first.generation = state.generation;
+        _pendingScopes[scope] = first;
+        _rememberPending(scope);
+        _publish();
+        return;
+      }
+      state.items = items(data);
+      state.total = data['total'] as int;
+      state.page = page;
+      state.next = data['nextCursor'] as String;
+      state.cursors = cursors.take(page + 1).toList();
+      _rememberPending(scope);
+    } on NotebookApiException catch (e) {
+      if (!current()) return;
+      if (e.status == 400 &&
+          e.code == 'invalid_request' &&
+          cursors[page].isNotEmpty) {
+        // 日期或游标失效不重试旧 cursor，重新读取两类首分页。
+        await _refreshSnapshot(resetPending: true);
+      } else {
+        state.error = '$e';
+      }
+    } on _PendingDateChanged {
+      if (current()) await refresh();
     } catch (e) {
-      if (!_disposed && generation == _generation) _error = '$e';
+      if (current()) state.error = '$e';
     } finally {
-      if (!_disposed && generation == _generation) {
-        _loading = false;
+      if (current()) {
+        state.loading = false;
         _publish();
       }
     }
@@ -275,7 +423,12 @@ class HttpNotebookRepository extends NotebookRepository
   Future<void> loadMoreOn(DateTime date) async {
     final key = dateKey(date), cursor = _dateCursors[dateKey(date)] ?? '';
     if (_loading || cursor.isEmpty) return;
-    final generation = ++_generation;
+    if (!pendingCurrent) {
+      await refresh();
+      return;
+    }
+    _invalidateReads();
+    final generation = _generation;
     _loading = true;
     _publish();
     try {
@@ -284,6 +437,10 @@ class HttpNotebookRepository extends NotebookRepository
         query: {'view': 'occurrences', 'date': key, 'cursor': cursor},
       );
       if (_disposed || generation != _generation) return;
+      if (!pendingCurrent) {
+        await refresh();
+        return;
+      }
       final merged = {
         for (final entry in entriesOn(date)) entry.occurrenceKey: entry,
       };
@@ -308,13 +465,20 @@ class HttpNotebookRepository extends NotebookRepository
   @override
   Future<void> confirm(Set<String> ids) async {
     // 确认会使所有在途读取失效；服务失败前保持原快照。
-    ++_generation;
-    final data = await _request(
-      'notifications/acknowledgements',
-      body: {'notificationIds': ids.map(int.parse).toList()},
-    );
+    _invalidateReads();
+    dynamic data;
+    try {
+      data = await _request(
+        'notifications/acknowledgements',
+        body: {'notificationIds': ids.map(int.parse).toList()},
+      );
+    } catch (_) {
+      _loading = false;
+      _publish();
+      rethrow;
+    }
     if (_disposed) return;
-    ++_generation;
+    _invalidateReads();
     final times = {
       for (final raw in data as List)
         raw['notificationId'].toString(): wallTime(
@@ -339,7 +503,25 @@ class HttpNotebookRepository extends NotebookRepository
     _pending = List.unmodifiable(
       _pending.where((entry) => !times.containsKey(entry.id)),
     );
+    for (final scope in PendingScope.values) {
+      final state = _pendingScopes[scope]!;
+      ++state.generation;
+      state.loading = false;
+      final removed = state.items
+          .where((entry) => times.containsKey(entry.id))
+          .length;
+      state.items = List.unmodifiable(
+        state.items.where((entry) => !times.containsKey(entry.id)),
+      );
+      // 明确 ID 来自同一范围；跨页选择也必须从该范围完整总数中扣除。
+      final scopeIds = ids.where((id) => _pendingMembership[id] == scope);
+      final count = scopeIds.length > removed ? scopeIds.length : removed;
+      state.total = (state.total - count).clamp(0, state.total);
+    }
     _total = (_total - times.length).clamp(0, _total);
+    for (final id in ids) {
+      _pendingMembership.remove(id);
+    }
     _loading = false;
     _publish();
     // 已成功的确认不能因后续刷新失败被报告为确认失败。
@@ -436,7 +618,7 @@ class HttpNotebookRepository extends NotebookRepository
         previous?.$2 ??
         '$session-${DateTime.now().microsecondsSinceEpoch}-${_generation++}';
     _uncertainWrites[session] = (fingerprint, key);
-    ++_generation;
+    _invalidateReads();
     try {
       final result = summary(
         await _request(
@@ -448,7 +630,7 @@ class HttpNotebookRepository extends NotebookRepository
       );
       _uncertainWrites.remove(session);
       if (_disposed) return;
-      ++_generation;
+      _invalidateReads();
       _schedules[result.id] = result;
       await refresh();
     } on NotebookApiException catch (e) {
@@ -466,11 +648,11 @@ class HttpNotebookRepository extends NotebookRepository
 
   @override
   Future<void> delete(String id) async {
-    ++_generation;
+    _invalidateReads();
     try {
       await _request('schedules/$id', method: 'DELETE');
       if (_disposed) return;
-      ++_generation;
+      _invalidateReads();
       _schedules.remove(id);
       await refresh();
     } finally {
@@ -484,8 +666,24 @@ class HttpNotebookRepository extends NotebookRepository
   @override
   void dispose() {
     _disposed = true;
-    ++_generation;
+    _invalidateReads();
     _client.close(force: true);
     super.dispose();
   }
+}
+
+// 范围各自拥有分页、加载错误与请求代次；不保存业务可变状态。
+class _PendingState {
+  List<TriggerSummary> items = const [];
+  int total = 0, page = 0, generation = 0;
+  List<String> cursors = [''];
+  String next = '';
+  String? error;
+  bool loading = false;
+}
+
+class _PendingDateChanged implements Exception {
+  const _PendingDateChanged();
+  @override
+  String toString() => '北京时间日期已变化，请重试读取今日与历史提醒。';
 }

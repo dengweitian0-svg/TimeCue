@@ -3,8 +3,9 @@ import '../contracts/schedule_rules.dart';
 
 /// 显式内存示例仓储，不连接 Go，也不写入 SQLite。
 class DemoNotebookRepository extends NotebookRepository {
-  DemoNotebookRepository({DateTime? now})
-    : demoNow = now ?? DateTime.utc(2026, 10, 7, 14, 32) {
+  DemoNotebookRepository({DateTime? now, DateTime Function()? clock})
+    : _now = now ?? clock?.call() ?? DateTime.utc(2026, 10, 7, 14, 32),
+      _clock = clock {
     final names = ['读一会儿书', '喝水，伸个懒腰', '整理本周计划', '整理一下桌面', '睡前放松'];
     final hours = [9, 13, 15, 16, 20];
     for (var i = 0; i < names.length; i++) {
@@ -52,18 +53,32 @@ class DemoNotebookRepository extends NotebookRepository {
     }
   }
   @override
-  final DateTime demoNow;
+  DateTime get demoNow => _clock?.call() ?? _now;
+  final DateTime _now;
+  final DateTime Function()? _clock;
+  @override
+  Future<void> refresh({DateTime? month, DateTime? date}) async =>
+      notifyListeners();
   final Map<String, ScheduleSummary> _schedules = {};
   final List<TriggerSummary> _triggers = [];
   int _sequence = 0;
   @override
   List<TriggerSummary> get today => List.unmodifiable(entriesOn(demoNow));
   @override
-  List<TriggerSummary> get pending => List.unmodifiable(
-    _triggers.where(
-      (e) => !e.plannedAt.isAfter(demoNow) && e.acknowledgedAt == null,
-    ),
-  );
+  List<TriggerSummary> get pending {
+    final values = _triggers
+        .where(
+          (entry) =>
+              !entry.plannedAt.isAfter(demoNow) && entry.acknowledgedAt == null,
+        )
+        .toList();
+    values.sort((a, b) {
+      final comparison = a.plannedAt.compareTo(b.plannedAt);
+      return comparison != 0 ? comparison : a.id.compareTo(b.id);
+    });
+    return List.unmodifiable(values);
+  }
+
   @override
   ScheduleSummary schedule(String id) => _schedules[id]!;
   @override

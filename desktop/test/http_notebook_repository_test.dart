@@ -56,11 +56,28 @@ Map<String, dynamic> snapshot({
 Future<HttpNotebookRepository> serverRepository(
   FutureOr<Object> Function(HttpRequest) handle, {
   String basePath = '/',
+  DateTime Function()? now,
+  bool scopedQueries = false,
 }) async {
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   server.listen((request) async {
     try {
-      final data = await handle(request);
+      Object data;
+      if (!scopedQueries &&
+          request.uri.path.endsWith('/notifications') &&
+          request.uri.queryParameters.containsKey('scope') &&
+          !request.uri.queryParameters.containsKey('cursor')) {
+        final source = await handle(_SnapshotRequest(request));
+        if (source is Map && source.containsKey('unacknowledged')) {
+          data = request.uri.queryParameters['scope'] == 'history'
+              ? page([])
+              : source['unacknowledged'] as Object;
+        } else {
+          data = source;
+        }
+      } else {
+        data = await handle(request);
+      }
       request.response.headers.contentType = ContentType.json;
       request.response.write(
         jsonEncode(
@@ -84,6 +101,7 @@ Future<HttpNotebookRepository> serverRepository(
   });
   final repo = HttpNotebookRepository(
     base: Uri.parse('http://127.0.0.1:${server.port}$basePath'),
+    now: now ?? () => DateTime.utc(2026, 10, 8, 14, 32),
   );
   addTearDown(() async {
     repo.dispose();
@@ -477,7 +495,7 @@ void main() {
     await repo.refresh();
     expect(repo.hasSnapshot, isTrue);
     await repo.loadPendingPage(1);
-    expect(repo.pending.single.id, '51');
+    expect(repo.pendingFor(PendingScope.today).single.id, '51');
     await repo.confirm({'1'});
     expect(requests, contains('/api/v1/notifications/acknowledgements'));
     expect(
@@ -526,7 +544,7 @@ void main() {
     expect(repo.today.first.acknowledgedAt!.hour, 14);
     expect(repo.today.last.acknowledgedAt, isNull);
     expect(repo.pendingTotal, 50);
-    expect(repo.pending.single.id, '51');
+    expect(repo.pendingFor(PendingScope.today).single.id, '51');
   });
   test('北京时间映射、服务端总数、全选本页和跨页选择不随新增扩大', () async {
     var fresh = false;
@@ -556,6 +574,9 @@ void main() {
     fresh = true;
     await repo.refresh();
     expect(vm.selected, {'1', '51'});
+    expect(vm.page, 1);
+    expect(vm.pendingPage.map((e) => e.id), ['51']);
+    await repo.loadPendingPage(0);
     expect(vm.pendingPage.map((e) => e.id), ['1', '3']);
   });
 
@@ -659,4 +680,23 @@ void main() {
     expect(vm.right, isA<DateListPage>());
     expect(repo.entriesOn(date).single.name, '提醒 3');
   });
+}
+
+// 旧测试只描述组合快照；新首分页复用其同一个服务端夹具，不推导生产数据。
+class _SnapshotRequest implements HttpRequest {
+  _SnapshotRequest(this.original);
+  final HttpRequest original;
+  @override
+  Uri get uri => original.uri.replace(
+    path: original.uri.path.startsWith('/api/v1/')
+        ? '/api/v1/scheduler/schedules'
+        : '/schedules',
+    queryParameters: {'view': 'occurrences', 'include': 'unacknowledged'},
+  );
+  @override
+  String get method => original.method;
+  @override
+  HttpResponse get response => original.response;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

@@ -48,146 +48,222 @@ class TodaySpread extends StatelessWidget {
         ),
       ),
       Expanded(
+        child: PaperPage(right: true, child: PendingList(model: model)),
+      ),
+    ],
+  );
+}
+
+// 两类待确认共用列表、状态、详情、选择工具栏及分页。
+class PendingList extends StatelessWidget {
+  const PendingList({super.key, required this.model});
+  final NotebookViewModel model;
+  @override
+  Widget build(BuildContext context) {
+    final entries = model.pendingPage;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        PageHeading(
+          '待确认',
+          '${model.pendingTotal} 件小事，等你轻轻回应',
+          eyebrow: 'WAITING FOR YOUR REPLY',
+        ),
+        if (model.pendingLoading) const LinearProgressIndicator(),
+        if (model.pendingError != null)
+          TextButton.icon(
+            onPressed: model.refresh,
+            icon: const Icon(Icons.refresh),
+            label: Text('读取失败，重试 · ${model.pendingError}'),
+          ),
+        if (model.pendingTotal > 0) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                '已选 ${model.selected.length} 条',
+                style: const TextStyle(fontSize: 12),
+              ),
+              TextButton(
+                onPressed:
+                    model.busy ||
+                        model.pendingLoading ||
+                        !model.repository.pendingCurrent
+                    ? null
+                    : model.selectPage,
+                child: const Text('全选本页'),
+              ),
+              TextButton(
+                onPressed: model.busy ? null : model.clearSelection,
+                child: const Text('清空'),
+              ),
+              FilledButton(
+                onPressed:
+                    model.busy ||
+                        model.pendingLoading ||
+                        !model.repository.pendingCurrent ||
+                        model.selected.isEmpty
+                    ? null
+                    : () => model.confirm(model.selected),
+                child: const Text('确认选中'),
+              ),
+            ],
+          ),
+          for (final (index, entry) in entries.indexed)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (model.pendingScope == PendingScope.history &&
+                      (index == 0 ||
+                          !sameDay(
+                            entry.plannedAt,
+                            entries[index - 1].plannedAt,
+                          )))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        '${entry.plannedAt.year} 年 ${entry.plannedAt.month} 月 ${entry.plannedAt.day} 日',
+                        style: const TextStyle(
+                          fontFamily: 'SimSun',
+                          fontSize: 18,
+                        ),
+                      ),
+                    ),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: model.selected.contains(entry.id),
+                        onChanged:
+                            model.busy ||
+                                model.pendingLoading ||
+                                !model.repository.pendingCurrent
+                            ? null
+                            : (_) => model.toggle(entry.id),
+                        semanticLabel:
+                            '选择 ${entry.name} ${timeLabel(entry.plannedAt)}',
+                      ),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => showTriggerDetails(context, entry),
+                          child: Text(entry.name),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    '${entry.plannedAt.year} 年 ${entry.plannedAt.month} 月 ${entry.plannedAt.day} 日 · ${timeLabel(entry.plannedAt)} · ${entry.delivery == 'failed'
+                        ? '投递失败'
+                        : entry.delivery == 'sent'
+                        ? '已提醒'
+                        : '待投递'}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: NotebookTheme.muted,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (entry.description.isNotEmpty)
+                    Text(
+                      entry.description,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: NotebookTheme.muted,
+                      ),
+                    ),
+                  OutlinedButton.icon(
+                    onPressed:
+                        model.busy ||
+                            model.pendingLoading ||
+                            !model.repository.pendingCurrent
+                        ? null
+                        : () => model.confirm({entry.id}),
+                    icon: const Icon(Icons.check, size: 16),
+                    label: const Text('确认完成'),
+                  ),
+                  const Divider(),
+                ],
+              ),
+            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                onPressed: model.busy || model.pendingLoading || model.page == 0
+                    ? null
+                    : () => model.turnPage(-1),
+                tooltip: '上一页',
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Text('${model.page + 1} / ${model.pageCount}'),
+              IconButton(
+                onPressed:
+                    model.busy ||
+                        model.pendingLoading ||
+                        model.page + 1 >= model.pageCount
+                    ? null
+                    : () => model.turnPage(1),
+                tooltip: '下一页',
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+        ] else if (model.repository.hasSnapshot)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 42),
+            child: Text(
+              '✓  都回应好了，休息一下吧。',
+              style: TextStyle(color: NotebookTheme.sage),
+            ),
+          ),
+        if (model.error != null)
+          Text(
+            model.error!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+      ],
+    );
+  }
+}
+
+class HistorySpread extends StatelessWidget {
+  const HistorySpread({super.key, required this.model});
+  final NotebookViewModel model;
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Expanded(
         child: PaperPage(
-          right: true,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              PageHeading(
-                '待确认',
-                '${model.repository.pendingTotal} 件小事，等你轻轻回应',
-                eyebrow: 'WAITING FOR YOUR REPLY',
+              const PageHeading(
+                '历史待确认',
+                '昨天及更早，仍在等你回应的小事。',
+                eyebrow: 'LEFT ON PREVIOUS PAGES',
               ),
-              if (model.repository.loading) const LinearProgressIndicator(),
-              if (model.repository.refreshError != null)
-                TextButton.icon(
-                  onPressed: model.refresh,
-                  icon: const Icon(Icons.refresh),
-                  label: Text('读取失败，重试 · ${model.repository.refreshError}'),
+              Text(
+                '${model.pendingTotal} 条未确认提醒',
+                style: const TextStyle(color: NotebookTheme.muted),
+              ),
+              const SizedBox(height: 28),
+              const Text(
+                '按原计划日期，一页一页慢慢回顾。',
+                style: TextStyle(
+                  fontFamily: 'SimSun',
+                  color: NotebookTheme.muted,
                 ),
-              if (model.repository.pendingTotal > 0) ...[
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      '已选 ${model.selected.length} 条',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    TextButton(
-                      onPressed: model.busy || model.repository.loading
-                          ? null
-                          : model.selectPage,
-                      child: const Text('全选本页'),
-                    ),
-                    TextButton(
-                      onPressed: model.busy ? null : model.clearSelection,
-                      child: const Text('清空'),
-                    ),
-                    FilledButton(
-                      onPressed:
-                          model.busy ||
-                              model.repository.loading ||
-                              model.selected.isEmpty
-                          ? null
-                          : () => model.confirm(model.selected),
-                      child: const Text('确认选中'),
-                    ),
-                  ],
-                ),
-                for (final entry in model.pendingPage)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Checkbox(
-                              value: model.selected.contains(entry.id),
-                              onChanged: model.busy || model.repository.loading
-                                  ? null
-                                  : (_) => model.toggle(entry.id),
-                              semanticLabel:
-                                  '选择 ${entry.name} ${timeLabel(entry.plannedAt)}',
-                            ),
-                            Expanded(child: Text(entry.name)),
-                          ],
-                        ),
-                        Text(
-                          '${entry.plannedAt.month} 月 ${entry.plannedAt.day} 日 · ${timeLabel(entry.plannedAt)} · ${entry.delivery == 'failed'
-                              ? '投递失败'
-                              : entry.delivery == 'sent'
-                              ? '已提醒'
-                              : '待投递'}',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: NotebookTheme.muted,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        if (entry.description.isNotEmpty)
-                          Text(
-                            entry.description,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: NotebookTheme.muted,
-                            ),
-                          ),
-                        OutlinedButton.icon(
-                          onPressed: model.busy || model.repository.loading
-                              ? null
-                              : () => model.confirm({entry.id}),
-                          icon: const Icon(Icons.check, size: 16),
-                          label: const Text('确认完成'),
-                        ),
-                        const Divider(),
-                      ],
-                    ),
-                  ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      onPressed:
-                          model.busy ||
-                              model.repository.loading ||
-                              model.page == 0
-                          ? null
-                          : () => model.turnPage(-1),
-                      tooltip: '上一页',
-                      icon: const Icon(Icons.chevron_left),
-                    ),
-                    Text('${model.page + 1} / ${model.pageCount}'),
-                    IconButton(
-                      onPressed:
-                          model.busy ||
-                              model.repository.loading ||
-                              model.page + 1 >= model.pageCount
-                          ? null
-                          : () => model.turnPage(1),
-                      tooltip: '下一页',
-                      icon: const Icon(Icons.chevron_right),
-                    ),
-                  ],
-                ),
-              ] else if (model.repository.hasSnapshot)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 42),
-                  child: Text(
-                    '✓  都回应好了，休息一下吧。',
-                    style: TextStyle(color: NotebookTheme.sage),
-                  ),
-                ),
-              if (model.error != null)
-                Text(
-                  model.error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
+              ),
             ],
           ),
         ),
+      ),
+      Expanded(
+        child: PaperPage(right: true, child: PendingList(model: model)),
       ),
     ],
   );
@@ -201,7 +277,7 @@ Future<void> showTriggerDetails(
   builder: (context) => AlertDialog(
     title: Text(entry.name),
     content: SelectableText(
-      '${entry.plannedAt.month} 月 ${entry.plannedAt.day} 日 ${timeLabel(entry.plannedAt)}\n${entry.description}\n${entry.acknowledgedAt != null
+      '${entry.plannedAt.year} 年 ${entry.plannedAt.month} 月 ${entry.plannedAt.day} 日 ${timeLabel(entry.plannedAt)}\n${entry.description}\n${entry.acknowledgedAt != null
           ? '已完成'
           : entry.source == 'projected' || entry.delivery.isEmpty
           ? '未来安排'
@@ -596,11 +672,15 @@ class NotebookFrame extends StatelessWidget {
                           top: Radius.circular(7),
                         ),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
                       minimumSize: const Size(80, 40),
                     ),
                     onPressed: () => onTab(tab),
-                    child: Text(tab == NotebookTab.today ? '今天' : '日历'),
+                    child: Text(switch (tab) {
+                      NotebookTab.today => '今天',
+                      NotebookTab.history => '历史待确认',
+                      NotebookTab.calendar => '日历',
+                    }),
                   ),
                 ),
               ),
@@ -636,7 +716,11 @@ class NotebookFrame extends StatelessWidget {
               label: const Text('管理日程'),
             ),
             Text(
-              model.tab == NotebookTab.today ? '01 — 02' : '03 — 04',
+              switch (model.tab) {
+                NotebookTab.today => '01 — 02',
+                NotebookTab.history => '03 — 04',
+                NotebookTab.calendar => '05 — 06',
+              },
               style: const TextStyle(
                 fontSize: 10,
                 letterSpacing: 2,
