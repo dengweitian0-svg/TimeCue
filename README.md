@@ -16,6 +16,8 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 | Flutter | `desktop/` 已实现三时段房间、双页本子及创建/编辑视觉骨架，默认接入 Go 查询、单条/批量确认及真实规则变更，视觉示例仍用显式内存仓储。 |
 
 
+日程本已接入“今天｜历史待确认｜日历”三标签：按原计划时间及北京时间零点分类，两类分别分页和选择，房间统计全部到期未确认；跨日重载首分页，查询及查看详情不会确认或调用平台通知。接口和自动检查证据见[历史待确认验收记录](docs/design/historical-unacknowledged-reminders-validation.md)。
+
 ## 产品目标与核心规则
 
 - 创建、查看和删除单次或周期日程；周期日程允许暂停和恢复后续提醒。
@@ -88,6 +90,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 | GET | `/api/v1/scheduler/schedules?view=occurrences&date=YYYY-MM-DD&cursor=...` | 日期事实与未来投影，分页去重 |
 | GET | `/api/v1/scheduler/schedules?view=calendar&month=YYYY-MM` | 月份日期标记 |
 | GET | `/api/v1/notifications?state=unacknowledged&cursor=...` | 全历史到期未确认页，含失败及待投递 |
+| GET | `/api/v1/notifications?state=unacknowledged&scope=today&cursor=...` | 今日到期未确认；可改 scope=history 查询昨日及更早，范围总数先于分页，跨范围/跨日游标返回 400 |
 | GET | `/api/v1/notifications?deliveryTaskId=...&attemptId=...&cursor=...` | 本运行任务历史成员；可选 attemptId 读取该次冻结实际成员，50 条分页 |
 | GET | `/api/v1/notifications/:id` | 提醒详情，父日程删除后历史仍可查 |
 | POST | `/api/v1/notifications/acknowledgements` | 单条及批量统一提交 notificationIds，最多 500 个，整批校验后原子确认 |

@@ -74,6 +74,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('日程本  6'));
     await capture('02-today');
+    await tester.tap(find.text('历史待确认'));
+    await capture('11-history-pending');
     await tester.tap(find.text('日历'));
     await capture('03-calendar-blank');
     await tester.tap(find.text('7').first);

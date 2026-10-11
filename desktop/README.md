@@ -35,6 +35,7 @@ attempt、平台整数映射和待回填结果只在内存。重复领取、开�
 | `GET /schedules?view=occurrences&date=YYYY-MM-DD&cursor=...` | 日期触发清单及续页 |
 | `GET /schedules?view=calendar&month=YYYY-MM` | 月份日期标记 |
 | `GET /notifications?state=unacknowledged&cursor=...` | 待确认续页 |
+| `GET /notifications?state=unacknowledged&scope=today&cursor=...` | 今日首/续页及完整 total；scope=history 为昨日及更早，跨范围/北京日期游标返回 400 |
 | `GET /notifications/:id` | 持久化提醒详情 |
 | `POST /notifications/acknowledgements` | `notificationIds` 数组，单条和批量走同一事务操作 |
 
@@ -44,7 +45,8 @@ attempt、平台整数映射和待回填结果只在内存。重复领取、开�
 
 ### 快照、分页与失败行为
 
-- 待确认默认每页 50，徽标读取 Go 总数；全选只捕获当前页，跨页选择保留，不随后台新记录扩大。批量请求提交明确 ID，最多 500 条，非法成员整批拒绝。
+- 标签依次为今天、历史待确认、日历。今日左页保留今日全部安排，右页仅今日到期未确认；历史按原计划完整日期分组，四种投递状态保持真实。两类待确认默认每页 50，房间徽标读取组合快照的全部待确认总数；全选只捕获当前页，跨页选择保留，不随后台新记录扩大。批量请求提交明确 ID，最多 500 条，非法成员整批拒绝。
+- 今日/历史各自保存分页位置、游标、加载/错误及选择；普通刷新保留有效位置，范围游标不混用。成功发布新北京日期时两类回首分页并清空旧范围选择，新历史记录不自动选中；混合日期及旧响应不发布，400 后重读首分页，跨日读取失败保留内容并阻止旧今日选择提交。
 - 本子打开期间每 5 秒刷新；打开、恢复前台和确认后立即查询，关闭或后台停止普通轮询。请求代次阻止旧响应覆盖新状态。
 - 确认响应同时更新今日、日期清单和待确认；确认失败保持旧内容及选择。确认成功后的刷新失败单独提示，保留已成功的完成事实。
 - 日期清单与今日提供加载更多；未来投影使用 Go 的不透明 occurrenceKey，确认使用 notificationId。日历首进为空白，选日期后显示加载/错误/清单。
@@ -66,7 +68,9 @@ TimeCueApp                              MaterialApp、主题、构造注入
             ├─ TodaySpread              第一组跨页
             │  ├─ PaperPage             今日安排 → TriggerRow
             │  └─ PaperPage             待确认、选择工具栏、分页、逐条确认
-            └─ CalendarSpread           第二组跨页
+            ├─ HistorySpread            第二组跨页：完整日期分组、历史说明
+            │  └─ PendingList           共用状态/详情/选择/确认/分页
+            └─ CalendarSpread           第三组跨页
                ├─ PaperPage             月份导航 → MonthGrid、管理日程分页弹层
                └─ PaperPage             互斥右页
                   ├─ BlankPage          首次进入，无内容
@@ -99,7 +103,7 @@ flowchart LR
   App --> Room[RoomScreen]
   Room --> VM[NotebookViewModel]
   Overlay[NotebookOverlay] --> VM
-  Spreads[TodaySpread / CalendarSpread] --> VM
+  Spreads[TodaySpread / HistorySpread / CalendarSpread] --> VM
   Editor[ScheduleEditor] --> EVM[ScheduleEditorViewModel]
   VM --> Contract[NotebookRepository 契约]
   EVM --> Contract
@@ -110,7 +114,7 @@ flowchart LR
 | 状态 | 所有者 | Widget 的关系 |
 | --- | --- | --- |
 | Go 业务快照、确认结果 / 内存示例 | HTTP / 示例仓储 | 只读 DTO；确认必须调用正式用例，规则变更必须调用正式事务 |
-| 标签、月份、互斥右页、跨页勾选 | NotebookViewModel | 跨页监听状态，只发送界面操作 |
+| 标签、月份、互斥右页、两范围分页及跨页勾选 | NotebookViewModel | 跨页监听状态，只发送界面操作 |
 | 开合阶段、动画进度、编辑会话 | NotebookOverlay | 内容到位后才可操作；导航时守卫草稿 |
 | 字段、草稿、保存错误 | ScheduleEditorViewModel | 创建弹层、独立修改弹窗与右页编辑复用表单，版本冲突保留草稿 |
 | 真实环境时间 | RoomClockController | 每秒重读 UTC+8，恢复前台立即同步 |
