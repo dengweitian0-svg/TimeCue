@@ -46,12 +46,13 @@ class ScheduleErrorPage extends CalendarRightPage {
 }
 
 class NotebookViewModel extends ChangeNotifier {
-  NotebookViewModel(this.repository)
+  NotebookViewModel(this.repository, {this.onRecovery})
     : month = DateTime.utc(repository.demoNow.year, repository.demoNow.month),
       _pendingDate = repository.demoNow {
     repository.addListener(_refresh);
   }
   final NotebookRepository repository;
+  final VoidCallback? onRecovery;
   NotebookTab _tab = NotebookTab.today;
   NotebookTab get tab => _tab;
   DateTime month;

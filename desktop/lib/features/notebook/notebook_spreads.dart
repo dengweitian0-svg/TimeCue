@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
+import '../../contracts/notification_query.dart';
 import '../../theme/notebook_theme.dart';
 import 'notebook_view_model.dart';
+import 'notification_details.dart';
+import 'recovery_status.dart';
 
 class TodaySpread extends StatelessWidget {
   const TodaySpread({super.key, required this.model});
@@ -22,7 +25,11 @@ class TodaySpread extends StatelessWidget {
               for (final entry in model.repository.today)
                 TriggerRow(
                   entry: entry,
-                  onTap: () => showTriggerDetails(context, entry),
+                  onTap: () => showTriggerDetails(
+                    context,
+                    entry,
+                    repository: model.repository,
+                  ),
                 ),
               if (model.repository.hasMoreOn(model.repository.demoNow))
                 TextButton(
@@ -148,7 +155,11 @@ class PendingList extends StatelessWidget {
                       ),
                       Expanded(
                         child: InkWell(
-                          onTap: () => showTriggerDetails(context, entry),
+                          onTap: () => showTriggerDetails(
+                            context,
+                            entry,
+                            repository: model.repository,
+                          ),
                           child: Text(entry.name),
                         ),
                       ),
@@ -271,28 +282,15 @@ class HistorySpread extends StatelessWidget {
 
 Future<void> showTriggerDetails(
   BuildContext context,
-  TriggerSummary entry,
-) => showDialog<void>(
+  TriggerSummary entry, {
+  NotebookRepository? repository,
+}) => showDialog<void>(
   context: context,
-  builder: (context) => AlertDialog(
-    title: Text(entry.name),
-    content: SelectableText(
-      '${entry.plannedAt.year} 年 ${entry.plannedAt.month} 月 ${entry.plannedAt.day} 日 ${timeLabel(entry.plannedAt)}\n${entry.description}\n${entry.acknowledgedAt != null
-          ? '已完成'
-          : entry.source == 'projected' || entry.delivery.isEmpty
-          ? '未来安排'
-          : entry.delivery == 'failed'
-          ? '投递失败 · 等待你的确认'
-          : entry.delivery == 'pending' || entry.delivery == 'loaded'
-          ? '待投递 · 等待你的确认'
-          : '已提醒 · 等待你的确认'}',
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('关闭'),
-      ),
-    ],
+  builder: (context) => NotificationDetailsDialog(
+    entry: entry,
+    gateway: repository is NotificationQueryGateway
+        ? repository as NotificationQueryGateway
+        : null,
   ),
 );
 
@@ -480,7 +478,11 @@ class CalendarSpread extends StatelessWidget {
                             (entry.editable ||
                                 !model.repository.serverPagination)
                         ? () => onNavigate(() => model.edit(entry.scheduleId))
-                        : () => showTriggerDetails(context, entry),
+                        : () => showTriggerDetails(
+                            context,
+                            entry,
+                            repository: model.repository,
+                          ),
                   ),
                 if (model.repository.hasMoreOn(date))
                   TextButton(
@@ -715,6 +717,23 @@ class NotebookFrame extends StatelessWidget {
               icon: const Icon(Icons.list_alt, size: 14),
               label: const Text('管理日程'),
             ),
+            if (model.repository.recovery case final progress?)
+              Flexible(
+                child: TextButton(
+                  onPressed: model.onRecovery,
+                  style: TextButton.styleFrom(
+                    foregroundColor: NotebookTheme.paper,
+                    textStyle: const TextStyle(fontSize: 11),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(
+                    '${model.repository.refreshError == null ? '' : '上次读取 · '}${recoveryLabel(progress)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
             Text(
               switch (model.tab) {
                 NotebookTab.today => '01 — 02',

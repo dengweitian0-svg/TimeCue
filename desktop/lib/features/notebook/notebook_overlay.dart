@@ -15,10 +15,12 @@ class NotebookOverlay extends StatefulWidget {
     required this.model,
     required this.origin,
     required this.onClosed,
+    this.historyRequest = 0,
   });
   final NotebookViewModel model;
   final Offset origin;
   final VoidCallback onClosed;
+  final int historyRequest;
   @override
   State<NotebookOverlay> createState() => _NotebookOverlayState();
 }
@@ -33,6 +35,18 @@ class _NotebookOverlayState extends State<NotebookOverlay>
   NotebookPhase phase = NotebookPhase.opening;
   ScheduleEditorViewModel? editor;
   bool started = false;
+  @override
+  void didUpdateWidget(covariant NotebookOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.historyRequest != widget.historyRequest) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          navigate(() => widget.model.changeTab(NotebookTab.history));
+        }
+      });
+    }
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
