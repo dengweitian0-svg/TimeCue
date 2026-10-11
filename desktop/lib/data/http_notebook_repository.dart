@@ -3,11 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 import '../contracts/notebook_repository.dart';
 import '../contracts/notification_delivery.dart';
+import '../contracts/notification_query.dart';
 import '../contracts/schedule_rules.dart';
 
 /// Go 是唯一业务事实来源；本类只保存只读快照，不展开规则。
 class HttpNotebookRepository extends NotebookRepository
-    implements NotificationDeliveryGateway {
+    implements NotificationDeliveryGateway, NotificationQueryGateway {
   HttpNotebookRepository({
     HttpClient? client,
     Uri? base,
@@ -30,6 +31,9 @@ class HttpNotebookRepository extends NotebookRepository
   final Map<String, int> _openScheduleCounts = {};
   Set<String> _marks = {};
   int _total = 0;
+  RecoveryProgress? _recovery;
+  @override
+  RecoveryProgress? get recovery => _recovery;
   final Map<String, PendingScope> _pendingMembership = {};
   final _pendingScopes = {
     for (final scope in PendingScope.values) scope: _PendingState(),
@@ -175,6 +179,48 @@ class HttpNotebookRepository extends NotebookRepository
       DeliveryRuntime.fromJson(await _request('/health'));
 
   @override
+  Future<TriggerSummary> notificationDetails(String notificationId) async {
+    final result = trigger(
+      await _request('notifications/${Uri.encodeComponent(notificationId)}'),
+    );
+    if (result.notificationId != notificationId) {
+      throw const FormatException('提醒详情身份与请求不一致。');
+    }
+    return result;
+  }
+
+  @override
+  Future<NotificationMemberPage> notificationMembers(
+    String deliveryTaskId, {
+    String? attemptId,
+    String cursor = '',
+  }) async {
+    final data = await _request(
+      'notifications',
+      query: {
+        'deliveryTaskId': deliveryTaskId,
+        'attemptId': ?attemptId,
+        if (cursor.isNotEmpty) 'cursor': cursor,
+      },
+    );
+    final entries = items(data);
+    final total = data['total'];
+    if (total is! int ||
+        total < entries.length ||
+        entries.length > 50 ||
+        data['nextCursor'] is! String) {
+      throw const FormatException('任务成员分页响应无效。');
+    }
+    return NotificationMemberPage(
+      items: entries,
+      total: total,
+      nextCursor: data['nextCursor'] as String,
+      asOf: wallTime(data['asOf'] as String),
+      recovery: RecoveryProgress.fromJson(data['recovery']),
+    );
+  }
+
+  @override
   Future<List<DeliveryClaim>> claimNotifications() async {
     final data = await _request('notifications/claim', body: {'limit': 20});
     if (data is! List) throw const FormatException('通知领取响应必须是数组。');
@@ -272,6 +318,7 @@ class HttpNotebookRepository extends NotebookRepository
             query: {'view': 'occurrences', 'include': 'unacknowledged'},
           );
           final now = wallTime(snapshot['asOf'] as String);
+          final recovery = RecoveryProgress.fromJson(snapshot['recovery']);
           final day = dateKey(now);
           final requestedMonth = _month ?? DateTime.utc(now.year, now.month);
           final marks = await _request(
@@ -301,6 +348,7 @@ class HttpNotebookRepository extends NotebookRepository
           if (dateKey(_clock()) != day) throw const _PendingDateChanged();
           if (!sameDay(_now, now)) _pendingMembership.clear();
           _now = now;
+          _recovery = recovery;
           _today = items(snapshot['occurrences']);
           _pending = items(snapshot['unacknowledged']);
           _total = snapshot['unacknowledged']['total'] as int;

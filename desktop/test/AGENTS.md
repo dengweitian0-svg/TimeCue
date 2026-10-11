@@ -9,6 +9,7 @@
 - `windows_notification_bridge_test.dart`：用可控 tick、Completer 和平台替身验证重复领取去重、start/结果丢响应、同批失败隔离、无需展示、明确失败及未知结果、健康失败/停止接纳/404/409、无断线换进程、停止与释放竞争、空领取无心跳，以及宿主可见错误和连接重试。平台替身测试不作为系统横幅真机证据。
 - `notebook_time_picker_test.dart`：时间输入、转盘联动与交互测试。
 - `notebook_loaded_status_test.dart`：已加载提醒详情显示待投递，不显示已提醒。
+- `notification_query_test.dart`：复用原 HTTP 夹具验证 task/attempt 身份与游标、详情错配、真实双状态、恢复摘要与未知总数、错误保留及查询不发布本子状态。
 
 - HTTP 测试覆盖 201/204、PUT、草稿版本、暂停创建、多时间规则、结果不明时幂等重试、冲突保留与重新加载，以及管理列表包含暂停规则、恢复提交原 revision 和完整混合周期；`schedule_rules_test.dart` 验证预设往返和复杂规则保留，`schedule_management_test.dart` 从实际房间和今日日程本入口验证无未来投影的暂停日程仍能查看名称/说明/时间，打开独立修改弹窗而不打开本子或切换原页面；覆盖恢复未来安排、保存后列表刷新、未保存修改舍弃/继续、详情读取失败重试及删除后刷新。
 

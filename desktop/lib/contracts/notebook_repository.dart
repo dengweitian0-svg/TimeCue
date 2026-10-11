@@ -121,7 +121,60 @@ class TriggerSummary {
 
 enum PendingScope { today, history }
 
+@immutable
+class RecoveryProgress {
+  const RecoveryProgress({
+    required this.recoveryId,
+    required this.state,
+    required this.through,
+    required this.materializedCount,
+    required this.missedTotal,
+    required this.displayableCount,
+    required this.deliveryTaskId,
+  });
+  final String recoveryId, state, deliveryTaskId;
+  final DateTime through;
+  final int materializedCount, displayableCount;
+  final int? missedTotal;
+
+  static RecoveryProgress? fromJson(dynamic value) {
+    if (value == null) return null;
+    if (value is! Map<String, dynamic> ||
+        !['running', 'completed', 'failed'].contains(value['state'])) {
+      throw const FormatException('历史整理状态无效。');
+    }
+    String identity(String key) {
+      final field = value[key];
+      if (field is! String || field.isEmpty) {
+        throw const FormatException('历史整理身份缺失。');
+      }
+      return field;
+    }
+
+    int count(String key) {
+      final field = value[key];
+      if (field is! int || field < 0) {
+        throw const FormatException('历史整理数量无效。');
+      }
+      return field;
+    }
+
+    return RecoveryProgress(
+      recoveryId: identity('recoveryId'),
+      state: value['state'] as String,
+      through: DateTime.parse(
+        value['through'] as String,
+      ).toUtc().add(const Duration(hours: 8)),
+      materializedCount: count('materializedCount'),
+      missedTotal: value['missedTotal'] == null ? null : count('missedTotal'),
+      displayableCount: count('displayableCount'),
+      deliveryTaskId: identity('deliveryTaskId'),
+    );
+  }
+}
+
 abstract class NotebookRepository extends ChangeNotifier {
+  RecoveryProgress? get recovery => null;
   bool get supportsRuleChanges => true;
   bool get canWrite =>
       supportsRuleChanges &&
