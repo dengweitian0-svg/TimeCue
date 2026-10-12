@@ -113,16 +113,16 @@ git switch -c feat/12-recurring-reminder
 
 ## CI 规则
 
-向 `dev` 提交 Pull Request 时，`.github/workflows/ci.yml` 的 Go 和 Flutter 检查均运行在 Windows runner，与应用目标平台一致。Go 工作流脚本使用 PowerShell；Flutter 工程位于 `desktop/`。
+向 `dev` 或 `main` 提交 Pull Request 时，`.github/workflows/ci.yml` 的 Go 和 Flutter 检查均运行在 Windows runner，与应用目标平台一致。Go 工作流脚本使用 PowerShell；Flutter 工程位于 `desktop/`。
 
 - Go：`gofmt`、`go vet ./...`、`go test -p 1 ./...`；固定业务端口的跨包测试串行运行。
 - Flutter：CI 固定 Flutter 3.47.0，保留本机 master SDK；运行 `flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`，通知插件及传递依赖提交 lockfile。
-- Windows 构建：`flutter build windows --release`，默认连接手动启动的 Go 服务；在 desktop 执行 `cmake -S test/native -B build/desktop-native -A x64`、`cmake --build build/desktop-native --config Release` 和 `ctest --test-dir build/desktop-native -C Release --output-on-failure` 验证原生单实例、IPC、自有进程与 Job 清理。
+- Windows 构建：`flutter build windows --release`，发行包默认托管同目录 Go；开发外连显式指定 backend=external。在 desktop 执行 `cmake -S test/native -B build/desktop-native -A x64`、`cmake --build build/desktop-native --config Release` 和 `ctest --test-dir build/desktop-native -C Release --output-on-failure` 验证原生单实例、IPC、自有进程与 Job 清理。
 - 本地运行：先在根目录运行 `go run ./cmd/flutter --data-dir .`，再在 `desktop/` 执行 `flutter run -d windows -a --backend=external -a --data-dir=<仓库绝对目录>`；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
 CI 通过后再合并 PR。
 
 ## main 分支策略
 
-`main` 只接受本仓库 `dev → main` 的版本发布 PR，这是仓库的分支策略约束。当前 `.github/workflows` 中没有针对其他来源分支自动留言或关闭 PR 的 workflow；是否阻止不符合策略的 PR 由 GitHub 仓库设置和维护流程负责。
+`main` 只接受本仓库 `dev → main` 且由发布负责人 dengweitian0-svg 提出的版本发布 PR。protect-main.yml 对不满足条件的 PR 留言并关闭；CI 验证 dev/main 两类 PR。
 
 Windows CI 的 Go 格式检查会先统一 CRLF/LF 并比较 gofmt 输出；只消除换行差异，实际代码排版仍须一致，不格式化未修改的 Go 文件。
