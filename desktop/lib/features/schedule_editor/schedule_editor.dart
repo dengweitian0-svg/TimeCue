@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import '../../contracts/notebook_repository.dart';
 import '../../contracts/schedule_rules.dart';
 import '../../theme/notebook_theme.dart';
+import '../../app/operation_toast.dart';
 import 'notebook_date_time_picker.dart';
 import 'schedule_slot_picker.dart';
 import 'schedule_time_chip.dart';
@@ -287,6 +288,54 @@ class ScheduleEditor extends StatefulWidget {
 }
 
 class _ScheduleEditorState extends State<ScheduleEditor> {
+  Future<void> _save({bool reopening = false}) async {
+    final model = widget.model;
+    final saved = await model.save();
+    if (!mounted) return;
+    if (!saved) {
+      OperationToast.error(context, '日程未能保存，请查看表单中的错误。');
+      return;
+    }
+    final message = reopening
+        ? '日程已重新开启'
+        : model.original == null
+        ? '日程已创建'
+        : '日程已保存';
+    if (model.repository.refreshError case final refreshError?) {
+      OperationToast.warning(context, '$message，但列表刷新失败：$refreshError');
+    } else {
+      OperationToast.success(context, message);
+    }
+    widget.onSaved();
+  }
+
+  Future<void> _delete() async {
+    final model = widget.model;
+    final deleted = await model.delete();
+    if (!mounted) return;
+    if (!deleted) {
+      OperationToast.error(context, '日程未能删除，请查看表单中的错误。');
+      return;
+    }
+    if (model.repository.refreshError case final refreshError?) {
+      OperationToast.warning(context, '日程已删除，但列表刷新失败：$refreshError');
+    } else {
+      OperationToast.success(context, '日程已删除');
+    }
+    widget.onSaved();
+  }
+
+  Future<void> _reload() async {
+    await widget.model.reload();
+    if (!mounted) return;
+    final error = widget.model.error;
+    if (error != null) {
+      OperationToast.error(context, '重新加载日程失败：$error');
+    } else {
+      OperationToast.success(context, '已加载最新日程版本');
+    }
+  }
+
   Future<void> _pickDateTime() async {
     final m = widget.model;
     if (m.busy || m.timeLocked) return;
@@ -493,7 +542,9 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
               onPressed: m.busy
                   ? null
                   : () async {
-                      if (await allowDiscard(context, m)) await m.reload();
+                      if (await allowDiscard(context, m) && mounted) {
+                        await _reload();
+                      }
                     },
               child: const Text('重新加载最新版本'),
             ),
@@ -511,7 +562,7 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
                       ? null
                       : () async {
                           m.update(() => m.enabled = true);
-                          if (await m.save() && mounted) widget.onSaved();
+                          await _save(reopening: true);
                         },
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('重新开启'),
@@ -521,7 +572,7 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
                   onPressed: m.busy || !m.repository.canWrite
                       ? null
                       : () async {
-                          if (await m.save() && mounted) widget.onSaved();
+                          await _save();
                         },
                   child: Text(m.busy ? '保存中…' : '保存日程'),
                 ),
@@ -553,7 +604,7 @@ class _ScheduleEditorState extends State<ScheduleEditor> {
                             ),
                           );
                           if (yes == true) {
-                            if (await m.delete() && mounted) widget.onSaved();
+                            await _delete();
                           }
                         },
                   child: const Text('删除'),

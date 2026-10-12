@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
 
 /// 编辑用户覆盖值；默认基线与运行资源仍由 Go 管理。
@@ -53,7 +54,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
       final values = await widget.store.read();
       if (mounted) setState(() => _apply(values));
     } catch (failure) {
-      if (mounted) setState(() => _error = '读取设置失败：$failure');
+      if (mounted) {
+        final message = '读取设置失败：$failure';
+        setState(() => _error = message);
+        OperationToast.error(context, '设置未能读取，请查看弹窗中的错误并重试。');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -65,7 +70,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
   });
 
   Future<void> _save() async {
-    if (_busy || !_dirty || !_form.currentState!.validate()) return;
+    if (_busy || !_dirty) return;
+    if (!_form.currentState!.validate()) {
+      OperationToast.error(context, '请检查设置字段并修正错误。');
+      return;
+    }
     await _write(
       () => widget.store.update(
         logLevel: _level != _original!.logLevel ? _level : null,
@@ -93,14 +102,31 @@ class _SettingsDialogState extends State<SettingsDialog> {
     try {
       final result = await operation();
       if (!mounted) return;
+      final resultMessage = result.pathsChanged
+          ? '$message。路径更改将在下次启动生效，已有数据不会自动搬迁。'
+          : '$message。日志级别由本地服务自动加载。';
       setState(() {
         _apply(result.overrides);
-        _message = result.pathsChanged
-            ? '$message。路径更改将在下次启动生效，已有数据不会自动搬迁。'
-            : '$message。日志级别由本地服务自动加载。';
+        _message = resultMessage;
       });
+      OperationToast.success(
+        context,
+        result.pathsChanged
+            ? message.contains('恢复')
+                  ? '已恢复默认设置，路径将在下次启动时生效'
+                  : '设置已保存，路径将在下次启动时生效'
+            : message.contains('恢复')
+            ? '已恢复默认设置'
+            : '设置已保存',
+      );
     } catch (failure) {
-      if (mounted) setState(() => _error = '保存设置失败：$failure');
+      if (mounted) {
+        final error = message.contains('恢复')
+            ? '恢复默认设置失败：$failure'
+            : '保存设置失败：$failure';
+        setState(() => _error = error);
+        OperationToast.error(context, '设置操作未完成，请查看弹窗中的错误。');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

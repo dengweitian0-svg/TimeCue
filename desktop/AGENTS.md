@@ -7,6 +7,7 @@
 
 - `lib/main.dart`：选择 HTTP 或演示仓储，真实模式装配单个通知执行者及桌面生命周期；原生主实例资格先于仓储与执行者创建，通知 callback 经宿主唤回后进入只读定位。
 - [lib/app](lib/app/AGENTS.md)：应用、主题与主屏装配。
+- `lib/app/operation_toast.dart`：应用级操作结果 Toast 宿主及成功、失败、警告入口。
 - [lib/contracts](lib/contracts/AGENTS.md)：日程 DTO、草稿和仓储操作契约。
 - [lib/data](lib/data/AGENTS.md)：HTTP 快照、分页、确认与内存示例数据。
 - `lib/data/config_file_store.dart`：用户配置文件的 Flutter 写入入口，保留注释及其他字段，只管理运行配置覆盖值。

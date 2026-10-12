@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../app/operation_toast.dart';
 import '../../contracts/notebook_repository.dart';
 import '../../contracts/schedule_rules.dart';
 import '../schedule_editor/schedule_editor.dart';
@@ -48,7 +49,7 @@ class _ScheduleManagementDialogState extends State<ScheduleManagementDialog> {
     load(0);
   }
 
-  Future<void> load(int target) async {
+  Future<bool> load(int target, {bool reportError = true}) async {
     setState(() {
       loading = true;
       error = null;
@@ -61,8 +62,15 @@ class _ScheduleManagementDialogState extends State<ScheduleManagementDialog> {
           offset = target;
         });
       }
+      return true;
     } catch (e) {
-      if (mounted) setState(() => error = '$e');
+      if (mounted) {
+        setState(() => error = '$e');
+        if (reportError) {
+          OperationToast.error(context, '管理列表未能读取，请查看窗口中的错误并重试。');
+        }
+      }
+      return false;
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -87,9 +95,17 @@ class _ScheduleManagementDialogState extends State<ScheduleManagementDialog> {
           original: original,
         ),
       );
-      if (mounted && changed == true) await load(offset);
+      if (mounted && changed == true) {
+        final refreshed = await load(offset, reportError: false);
+        if (mounted && !refreshed) {
+          OperationToast.warning(context, '日程操作已完成，但管理列表未能刷新。');
+        }
+      }
     } catch (e) {
-      if (mounted) setState(() => error = '$e');
+      if (mounted) {
+        setState(() => error = '$e');
+        OperationToast.error(context, '日程详情未能读取，请查看管理窗口中的错误。');
+      }
     } finally {
       if (mounted) {
         setState(() {

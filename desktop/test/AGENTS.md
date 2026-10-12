@@ -31,6 +31,8 @@
 - historical_pending_widget_test.dart：独立于网络测试的 Widget 夹具，验证三标签顺序、今日左右范围、历史日期分组、完整时间、四种真实状态及查看详情只读；Widget 绑定不用于 HTTP 服务测试。
 
 - `desktop_lifecycle_test.dart`：关闭不释放、最新显隐意图、托盘不可用/恢复、隐藏未知结果、就绪回应与新目标竞争、登录意图、D6 冻结成员弹窗、退出监听重入、共享预算及迟到操作隔离、窗口失败后成功唤回清除提示、保留独立托盘错误及重试入口准确性；平台替身不冒充系统点击证据。
+- `operation_toast_test.dart`：验证全局 Toast 位于导航和模态路由上层、独立关闭与数量上限、成功/失败/警告自动消失、卸载释放计时、小窗口高缩放长文案和空白点击穿透；仅在设置 `TIMECUE_CAPTURE_OPERATION_TOAST=true` 时生成 `build/visuals/operation-toast.png`。
+- `operation_feedback_test.dart`：通过待确认、日程和设置的真实按钮验证成功/失败反馈、确认选择与日程草稿保留、刷新失败转警告，以及确认中释放 ViewModel 后忽略迟到结果。
 - [native](native/AGENTS.md)：独立 Windows 原生协议与进程测试，覆盖同时选主、真实 IPC、Unicode/非法输入、就绪前缓冲、重复 ACK、退出拒绝、2 秒超时及 abandoned mutex 恢复。编译启用 /W4 /WX，使用自有隐藏子进程和隔离锁名。
 
 - `managed_backend_test.dart`：ready 分片/协议反证、健康错配、截止后不启动请求、显式重试、退出竞争、零预算最终回收、异常身份及迟到代次；`managed_repository_test.dart` 使用真实 HttpServer 验证握手前零业务请求、预期身份拒绝、退出关闭和失败重试；`managed_host_test.dart` 验证实际 Widget 门禁、隐藏意图下失败可见、托管桥身份隔离与在途平台结果不补交。

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
+import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
 import '../notebook/notebook_overlay.dart';
 import '../notebook/notebook_view_model.dart';
@@ -33,6 +34,17 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   late final notebook = NotebookViewModel(
     widget.repository,
     onRecovery: widget.onRecovery,
+    onOperationFeedback: (status, message) {
+      if (!mounted) return;
+      switch (status) {
+        case NotebookOperationStatus.success:
+          OperationToast.success(context, message);
+        case NotebookOperationStatus.warning:
+          OperationToast.warning(context, message);
+        case NotebookOperationStatus.error:
+          OperationToast.error(context, message);
+      }
+    },
   );
   Timer? _recoveryPoll;
   int _historyRequest = 0;

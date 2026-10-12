@@ -11,6 +11,7 @@ import '../theme/notebook_theme.dart';
 import 'windows_notification_bridge.dart';
 import 'desktop_lifecycle.dart';
 import 'managed_backend.dart';
+import 'operation_toast.dart';
 
 class TimeCueApp extends StatelessWidget {
   const TimeCueApp({
@@ -40,6 +41,8 @@ class TimeCueApp extends StatelessWidget {
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
     debugShowCheckedModeBanner: false,
     theme: NotebookTheme.data,
+    builder: (context, child) =>
+        OperationToastHost(child: child ?? const SizedBox.shrink()),
     home: DesktopShell(
       repository: repository,
       notifications: notifications,

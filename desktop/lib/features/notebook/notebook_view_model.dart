@@ -4,6 +4,11 @@ import '../../contracts/notebook_repository.dart';
 
 enum NotebookTab { today, history, calendar }
 
+enum NotebookOperationStatus { success, warning, error }
+
+typedef NotebookOperationFeedback =
+    void Function(NotebookOperationStatus status, String message);
+
 sealed class CalendarRightPage {
   const CalendarRightPage();
 }
@@ -46,13 +51,17 @@ class ScheduleErrorPage extends CalendarRightPage {
 }
 
 class NotebookViewModel extends ChangeNotifier {
-  NotebookViewModel(this.repository, {this.onRecovery})
-    : month = DateTime.utc(repository.demoNow.year, repository.demoNow.month),
-      _pendingDate = repository.demoNow {
+  NotebookViewModel(
+    this.repository, {
+    this.onRecovery,
+    this.onOperationFeedback,
+  }) : month = DateTime.utc(repository.demoNow.year, repository.demoNow.month),
+       _pendingDate = repository.demoNow {
     repository.addListener(_refresh);
   }
   final NotebookRepository repository;
   final VoidCallback? onRecovery;
+  final NotebookOperationFeedback? onOperationFeedback;
   NotebookTab _tab = NotebookTab.today;
   NotebookTab get tab => _tab;
   DateTime month;
@@ -240,7 +249,9 @@ class NotebookViewModel extends ChangeNotifier {
       return;
     }
     if (ids.length > 500) {
-      _errors[pendingScope] = '一次最多确认 500 条，请减少选择后重试。';
+      const message = '一次最多确认 500 条，请减少选择后重试。';
+      _errors[pendingScope] = message;
+      onOperationFeedback?.call(NotebookOperationStatus.error, message);
       notifyListeners();
       return;
     }
@@ -252,9 +263,25 @@ class NotebookViewModel extends ChangeNotifier {
     final selection = _selected;
     try {
       await repository.confirm(frozen);
+      if (_disposed) return;
       selection.removeAll(frozen);
+      final refreshError = repository.refreshError;
+      if (refreshError != null) {
+        onOperationFeedback?.call(
+          NotebookOperationStatus.warning,
+          '已确认 ${frozen.length} 条提醒，但列表刷新失败：$refreshError',
+        );
+      } else {
+        onOperationFeedback?.call(
+          NotebookOperationStatus.success,
+          '已确认 ${frozen.length} 条提醒',
+        );
+      }
     } catch (e) {
-      _errors[scope] = '$e';
+      if (!_disposed) {
+        _errors[scope] = '$e';
+        onOperationFeedback?.call(NotebookOperationStatus.error, '确认提醒失败：$e');
+      }
     }
     if (_disposed) return;
     busy = false;
