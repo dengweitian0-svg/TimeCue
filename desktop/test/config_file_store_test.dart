@@ -214,6 +214,89 @@ db:
     );
   });
 
+  test('旧数据库目录读取为原目录，启动修正保留注释、其他字段和已有数据', () async {
+    final target = await Directory(p.join(directory.path, '旧数据库 目录')).create();
+    final database = await File(
+      p.join(target.path, 'timecue.db'),
+    ).writeAsString('已有数据库内容');
+    final original =
+        "# 保留注释\ndb:\n  db_path: '${target.path}'\nlog:\n  log_path: ./logs\nother: keep\n";
+    await seed(original);
+    final read = await store.read();
+    expect(read.databaseDirectory, target.path);
+    expect(read.databasePath, database.path);
+    expect(await config.readAsString(), original);
+
+    final normalized = await store.normalizeLegacyDatabaseDirectory();
+    expect(normalized.pathsChanged, isTrue);
+    final contents = await config.readAsString();
+    final root = YamlEditor(contents).parseAt([]).value as Map;
+    expect(root['db']['db_path'], database.path);
+    expect(root['log']['log_path'], './logs');
+    expect(root['other'], 'keep');
+    expect(contents, contains('# 保留注释'));
+    expect(await database.readAsString(), '已有数据库内容');
+    expect(
+      (await store.normalizeLegacyDatabaseDirectory()).pathsChanged,
+      isFalse,
+    );
+    expect(await config.readAsString(), contents);
+  });
+
+  test('相对旧目录按配置目录识别，修正与并发设置保存不丢字段', () async {
+    await seed('db:\n  db_path: ./旧目录\n');
+    await Directory(p.join(config.parent.path, '旧目录')).create();
+    await Future.wait([
+      store.update(logLevel: 'debug'),
+      store.normalizeLegacyDatabaseDirectory(),
+    ]);
+    final root =
+        YamlEditor(await config.readAsString()).parseAt([]).value as Map;
+    expect(root['db']['db_path'], p.join('./旧目录', 'timecue.db'));
+    expect(root['log']['level'], 'debug');
+    expect(
+      await File(p.join(config.parent.path, '旧目录', 'timecue.db')).exists(),
+      isFalse,
+    );
+  });
+
+  test('启动修正不改写正常文件、缺省配置或 SQLite 特殊数据源', () async {
+    expect(
+      (await store.normalizeLegacyDatabaseDirectory()).pathsChanged,
+      isFalse,
+    );
+    expect(await config.exists(), isFalse);
+    await seed('log:\n  level: info\n');
+    for (final value in [
+      'custom-name.db',
+      './not-created.db',
+      ':memory:',
+      'file:shared?mode=memory&cache=shared',
+    ]) {
+      await store.update(databasePath: value);
+      final before = await config.readAsString();
+      expect(
+        (await store.normalizeLegacyDatabaseDirectory()).pathsChanged,
+        isFalse,
+      );
+      expect((await store.read()).databasePath, value);
+      expect(await config.readAsString(), before);
+    }
+  });
+
+  test('旧目录内数据库文件名被目录占用时修正失败，不覆盖原配置', () async {
+    await seed('db:\n  db_path: ./old-directory\n');
+    await Directory(
+      p.join(config.parent.path, 'old-directory', 'timecue.db'),
+    ).create(recursive: true);
+    final before = await config.readAsString();
+    await expectLater(
+      store.normalizeLegacyDatabaseDirectory(),
+      throwsFormatException,
+    );
+    expect(await config.readAsString(), before);
+  });
+
   test('配置路径为目录时返回文件错误，修复后继续保存', () async {
     await Directory(config.path).create(recursive: true);
     await expectLater(

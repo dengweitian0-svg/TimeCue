@@ -46,8 +46,43 @@ class ConfigFileStore {
 
   Future<ConfigOverrides> read() => _serialize(() async {
     final editor = _parse(await _readContents());
-    return _overrides(editor);
+    final values = _overrides(editor);
+    return ConfigOverrides(
+      logLevel: values.logLevel,
+      logPath: values.logPath,
+      databasePath: await _databaseFilePath(values.databasePath),
+    );
   });
+
+  /// 托管 Go 启动前修正旧设置保存的目录值，不创建或迁移数据库。
+  Future<ConfigSaveResult> normalizeLegacyDatabaseDirectory() =>
+      _serialize(() async {
+        final editor = _parse(await _readContents());
+        final before = _overrides(editor);
+        final databasePath = await _databaseFilePath(before.databasePath);
+        if (databasePath != before.databasePath) {
+          await _validateResourcePath(databasePath!, database: true);
+          _set(editor, 'db', 'db_path', databasePath);
+          await _save(editor.toString());
+        }
+        return _result(before, _overrides(editor));
+      });
+
+  // 只将已存在的普通目录识别为旧值，避免猜测文件名或改写 SQLite 特殊数据源。
+  Future<String?> _databaseFilePath(String? value) async {
+    if (value == null ||
+        value.trim().isEmpty ||
+        value == ':memory:' ||
+        value.startsWith('file:')) {
+      return value;
+    }
+    final path = p.isAbsolute(value)
+        ? value
+        : p.join(p.dirname(configPath), value);
+    return await FileSystemEntity.type(path) == FileSystemEntityType.directory
+        ? p.join(value, 'timecue.db')
+        : value;
+  }
 
   Future<ConfigSaveResult> update({
     String? logLevel,

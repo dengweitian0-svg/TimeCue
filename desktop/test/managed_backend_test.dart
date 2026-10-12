@@ -84,6 +84,55 @@ DeliveryRuntime runtime(
 }) => DeliveryRuntime(id ?? process.instance, pid: pid, capabilities: caps);
 
 void main() {
+  test('启动准备完成后才创建 Go，准备失败可见且重试重新准备', () async {
+    final process = FakeProcess();
+    var preparations = 0;
+    final backend = ManagedBackend(
+      platform: process,
+      health: () async => runtime(process),
+      prepareStart: () async {
+        expect(process.starts, 0);
+        preparations++;
+        if (preparations == 1) throw const FormatException('旧配置修正失败');
+      },
+    );
+    addTearDown(backend.dispose);
+    await backend.start();
+    expect(backend.state, BackendState.failed);
+    expect(backend.error, contains('旧配置修正失败'));
+    expect(process.starts, 0);
+    await backend.start();
+    expect(preparations, 2);
+    expect(backend.ready, true);
+    expect(process.starts, 1);
+  });
+
+  test('启动准备未结束时退出或预算耗尽，不创建 Go', () async {
+    for (final cancel in [false, true]) {
+      final process = FakeProcess();
+      final preparing = Completer<void>();
+      var elapsed = Duration.zero;
+      final backend = ManagedBackend(
+        platform: process,
+        health: () async => runtime(process),
+        prepareStart: () => preparing.future,
+        elapsed: () => elapsed,
+      );
+      addTearDown(backend.dispose);
+      final pending = backend.start();
+      await flush();
+      expect(process.starts, 0);
+      if (cancel) {
+        backend.cancelStart();
+      } else {
+        elapsed = const Duration(seconds: 10);
+      }
+      preparing.complete();
+      await pending;
+      expect(process.starts, 0);
+      expect(backend.ready, false);
+    }
+  });
   for (final lateDiagnostic in [false, true]) {
     test('退出诊断显示在错误中，诊断晚于退出=$lateDiagnostic', () async {
       final process = FakeProcess()..autoReady = false;

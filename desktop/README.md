@@ -20,6 +20,8 @@ flutter run -d windows -a --backend=external -a --data-dir=D:\go_project\src\Tim
 
 “恢复默认设置”确认后移除这三项运行覆盖值，保留其他字段及注释。关闭未保存修改时可取消或舍弃；读取失败可重试，保存失败保留草稿。演示模式的设置入口禁用，不修改本地配置。
 
+旧版本若将数据库目录直接保存到了 db.db_path，托管启动会在创建 Go 前自动补齐 timecue.db。设置读取仍显示该目录，不取上一级；修正保留其他字段、注释及已有数据库，正常文件路径和 SQLite 特殊数据源不变。修正失败显示启动错误，可显式重试。
+
 ## Windows 系统提醒
 
 真实模式启动一个应用级 Windows 通知执行者；external 连接手动 Go，managed 在自有 Go 的 ready/health 双重核验后开放业务，先核对 `/health` 的 v1、delivery-v1 和 recovery-v1。每秒领取最多 20 个完整任务，按 Go 的开始决定调用一次即时通知，再回填 sent/failed；单条、多条和恢复汇总均使用 Go 冻结文案。关闭本子或失去焦点不会停止领取，显式演示不接真实通知。

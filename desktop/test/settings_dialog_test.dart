@@ -305,4 +305,27 @@ db:
     );
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('旧配置把目录写入数据库路径时，设置仍显示该目录而非上一级', (tester) async {
+    final target = await tester.runAsync(
+      () => Directory(p.join(directory.path, '旧数据')).create(),
+    );
+    final original = "db:\n  db_path: '${target!.path}'\nlog:\n  level: info\n";
+    await tester.runAsync(() => File(store.configPath).writeAsString(original));
+    await open(tester);
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey('settings-database-path')),
+          )
+          .controller!
+          .text,
+      target.path,
+    );
+    expect(
+      await tester.runAsync(() => File(store.configPath).readAsString()),
+      original,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
 }

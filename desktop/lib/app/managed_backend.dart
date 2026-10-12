@@ -122,6 +122,7 @@ class ManagedBackend extends ChangeNotifier {
   ManagedBackend({
     required this.platform,
     required this.health,
+    this.prepareStart,
     this.startupBudget = const Duration(seconds: 10),
     String Function()? identity,
     Duration Function()? elapsed,
@@ -131,6 +132,7 @@ class ManagedBackend extends ChangeNotifier {
   }
   final OwnedProcessPlatform platform;
   final Future<DeliveryRuntime> Function() health;
+  final Future<void> Function()? prepareStart;
   final Duration startupBudget;
   final String Function() _identity;
   final Duration Function()? _elapsed;
@@ -212,6 +214,7 @@ class ManagedBackend extends ChangeNotifier {
     _watch.start();
     _publish();
     try {
+      if (prepareStart != null) await _bounded(prepareStart!);
       final values = await _bounded(
         () => Future.wait<Object>([
           platform.start(generation, instanceId!),
