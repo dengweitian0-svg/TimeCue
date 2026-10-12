@@ -1,0 +1,37 @@
+name: Windows Release Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+          cache: true
+      - name: 检查并构建完整发行包
+        shell: pwsh
+        run: ./scripts/build-release.ps1
+      - name: 验证原生生命周期
+        shell: pwsh
+        run: |
+          cmake -S desktop/test/native -B desktop/build/release-native -A x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build desktop/build/release-native --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir desktop/build/release-native -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: timecue-windows-x64
+          path: build/releases/*.zip*

@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  go-checks:
+    name: Go Windows Checks
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 检测 Go 模块
+        id: go-module
+        run: |
+          if (Test-Path -LiteralPath go.mod) {
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'exists=true'
+          } else {
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'exists=false'
+            Write-Output '当前仓库尚未包含 go.mod，暂时跳过 Go 检查。'
+          }
+
+      - name: 设置 Go 环境
+        if: steps.go-module.outputs.exists == 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 检查代码格式
+        if: steps.go-module.outputs.exists == 'true'
+        run: |
+          $unformatted = @()
+          $taskUtf8 = [System.Text.UTF8Encoding]::new($false)
+          $goFiles = @(git ls-files -- '*.go')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($goFile in $goFiles) {
+            $source = [System.IO.File]::ReadAllText($goFile).Replace("`r`n", "`n")
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = (Get-Command gofmt).Source
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.StandardInputEncoding = $taskUtf8
+            $startInfo.StandardOutputEncoding = $taskUtf8
+            $formatter = [System.Diagnostics.Process]::Start($startInfo)
+            $formatter.StandardInput.Write($source)
+            $formatter.StandardInput.Close()
+            $formatted = $formatter.StandardOutput.ReadToEnd()
+            $formatter.WaitForExit()
+            if ($formatter.ExitCode -ne 0) { throw "gofmt 检查失败：$goFile" }
+            if ($formatted -cne $source) { $unformatted += $goFile }
+            $formatter.Dispose()
+          }
+          if ($unformatted.Count -gt 0) {
+            Write-Output '以下文件未通过 gofmt 检查：'
+            $unformatted
+            exit 1
+          }
+          Write-Output ("Go 格式通过：{0} 个受版本控制文件，按 LF 比较 gofmt 输出。" -f $goFiles.Count)
+
+      - name: 静态检查
+        if: steps.go-module.outputs.exists == 'true'
+        run: go vet ./...
+
+      - name: 运行测试
+        if: steps.go-module.outputs.exists == 'true'
+        run: go test -p 1 ./...
+
+  flutter-checks:
+    name: Flutter Windows Checks
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 设置 Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.0'
+          cache: true
+      - name: 设置 Go 打包环境
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 安装 Flutter 依赖
+        run: flutter pub get
+      - name: 检查 Dart 格式
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: 静态检查
+        run: flutter analyze
+      - name: 运行 Flutter 测试
+        run: flutter test
+      - name: 构建 Windows 桌面端
+        run: flutter build windows --release
+      - name: 构建 Windows 单实例与进程原生测试
+        run: cmake -S test/native -B build/desktop-native -A x64
+      - name: 编译 Windows 单实例与进程原生测试
+        run: cmake --build build/desktop-native --config Release
+      - name: 验证 Windows 单实例、参数转交与 Job 清理
+        run: ctest --test-dir build/desktop-native -C Release --output-on-failure
+      - name: 打包完整 Windows 发行目录
+        shell: pwsh
+        run: ../scripts/build-release.ps1 -SkipChecks -SkipFlutterBuild
+      - name: 保存发行包及校验值
+        uses: actions/upload-artifact@v4
+        with:
+          name: timecue-windows-x64
+          path: build/releases/*.zip*

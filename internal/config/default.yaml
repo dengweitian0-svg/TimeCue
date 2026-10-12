@@ -1,0 +1,10 @@
+app:
+  name: timecue
+  version: 0.0.1
+
+log:
+  level: info
+  log_path: ./log
+
+db:
+  db_path: ./db/timecue.db
