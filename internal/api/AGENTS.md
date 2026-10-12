@@ -8,7 +8,7 @@
 - [handler](handler/AGENTS.md)：请求解析与校验、服务调用、响应 DTO 和业务错误映射。
 - `router_test.go`：验证路由、输入校验、响应协议和 HTTP 日志。
 - `health_runtime_test.go`：健康成功及两类失败的运行身份、PID、版本、能力和 HostGuard 回归。
-- `delivery_test.go`：投递三接口严格输入、空队列、当前运行身份、真实数据库正向流程和日志隐私测试。
+- `delivery_test.go`：投递接口严格输入、空队列、当前运行身份、退出 attempt 精确匹配、迟到退出及结果回流和日志隐私测试。
 - `recovery_test.go`：真实 SQLite 的恢复摘要、任务及 attempt 成员查询、参数组合、旧身份和投递/确认独立性 HTTP 回归。
 - `schedule_logging_test.go`：使用真实 SQLite 验证创建、更新、启停、删除、幂等重放及提交后响应失败的日志；`http_log_helpers_test.go` 复用 API 路由装配，提供日志捕获、断言和响应短写模拟。
 
@@ -22,7 +22,8 @@
 - 中间件顺序为 `HTTPLogger` → `HostGuard` → `Recovery`。路由测试覆盖事件消息、日志级别、业务字段及失败时的字段遗漏。
 - 日程变更日志的完整链路测试归 API；日志素材保留、序列化失败、panic 和请求隔离等通用测试归 middleware。使用全局日志器的测试不并行执行。
 - POST notifications/claim 领取完整任务，delivery-attempts/:id/start 冻结执行决定，delivery-attempts/:id/results 回填 sent/failed；只支持单执行者。不存在或旧进程身份返回 404，未开始回填及矛盾结果返回 409，停止接纳返回 503。
-- 三条投递路由由 handler 直接附加 HTTPResult.LogFields，包含运行身份、数量和次数，不包含文案及成员列表；响应失败仍保留已提交操作事实。
+- POST notifications/executor-exit 要求 instanceId 与 attemptIds；当前运行身份匹配后只整理列表中仍活动的尝试，未知 ID 忽略，空列表无操作。未知平台结果不伪造失败且不重置已用次数；迟到的真实结果仍可回填。JSON 体沿用 1 MiB 上限。
+- 投递路由由 handler 直接附加 HTTPResult.LogFields，包含运行身份、数量和次数，不包含文案及成员列表；响应失败仍保留已提交操作事实。
 - 领取和开始支持 minute/recovery；recovery 全部整理完成才开放，开始文案仅含实际数量。GET notifications 通过 deliveryTaskId 及可选 attemptId 查询当前任务历史或冻结成员；与 state 模式互斥，未开始尝试及成员版本变化返回 409，旧身份返回 404。
 - 组合快照增加 recovery（无轮次为 null），recovery 任务分页附加对应轮次进度；未知 missedTotal 为 null，unacknowledgedCount 返回本轮已整理历史中尚未确认的数量，与完整遗漏及可投递统计独立；确认后可归零而历史仍保留。原 total 与 openScheduleCount 的统计范围不变。查询日志只追加恢复身份、阶段和已整理数，不记录文案、游标或成员集合。
 

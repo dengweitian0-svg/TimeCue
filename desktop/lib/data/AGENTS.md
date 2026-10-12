@@ -5,7 +5,7 @@
 配置约束：应用内仅 Flutter 写用户配置，Go 只读取和监听。公开视图只返回日志级别、日志路径与数据库路径的用户覆盖值，未配置字段返回 null，默认值由 Go 原有 default.yaml 决定。恢复只移除三个运行字段，保留 app、desktop 和未知字段。保存结果 pathsChanged 只描述路径字段变化，数据库和日志路径在下次启动应用，不将保存配置当成资源迁移。启动层负责传入共同的绝对数据目录；此组件不新增 HTTP 接口或配置编辑页面。
 
 - `http_notebook_repository.dart`：读取 Go 的今日、日期、月历和待确认快照，处理分页、提醒详情、确认、真实规则详情/列表/创建/更新/删除、时间转换与错误状态。
-- 同一 HttpNotebookRepository 实现 NotificationDeliveryGateway，复用原请求封装调用三条投递 POST 及根 /health；投递操作不改变本子 loading 和快照，不自报成员，回填校验 attempt/outcome 一致。健康 503 读取 data.error，业务错误继续读取顶层 error；请求失败不改写投递结果。
+- 同一 HttpNotebookRepository 实现 NotificationDeliveryGateway，复用原请求封装调用领取、开始、结果和执行者退出 POST 及根 /health；退出 POST 使用宿主传入的剩余 deadline。投递操作不改变本子 loading 和快照，不自报成员，回填校验 attempt/outcome 一致。健康 503 读取 data.error，业务错误继续读取顶层 error；请求失败不改写投递结果。
 - 同一仓储实现 NotificationQueryGateway，读取持久提醒详情、task 历史及 attempt 冻结成员；只返回分页 DTO，不覆盖今日/历史缓存或 loading。任务请求不附 state/scope，详情核对返回 notificationId，复用原客户端和错误类型。组合刷新相容发布 recovery 摘要，失败保留原快照及错误标记。确认成功后先作废旧恢复未确认数，正式刷新再发布真实剩余数；不能按本次确认总数估减本轮计数，后续读取失败不继续展示已过期的提示数量。
 - `demo_notebook_repository.dart`：提供内存示例日程与提醒、预设规则投影、创建/编辑/删除和确认交互。
 

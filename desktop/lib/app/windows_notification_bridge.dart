@@ -327,18 +327,29 @@ class WindowsNotificationBridge extends ChangeNotifier {
     _timer?.cancel();
   }
 
-  /// 使用宿主剩余预算，超时不改变已知结果或伪造平台失败。
-  Future<void> stopAndDrain(Duration budget) async {
+  /// 使用宿主共享预算；外连退出预留一段时间报告本执行者的活动身份。
+  Future<void> stopAndDrain(
+    Duration budget, {
+    bool reportExecutorExit = false,
+  }) async {
     stopClaiming();
     final elapsed = Stopwatch()..start();
+    const exitReserve = Duration(milliseconds: 500);
+    final drainBudget = reportExecutorExit
+        ? (budget > exitReserve ? budget - exitReserve : Duration.zero)
+        : budget;
     try {
       final active = _cycle;
-      if (active != null) await active.timeout(budget);
-      while (!_disposed && pendingResults > 0 && elapsed.elapsed < budget) {
-        final remaining = budget - elapsed.elapsed;
+      if (active != null && drainBudget > Duration.zero) {
+        await active.timeout(drainBudget);
+      }
+      while (!_disposed &&
+          pendingResults > 0 &&
+          elapsed.elapsed < drainBudget) {
+        final remaining = drainBudget - elapsed.elapsed;
         await runOnce().timeout(remaining);
         if (pendingResults > 0) {
-          final wait = budget - elapsed.elapsed;
+          final wait = drainBudget - elapsed.elapsed;
           if (wait <= Duration.zero) break;
           await Future<void>.delayed(
             wait < const Duration(seconds: 1)
@@ -349,6 +360,26 @@ class WindowsNotificationBridge extends ChangeNotifier {
       }
     } on TimeoutException {
       // 退出可以放弃本次内存回填，不能再次展示或另建持久回执。
+    }
+    if (!reportExecutorExit || _disposed || _instanceId == null) return;
+    final attemptIds = _executions.values
+        .where(
+          (execution) =>
+              execution.stage != _Stage.done &&
+              execution.stage != _Stage.retired,
+        )
+        .map((execution) => execution.claim.attemptId)
+        .toList(growable: false);
+    final remaining = budget - elapsed.elapsed;
+    if (attemptIds.isEmpty || remaining <= Duration.zero) return;
+    try {
+      await gateway
+          .reportExecutorExited(_instanceId!, attemptIds, timeout: remaining)
+          .timeout(remaining);
+    } on TimeoutException {
+      // 继续沿用退出预算，不另开 HTTP 超时窗口。
+    } catch (_) {
+      // 外连 Go 仍由用户管理；退出通知失败不伪造平台结果。
     }
   }
 

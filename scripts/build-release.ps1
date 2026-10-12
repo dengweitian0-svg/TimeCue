@@ -46,6 +46,14 @@ try {
 
     $taskFlutterOutput = Join-Path $taskRoot 'desktop/build/windows/x64/runner/Release'
     $taskFlutterConfig = [IO.File]::ReadAllText((Join-Path $taskRoot 'desktop/windows/flutter/ephemeral/generated_config.cmake'))
+    $taskFlutterSdkMatch = [regex]::Match($taskFlutterConfig, 'file\(TO_CMAKE_PATH\s+"([^"]+)"\s+FLUTTER_ROOT\)')
+    if (!$taskFlutterSdkMatch.Success) { throw '缺少 Flutter SDK 路径。' }
+    $taskFlutterSdkRoot = $taskFlutterSdkMatch.Groups[1].Value.Replace('\\', '\')
+    $taskFlutterSdkVersionFile = Join-Path $taskFlutterSdkRoot 'bin/cache/flutter.version.json'
+    if (!(Test-Path -LiteralPath $taskFlutterSdkVersionFile)) { throw "找不到构建配置所用 Flutter SDK 的版本信息：$taskFlutterSdkVersionFile" }
+    try { $taskFlutterSdkInfo = [IO.File]::ReadAllText($taskFlutterSdkVersionFile) | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw 'Flutter SDK 未提供有效的机器可读版本信息。' }
+    if (!$taskFlutterSdkInfo.frameworkVersion -or !$taskFlutterSdkInfo.channel) { throw 'Flutter SDK 版本信息缺少 frameworkVersion 或 channel。' }
     $taskConfiguredTarget = [regex]::Match($taskFlutterConfig, '"FLUTTER_TARGET=([^\"]*)"').Groups[1].Value.Replace('\\', '\')
     if (!$taskConfiguredTarget) { throw '缺少 Flutter 构建入口。' }
     if (![IO.Path]::IsPathRooted($taskConfiguredTarget)) {
@@ -69,7 +77,7 @@ try {
         sourceDirty = [bool](& git status --porcelain | Out-String).Trim()
         createdAtUtc = [DateTime]::UtcNow.ToString('o')
         goVersion = (& go version | Out-String).Trim()
-        flutterSdk = $taskDefines.Split(',') | ForEach-Object { if ($_){ [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) } } | Where-Object { $_ -match '^FLUTTER_(VERSION|CHANNEL)=' }
+        flutterSdk = [ordered]@{ version = $taskFlutterSdkInfo.frameworkVersion; channel = $taskFlutterSdkInfo.channel }
         files = @(Get-ChildItem -LiteralPath $taskStaging -Recurse -File | ForEach-Object {
             [ordered]@{ path = $_.FullName.Substring($taskStaging.Length + 1).Replace('\', '/'); sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
         })

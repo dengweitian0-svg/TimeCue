@@ -28,8 +28,8 @@ func (s *NotificationStore) CreateNotification(ctx context.Context, scheduleID i
 	if scheduleID <= 0 {
 		return nil, fmt.Errorf("[store] schedule ID must be positive, schedule_id=%d", scheduleID)
 	}
-	if notifyAt.IsZero() {
-		return nil, fmt.Errorf("[store] notification time must not be zero, notify_at=%q", notifyAt.Format(time.RFC3339Nano))
+	if err := model.ValidateUnixNanoTime(notifyAt); err != nil {
+		return nil, fmt.Errorf("[store] invalid notification time, notify_at=%q: %w", notifyAt.Format(time.RFC3339Nano), err)
 	}
 	db, err := s.db.handle()
 	if err != nil {

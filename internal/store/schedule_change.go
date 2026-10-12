@@ -60,12 +60,17 @@ func (s *ScheduleStore) ApplyScheduleChange(ctx context.Context, change model.Sc
 			return nil, model.ErrScheduleConflict
 		}
 	}
+	if err = schedule.Validate(); err != nil {
+		return nil, err
+	}
 	next, err := prepare(current, now)
 	if err != nil {
 		return nil, err
 	}
-	if err = schedule.Validate(); err != nil {
-		return nil, err
+	if next != nil {
+		if err = model.ValidateUnixNanoTime(*next); err != nil {
+			return nil, err
+		}
 	}
 	if current == nil {
 		schedule.Revision = 1

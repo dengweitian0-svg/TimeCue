@@ -166,6 +166,13 @@ void main() {
           'body': '有 51 项遗漏',
         };
       }
+      if (request.uri.path.endsWith('/executor-exit')) {
+        expect(body, {
+          'instanceId': 'go-1',
+          'attemptIds': ['attempt'],
+        });
+        return {'accepted': true};
+      }
       expect(body, {'outcome': 'sent'});
       return {'attemptId': 'attempt', 'outcome': 'sent', 'memberCount': 51};
     }, basePath: '/api/v1/scheduler/');
@@ -173,11 +180,15 @@ void main() {
     expect((await repo.claimNotifications()).single.taskType, 'recovery');
     expect((await repo.startNotification('attempt')).memberCount, 51);
     await repo.reportNotification('attempt', DeliveryOutcome.sent);
+    await repo.reportExecutorExited('go-1', [
+      'attempt',
+    ], timeout: const Duration(milliseconds: 250));
     expect(requests, [
       '/health',
       '/api/v1/notifications/claim',
       '/api/v1/notifications/delivery-attempts/attempt/start',
       '/api/v1/notifications/delivery-attempts/attempt/results',
+      '/api/v1/notifications/executor-exit',
     ]);
     expect(repo.loading, isFalse);
     expect(repo.hasSnapshot, isFalse);
@@ -196,6 +207,24 @@ void main() {
       repo.reportNotification('attempt', DeliveryOutcome.sent),
       throwsFormatException,
     );
+  });
+
+  test('执行者退出 HTTP 请求服从宿主传入的剩余 deadline', () async {
+    final received = Completer<void>();
+    final repo = await serverRepository((request) async {
+      received.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      return {'accepted': true};
+    });
+    final watch = Stopwatch()..start();
+    await expectLater(
+      repo.reportExecutorExited('go-1', [
+        'attempt',
+      ], timeout: const Duration(milliseconds: 40)),
+      throwsA(isA<StateError>()),
+    );
+    await received.future;
+    expect(watch.elapsed, lessThan(const Duration(milliseconds: 200)));
   });
   test('管理列表查询关闭规则，重新开启提交原 revision 并保留混合周期规则', () async {
     const cron = ['0 9 * * *', '30 18 * * 3'];

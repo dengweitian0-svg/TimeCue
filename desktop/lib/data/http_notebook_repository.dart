@@ -142,17 +142,26 @@ class HttpNotebookRepository extends NotebookRepository
     Object? body,
     String? method,
     String? operationKey,
+    Duration? timeout,
   }) async {
     if (_disposed || (path != '/health' && !_runtimeAccess)) {
       throw StateError('自有本地服务尚未就绪或已经结束。');
     }
     try {
+      final watch = Stopwatch()..start();
+      Duration remaining() {
+        if (timeout == null) return const Duration(seconds: 5);
+        final value = timeout - watch.elapsed;
+        if (value <= Duration.zero) throw TimeoutException('本地服务请求超时。');
+        return value;
+      }
+
       // 提醒资源与 scheduler 同级，不能沿用日程接口的路径前缀。
       final resourcePath = path.startsWith('notifications') ? '../$path' : path;
       final uri = _base.resolve(resourcePath).replace(queryParameters: query);
       final request = await _client
           .openUrl(method ?? (body == null ? 'GET' : 'POST'), uri)
-          .timeout(const Duration(seconds: 5));
+          .timeout(remaining());
       request.followRedirects = false;
       if (operationKey != null) {
         request.headers.set('Idempotency-Key', operationKey);
@@ -161,13 +170,11 @@ class HttpNotebookRepository extends NotebookRepository
         request.headers.contentType = ContentType.json;
         request.write(jsonEncode(body));
       }
-      final response = await request.close().timeout(
-        const Duration(seconds: 5),
-      );
+      final response = await request.close().timeout(remaining());
       final text = await response
           .transform(utf8.decoder)
           .join()
-          .timeout(const Duration(seconds: 5));
+          .timeout(remaining());
       if (_disposed || (path != '/health' && !_runtimeAccess)) {
         throw StateError('本次运行已经结束，忽略迟到响应。');
       }
@@ -286,6 +293,22 @@ class HttpNotebookRepository extends NotebookRepository
         data['attemptId'] != attemptId ||
         data['outcome'] != outcome.name) {
       throw const FormatException('通知回填响应与提交身份不一致。');
+    }
+  }
+
+  @override
+  Future<void> reportExecutorExited(
+    String instanceId,
+    List<String> attemptIds, {
+    required Duration timeout,
+  }) async {
+    final data = await _request(
+      'notifications/executor-exit',
+      body: {'instanceId': instanceId, 'attemptIds': attemptIds},
+      timeout: timeout,
+    );
+    if (data is! Map<String, dynamic> || data['accepted'] != true) {
+      throw const FormatException('执行者退出响应无效。');
     }
   }
 

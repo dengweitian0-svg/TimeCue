@@ -38,6 +38,11 @@ func NewRouter(app *service.App, healthCheck handler.HealthCheck, info ...servic
 	notify.GET("/notifications/:id", middleware.WrapHTTPHandler(handler.NotificationHandler(app), getNotificationFields))
 	notify.POST("/notifications/acknowledgements", middleware.WrapHTTPHandler(handler.AcknowledgementsHandler(app), acknowledgeNotificationFields))
 	notify.POST("/notifications/claim", middleware.WrapHTTPHandler(handler.ClaimDeliveryHandler(app), nil))
+	runtimeInfo := service.RuntimeInfo{}
+	if len(info) > 0 {
+		runtimeInfo = info[0]
+	}
+	notify.POST("/notifications/executor-exit", middleware.WrapHTTPHandler(handler.DeliveryExecutorExitHandler(app, runtimeInfo), nil))
 	notify.POST("/notifications/delivery-attempts/:id/start", middleware.WrapHTTPHandler(handler.StartDeliveryHandler(app), nil))
 	notify.POST("/notifications/delivery-attempts/:id/results", middleware.WrapHTTPHandler(handler.DeliveryResultsHandler(app), nil))
 	return router

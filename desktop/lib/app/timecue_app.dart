@@ -178,7 +178,12 @@ class _DesktopShellState extends State<DesktopShell> {
       };
       desktop.stopOwnedProcess = widget.backend?.stopOwned;
       desktop.finalizeOwnedProcess = widget.backend?.releaseOwned;
-      desktop.drain = widget.notifications?.stopAndDrain;
+      desktop.drain = widget.notifications == null
+          ? null
+          : (budget) => widget.notifications!.stopAndDrain(
+              budget,
+              reportExecutorExit: widget.backend == null,
+            );
       desktop.releaseResources = _releaseRuntime;
       unawaited(desktop.initialize());
     }
@@ -192,7 +197,10 @@ class _DesktopShellState extends State<DesktopShell> {
         }
         widget.backend?.cancelStart();
         widget.notificationViews?.close();
-        await widget.notifications?.stopAndDrain(const Duration(seconds: 5));
+        await widget.notifications?.stopAndDrain(
+          const Duration(seconds: 5),
+          reportExecutorExit: widget.backend == null,
+        );
         await widget.backend?.releaseOwned();
         return AppExitResponse.exit;
       },

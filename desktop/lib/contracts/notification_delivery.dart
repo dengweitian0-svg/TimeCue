@@ -4,6 +4,11 @@ abstract interface class NotificationDeliveryGateway {
   Future<List<DeliveryClaim>> claimNotifications();
   Future<DeliveryStart> startNotification(String attemptId);
   Future<void> reportNotification(String attemptId, DeliveryOutcome outcome);
+  Future<void> reportExecutorExited(
+    String instanceId,
+    List<String> attemptIds, {
+    required Duration timeout,
+  });
 }
 
 enum DeliveryOutcome { sent, failed }

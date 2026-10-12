@@ -7,8 +7,8 @@
 - `widget_test.dart`：房间入口、本子页面、编辑弹层、焦点、动效与布局测试。
 - `notebook_model_test.dart`：示例数据、提醒确认、分页选择和页面状态测试。
 - `http_notebook_repository_test.dart`：HTTP 路径、快照、分页、确认、错误和刷新测试。
-- HTTP 投递测试复用原 HttpServer 夹具，覆盖 health 根路径、三条同级通知 POST、JSON、完整 recovery 响应、不改变界面加载状态及矛盾回填/未知任务拒绝。
-- `windows_notification_bridge_test.dart`：用可控 tick、Completer 和平台替身验证重复领取去重、start/结果丢响应、同批失败隔离、无需展示、明确失败及未知结果、健康失败/停止接纳/404/409、无断线换进程、停止与释放竞争、空领取无心跳，以及宿主可见错误和连接重试。平台替身测试不作为系统横幅真机证据。
+- HTTP 投递测试复用原 HttpServer 夹具，覆盖 health 根路径、同级通知 POST、JSON、完整 recovery 响应、不改变界面加载状态、执行者退出身份/attempt 列表与 deadline 及矛盾回填/未知任务拒绝。
+- `windows_notification_bridge_test.dart`：用可控 tick、Completer 和平台替身验证重复领取去重、start/结果丢响应、同批失败隔离、无需展示、明确失败及未知结果、健康失败/停止接纳/404/409、无断线换进程、停止与释放竞争、共享预算耗尽时的外连执行者退出回报和迟到真实结果回流、空领取无心跳，以及宿主可见错误和连接重试。平台替身测试不作为系统横幅真机证据。
 - `notebook_time_picker_test.dart`：时间输入、转盘联动与交互测试。
 - `notebook_loaded_status_test.dart`：已加载提醒详情显示待投递，不显示已提醒。
 - `notification_query_test.dart`：复用原 HTTP 夹具验证 task/attempt 身份与游标、详情错配、真实双状态、恢复摘要与未知总数、未确认数兼容/校验、确认成功后刷新失败时作废旧计数并读取新剩余数、错误保留及查询不发布本子状态。

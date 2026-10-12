@@ -110,7 +110,70 @@ func checkSchema(ctx context.Context, db schemaReader, allowLegacyStatus bool) e
 			return fmt.Errorf("%w: missing %s primary key", ErrSchemaInvalid, table)
 		}
 	}
+	if err := checkNotificationUniqueKey(ctx, db); err != nil {
+		return err
+	}
 	return nil
+}
+
+// checkNotificationUniqueKey 确认提醒去重所依赖的完整唯一索引仍然存在。
+func checkNotificationUniqueKey(ctx context.Context, db schemaReader) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA index_list(notifications)`)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+	}
+	type index struct {
+		name    string
+		unique  bool
+		partial bool
+	}
+	var indexes []index
+	for rows.Next() {
+		var sequence, unique, partial int
+		var name, origin string
+		if err := rows.Scan(&sequence, &name, &unique, &origin, &partial); err != nil {
+			rows.Close()
+			return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+		}
+		indexes = append(indexes, index{name: name, unique: unique == 1, partial: partial == 1})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+	}
+	rows.Close()
+	for _, candidate := range indexes {
+		if !candidate.unique || candidate.partial {
+			continue
+		}
+		columns, err := db.QueryContext(ctx, `SELECT seqno, cid, name FROM pragma_index_info(?)`, candidate.name)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+		}
+		var names []string
+		for columns.Next() {
+			var sequence, columnID int
+			var name sql.NullString
+			if err := columns.Scan(&sequence, &columnID, &name); err != nil {
+				columns.Close()
+				return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+			}
+			if !name.Valid {
+				names = append(names, "")
+			} else {
+				names = append(names, name.String)
+			}
+		}
+		err = columns.Err()
+		columns.Close()
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
+		}
+		if len(names) == 2 && names[0] == "schedule_id" && names[1] == "notify_time" {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: missing UNIQUE(notifications.schedule_id, notifications.notify_time)", ErrSchemaInvalid)
 }
 
 // DB 定义数据库连接的生命周期操作。

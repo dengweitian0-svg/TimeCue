@@ -229,3 +229,45 @@ func TestLegacySecondsCannotBeSavedAgain(t *testing.T) {
 		t.Fatalf("分钟级未来规则无法保存: %#v %v", changed, err)
 	}
 }
+
+func TestSingleScheduleUnixNanoBoundaryAndOverflow(t *testing.T) {
+	db, schedules, notifications := newMigratedStore(t)
+	ctx := context.Background()
+	schedules.now = func() time.Time { return time.Date(2200, 1, 1, 0, 0, 0, 0, model.BeijingLocation()) }
+	app := &service.App{Schedule: schedules, Notify: notifications}
+	maxUnixNano := time.Unix(0, 1<<63-1)
+	lastSupportedMinute := maxUnixNano.Truncate(time.Minute)
+	if err := model.ValidateUnixNanoTime(lastSupportedMinute); err != nil {
+		t.Fatalf("最后一个可存储分钟应有效: %v", err)
+	}
+	created, err := app.WriteSchedule(ctx, model.Schedule{
+		Name: "边界时间", Type: model.SingleSchedule, Single: &model.Single{NotifyTime: lastSupportedMinute},
+	}, 0, "boundary")
+	if err != nil {
+		t.Fatalf("保存边界分钟: %v", err)
+	}
+	var stored int64
+	if err = db.db.QueryRowContext(ctx, `SELECT single_notify_time FROM schedules WHERE id = ?`, created.Schedule.ID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != lastSupportedMinute.UnixNano() {
+		t.Fatalf("边界分钟持久化值错误: got %d want %d", stored, lastSupportedMinute.UnixNano())
+	}
+
+	overflow := time.Date(9999, 1, 1, 0, 0, 0, 0, model.BeijingLocation())
+	if _, err = app.WriteSchedule(ctx, model.Schedule{
+		Name: "溢出时间", Type: model.SingleSchedule, Single: &model.Single{NotifyTime: overflow},
+	}, 0, "overflow"); !errors.Is(err, service.ErrInvalidSchedule) {
+		t.Fatalf("超出 Unix 纳秒范围的单次应被拒绝: %v", err)
+	}
+	var scheduleCount, receiptCount int
+	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM schedules WHERE name = '溢出时间'`).Scan(&scheduleCount); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.db.QueryRowContext(ctx, `SELECT count(*) FROM schedule_write_receipts WHERE operation_key = 'overflow'`).Scan(&receiptCount); err != nil {
+		t.Fatal(err)
+	}
+	if scheduleCount != 0 || receiptCount != 0 {
+		t.Fatalf("溢出单次不应落库: schedules=%d receipts=%d", scheduleCount, receiptCount)
+	}
+}

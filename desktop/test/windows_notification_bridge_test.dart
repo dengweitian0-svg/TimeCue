@@ -32,8 +32,10 @@ class Gateway implements NotificationDeliveryGateway {
   List<DeliveryClaim> queue = [];
   final starts = <String>[];
   final results = <(String, DeliveryOutcome)>[];
+  final exits = <(String, List<String>, Duration)>[];
   Future<DeliveryStart> Function(String)? onStart;
   Future<void> Function(String, DeliveryOutcome)? onResult;
+  Future<void> Function(String, List<String>, Duration)? onExecutorExit;
   Future<DeliveryRuntime> Function()? onHealth;
   @override
   Future<DeliveryRuntime> deliveryRuntime() async {
@@ -59,6 +61,16 @@ class Gateway implements NotificationDeliveryGateway {
   Future<void> reportNotification(String id, DeliveryOutcome outcome) async {
     results.add((id, outcome));
     await onResult?.call(id, outcome);
+  }
+
+  @override
+  Future<void> reportExecutorExited(
+    String instanceId,
+    List<String> attemptIds, {
+    required Duration timeout,
+  }) async {
+    exits.add((instanceId, List.of(attemptIds), timeout));
+    await onExecutorExit?.call(instanceId, attemptIds, timeout);
   }
 }
 
@@ -246,7 +258,12 @@ void main() {
     final first = bridge.runOnce();
     await arrived.future;
     final second = bridge.runOnce();
-    bridge.stopClaiming();
+    final draining = bridge.stopAndDrain(
+      const Duration(milliseconds: 600),
+      reportExecutorExit: true,
+    );
+    await draining;
+    expect(gateway.exits.single.$2, ['one']);
     release.complete(decision(gateway.queue.single));
     await Future.wait([first, second]);
     expect(gateway.starts, ['one']);
@@ -268,6 +285,59 @@ void main() {
     await bridge.runOnce();
     expect(gateway.claims, 1);
     expect(gateway.results, [('one', DeliveryOutcome.sent)]);
+    expect(gateway.exits, isEmpty);
+  });
+
+  test('外连 drain 超时后在同一预算内报告活动 attempt，迟到 sent 仍回填', () async {
+    gateway.queue = [claim('one')];
+    final shown = Completer<void>(), release = Completer<DeliveryOutcome?>();
+    platform.onShow = () {
+      shown.complete();
+      return release.future;
+    };
+    final cycle = bridge.runOnce();
+    await shown.future;
+
+    await bridge.stopAndDrain(
+      const Duration(milliseconds: 600),
+      reportExecutorExit: true,
+    );
+    expect(gateway.exits, hasLength(1));
+    expect(gateway.exits.single.$1, 'go-1');
+    expect(gateway.exits.single.$2, ['one']);
+    expect(
+      gateway.exits.single.$3,
+      lessThanOrEqualTo(const Duration(milliseconds: 500)),
+    );
+    expect(gateway.exits.single.$3, greaterThan(Duration.zero));
+    expect(gateway.results, isEmpty);
+
+    release.complete(DeliveryOutcome.sent);
+    await cycle;
+    expect(gateway.results, [('one', DeliveryOutcome.sent)]);
+  });
+
+  test('结果已知但 HTTP 回填挂起时退出通知后仍重传原 sent', () async {
+    gateway.queue = [claim('one')];
+    final reporting = Completer<void>(), release = Completer<void>();
+    gateway.onResult = (_, _) {
+      reporting.complete();
+      return release.future;
+    };
+    final cycle = bridge.runOnce();
+    await reporting.future;
+
+    await bridge.stopAndDrain(
+      const Duration(milliseconds: 600),
+      reportExecutorExit: true,
+    );
+    expect(gateway.exits.single.$2, ['one']);
+    expect(gateway.results, [('one', DeliveryOutcome.sent)]);
+
+    release.complete();
+    await cycle;
+    expect(gateway.results, [('one', DeliveryOutcome.sent)]);
+    expect(platform.shown, hasLength(1));
   });
 
   test('释放后迟到 start 不展示、不回填、不发布状态', () async {

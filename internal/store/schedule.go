@@ -41,8 +41,8 @@ func (s *ScheduleStore) CreateScheduleWithNotification(ctx context.Context, sche
 		return nil, nil, fmt.Errorf("[store] new schedule must not have a preset state, schedule_id=%d, cancelled=%t, deleted=%t", schedule.ID, schedule.Cancelled, schedule.Deleted)
 	}
 	if notifyAt != nil {
-		if notifyAt.IsZero() {
-			return nil, nil, fmt.Errorf("[store] initial notification time must not be zero, name=%q", schedule.Name)
+		if err := model.ValidateUnixNanoTime(*notifyAt); err != nil {
+			return nil, nil, fmt.Errorf("[store] invalid initial notification time, name=%q: %w", schedule.Name, err)
 		}
 		if schedule.Type == model.SingleSchedule && schedule.Single.NotifyTime.UTC().UnixNano() != notifyAt.UTC().UnixNano() {
 			return nil, nil, fmt.Errorf("[store] initial notification time does not match single schedule, name=%q, notify_at=%q", schedule.Name, notifyAt.UTC().Format(time.RFC3339Nano))

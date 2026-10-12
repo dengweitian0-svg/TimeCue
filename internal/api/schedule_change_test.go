@@ -42,9 +42,16 @@ func TestScheduleChangeHTTP(t *testing.T) {
 	requireStatus(t, call(http.MethodPut, path, strings.Replace(edit, "恢复", "不同内容", 1), "update"), 409)
 	requireStatus(t, call(http.MethodPost, "/api/v1/scheduler/schedules", `{"name":"秒","type":"single","single":{"notifyTime":"2099-01-01T09:30:01+08:00"}}`, "seconds"), 400)
 	requireStatus(t, call(http.MethodPost, "/api/v1/scheduler/schedules", `{"name":"亚秒","type":"single","single":{"notifyTime":"2099-01-01T09:30:00.001+08:00"}}`, "fraction"), 400)
+	requireStatus(t, call(http.MethodPost, "/api/v1/scheduler/schedules", `{"name":"范围外","type":"single","single":{"notifyTime":"9999-01-01T09:30:00+08:00"}}`, "overflow-year"), 400)
+	requireStatus(t, call(http.MethodPost, "/api/v1/scheduler/schedules", `{"name":"纳秒上界外","type":"single","single":{"notifyTime":"2262-04-12T07:48:00+08:00"}}`, "overflow-upper-bound"), 400)
 	requireStatus(t, call(http.MethodPut, path, `{"name":"改类型","type":"single","expectedRevision":2,"single":{"notifyTime":"2099-01-01T09:30:00+08:00"}}`, "type"), 400)
 	requireStatus(t, call(http.MethodDelete, path, "", ""), 204)
 	requireStatus(t, call(http.MethodPut, path, strings.Replace(edit, `"expectedRevision":1`, `"expectedRevision":3`, 1), "deleted"), 404)
+	remaining := request(router, http.MethodGet, "/api/v1/scheduler/schedules?limit=50", "", "")
+	requireStatus(t, remaining, 200)
+	if rows := decodeObject(t, remaining.Body.Bytes())["data"].([]any); len(rows) != 0 {
+		t.Fatalf("非法单次不应写入日程: %#v", rows)
+	}
 }
 
 // TestDateOpenScheduleCountHTTP 保证日期响应携带按日程去重的启用总数。

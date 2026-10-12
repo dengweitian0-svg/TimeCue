@@ -54,6 +54,9 @@ func (s Schedule) Validate() error {
 		if s.Single == nil || s.Period != nil || s.Single.NotifyTime.IsZero() {
 			return fmt.Errorf("[model] single schedule requires one notification time and no period rule")
 		}
+		if err := ValidateUnixNanoTime(s.Single.NotifyTime); err != nil {
+			return fmt.Errorf("[model] single notification time cannot be stored: %w", err)
+		}
 		if s.Single.NotifyTime.Second() != 0 || s.Single.NotifyTime.Nanosecond() != 0 {
 			return fmt.Errorf("[model] single notification time must have minute precision")
 		}

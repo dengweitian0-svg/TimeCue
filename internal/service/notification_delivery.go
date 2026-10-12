@@ -335,8 +335,21 @@ func deliveryMemberIDs(values []*model.Notification) []int {
 	return ids
 }
 
-// DeliveryExecutorExited 由 D4/D8 的明确退出事件调用；未知结果不伪造 failed。
+// DeliveryExecutorExited 兼容服务内明确退出调用；未知结果不伪造 failed。
 func (a *App) DeliveryExecutorExited() {
+	a.deliveryExecutorExited(nil)
+}
+
+// DeliveryExecutorExitedAttempts 仅整理退出执行者持有的 attempt，迟到事件不会影响新领取。
+func (a *App) DeliveryExecutorExitedAttempts(attemptIDs []string) {
+	ids := make(map[string]struct{}, len(attemptIDs))
+	for _, id := range attemptIDs {
+		ids[id] = struct{}{}
+	}
+	a.deliveryExecutorExited(ids)
+}
+
+func (a *App) deliveryExecutorExited(attemptIDs map[string]struct{}) {
 	a.operations.Lock()
 	defer a.operations.Unlock()
 	if a.Delivery == nil {
@@ -345,7 +358,7 @@ func (a *App) DeliveryExecutorExited() {
 	d := a.Delivery
 	for _, task := range d.allTasks() {
 		at := task.active
-		if task.done || at == nil || at.unknown {
+		if task.done || at == nil || at.unknown || attemptIDs != nil && !containsAttempt(attemptIDs, at.claim.AttemptID) {
 			continue
 		}
 		if at.start == nil {
@@ -356,6 +369,11 @@ func (a *App) DeliveryExecutorExited() {
 		}
 		task.active = nil
 	}
+}
+
+func containsAttempt(values map[string]struct{}, id string) bool {
+	_, ok := values[id]
+	return ok
 }
 
 // StopDelivery 阻止新领取及开始，仍允许已接收的结果回填。

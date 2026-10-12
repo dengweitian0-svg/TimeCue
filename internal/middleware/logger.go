@@ -63,6 +63,7 @@ type httpEvent struct {
 // 路由事件只描述 HTTP 语义，不依赖 handler、服务层或响应体。
 var httpEvents = map[httpEventKey]httpEvent{
 	{http.MethodPost, "/api/v1/notifications/claim"}:                         {slog.LevelDebug, "delivery tasks claimed", "failed to claim delivery tasks"},
+	{http.MethodPost, "/api/v1/notifications/executor-exit"}:                 {slog.LevelInfo, "delivery executor exited", "failed to record delivery executor exit"},
 	{http.MethodPost, "/api/v1/notifications/delivery-attempts/:id/start"}:   {slog.LevelInfo, "delivery attempt started", "failed to start delivery attempt"},
 	{http.MethodPost, "/api/v1/notifications/delivery-attempts/:id/results"}: {slog.LevelInfo, "delivery result recorded", "failed to record delivery result"},
 	{http.MethodPut, "/api/v1/scheduler/schedules/:id"}:                      {slog.LevelInfo, "schedule updated", "failed to update schedule"},

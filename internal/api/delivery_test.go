@@ -71,7 +71,13 @@ func TestDeliveryHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	router := NewRouter(app, db.CheckHealth)
+	runtime := service.NewRuntimeInfo("delivery-test-run")
+	router := NewRouter(app, db.CheckHealth, runtime)
+	for _, body := range []string{`{"instanceId":"delivery-test-run"}`, `{"instanceId":"delivery-test-run","attemptIds":null}`, `{"instanceId":"delivery-test-run","attemptIds":"bad"}`, `{"instanceId":"delivery-test-run","attemptIds":[""]}`} {
+		requireStatus(t, request(router, http.MethodPost, "/api/v1/notifications/executor-exit", body, "application/json"), 400)
+	}
+	emptyExit := request(router, http.MethodPost, "/api/v1/notifications/executor-exit", `{"instanceId":"delivery-test-run","attemptIds":[]}`, "application/json")
+	requireStatus(t, emptyExit, 200)
 	for i := 0; i < 2; i++ {
 		body := fmt.Sprintf(`{"name":"private-response-%d","type":"single","single":{"notifyTime":%q}}`, i, at.In(time.FixedZone("北京时间", 8*60*60)).Format(time.RFC3339))
 		requireStatus(t, request(router, http.MethodPost, "/api/v1/scheduler/schedules", body, "application/json"), 201)
@@ -101,6 +107,31 @@ func TestDeliveryHTTPFlow(t *testing.T) {
 	record := requireHTTPRecord(t, readLogs(), http.MethodPost, path+"/start", "INFO", "delivery attempt started", 200, time.Since(startedAt))
 	if record["count"] != float64(2) || record["attempt_number"] != float64(1) {
 		t.Fatal("投递日志缺少执行事实", record)
+	}
+	exitPath := "/api/v1/notifications/executor-exit"
+	exitBody := fmt.Sprintf(`{"instanceId":"old-run","attemptIds":[%q]}`, claims.Data[0].AttemptID)
+	requireStatus(t, request(router, http.MethodPost, exitPath, exitBody, "application/json"), 404)
+	if snapshot := app.DeliverySnapshot(); len(snapshot) != 1 || snapshot[0].AttemptID != claims.Data[0].AttemptID || !snapshot[0].Started {
+		t.Fatal("旧运行身份改变了活动投递", snapshot)
+	}
+	exitBody = fmt.Sprintf(`{"instanceId":"delivery-test-run","attemptIds":[%q]}`, claims.Data[0].AttemptID)
+	exitResponse := request(router, http.MethodPost, exitPath, exitBody, "application/json")
+	requireStatus(t, exitResponse, 200)
+	if strings.TrimSpace(exitResponse.Body.String()) != `{"data":{"accepted":true}}` {
+		t.Fatal("执行者退出响应错误", exitResponse.Body.String())
+	}
+	if snapshot := app.DeliverySnapshot(); len(snapshot) != 1 || snapshot[0].Attempts != 1 || !snapshot[0].Uncertain {
+		t.Fatal("退出应保留展示预算并标记结果未知", snapshot)
+	}
+	at = at.Add(5 * time.Second)
+	newClaims, err := app.ClaimDelivery(context.Background(), 20)
+	if err != nil || len(newClaims) != 1 || newClaims[0].AttemptID == claims.Data[0].AttemptID {
+		t.Fatal("未知结果等待后应创建新 attempt", newClaims, err)
+	}
+	lateExit := fmt.Sprintf(`{"instanceId":"delivery-test-run","attemptIds":[%q,%q,"unknown"]}`, claims.Data[0].AttemptID, claims.Data[0].AttemptID)
+	requireStatus(t, request(router, http.MethodPost, exitPath, lateExit, "application/json"), 200)
+	if snapshot := app.DeliverySnapshot(); len(snapshot) != 1 || snapshot[0].AttemptID != newClaims[0].AttemptID || snapshot[0].Attempts != 1 {
+		t.Fatal("迟到退出不能整理新 attempt 或重置预算", snapshot)
 	}
 	requireStatus(t, request(router, http.MethodPost, path+"/results", `{"outcome":"sent"}`, "application/json"), 200)
 	requireStatus(t, request(router, http.MethodPost, path+"/results", `{"outcome":"sent"}`, "application/json"), 200)

@@ -71,6 +71,9 @@ func (s *Sqlite) PrepareSchema(ctx context.Context) error {
 				}
 			}
 		}
+		if err = checkNotificationUniqueKey(ctx, db); err != nil {
+			return err
+		}
 		if version == 2 {
 			if err = checkSchema(ctx, db, true); err != nil {
 				return err

@@ -101,6 +101,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 | POST | `/api/v1/notifications/claim` | 领取最多 20 个完整 minute/recovery 任务，返回本运行的任务/attempt 身份及平台标识 |
 | POST | `/api/v1/notifications/delivery-attempts/:id/start` | 重检成员资格并冻结文案，消费一次运行内展示预算，重复请求幂等 |
 | POST | `/api/v1/notifications/delivery-attempts/:id/results` | 回填整次平台请求的 sent/failed，原子更新实际成员；重复结果不再次执行 |
+| POST | `/api/v1/notifications/executor-exit` | 当前 instanceId 和执行者持有的 attemptIds；只整理精确匹配的活动尝试，保留展示预算及迟到真实结果 |
 
 创建请求示例：
 
@@ -108,7 +109,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 {"name":"工作日晨会","type":"period","description":null,"period":{"cron":["0 9 * * 1,2,3,4,5"]}}
 ```
 
-单次日程使用 `"type":"single"` 和 `"single":{"notifyTime":"2026-10-10T09:30:00+08:00"}`；时间必须为分钟精度（秒与亚秒均为零）且晚于创建时刻。周期日程可传 `period.open` 原子创建暂停规则，缺省启用。两类规则不能同时出现，未知字段会被拒绝。成功响应使用 `{"data":{...}}`，创建返回 201 及 `Location`；列表返回 `{"data":[...]}`，按创建时间及 ID 降序排列。日程对象始终包含 `id`、`name`、`type`、`description`、`single`、`period`、`cancelled`、`createdAt`、`updatedAt`、`revision`，不适用的规则字段为 `null`。业务时间带 `+08:00`。
+单次日程使用 `"type":"single"` 和 `"single":{"notifyTime":"2026-10-10T09:30:00+08:00"}`；时间必须为分钟精度（秒与亚秒均为零）、晚于创建时刻，并可无损保存为 int64 Unix 纳秒。最大合法北京时间分钟为 `2262-04-12T07:47:00+08:00`，越界输入返回 400。周期日程可传 `period.open` 原子创建暂停规则，缺省启用。两类规则不能同时出现，未知字段会被拒绝。成功响应使用 `{"data":{...}}`，创建返回 201 及 `Location`；列表返回 `{"data":[...]}`，按创建时间及 ID 降序排列。日程对象始终包含 `id`、`name`、`type`、`description`、`single`、`period`、`cancelled`、`createdAt`、`updatedAt`、`revision`，不适用的规则字段为 `null`。业务时间带 `+08:00`。
 
 查询参数 `type` 为 `single` 或 `period`，`limit` 默认为 50 且允许 1–50，`offset` 默认为 0 且必须非负。非法输入返回 400；不存在或已删除日程返回 404。普通错误格式为 `{"error":{"code":"...","message":"..."}}`。健康检查失败返回 503，错误位于 `data.error`。
 

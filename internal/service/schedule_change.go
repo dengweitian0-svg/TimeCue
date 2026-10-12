@@ -20,6 +20,9 @@ func (a *App) WriteSchedule(ctx context.Context, schedule model.Schedule, expect
 		return nil, ErrInvalidSchedule
 	}
 	schedule.Name = strings.TrimSpace(schedule.Name)
+	if err := schedule.Validate(); err != nil {
+		return nil, ErrInvalidSchedule
+	}
 	input, _ := json.Marshal(struct {
 		Schedule model.Schedule
 		Revision int
