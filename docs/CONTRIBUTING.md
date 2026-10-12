@@ -42,6 +42,8 @@ TimeCue 采用 `main + dev` 双主干模式：
 
 ## 版本发布流程
 
+Windows 完整包使用 `scripts/build-release.ps1`，版本来自 desktop/pubspec.yaml；产物包含完整 Flutter 目录及 timecue-core.exe、校验清单和 ZIP。dev PR 的 CI 保存同轮发行产物，手动 Windows Release Package 工作流用于稳定 SDK 全量验证和打包，不自动创建 Tag/Release。发布前按 docs/RELEASE.md 检查首次运行、重启数据、迁移备份和系统交互；本地 master SDK 通过不能替代 stable CI。
+
 当 `dev` 中的修改已经达到一个可发布版本，并完成必要验证后：
 
 1. 创建 `dev → main` 的 Pull Request。

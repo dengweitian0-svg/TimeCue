@@ -11,6 +11,7 @@
 约束：二次启动不创建 Flutter 引擎、业务仓储、通知执行者或 Go。跨进程激活原样交给 D6 只读查询，不能更改正在运行的目录、连接或模式；显式 payload 参数不是实际 Windows 横幅点击证据。Windows 会话退出/进程崩溃可能直接结束运行，不承诺异步回填完成。原生测试位于 `desktop/test/native`，使用独立锁名及自有隐藏进程。
 
 - `launch_configuration.*`：统一解析 backend/data-dir/go-executable 与 Windows 路径；单实例原始快照固定，重复启动显式冲突在接纳前拒绝，省略选项表示复用。转交到 Dart 的激活信封只包含原有窗口/通知意图。
+- 主实例默认 managed、当前用户 LocalAppData/TimeCue 和程序目录中的 timecue-core.exe；只在取得主实例锁后补全默认值，转交端不把省略值变成冲突选项。显式 external 不创建或停止 Go；编译启用 UTF-8，系统目录解析链接 shell32/ole32。
 - `managed_process.*`：单一所有者创建自有 Go；CreateProcessW/CREATE_NO_WINDOW、限定继承匿名管道及创建时 Job 列表，kill-on-close 且 Job 不继承；后台排空有界 stdout/stderr、观察退出。shutdown/EOF 优雅取消，Release 幂等回收管道、线程及句柄；timecue/process 通道由 FlutterWindow 接入，原生销毁也回收 Job。
 
 约束：C++ 所有代码注释使用中文；每个函数仅保留一处用途、参数方向和返回值说明，优先放在头文件，文件内函数及回调在定义处说明；使用四空格缩进。

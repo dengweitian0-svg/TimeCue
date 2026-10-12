@@ -187,7 +187,7 @@ ctest --test-dir build/d7-native -C Release --output-on-failure
 
 ## 自有 Go 子进程
 
-真实模式显式提供绝对 data-dir。默认 backend 保持 external，不拥有手动 Go；managed 还需指定已编译 Go 的绝对路径。编译和运行示例（先在仓库根目录，数据库已手动迁移）：
+发行包默认 managed，数据位于当前用户 LocalAppData/TimeCue，Go 位于程序目录的 timecue-core.exe。可显式覆盖 data-dir/go-executable；开发连接手动 Go 必须指定 backend=external 和 data-dir。完整打包运行根目录 scripts/build-release.ps1，见[发行说明](../docs/RELEASE.md)。以下为手动构建联调示例：
 
 ```powershell
 $timecueDataDir = (Resolve-Path .).Path
@@ -199,7 +199,7 @@ flutter build windows --release
 & .\build\windows\x64\runner\Release\timecue_desktop.exe --backend=managed "--data-dir=$timecueDataDir" "--go-executable=$timecueGoExe"
 ```
 
-Go 隐藏创建且在创建时进入自有 Job；子端仅继承 stdin/stdout/stderr 管道。ready 单行上限 16 KiB，创建、ready、/health 和存活核验共用 10 秒，核对新 instanceId、持有进程 PID、固定地址、v1 与四项 D4 能力。握手前不挂载业务房间、不领取或展示；启动错误保持窗口可见，可显式重试或退出。配置存储从同一启动快照取 data-dir，不自动初始化或迁移数据库。
+Go 隐藏创建且在创建时进入自有 Job；子端仅继承 stdin/stdout/stderr 管道。ready 单行上限 16 KiB，创建、ready、/health 和存活核验共用 10 秒，核对身份、PID、地址、v1 与四项能力。握手前不挂载业务房间、不领取或展示；错误保持窗口可见，可重试或退出。Flutter 配置存储使用同一 data-dir，不访问数据库；Go 在监听前初始化新库或备份后升级可识别的 Flutter 旧库，失败不放行业务。
 
 明确退出先停新工作并尽力回填原结果，再以剩余 5 秒共享预算发送 shutdown/EOF 和等待；最终回收不受零预算影响，关闭 Job 并释放句柄。宿主崩溃由内核 Job 清理自有 Go/后代。运行中 Go 退出后旧任务与异步结果失效，不自动重启、不接管其他端口服务；外连模式仍可跟随手动 Go 的新运行，退出 Flutter 不停止它。
 

@@ -2,6 +2,8 @@
 
 构建并启动承载 Flutter 界面的 Windows 应用。
 
+主实例由 runner 补全发行默认目录和同目录 Go；scripts/build-release.ps1 组合 Flutter 运行文件及服务，平台 CMake 不执行 Go 编译。
+
 - `CMakeLists.txt`：平台构建入口、目标装配与运行文件打包。
 - `.clang-format`：C++ 四空格缩进及续行格式，保留包含顺序和中文说明。
 - [runner](runner/AGENTS.md)：原生窗口、消息循环和应用资源。

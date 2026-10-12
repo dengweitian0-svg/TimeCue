@@ -2,7 +2,9 @@
 
 TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由 Go 管理日程规则、提醒状态和本地数据，由 Flutter 提供桌面界面及系统交互。
 
-> 当前可运行 Flutter 房间与日程本和独立 Go 本机 HTTP API。已接通查询、确认、规则操作、Windows 即时通知桥、通知点击只读定位及恢复展示；已接入托盘单实例与自有 Go 进程管理；系统通知完整冷启动及安装交付仍待后续核验。
+> 当前可运行 Flutter 房间与日程本和独立 Go 本机 HTTP API。已接入托盘、单实例、自有 Go 进程及完整 Windows ZIP 打包；默认使用用户数据目录，首次启动初始化数据库。系统通知完整冷启动与人工安装态验收仍待核验。
+
+发行构建：在根目录运行 `powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1`，完整 ZIP 输出到 `build/releases/`。解压后双击 `timecue_desktop.exe`，无需手填参数；必须保留同目录 Go、DLL 和 data。数据升级及验收边界见[发行说明](docs/RELEASE.md)。
 
 ## 当前实现
 
@@ -12,7 +14,7 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 | 配置 | Flutter 负责用户 config.yaml 的原子写入；Go 合并原有内嵌默认值、发布快照并监听。相对数据库/日志路径使用同一数据目录。 |
 | 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
 | 日程与提醒 | 已有规则操作、查询与确认；D1 开放完整分钟分组，D2 提供领取、开始、结果回填和有限重试，D3 按历史版本分批恢复、开放唯一遗漏汇总并查询成员/进度。D5 已接 Windows 即时展示与内存结果重传，D6 已接冻结成员定位、持久提醒详情及恢复进度/历史分页。 |
-| SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；表结构由独立 SQL 迁移建立，入口检查迁移版本和表结构但不自动执行迁移。 |
+| SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；入口初始化空库或备份后升级可识别的 Flutter 旧库，事务提交前检查结构；拒绝自动转换 Wails 数据库。 |
 | Flutter | `desktop/` 已实现三时段房间、双页本子及创建/编辑视觉骨架，默认接入 Go 查询、单条/批量确认及真实规则变更，视觉示例仍用显式内存仓储。 |
 
 
@@ -78,7 +80,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 
 ## 本地 HTTP API
 
-首次使用空数据库时，先按[迁移说明](migrations/README.md)依次手动执行当前 `001_initial.up.sql`、`002_schedule_changes.up.sql`，再运行 `go run ./cmd/flutter --data-dir .`。版本仍为 2；旧库若 status CHECK 不支持 loaded，将明确拒绝启动，修改 SQL 文件不会自动修改旧库。服务固定监听 `http://127.0.0.1:10086`，仅接受 `Host: 127.0.0.1:10086`，不启用浏览器 CORS 或应用令牌。启动前和 `GET /health` 检查版本、结构及 loaded 约束。
+首次使用空数据库时，直接运行 `go run ./cmd/flutter --data-dir .`，入口建立版本 2 数据库。可识别的 Flutter 版本 1 或缺少 loaded 约束的版本 2 旧库先备份再事务升级，未知和 Wails 旧库保留并拒绝，见[迁移说明](migrations/README.md)。服务固定监听 `http://127.0.0.1:10086`，仅接受对应 Host，不启用浏览器 CORS 或应用令牌。启动前和 `GET /health` 检查版本、结构及 loaded 约束。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
@@ -122,7 +124,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 go run ./cmd/flutter --data-dir .
 ```
 
-这会启动本地 HTTP 服务，不会打开桌面窗口。SQLite 初始迁移的执行方法见 [`migrations/README.md`](migrations/README.md)；`Sqlite.Connect` 不会自动执行迁移。
+这会启动本地 HTTP 服务，不会打开桌面窗口。入口显式初始化新库或升级可识别 Flutter 旧库；独立 `Sqlite.Connect` 不执行迁移，详见[迁移说明](migrations/README.md)。
 
 需要检查现有 Go 代码时可运行：
 

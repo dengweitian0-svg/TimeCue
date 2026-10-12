@@ -1,5 +1,6 @@
 #include "launch_configuration.h"
 #include <windows.h>
+#include <shlobj.h>
 #include <filesystem>
 
 std::wstring LaunchWide(const std::string& value) {
@@ -108,4 +109,26 @@ bool CompatibleLaunchConfiguration(
     return (!requested.backend_explicit || requested.backend == current.backend) &&
         (!requested.data_explicit || SamePath(requested.data_dir, current.data_dir)) &&
         (!requested.executable_explicit || SamePath(requested.executable, current.executable));
+}
+
+bool ResolveLaunchDefaults(LaunchConfiguration& configuration) {
+    if (!configuration.backend_explicit) configuration.backend = "managed";
+    if (configuration.backend == "external") return true;
+    if (!configuration.data_explicit) {
+        PWSTR directory = nullptr;
+        const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &directory);
+        if (FAILED(result)) return false;
+        configuration.data_dir = Utf8((std::filesystem::path(directory) / L"TimeCue").wstring());
+        CoTaskMemFree(directory);
+        if (configuration.data_dir.empty()) return false;
+    }
+    if (!configuration.executable_explicit) {
+        std::wstring executable(32768, L'\0');
+        const DWORD count = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+        if (!count || count >= executable.size()) return false;
+        executable.resize(count);
+        configuration.executable = Utf8((std::filesystem::path(executable).parent_path() / L"timecue-core.exe").wstring());
+        if (configuration.executable.empty()) return false;
+    }
+    return true;
 }

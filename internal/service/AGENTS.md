@@ -1,5 +1,7 @@
 # 日程与提醒业务
 
+- RuntimeOptions.PrepareDatabase 是可选启动准备端口，在 Connect 后、健康检查和监听前调用；失败沿用连接清理，不发布 ready。业务层不解释迁移 SQL。
+
 组合日程、提醒的业务操作，提供规则计算和查询视图。
 
 - `app.go`：业务服务与 RuntimeDatabase/HTTP handler 装配契约、固定目录运行路径、公开 RuntimeInfo、可选 OnReady 回调；App.Run 管理配置/日志/数据库/HTTP/调度/恢复生命周期、请求等待与退出清理，以及日程基础用例。

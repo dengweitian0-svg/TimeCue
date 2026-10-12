@@ -210,7 +210,15 @@ func TestManagedProcess(t *testing.T) {
 			}
 		})
 	}
-	for _, kind := range []string{"bad-config", "bad-log", "unmigrated", "old", "occupied", "early-eof"} {
+	for _, kind := range []string{"unmigrated", "old"} {
+		t.Run(kind, func(t *testing.T) {
+			p := launchProcess(t, binary, "--data-dir", processFixture(t, root, kind), "--instance-id", "initialized")
+			p.ready(t)
+			_, _ = io.WriteString(p.input, "{\"command\":\"shutdown\"}\n")
+			p.wait(t, true)
+		})
+	}
+	for _, kind := range []string{"bad-config", "bad-log", "occupied", "early-eof"} {
 		t.Run(kind, func(t *testing.T) {
 			fixtureKind := kind
 			if kind == "occupied" || kind == "early-eof" {

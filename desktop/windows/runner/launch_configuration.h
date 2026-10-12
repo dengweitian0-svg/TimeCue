@@ -17,6 +17,11 @@ struct LaunchConfiguration {
 std::optional<LaunchConfiguration> ParseLaunchConfiguration(
     const std::vector<std::string>& arguments);
 
+// 为主实例补全发行默认值；显式 external 仍要求数据目录。
+// configuration：已解析的参数，只补全未显式指定的值。
+// 返回 false 表示用户目录或程序目录解析失败。
+bool ResolveLaunchDefaults(LaunchConfiguration& configuration);
+
 // 检查二次启动的显式选项是否与主实例配置兼容。
 // current：主实例配置
 // requested：二次启动配置，省略的选项复用主实例值。

@@ -122,10 +122,11 @@ type RuntimeDatabase interface {
 
 // RuntimeOptions 注入外部适配器；路由在入口装配，App 不解释 HTTP 路由。
 type RuntimeOptions struct {
-	Database RuntimeDatabase
-	Handler  http.Handler
-	Log      *logger.Logger
-	OnReady  func() error
+	Database        RuntimeDatabase
+	Handler         http.Handler
+	Log             *logger.Logger
+	OnReady         func() error
+	PrepareDatabase func(context.Context) error
 }
 
 // RuntimeInfo 是本次启动的公开身份；入口构造后不再修改，健康与握手读取同一值。
@@ -180,6 +181,11 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 			log.Error("[app] failed to close database", "error", err)
 		}
 	}()
+	if options.PrepareDatabase != nil {
+		if err = options.PrepareDatabase(ctx); err != nil {
+			return fmt.Errorf("prepare database schema: %w", err)
+		}
+	}
 	if err = options.Database.CheckHealth(ctx); err != nil {
 		return fmt.Errorf("check database schema: %w", err)
 	}

@@ -16,7 +16,8 @@
 
 # 约束
 
-- `Connect` 只打开连接；健康检查验证迁移版本和表结构，建表不由连接自动执行。核心业务持久化使用 `schedules`/`notifications`；`schedule_versions` 保存规则有效区间，`schedule_write_receipts` 保存请求摘要与原操作结果。
+- `Connect` 只打开连接；启动显式调用 `PrepareSchema` 后健康检查验证迁移版本和结构。核心业务持久化使用 `schedules`/`notifications`；`schedule_versions` 保存规则有效区间，`schedule_write_receipts` 保存请求摘要与原操作结果。
+- `migrate.go` / `migrate_test.go`：嵌入现有 001/002，空库初始化、Flutter 版本 1/旧版本 2 升级、SQLite 一致性备份、保留提醒主键/投递/确认事实及索引；事务提交前检查结构，失败回滚。版本仍为 2；Wails 和未知列集合拒绝，不覆盖用户数据库。
 - 日程与首提醒联合创建、日程取消/删除及未来待投递提醒隐藏使用事务；提醒生成在事务内检查父日程状态并按日程/触发时间去重。
 - 使用软删除保留历史；日期与待确认组合查询使用同一读取事务。投递结果与确认分别更新，批量确认任一非法成员整批回滚，重复确认保留首次时间。
 - 数据库时间保存 Unix 纳秒，返回时间固定 UTC+8；公开错误保留 `%w`，便于上层使用 `errors.Is`。

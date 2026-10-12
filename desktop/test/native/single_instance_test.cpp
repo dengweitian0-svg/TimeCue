@@ -129,11 +129,11 @@ void WindowVisibility() {
 void Forwarding(const std::wstring& key) {
   SingleInstance primary(key);
   Require(primary.Start({}) == SingleInstance::Result::primary, "initial primary");
-  auto options = EncodeDesktopLaunch({991, 2, {"--login-start", "--backend=external"}});
+  auto options = EncodeDesktopLaunch({991, 2, {"--login-start", "--backend=managed"}});
   COPYDATASTRUCT configuration_copy{kMagic, static_cast<DWORD>(options.size()), options.data()};
   Require(SendMessageW(primary.handle(), WM_COPYDATA, reinterpret_cast<WPARAM>(primary.handle()),
       reinterpret_cast<LPARAM>(&configuration_copy)) == 1, "compatible configuration rejected");
-  options = EncodeDesktopLaunch({992, 2, {"--login-start", "--backend=managed"}});
+  options = EncodeDesktopLaunch({992, 2, {"--login-start", "--backend=external"}});
   configuration_copy.cbData = static_cast<DWORD>(options.size()); configuration_copy.lpData = options.data();
   Require(SendMessageW(primary.handle(), WM_COPYDATA, reinterpret_cast<WPARAM>(primary.handle()),
       reinterpret_cast<LPARAM>(&configuration_copy)) == 0, "conflicting configuration accepted");
@@ -214,6 +214,14 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 3) return Child(argv[1], argv[2]);
     const auto key = L".D7Test." + std::to_wstring(GetCurrentProcessId());
     Codec();
+    // 默认值只在主实例补全，转交省略值复用当前配置。
+    auto defaults = ParseLaunchConfiguration({});
+    Require(defaults.has_value() && ResolveLaunchDefaults(*defaults), "release defaults unresolved");
+    Require(defaults->backend == "managed" && !defaults->data_dir.empty(), "release defaults missing");
+    Require(defaults->executable.find("timecue-core.exe") != std::string::npos, "bundled Go path missing");
+    auto external = ParseLaunchConfiguration({"--backend=external", "--data-dir=."});
+    Require(external.has_value() && ResolveLaunchDefaults(*external) && external->executable.empty(), "external mode changed");
+    Require(CompatibleLaunchConfiguration(*defaults, *ParseLaunchConfiguration({})), "ordinary reopen changed defaults");
     WindowVisibility();
     Forwarding(key + L".forward");
     CrossDirectory(key + L".directory");

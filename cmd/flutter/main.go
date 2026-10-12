@@ -56,6 +56,9 @@ func run(log *logger.Logger) error {
 
 // runApp 沿用 App.Run 的资源所有权，控制管道只请求取消。
 func runApp(ctx context.Context, options startupOptions, log *logger.Logger) error {
+	if err := os.MkdirAll(options.dataDir, 0o755); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
+	}
 	manager, err := config.NewManager(options.dataDir)
 	if err != nil {
 		return err
@@ -74,7 +77,7 @@ func runApp(ctx context.Context, options startupOptions, log *logger.Logger) err
 		return err
 	}
 	info := service.NewRuntimeInfo(options.instanceID)
-	runtime := service.RuntimeOptions{Database: db, Handler: api.NewRouter(app, db.CheckHealth, info), Log: log}
+	runtime := service.RuntimeOptions{Database: db, PrepareDatabase: db.PrepareSchema, Handler: api.NewRouter(app, db.CheckHealth, info), Log: log}
 	if options.managed {
 		runtime.OnReady = func() error {
 			if ctx.Err() != nil {

@@ -39,6 +39,16 @@ func (s *Sqlite) CheckHealth(ctx context.Context) error {
 	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
 	}
+	return checkSchema(ctx, db, false)
+}
+
+// schemaReader 允许提交前通过同一事务验证结构。
+type schemaReader interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func checkSchema(ctx context.Context, db schemaReader, allowLegacyStatus bool) error {
 	var version int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
@@ -50,7 +60,7 @@ func (s *Sqlite) CheckHealth(ctx context.Context) error {
 	if err := db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notifications'`).Scan(&notificationDDL); err != nil {
 		return fmt.Errorf("%w: notifications table missing: %v", ErrSchemaInvalid, err)
 	}
-	if !strings.Contains(strings.ToLower(notificationDDL), "'loaded'") {
+	if !allowLegacyStatus && !strings.Contains(strings.ToLower(notificationDDL), "'loaded'") {
 		return fmt.Errorf("%w: notifications status does not support loaded", ErrSchemaInvalid)
 	}
 	for table, required := range map[string]map[string]string{

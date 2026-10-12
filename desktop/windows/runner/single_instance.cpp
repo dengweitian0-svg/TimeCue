@@ -230,6 +230,10 @@ SingleInstance::Result SingleInstance::Start(const std::vector<std::string>& arg
         const DWORD acquired = WaitForSingleObject(mutex_, 0);
         if (acquired == WAIT_OBJECT_0 || acquired == WAIT_ABANDONED) {
             owns_mutex_ = true;
+            if (!ResolveLaunchDefaults(configuration_)) {
+                error_ = L"无法解析 TimeCue 用户数据目录或程序目录。";
+                return Result::error;
+            }
             if (!CreateReceiver(true)) {
                 error_ = L"无法创建 TimeCue 激活接收端。";
                 return Result::error;
