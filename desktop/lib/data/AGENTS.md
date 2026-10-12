@@ -1,6 +1,6 @@
 # 界面数据接入
 
-- `config_file_store.dart`：固定 data-dir 下的 config.yaml 用户覆盖值读取、运行字段更新与恢复；日志级别限定 debug/info/warn/error，路径校验非空及空字符。使用 yaml_edit 保留注释与未知字段，同一文件多实例读写串行化，临时文件刷新后在同一文件系统替换。
+- `config_file_store.dart`：固定 data-dir 下的 config.yaml 用户覆盖值读取、运行字段更新与恢复；日志级别限定 debug/info/warn/error，路径校验非空及空字符。数据库目录保存时自动追加 timecue.db，读取提供所属目录；数据库及日志目录不能指向已有文件。使用 yaml_edit 保留注释与未知字段，同一文件多实例读写串行化，临时文件刷新后在同一文件系统替换。
 
 配置约束：应用内仅 Flutter 写用户配置，Go 只读取和监听。公开视图只返回日志级别、日志路径与数据库路径的用户覆盖值，未配置字段返回 null，默认值由 Go 原有 default.yaml 决定。恢复只移除三个运行字段，保留 app、desktop 和未知字段。保存结果 pathsChanged 只描述路径字段变化，数据库和日志路径在下次启动应用，不将保存配置当成资源迁移。启动层负责传入共同的绝对数据目录；此组件不新增 HTTP 接口或配置编辑页面。
 

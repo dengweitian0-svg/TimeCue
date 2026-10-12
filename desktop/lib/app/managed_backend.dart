@@ -147,6 +147,7 @@ class ManagedBackend extends ChangeNotifier {
   bool _everReady = false, _disposed = false, _exited = false;
   bool _resourcesReleased = false;
   String _diagnostics = '';
+  String? _failureMessage;
   final List<int> _stdout = [];
   bool _receivedReady = false;
   Completer<Map<String, dynamic>>? _readyLine;
@@ -202,6 +203,7 @@ class ManagedBackend extends ChangeNotifier {
     _resourcesReleased = false;
     _stdout.clear();
     _diagnostics = '';
+    _failureMessage = null;
     _exited = _receivedReady = false;
     _readyLine = Completer<Map<String, dynamic>>();
     _exit = Completer<void>();
@@ -274,6 +276,11 @@ class ManagedBackend extends ChangeNotifier {
       if (_diagnostics.length > 8192) {
         _diagnostics = _diagnostics.substring(_diagnostics.length - 8192);
       }
+      // 退出与管道读取可能乱序，失败后到达的诊断仍需补充到可见错误。
+      if (_state == BackendState.failed && _failureMessage != null) {
+        error = '$_failureMessage\n$_diagnostics';
+        _publish();
+      }
       return;
     }
     if (event.type == 'exit') {
@@ -330,6 +337,7 @@ class ManagedBackend extends ChangeNotifier {
 
   void _fail(String message) {
     _state = BackendState.failed;
+    _failureMessage = message;
     error = _diagnostics.isEmpty ? message : '$message\n$_diagnostics';
     onInvalidated?.call();
     _publish();

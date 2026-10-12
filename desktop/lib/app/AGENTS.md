@@ -10,3 +10,4 @@
 - `timecue_app.dart` 的托管启动门禁只在双重核验后挂载 RoomScreen 和初始化通知桥；失败诊断可滚动并恢复可见窗口，激活仅缓冲最新目标。DesktopLifecycle 的 finalizeOwnedProcess 在所有优雅等待后无条件执行，再释放共享资源并销毁窗口。
 
 - ManagedBackend 在创建每个异步启动操作前检查取消和截止，启动状态监听重入请求退出时不创建 Go；健康错配通过正式 invalidateRuntime 操作撤销整个托管运行。
+- ManagedBackend 失败诊断保留有界 stderr；退出后同代次到达的输出仍补充可见错误，重试清空旧诊断。

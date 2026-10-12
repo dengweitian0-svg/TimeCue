@@ -170,6 +170,50 @@ db:
     expect(await config.readAsString(), duplicate);
   });
 
+  test('数据库目录自动补齐文件名，保存不创建或搬迁数据库', () async {
+    await seed('db:\n  db_path: ./db/old-name.db\n');
+    expect((await store.read()).databaseDirectory, './db');
+    final target = await Directory(p.join(directory.path, '数据库 目录')).create();
+    for (final value in [
+      target.path,
+      '${target.path}${p.separator}',
+      './新目录',
+    ]) {
+      final saved = await store.update(
+        databaseDirectory: value,
+        logPath: value,
+      );
+      expect(saved.overrides.databasePath, p.join(value, 'timecue.db'));
+      expect(p.equals(saved.overrides.databaseDirectory!, value), isTrue);
+      expect((await store.read()).databasePath, p.join(value, 'timecue.db'));
+      expect(await File(p.join(target.path, 'timecue.db')).exists(), isFalse);
+    }
+    expect(
+      await Directory(p.join(config.parent.path, '新目录')).exists(),
+      isFalse,
+    );
+  });
+
+  test('目录指向文件时拒绝保存并保留原配置，修正目录后能保存', () async {
+    const original = 'log:\n  level: info\n';
+    await seed(original);
+    final file = await File(
+      p.join(config.parent.path, 'existing.db'),
+    ).writeAsString('保留数据');
+    for (final operation in [
+      () => store.update(databaseDirectory: file.path, logLevel: 'debug'),
+      () => store.update(logPath: file.path),
+    ]) {
+      await expectLater(operation(), throwsFormatException);
+      expect(await config.readAsString(), original);
+      expect(await file.readAsString(), '保留数据');
+    }
+    expect(
+      (await store.update(databaseDirectory: './db')).overrides.databasePath,
+      p.join('./db', 'timecue.db'),
+    );
+  });
+
   test('配置路径为目录时返回文件错误，修复后继续保存', () async {
     await Directory(config.path).create(recursive: true);
     await expectLater(

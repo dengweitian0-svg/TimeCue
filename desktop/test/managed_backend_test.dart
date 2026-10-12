@@ -84,6 +84,35 @@ DeliveryRuntime runtime(
 }) => DeliveryRuntime(id ?? process.instance, pid: pid, capabilities: caps);
 
 void main() {
+  for (final lateDiagnostic in [false, true]) {
+    test('退出诊断显示在错误中，诊断晚于退出=$lateDiagnostic', () async {
+      final process = FakeProcess()..autoReady = false;
+      final backend = ManagedBackend(
+        platform: process,
+        health: () async => runtime(process),
+      );
+      addTearDown(backend.dispose);
+      final pending = backend.start();
+      await flush();
+      void diagnostic() => process.controller.add(
+        OwnedProcessEvent(
+          process.generation,
+          'stderr',
+          bytes: utf8.encode('数据库无法打开：D:\\time_cue\n'),
+        ),
+      );
+      if (!lateDiagnostic) diagnostic();
+      process.exit(1);
+      await pending;
+      if (lateDiagnostic) diagnostic();
+      expect(backend.state, BackendState.failed);
+      expect(backend.error, contains('数据库无法打开：D:\\time_cue'));
+      process.autoReady = true;
+      await backend.start();
+      expect(backend.ready, true);
+      expect(backend.error, isNull);
+    });
+  }
   test('启动监听同步请求退出时不再创建 Go', () async {
     final process = FakeProcess();
     final backend = ManagedBackend(

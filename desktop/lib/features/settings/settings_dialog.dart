@@ -28,7 +28,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _original != null &&
       (_level != _original!.logLevel ||
           _logPath.text != (_original!.logPath ?? '') ||
-          _databasePath.text != (_original!.databasePath ?? ''));
+          _databasePath.text != (_original!.databaseDirectory ?? ''));
 
   @override
   void initState() {
@@ -41,7 +41,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _original = values;
     _level = values.logLevel;
     _logPath.text = values.logPath ?? '';
-    _databasePath.text = values.databasePath ?? '';
+    _databasePath.text = values.databaseDirectory ?? '';
   }
 
   Future<void> _load() async {
@@ -72,7 +72,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
         logPath: _logPath.text != (_original!.logPath ?? '')
             ? _logPath.text
             : null,
-        databasePath: _databasePath.text != (_original!.databasePath ?? '')
+        databaseDirectory:
+            _databasePath.text != (_original!.databaseDirectory ?? '')
             ? _databasePath.text
             : null,
       ),
@@ -135,7 +136,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     if (_busy || _confirming) return;
     final confirmed = await _confirm(
       '恢复默认设置？',
-      '日志级别、日志目录和数据库路径将恢复默认配置。未保存的修改会被舍弃，已有数据不会自动搬迁。',
+      '日志级别、日志目录和数据库目录将恢复默认配置。未保存的修改会被舍弃，已有数据不会自动搬迁。',
       '恢复默认',
     );
     if (!mounted || !confirmed) return;
@@ -208,7 +209,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   if (_busy) const LinearProgressIndicator(),
                   const Text('日志与数据'),
                   const SizedBox(height: 8),
-                  const Text('日志级别会自动加载；日志目录和数据库路径在下次启动生效。'),
+                  const Text('日志级别会自动加载；日志目录和数据库目录在下次启动生效。'),
                   const SizedBox(height: 24),
                   if (_original != null) ...[
                     DropdownButtonFormField<String>(
@@ -253,15 +254,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       controller: _databasePath,
                       enabled: !_busy,
                       decoration: const InputDecoration(
-                        labelText: '数据库路径',
+                        labelText: '数据库目录',
                         hintText: '未设置，使用默认配置',
+                        helperText: '例如 D:\\time_cue，程序自动补齐 timecue.db',
                       ),
                       validator: (value) =>
-                          _validatePath(value, _original!.databasePath),
+                          _validatePath(value, _original!.databaseDirectory),
                       onChanged: (_) => _edited(),
                     ),
                     const SizedBox(height: 16),
-                    const Text('相对路径以当前数据目录为基准。更改数据库路径不会搬迁已有日程数据。'),
+                    const Text('相对目录以当前数据目录为基准。更改数据库目录不会搬迁已有日程数据。'),
                     const SizedBox(height: 20),
                   ],
                   Text('配置文件', style: Theme.of(context).textTheme.labelMedium),
