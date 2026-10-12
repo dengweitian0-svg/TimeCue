@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:timecue_desktop/app/timecue_app.dart';
 import 'package:timecue_desktop/data/config_file_store.dart';
 import 'package:timecue_desktop/data/demo_notebook_repository.dart';
@@ -75,13 +76,13 @@ db:
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey('settings-database-path')),
-      'db/中文 新日程.db',
+      'db/中文 新目录',
     );
     await tester.tap(find.text('保存设置'));
     await flush(tester);
     final values = await tester.runAsync(store.read);
     expect(values!.logLevel, 'debug');
-    expect(values.databasePath, 'db/中文 新日程.db');
+    expect(values.databasePath, p.join('db/中文 新目录', 'timecue.db'));
     expect(values.logPath, isNull);
     final contents = await tester.runAsync(
       () => File(store.configPath).readAsString(),
@@ -96,13 +97,13 @@ db:
           )
           .controller!
           .text,
-      'db/中文 新日程.db',
+      'db/中文 新目录',
     );
     await tester.tap(find.text('关闭'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('设置'));
     await flush(tester);
-    expect(find.text('db/中文 新日程.db'), findsOneWidget);
+    expect(find.text('db/中文 新目录'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -253,13 +254,78 @@ db:
     );
     await tester.enterText(
       find.byKey(const ValueKey('settings-database-path')),
-      'db/new.db',
+      'db/new',
     );
     await tester.pump();
     await tester.tap(find.text('保存设置'));
     await flush(tester);
-    expect((await tester.runAsync(store.read))!.databasePath, 'db/new.db');
+    expect(
+      (await tester.runAsync(store.read))!.databasePath,
+      p.join('db/new', 'timecue.db'),
+    );
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('绝对目录可同时用作数据库和日志目录，重新打开不显示文件名', (tester) async {
+    final target = await tester.runAsync(
+      () => Directory(p.join(directory.path, '数据')).create(),
+    );
+    await open(tester);
+    expect(find.text('数据库目录'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-database-path')),
+      target!.path,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-log-path')),
+      target.path,
+    );
+    await tester.tap(find.text('保存设置'));
+    await flush(tester);
+    final values = await tester.runAsync(store.read);
+    expect(values!.databasePath, p.join(target.path, 'timecue.db'));
+    expect(values.logPath, target.path);
+    expect(
+      await tester.runAsync(() => File(values.databasePath!).exists()),
+      isFalse,
+    );
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('设置'));
+    await flush(tester);
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey('settings-database-path')),
+          )
+          .controller!
+          .text,
+      target.path,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('旧配置把目录写入数据库路径时，设置仍显示该目录而非上一级', (tester) async {
+    final target = await tester.runAsync(
+      () => Directory(p.join(directory.path, '旧数据')).create(),
+    );
+    final original = "db:\n  db_path: '${target!.path}'\nlog:\n  level: info\n";
+    await tester.runAsync(() => File(store.configPath).writeAsString(original));
+    await open(tester);
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey('settings-database-path')),
+          )
+          .controller!
+          .text,
+      target.path,
+    );
+    expect(
+      await tester.runAsync(() => File(store.configPath).readAsString()),
+      original,
+    );
     await tester.pumpWidget(const SizedBox());
   });
 }

@@ -30,6 +30,7 @@ Future<void> main() async {
     return;
   }
   final repository = HttpNotebookRepository(managed: configuration.managed);
+  final configFiles = configuration.configFiles;
   final views = NotificationViewModel(repository);
   final notifications = WindowsNotificationBridge(
     gateway: repository,
@@ -43,6 +44,9 @@ Future<void> main() async {
     backend = ManagedBackend(
       platform: WindowsOwnedProcessPlatform(),
       health: repository.deliveryRuntime,
+      prepareStart: () async {
+        await configFiles.normalizeLegacyDatabaseDirectory();
+      },
     );
     repository.onManagedRuntimeLost = () =>
         backend!.invalidateRuntime('端口上的服务身份与自有 Go 不一致。');
@@ -68,7 +72,7 @@ Future<void> main() async {
       notificationViews: views,
       notifications: notifications,
       backend: backend,
-      configFiles: configuration.configFiles,
+      configFiles: configFiles,
       ownsRepository: true,
     ),
   );
