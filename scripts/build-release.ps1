@@ -46,7 +46,13 @@ try {
 
     $taskFlutterOutput = Join-Path $taskRoot 'desktop/build/windows/x64/runner/Release'
     $taskFlutterConfig = [IO.File]::ReadAllText((Join-Path $taskRoot 'desktop/windows/flutter/ephemeral/generated_config.cmake'))
-    if ($taskFlutterConfig -notmatch 'FLUTTER_TARGET=lib[\\/]main\.dart') { throw '拒绝打包演示或测试入口，必须构建 lib/main.dart。' }
+    $taskConfiguredTarget = [regex]::Match($taskFlutterConfig, '"FLUTTER_TARGET=([^\"]*)"').Groups[1].Value.Replace('\\', '\')
+    if (!$taskConfiguredTarget) { throw '缺少 Flutter 构建入口。' }
+    if (![IO.Path]::IsPathRooted($taskConfiguredTarget)) {
+        $taskConfiguredTarget = Join-Path (Join-Path $taskRoot 'desktop') $taskConfiguredTarget
+    }
+    $taskExpectedTarget = [IO.Path]::GetFullPath((Join-Path $taskRoot 'desktop/lib/main.dart'))
+    if ([IO.Path]::GetFullPath($taskConfiguredTarget) -ine $taskExpectedTarget) { throw '拒绝打包演示或测试入口，必须构建 lib/main.dart。' }
     $taskDefines = [regex]::Match($taskFlutterConfig, '"DART_DEFINES=([^\"]*)"').Groups[1].Value
     foreach ($taskDefine in $taskDefines.Split(',')) {
         if ($taskDefine -and [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($taskDefine)) -eq 'TIMECUE_DEMO=true') { throw '拒绝打包内存演示模式。' }
