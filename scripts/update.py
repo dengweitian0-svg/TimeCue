@@ -151,6 +151,38 @@ def _validate_target(target):
             raise UpdateError(f"目标不是有效的 TimeCue 安装目录，缺少 {name}")
 
 
+def _managed_directory_tree(root, directory, owned_keys):
+    """确认待替换目录树只含旧清单文件，且没有空目录或 reparse point。"""
+    pending = [directory]
+    directories = []
+    files = []
+    while pending:
+        current = pending.pop()
+        directories.append(current)
+        try:
+            entries = list(current.iterdir())
+        except OSError as error:
+            raise UpdateError(f"无法检查待替换目录：{current}: {error}") from error
+        for child in entries:
+            if _is_reparse(child):
+                raise UpdateError(f"拒绝替换包含符号链接或 reparse point 的目录：{child}")
+            if child.is_dir():
+                pending.append(child)
+            elif child.is_file():
+                relative = child.relative_to(root).as_posix()
+                if relative.casefold() not in owned_keys:
+                    raise UpdateError(f"待替换目录包含未登记文件：{relative}")
+                files.append(relative)
+            else:
+                raise UpdateError(f"待替换目录包含非普通文件：{child}")
+    for current in directories:
+        relative = current.relative_to(root).as_posix().casefold().rstrip("/") + "/"
+        if not any(name.casefold().startswith(relative) for name in files):
+            raise UpdateError(f"待替换目录包含未登记的空目录：{current}")
+    return sorted((path.relative_to(root).as_posix() for path in directories),
+                  key=lambda value: value.count("/"), reverse=True)
+
+
 def _windows_file_is_busy(path):
     if os.name != "nt":
         return False
@@ -229,13 +261,22 @@ def update(source, target):
 
     old_keys = {name.casefold(): name for name in old_files}
     new_keys = {name.casefold(): name for name in new_files}
-    # 不接管已有清单未拥有的文件，以免覆盖安装目录中的自有数据。
-    if old_manifest_path.exists():
-        for folded, name in new_keys.items():
-            if folded not in old_keys:
-                candidate = _checked_path(target, name)
-                if candidate.exists():
-                    raise UpdateError(f"发行文件与未登记的现有文件冲突：{name}")
+    # 预检文件与目录形状转换，碰到未登记内容时在任何目标改动前拒绝。
+    prune_directories = set()
+    has_old_manifest = old_manifest_path.exists()
+    for name in new_files:
+        candidate = _checked_path(target, name)
+        if candidate.is_dir():
+            prune_directories.update(_managed_directory_tree(target, candidate, set(old_keys)))
+        elif candidate.exists() and has_old_manifest and name.casefold() not in old_keys:
+            raise UpdateError(f"发行文件与未登记的现有文件冲突：{name}")
+        parent = candidate.parent
+        while parent != target:
+            if parent.exists() and not parent.is_dir():
+                relative = parent.relative_to(target).as_posix()
+                if relative.casefold() not in old_keys:
+                    raise UpdateError(f"发行文件路径被未登记文件阻挡：{relative}")
+            parent = parent.parent
 
     updates = list(new_files.items())
     # 用旧清单中的拼写定位大小写不敏感的现有文件。
@@ -250,8 +291,7 @@ def update(source, target):
     backups = transaction / "backup"
     staged.mkdir()
     backups.mkdir()
-    changed = set()
-    created_dirs = set()
+    operations = []
     preserve_backup = False
     try:
         for relative, source_file in updates:
@@ -267,12 +307,22 @@ def update(source, target):
         affected = {name for name, _ in updates} | set(removals) | {"manifest.json"}
         for relative in affected:
             destination = _checked_path(target, relative)
-            if destination.exists():
+            if destination.is_file():
                 backup = backups.joinpath(*relative.split("/"))
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(destination, backup)
 
         try:
+            for relative in removals:
+                destination = _checked_path(target, relative)
+                if destination.is_file():
+                    operations.append(("file", relative))
+                    destination.unlink()
+            for relative in sorted(prune_directories, key=lambda value: value.count("/"), reverse=True):
+                directory = target.joinpath(*relative.split("/"))
+                if directory.is_dir():
+                    operations.append(("rmdir", relative))
+                    directory.rmdir()
             for relative, _ in updates:
                 destination = _checked_path(target, relative)
                 parent = destination.parent
@@ -281,38 +331,40 @@ def update(source, target):
                     missing.append(parent)
                     parent = parent.parent
                 for directory in reversed(missing):
+                    relative_dir = directory.relative_to(target).as_posix()
+                    operations.append(("mkdir", relative_dir))
                     directory.mkdir()
-                    created_dirs.add(directory)
-                changed.add(relative)
+                operations.append(("file", relative))
                 os.replace(staged.joinpath(*relative.split("/")), destination)
-            for relative in removals:
-                destination = _checked_path(target, relative)
-                if destination.exists():
-                    changed.add(relative)
-                    destination.unlink()
-            changed.add("manifest.json")
+            operations.append(("file", "manifest.json"))
             os.replace(manifest_stage, old_manifest_path)
         except Exception as error:
             rollback_errors = []
-            for relative in reversed(tuple(changed)):
+            for operation, relative in reversed(operations):
                 destination = target.joinpath(*relative.split("/"))
-                backup = backups.joinpath(*relative.split("/"))
                 try:
-                    if backup.is_file():
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        restore = transaction / "restore" / Path(*relative.split("/"))
-                        restore.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(backup, restore)
-                        os.replace(restore, destination)
-                    elif destination.exists():
-                        destination.unlink()
+                    if operation == "mkdir":
+                        if destination.is_dir():
+                            destination.rmdir()
+                    elif operation == "rmdir":
+                        if not destination.exists():
+                            destination.mkdir(parents=True, exist_ok=True)
+                    else:
+                        backup = backups.joinpath(*relative.split("/"))
+                        if backup.is_file():
+                            if destination.is_dir():
+                                destination.rmdir()
+                            destination.parent.mkdir(parents=True, exist_ok=True)
+                            restore = transaction / "restore" / Path(*relative.split("/"))
+                            restore.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(backup, restore)
+                            os.replace(restore, destination)
+                        elif destination.is_dir():
+                            destination.rmdir()
+                        elif destination.exists():
+                            destination.unlink()
                 except Exception as rollback_error:
                     rollback_errors.append(f"{relative}: {rollback_error}")
-            for directory in sorted(created_dirs, key=lambda item: len(item.parts), reverse=True):
-                try:
-                    directory.rmdir()
-                except OSError:
-                    pass
             if rollback_errors:
                 preserve_backup = True
                 raise UpdateError(f"更新失败：{error}；回滚也失败：{'；'.join(rollback_errors)}。备份保留在：{transaction}") from error

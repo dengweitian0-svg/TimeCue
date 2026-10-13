@@ -82,6 +82,95 @@ class UpdateTests(unittest.TestCase):
     def old_manifest(self, files):
         self.write_release(self.target, files)
 
+    def make_shape_change(self, root, old_files, new_files):
+        source = root / "new release"
+        target = root / "old install"
+        source.mkdir(parents=True)
+        target.mkdir()
+        self.write_release(source, new_files)
+        self.write_release(target, old_files)
+        return source, target
+
+    @staticmethod
+    def tree_snapshot(root):
+        result = {}
+        for path in root.rglob("*"):
+            relative = path.relative_to(root).as_posix()
+            result[relative] = ("dir", None) if path.is_dir() else ("file", path.read_bytes())
+        return result
+
+    def test_managed_file_to_directory_transition(self):
+        old = {"timecue_desktop.exe": b"old desktop", "timecue-core.exe": b"old core",
+               "assets/icon": b"old icon file"}
+        new = {"timecue_desktop.exe": b"new desktop", "timecue-core.exe": b"new core",
+               "assets/icon/variant.png": b"new icon variant"}
+        source, target = self.make_shape_change(self.root / "file-to-dir", old, new)
+        update.update(source, target)
+        self.assertEqual((target / "assets/icon/variant.png").read_bytes(), b"new icon variant")
+        self.assertFalse((target / "assets/icon").is_file())
+
+    def test_managed_directory_to_file_transition(self):
+        old = {"timecue_desktop.exe": b"old desktop", "timecue-core.exe": b"old core",
+               "assets/icon/x": b"old x", "assets/icon/y": b"old y"}
+        new = {"timecue_desktop.exe": b"new desktop", "timecue-core.exe": b"new core",
+               "assets/icon": b"new icon file"}
+        source, target = self.make_shape_change(self.root / "dir-to-file", old, new)
+        update.update(source, target)
+        self.assertEqual((target / "assets/icon").read_bytes(), b"new icon file")
+        self.assertFalse((target / "assets/icon/x").exists())
+
+    def test_directory_to_file_transition_rejects_unowned_contents(self):
+        old = {"timecue_desktop.exe": b"old desktop", "timecue-core.exe": b"old core",
+               "assets/icon/x": b"old x", "assets/icon/y": b"old y"}
+        new = {"timecue_desktop.exe": b"new desktop", "timecue-core.exe": b"new core",
+               "assets/icon": b"new icon file"}
+        for extra in ("file", "empty directory"):
+            with self.subTest(extra=extra):
+                case_root = self.root / ("dir-to-file-extra-" + extra.replace(" ", "-"))
+                source, target = self.make_shape_change(case_root, old, new)
+                if extra == "file":
+                    (target / "assets/icon/user.txt").write_bytes(b"keep")
+                else:
+                    (target / "assets/icon/user-empty").mkdir()
+                before = self.tree_snapshot(target)
+                with self.assertRaisesRegex(update.UpdateError, "未登记"):
+                    update.update(source, target)
+                self.assertEqual(self.tree_snapshot(target), before)
+
+    def test_shape_transitions_restore_files_and_directories_on_manifest_failure(self):
+        cases = (
+            (
+                "file-to-dir",
+                {"timecue_desktop.exe": b"old desktop", "timecue-core.exe": b"old core",
+                 "assets/icon": b"old icon file"},
+                {"timecue_desktop.exe": b"new desktop", "timecue-core.exe": b"new core",
+                 "assets/icon/variant.png": b"new icon variant"},
+            ),
+            (
+                "dir-to-file",
+                {"timecue_desktop.exe": b"old desktop", "timecue-core.exe": b"old core",
+                 "assets/icon/x": b"old x", "assets/icon/y": b"old y"},
+                {"timecue_desktop.exe": b"new desktop", "timecue-core.exe": b"new core",
+                 "assets/icon": b"new icon file"},
+            ),
+        )
+        original = update.os.replace
+        for name, old, new in cases:
+            with self.subTest(shape=name):
+                source, target = self.make_shape_change(self.root / ("rollback-" + name), old, new)
+                before = self.tree_snapshot(target)
+
+                def fail_manifest(source_path, destination):
+                    if (Path(destination) == target / "manifest.json" and Path(source_path).name == "manifest.json"
+                            and Path(source_path).parent.name == "new"):
+                        raise OSError("injected manifest commit error")
+                    return original(source_path, destination)
+
+                with mock.patch.object(update.os, "replace", side_effect=fail_manifest):
+                    with self.assertRaisesRegex(update.UpdateError, "已恢复"):
+                        update.update(source, target)
+                self.assertEqual(self.tree_snapshot(target), before)
+
     def test_success_cleans_owned_stale_files_and_keeps_extras(self):
         old = {
             "timecue_desktop.exe": b"old desktop",
