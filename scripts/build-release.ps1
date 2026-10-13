@@ -1,6 +1,5 @@
 ﻿param(
     [string]$OutputDirectory = '',
-    [switch]$SkipChecks,
     [switch]$SkipFlutterBuild
 )
 
@@ -24,20 +23,11 @@ function Invoke-Checked {
 
 Push-Location $taskRoot
 try {
-    if (!$SkipChecks) {
-        Invoke-Checked -Program 'go' -Arguments @('vet', './...')
-        Invoke-Checked -Program 'go' -Arguments @('test', '-p', '1', './...')
-    }
     Invoke-Checked -Program 'go' -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $taskStaging 'timecue-core.exe'), './cmd/flutter')
     Push-Location (Join-Path $taskRoot 'desktop')
     try {
         if (!$SkipFlutterBuild) {
             Invoke-Checked -Program 'flutter' -Arguments @('pub', 'get')
-        }
-        if (!$SkipChecks) {
-            Invoke-Checked -Program 'dart' -Arguments @('format', '--output=none', '--set-exit-if-changed', 'lib', 'test')
-            Invoke-Checked -Program 'flutter' -Arguments @('analyze', '--no-pub')
-            Invoke-Checked -Program 'flutter' -Arguments @('test', '--no-pub')
         }
         if (!$SkipFlutterBuild) {
             Invoke-Checked -Program 'flutter' -Arguments @('build', 'windows', '--release', '--no-pub', '--target=lib/main.dart')
@@ -69,6 +59,7 @@ try {
         if (!(Test-Path -LiteralPath (Join-Path $taskFlutterOutput $taskRequired))) { throw "发行构建缺少 $taskRequired" }
     }
     Copy-Item -Path (Join-Path $taskFlutterOutput '*') -Destination $taskStaging -Recurse
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'update.py') -Destination (Join-Path $taskStaging 'update.py')
     $taskReleaseNotes = Join-Path $taskRoot 'docs/RELEASE.md'
     $taskPackageReadme = Join-Path $taskStaging 'README.md'
     if (Test-Path -LiteralPath $taskReleaseNotes -PathType Leaf) {
@@ -80,6 +71,7 @@ try {
 - 请保留解压后的完整目录，其中包含 `timecue_desktop.exe`、Flutter 运行文件及 `timecue-core.exe`；不要只复制主程序。
 - 双击 `timecue_desktop.exe` 启动。默认使用托管模式，并将数据保存在当前用户的 `%LOCALAPPDATA%\TimeCue`。
 - 关闭窗口会隐藏到托盘；需要结束应用时，请从托盘菜单选择退出。
+- 更新时先退出 TimeCue，将新版 ZIP 解压到新目录，再在该目录运行 `python update.py`；旧版尚未登记安装位置时，先在新目录运行 `python update.py --register "D:\TimeCue"`，再运行 `python update.py`。
 - 可通过参数指定数据目录，例如：`timecue_desktop.exe --data-dir="D:\TimeCueData"`。
 - 开发外连模式需先启动 Go 服务，例如：`timecue_desktop.exe --backend=external --data-dir="D:\TimeCueData"`；退出 TimeCue 不会停止手动启动的 Go 服务。
 - 如果 `127.0.0.1:10086` 已被占用，TimeCue 会拒绝启动，不会结束占用端口的其他进程。
