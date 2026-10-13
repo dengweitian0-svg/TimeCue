@@ -69,7 +69,27 @@ try {
         if (!(Test-Path -LiteralPath (Join-Path $taskFlutterOutput $taskRequired))) { throw "发行构建缺少 $taskRequired" }
     }
     Copy-Item -Path (Join-Path $taskFlutterOutput '*') -Destination $taskStaging -Recurse
-    Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/RELEASE.md') -Destination (Join-Path $taskStaging 'README.md')
+    $taskReleaseNotes = Join-Path $taskRoot 'docs/RELEASE.md'
+    $taskPackageReadme = Join-Path $taskStaging 'README.md'
+    if (Test-Path -LiteralPath $taskReleaseNotes -PathType Leaf) {
+        Copy-Item -LiteralPath $taskReleaseNotes -Destination $taskPackageReadme
+    } else {
+        $taskFallbackReadme = @'
+# TimeCue Windows 使用说明
+
+- 请保留解压后的完整目录，其中包含 `timecue_desktop.exe`、Flutter 运行文件及 `timecue-core.exe`；不要只复制主程序。
+- 双击 `timecue_desktop.exe` 启动。默认使用托管模式，并将数据保存在当前用户的 `%LOCALAPPDATA%\TimeCue`。
+- 关闭窗口会隐藏到托盘；需要结束应用时，请从托盘菜单选择退出。
+- 可通过参数指定数据目录，例如：`timecue_desktop.exe --data-dir="D:\TimeCueData"`。
+- 开发外连模式需先启动 Go 服务，例如：`timecue_desktop.exe --backend=external --data-dir="D:\TimeCueData"`；退出 TimeCue 不会停止手动启动的 Go 服务。
+- 如果 `127.0.0.1:10086` 已被占用，TimeCue 会拒绝启动，不会结束占用端口的其他进程。
+'@
+        [IO.File]::WriteAllText(
+            $taskPackageReadme,
+            $taskFallbackReadme.TrimStart(),
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
     $taskManifest = [ordered]@{
         version = $taskVersion
         platform = 'windows-x64'

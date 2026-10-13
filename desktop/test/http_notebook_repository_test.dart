@@ -110,7 +110,137 @@ Future<HttpNotebookRepository> serverRepository(
   return repo;
 }
 
+Future<HttpNotebookRepository> rawResponseRepository(
+  int status,
+  String body, {
+  String contentType = 'application/json',
+}) async {
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  server.listen((request) async {
+    request.response.statusCode = status;
+    request.response.headers.contentType = ContentType.parse(contentType);
+    request.response.write(body);
+    await request.response.close();
+  });
+  final repo = HttpNotebookRepository(
+    base: Uri.parse('http://127.0.0.1:${server.port}/api/v1/scheduler/'),
+    now: () => DateTime.utc(2026, 10, 8, 14, 32),
+  );
+  addTearDown(() async {
+    repo.dispose();
+    await server.close(force: true);
+  });
+  return repo;
+}
+
 void main() {
+  test('HTTP 错误响应没有正文或返回非 JSON 时给出有界诊断', () async {
+    final empty = await rawResponseRepository(502, '');
+    await expectLater(
+      empty.deliveryRuntime(),
+      throwsA(
+        isA<NotebookApiException>()
+            .having((error) => error.status, 'status', 502)
+            .having((error) => error.message, 'message', contains('/health')),
+      ),
+    );
+
+    final html = await rawResponseRepository(
+      502,
+      '<html>proxy secret response</html>',
+      contentType: 'text/html',
+    );
+    await expectLater(
+      html.deliveryRuntime(),
+      throwsA(
+        isA<NotebookApiException>()
+            .having((error) => error.status, 'status', 502)
+            .having((error) => error.message, 'message', contains('HTTP 502'))
+            .having(
+              (error) => error.message,
+              'message',
+              isNot(contains('proxy secret response')),
+            ),
+      ),
+    );
+  });
+
+  test('成功响应要求对象和非空 data，且不返回空正文或非 JSON 为 null', () async {
+    final empty = await rawResponseRepository(200, '');
+    await expectLater(
+      empty.deliveryRuntime(),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('/health'),
+        ),
+      ),
+    );
+
+    final array = await rawResponseRepository(200, '[1, 2]');
+    await expectLater(array.deliveryRuntime(), throwsFormatException);
+
+    final nullData = await rawResponseRepository(200, '{"data": null}');
+    await expectLater(nullData.deliveryRuntime(), throwsFormatException);
+  });
+
+  test('默认本地客户端在配置 HTTP 代理时仍直连服务端', () async {
+    final proxyServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final proxyUri = Uri.parse('http://127.0.0.1:${proxyServer.port}');
+    final observedProxyRequests = <String>[];
+    proxyServer.listen((request) async {
+      observedProxyRequests.add(request.uri.toString());
+      request.response.statusCode = 502;
+      await request.response.close();
+    });
+    final backendAddress = InternetAddress('127.0.0.2');
+    final backend = await HttpServer.bind(backendAddress, 0);
+    backend.listen((request) async {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({'data': occurrence(42)}));
+      await request.response.close();
+    });
+    final base = Uri.parse(
+      'http://${backendAddress.address}:${backend.port}/api/v1/scheduler/',
+    );
+    final repo = HttpNotebookRepository(base: base);
+    final injectedClient = HttpClient();
+    final injectedRepo = HttpNotebookRepository(
+      base: base,
+      client: injectedClient,
+    );
+    addTearDown(() async {
+      repo.dispose();
+      injectedRepo.dispose();
+      await backend.close(force: true);
+      await proxyServer.close(force: true);
+    });
+
+    await HttpOverrides.runZoned(
+      () async {
+        // 默认 HttpClient 使用注入的环境代理作为基线，证明本测试确实经过代理。
+        final baselineClient = HttpClient();
+        final baselineRequest = await baselineClient.getUrl(base);
+        final baselineResponse = await baselineRequest.close();
+        await baselineResponse.drain<void>();
+        baselineClient.close(force: true);
+        expect(observedProxyRequests, hasLength(1));
+
+        expect((await repo.notificationDetails('42')).id, '42');
+        expect(observedProxyRequests, hasLength(1));
+
+        await expectLater(
+          injectedRepo.notificationDetails('42'),
+          throwsA(isA<NotebookApiException>()),
+        );
+        expect(observedProxyRequests, hasLength(2));
+      },
+      findProxyFromEnvironment: (_, _) =>
+          'PROXY ${proxyUri.host}:${proxyUri.port}',
+    );
+  });
+
   test('健康失败保留 data.error 的错误码和 503 状态', () async {
     final repo = await serverRepository((request) {
       request.response.statusCode = 503;
