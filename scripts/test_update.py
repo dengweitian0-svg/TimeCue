@@ -50,7 +50,7 @@ class FakeRegistry:
 class UpdateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="TimeCue 中文 ")
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.source = self.root / "新发行目录"
         self.target = self.root / "旧安装目录"
         self.source.mkdir()
@@ -268,6 +268,10 @@ class UpdateTests(unittest.TestCase):
             kernel.CloseHandle(handle)
         self.assertEqual((self.target / "timecue_desktop.exe").read_bytes(), b"old desktop")
         self.assertEqual((self.target / "manifest.json").read_bytes(), old_manifest)
+
+    @unittest.skipUnless(os.name == "nt", "Windows 已加载映像写权限检测")
+    def test_windows_loaded_python_executable_is_detected_as_busy(self):
+        self.assertTrue(update._windows_file_is_busy(Path(sys.executable)))
 
     def test_registry_value_wins_over_stale_process_value(self):
         registry = FakeRegistry(str(self.target))

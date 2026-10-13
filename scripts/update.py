@@ -146,7 +146,8 @@ def _windows_file_is_busy(path):
                                    ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p)
     kernel.CreateFileW.restype = ctypes.c_void_p
     kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
-    handle = kernel.CreateFileW(str(path), 0x80000000, 0, None, 3, 0x80, None)
+    # 仅申请读写权限并立即关闭，不向目标文件写入数据。
+    handle = kernel.CreateFileW(str(path), 0xC0000000, 0, None, 3, 0x80, None)
     invalid = ctypes.c_void_p(-1).value
     if handle == invalid:
         return True
@@ -203,7 +204,7 @@ def update(source, target):
     manifest, new_files = _read_manifest(source)
     for name in REQUIRED_FILES:
         if _windows_file_is_busy(target / name):
-            raise UpdateError(f"检测到目标文件正在使用，已拒绝更新：{name}。请先退出 TimeCue")
+            raise UpdateError(f"目标文件正在使用或不可写，已拒绝更新：{name}。请退出 TimeCue 并检查文件权限")
 
     old_manifest_path = target / "manifest.json"
     old_files = {}
