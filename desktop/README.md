@@ -20,7 +20,7 @@ flutter run -d windows -a --backend=external -a --data-dir=D:\go_project\src\Tim
 
 ## 应用设置
 
-点击房间左上角“设置”，可修改日志级别、日志目录和数据库目录。目录可直接输入 `D:\time_cue`；数据库目录保存时自动补齐 `timecue.db`，日志目录由 Go 写入 `timecue.jsonl`。设置读取与保存使用启动参数确定的同一个 data-dir 下的 config.yaml；未配置字段显示使用默认配置，只保存本次修改的字段。日志级别由 Go 自动加载，目录更改在下次启动生效，已有数据不会自动搬迁。配置文件路径可选中复制。
+点击房间左上角“设置”，可修改日志级别、日志目录和数据库目录。点击目录字段可通过 Windows 原生选择器选取；已有相对目录以配置文件所在数据目录为基准显示为绝对路径，未修改时仍保留原配置值。数据库目录保存时自动补齐 `timecue.db`，日志目录由 Go 写入 `timecue.jsonl`。设置读取与保存使用启动参数确定的同一个 data-dir 下的 config.yaml；未配置字段显示使用默认配置，只保存本次修改的字段。日志级别由 Go 自动加载，目录更改在下次启动生效，已有数据不会自动搬迁。
 
 “恢复默认设置”确认后移除这三项运行覆盖值，保留其他字段及注释。关闭未保存修改时可取消或舍弃；读取失败可重试，保存失败保留草稿。演示模式的设置入口禁用，不修改本地配置。
 
@@ -103,7 +103,7 @@ TimeCueApp                              MaterialApp、主题、构造注入
                   └─ EditingPage        ScheduleEditor（完整规则及 revision）
 
 RoomScreen → showDialog
-├─ SettingsDialog                       日志级别/日志目录/数据库路径、保存与恢复默认
+├─ SettingsDialog                       日志级别/日志目录/数据库目录原生选择、保存与恢复默认
 ├─ ScheduleManagementDialog             含已暂停规则、分页和详情读取
 │  └─ ScheduleEditDialog                独立修改弹窗，保存/恢复/删除后刷新列表
 └─ ScheduleCreateDialog                 草稿、关闭守卫、弹层焦点
@@ -171,7 +171,7 @@ flowchart LR
 
 `update(logLevel: ..., logPath: ..., databasePath: ...)` 校验字段并原子保存到 config.yaml，保留 YAML 注释、未知字段及 app/desktop 配置；同一文件的多实例操作串行执行。`restoreRuntimeDefaults()` 只移除三个运行字段，保留其余内容。结果 pathsChanged 表示保存的路径字段发生变化，供设置界面提示下次启动应用；本组件不切换数据库连接、不搬迁文件。
 
-Go config 只读、监听并发布快照，日志级别按现有机制热更新，数据库和日志路径由 Go 启动生命周期应用。存储组件可供后续设置页及桌面配置功能装配；当前没有新增配置 HTTP 接口或编辑页面。
+Go config 只读、监听并发布快照，日志级别按现有机制热更新，数据库和日志路径由 Go 启动生命周期应用。Flutter 设置弹窗直接使用配置存储，不新增配置 HTTP 接口。
 
 ## 托盘与单实例
 

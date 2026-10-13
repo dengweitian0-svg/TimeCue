@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_selector/file_selector.dart';
+import 'package:path/path.dart' as p;
 import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
 
@@ -25,11 +27,29 @@ class _SettingsDialogState extends State<SettingsDialog> {
   bool _confirming = false;
   bool _allowClose = false;
 
+  String? get _originalLogPath => _displayDirectory(_original?.logPath);
+
+  String? get _originalDatabasePath {
+    final value = _original?.databaseDirectory;
+    if (value == null || value == ':memory:' || value.startsWith('file:')) {
+      return value;
+    }
+    return _displayDirectory(value);
+  }
+
+  String? _displayDirectory(String? value) {
+    if (value == null || value.isEmpty) return value;
+    final dataDirectory = p.dirname(widget.store.configPath);
+    return p.normalize(
+      p.isAbsolute(value) ? value : p.join(dataDirectory, value),
+    );
+  }
+
   bool get _dirty =>
       _original != null &&
       (_level != _original!.logLevel ||
-          _logPath.text != (_original!.logPath ?? '') ||
-          _databasePath.text != (_original!.databaseDirectory ?? ''));
+          _logPath.text != (_originalLogPath ?? '') ||
+          _databasePath.text != (_originalDatabasePath ?? ''));
 
   @override
   void initState() {
@@ -41,8 +61,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _form = GlobalKey<FormState>();
     _original = values;
     _level = values.logLevel;
-    _logPath.text = values.logPath ?? '';
-    _databasePath.text = values.databaseDirectory ?? '';
+    _logPath.text = _displayDirectory(values.logPath) ?? '';
+    _databasePath.text = _originalDatabasePath ?? '';
   }
 
   Future<void> _load() async {
@@ -78,11 +98,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
     await _write(
       () => widget.store.update(
         logLevel: _level != _original!.logLevel ? _level : null,
-        logPath: _logPath.text != (_original!.logPath ?? '')
+        logPath: _logPath.text != (_originalLogPath ?? '')
             ? _logPath.text
             : null,
-        databaseDirectory:
-            _databasePath.text != (_original!.databaseDirectory ?? '')
+        databaseDirectory: _databasePath.text != (_originalDatabasePath ?? '')
             ? _databasePath.text
             : null,
       ),
@@ -195,6 +214,57 @@ class _SettingsDialogState extends State<SettingsDialog> {
     return null;
   }
 
+  Future<void> _selectDirectory(TextEditingController controller) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _message = null;
+    });
+    try {
+      final currentDirectory = controller.text;
+      final selected = await getDirectoryPath(
+        initialDirectory: p.isAbsolute(currentDirectory)
+            ? currentDirectory
+            : p.dirname(widget.store.configPath),
+      );
+      if (!mounted || selected == null) return;
+      controller.text = p.normalize(selected);
+      _edited();
+    } catch (failure) {
+      if (mounted) {
+        setState(() => _error = '选择目录失败：$failure');
+        OperationToast.error(context, '无法打开目录选择器，请查看弹窗中的错误。');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _directoryField({
+    required Key key,
+    required String label,
+    required String hint,
+    required TextEditingController controller,
+    required String? original,
+  }) => TextFormField(
+    key: key,
+    controller: controller,
+    enabled: !_busy,
+    readOnly: true,
+    onTap: () => _selectDirectory(controller),
+    decoration: InputDecoration(
+      labelText: label,
+      hintText: hint,
+      suffixIcon: IconButton(
+        tooltip: '选择$label',
+        onPressed: _busy ? null : () => _selectDirectory(controller),
+        icon: const Icon(Icons.folder_open_outlined),
+      ),
+    ),
+    validator: (value) => _validatePath(value, original),
+  );
+
   @override
   void dispose() {
     _logPath.dispose();
@@ -262,39 +332,25 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             },
                     ),
                     const SizedBox(height: 20),
-                    TextFormField(
+                    _directoryField(
                       key: const ValueKey('settings-log-path'),
                       controller: _logPath,
-                      enabled: !_busy,
-                      decoration: const InputDecoration(
-                        labelText: '日志目录',
-                        hintText: '未设置，使用默认配置',
-                      ),
-                      validator: (value) =>
-                          _validatePath(value, _original!.logPath),
-                      onChanged: (_) => _edited(),
+                      label: '日志目录',
+                      hint: '未设置，使用默认配置',
+                      original: _originalLogPath,
                     ),
                     const SizedBox(height: 20),
-                    TextFormField(
+                    _directoryField(
                       key: const ValueKey('settings-database-path'),
                       controller: _databasePath,
-                      enabled: !_busy,
-                      decoration: const InputDecoration(
-                        labelText: '数据库目录',
-                        hintText: '未设置，使用默认配置',
-                        helperText: '例如 D:\\time_cue，程序自动补齐 timecue.db',
-                      ),
-                      validator: (value) =>
-                          _validatePath(value, _original!.databaseDirectory),
-                      onChanged: (_) => _edited(),
+                      label: '数据库目录',
+                      hint: '未设置，使用默认配置',
+                      original: _originalDatabasePath,
                     ),
                     const SizedBox(height: 16),
-                    const Text('相对目录以当前数据目录为基准。更改数据库目录不会搬迁已有日程数据。'),
+                    const Text('更改数据库目录不会搬迁已有日程数据。'),
                     const SizedBox(height: 20),
                   ],
-                  Text('配置文件', style: Theme.of(context).textTheme.labelMedium),
-                  const SizedBox(height: 4),
-                  SelectableText(widget.store.configPath),
                   if (_error != null) ...[
                     const SizedBox(height: 16),
                     Text(
