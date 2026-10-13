@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:path/path.dart' as p;
 import 'package:timecue_desktop/app/timecue_app.dart';
 import 'package:timecue_desktop/data/config_file_store.dart';
@@ -13,15 +15,21 @@ void main() {
   late Directory directory;
   late ConfigFileStore store;
   late DemoNotebookRepository repository;
+  late FileSelectorPlatform originalSelector;
+  late _FakeFileSelector selector;
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('timecue-settings-');
     store = ConfigFileStore(directory.path);
     repository = DemoNotebookRepository();
+    originalSelector = FileSelectorPlatform.instance;
+    selector = _FakeFileSelector(() => directory.path);
+    FileSelectorPlatform.instance = selector;
   });
 
   tearDown(() async {
     repository.dispose();
+    FileSelectorPlatform.instance = originalSelector;
     await directory.delete(recursive: true);
   });
 
@@ -74,15 +82,18 @@ db:
     await tester.pumpAndSettle();
     await tester.tap(find.text('debug').last);
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey('settings-database-path')),
-      'db/中文 新目录',
-    );
+    final selectedDatabaseDirectory = p.join(directory.path, '数据目录');
+    selector.onSelect = () => selectedDatabaseDirectory;
+    await tester.tap(find.byKey(const ValueKey('settings-database-path')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('保存设置'));
     await flush(tester);
     final values = await tester.runAsync(store.read);
     expect(values!.logLevel, 'debug');
-    expect(values.databasePath, p.join('db/中文 新目录', 'timecue.db'));
+    expect(
+      values.databasePath,
+      p.join(selectedDatabaseDirectory, 'timecue.db'),
+    );
     expect(values.logPath, isNull);
     final contents = await tester.runAsync(
       () => File(store.configPath).readAsString(),
@@ -97,13 +108,13 @@ db:
           )
           .controller!
           .text,
-      'db/中文 新目录',
+      selectedDatabaseDirectory,
     );
     await tester.tap(find.text('关闭'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('设置'));
     await flush(tester);
-    expect(find.text('db/中文 新目录'), findsOneWidget);
+    expect(find.text(selectedDatabaseDirectory), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -114,16 +125,15 @@ db:
       await tester.runAsync(() => File(store.configPath).exists()),
       isFalse,
     );
-    await tester.enterText(
-      find.byKey(const ValueKey('settings-log-path')),
-      'new-log',
-    );
+    selector.onSelect = () => p.join(directory.path, 'new-log');
+    await tester.tap(find.byKey(const ValueKey('settings-log-path')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('关闭'));
     await tester.pumpAndSettle();
     expect(find.text('舍弃未保存的修改？'), findsOneWidget);
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
-    expect(find.text('new-log'), findsOneWidget);
+    expect(find.text(p.join(directory.path, 'new-log')), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     await tester.tap(find.text('舍弃修改'));
@@ -190,32 +200,41 @@ db:
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('已有路径不能清空；保存失败保留草稿并能再次保存', (tester) async {
+  testWidgets('选择失败保留原值；保存失败保留草稿并能再次保存', (tester) async {
     await tester.runAsync(
       () => File(store.configPath).writeAsString('log:\n  log_path: logs\n'),
     );
     await open(tester);
-    await tester.enterText(find.byKey(const ValueKey('settings-log-path')), '');
-    await tester.pump();
-    await tester.tap(find.text('保存设置'));
+    selector.onSelect = () => throw StateError('dialog failed');
+    await tester.tap(find.byKey(const ValueKey('settings-log-path')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('请填写路径'), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const ValueKey('settings-log-path')),
-      'new-logs',
+    expect(find.textContaining('选择目录失败'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey('settings-log-path')),
+          )
+          .controller!
+          .text,
+      p.join(directory.path, 'logs'),
     );
-    await tester.pump();
+    selector.onSelect = () => p.join(directory.path, 'new-logs');
+    await tester.tap(find.byKey(const ValueKey('settings-log-path')));
+    await tester.pumpAndSettle();
     await tester.runAsync(() => File(store.configPath).writeAsString('[]'));
     await tester.tap(find.text('保存设置'));
     await flush(tester);
     expect(find.textContaining('保存设置失败'), findsOneWidget);
-    expect(find.text('new-logs'), findsOneWidget);
+    expect(find.text(p.join(directory.path, 'new-logs')), findsOneWidget);
     await tester.runAsync(
       () => File(store.configPath).writeAsString('log:\n  log_path: logs\n'),
     );
     await tester.tap(find.text('保存设置'));
     await flush(tester);
-    expect((await tester.runAsync(store.read))!.logPath, 'new-logs');
+    expect(
+      (await tester.runAsync(store.read))!.logPath,
+      p.join(directory.path, 'new-logs'),
+    );
     expect(find.textContaining('保存设置失败'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
@@ -252,16 +271,15 @@ db:
     await tester.ensureVisible(
       find.byKey(const ValueKey('settings-database-path')),
     );
-    await tester.enterText(
-      find.byKey(const ValueKey('settings-database-path')),
-      'db/new',
-    );
-    await tester.pump();
+    selector.onSelect = () => p.join(directory.path, 'db', 'new');
+    await tester.tap(find.byKey(const ValueKey('settings-database-path')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('保存设置'));
     await tester.tap(find.text('保存设置'));
     await flush(tester);
     expect(
       (await tester.runAsync(store.read))!.databasePath,
-      p.join('db/new', 'timecue.db'),
+      p.join(directory.path, 'db', 'new', 'timecue.db'),
     );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
@@ -271,21 +289,19 @@ db:
     final target = await tester.runAsync(
       () => Directory(p.join(directory.path, '数据')).create(),
     );
+    final targetPath = target!.path;
     await open(tester);
     expect(find.text('数据库目录'), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const ValueKey('settings-database-path')),
-      target!.path,
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('settings-log-path')),
-      target.path,
-    );
+    selector.onSelect = () => targetPath;
+    await tester.tap(find.byKey(const ValueKey('settings-database-path')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-log-path')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('保存设置'));
     await flush(tester);
     final values = await tester.runAsync(store.read);
-    expect(values!.databasePath, p.join(target.path, 'timecue.db'));
-    expect(values.logPath, target.path);
+    expect(values!.databasePath, p.join(targetPath, 'timecue.db'));
+    expect(values.logPath, targetPath);
     expect(
       await tester.runAsync(() => File(values.databasePath!).exists()),
       isFalse,
@@ -301,7 +317,7 @@ db:
           )
           .controller!
           .text,
-      target.path,
+      targetPath,
     );
     await tester.pumpWidget(const SizedBox());
   });
@@ -326,6 +342,108 @@ db:
       await tester.runAsync(() => File(store.configPath).readAsString()),
       original,
     );
+    expect(find.text('配置文件'), findsNothing);
+    expect(find.text(store.configPath), findsNothing);
+    expect(find.textContaining('相对目录以当前数据目录为基准'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('相对目录以数据目录解析显示，改日志级别不会改写原路径', (tester) async {
+    const original =
+        'log:\n  level: info\n  log_path: logs\ndb:\n  db_path: db/custom.sqlite\n';
+    await tester.runAsync(() => File(store.configPath).writeAsString(original));
+    await open(tester);
+    tester.view.physicalSize = const Size(1280, 1200);
+    await tester.pump();
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey('settings-log-path')),
+          )
+          .controller!
+          .text,
+      p.join(directory.path, 'logs'),
+    );
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey('settings-database-path')),
+          )
+          .controller!
+          .text,
+      p.join(directory.path, 'db'),
+    );
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('debug').last);
+    await tester.pumpAndSettle();
+    tester
+        .widget<FilledButton>(find.widgetWithText(FilledButton, '保存设置'))
+        .onPressed!();
+    await flush(tester);
+    final contents = await tester.runAsync(
+      () => File(store.configPath).readAsString(),
+    );
+    expect(contents, contains('log_path: logs'));
+    expect(contents, contains('db_path: db/custom.sqlite'));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('取消选择不改草稿，选择中禁止再次打开、保存和关闭', (tester) async {
+    await open(tester);
+    selector.onSelect = () => null;
+    await tester.tap(find.byKey(const ValueKey('settings-log-path')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey('settings-log-path')),
+          )
+          .controller!
+          .text,
+      '',
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '保存设置'))
+          .onPressed,
+      isNull,
+    );
+
+    final pending = Completer<String?>();
+    selector.onSelect = () => pending.future;
+    await tester.tap(find.byKey(const ValueKey('settings-log-path')));
+    await tester.pump();
+    final calls = selector.calls;
+    await tester.tap(find.byKey(const ValueKey('settings-log-path')));
+    await tester.tap(find.text('关闭'));
+    await tester.pump();
+    expect(selector.calls, calls);
+    expect(find.byType(SettingsDialog), findsOneWidget);
+    pending.complete(p.join(directory.path, 'selected-log'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey('settings-log-path')),
+          )
+          .controller!
+          .text,
+      p.join(directory.path, 'selected-log'),
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+}
+
+class _FakeFileSelector extends FileSelectorPlatform {
+  _FakeFileSelector(this.onSelect);
+
+  FutureOr<String?> Function() onSelect;
+  var calls = 0;
+
+  @override
+  Future<String?> getDirectoryPathWithOptions(FileDialogOptions options) async {
+    calls++;
+    return await onSelect();
+  }
 }

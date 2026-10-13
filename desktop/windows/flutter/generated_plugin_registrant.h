@@ -9,7 +9,7 @@
 
 #include <flutter/plugin_registry.h>
 
-// Registers Flutter plugins.
+// 注册 Flutter 平台插件；参数为插件注册表指针；无返回值。
 void RegisterPlugins(flutter::PluginRegistry* registry);
 
 #endif  // GENERATED_PLUGIN_REGISTRANT_
