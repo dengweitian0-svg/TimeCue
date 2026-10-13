@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timecue_desktop/app/timecue_app.dart';
+import 'package:timecue_desktop/app/windows_notification_bridge.dart';
+import 'package:timecue_desktop/contracts/notification_delivery.dart';
 import 'package:timecue_desktop/data/demo_notebook_repository.dart';
 import 'package:timecue_desktop/features/notebook/notebook_overlay.dart';
 import 'package:timecue_desktop/features/notebook/notebook_view_model.dart';
@@ -145,6 +147,71 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     repo.dispose();
   });
+  testWidgets('连接未就绪时添加入口清晰可见并说明原因，恢复后打开创建弹窗', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repo = _WriteGateRepository()..setState(loading: true);
+    await tester.pumpWidget(TimeCueApp(repository: repo));
+
+    final addButton = find.widgetWithText(FilledButton, '添加日程');
+    expect(addButton, findsOneWidget);
+    expect(tester.widget<FilledButton>(addButton).onPressed, isNull);
+    expect(find.byTooltip('正在连接本地服务，暂时不能添加日程'), findsOneWidget);
+    final disabledStyle = tester.widget<FilledButton>(addButton).style!;
+    expect(
+      disabledStyle.backgroundColor?.resolve({WidgetState.disabled}),
+      const Color.fromARGB(225, 238, 222, 190),
+    );
+
+    repo.setState(loading: false, error: '连接失败');
+    await tester.pump();
+    expect(tester.widget<FilledButton>(addButton).onPressed, isNull);
+    expect(find.byTooltip('本地服务连接失败，请重试后添加日程'), findsOneWidget);
+
+    repo.setState(loading: false, hasSnapshot: true, error: null);
+    await tester.pump();
+    final enabledButton = tester.widget<FilledButton>(addButton);
+    expect(enabledButton.onPressed, isNotNull);
+    expect(
+      enabledButton.style!.backgroundColor?.resolve({}),
+      const Color.fromARGB(128, 73, 61, 48),
+    );
+    await tester.tap(addButton);
+    await tester.pumpAndSettle();
+    expect(find.byType(ScheduleCreateDialog), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    repo.dispose();
+  });
+  testWidgets('系统通知错误栏出现时仍可点击房间添加入口', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repo = DemoNotebookRepository();
+    final bridge = WindowsNotificationBridge(
+      gateway: _ErrorNotificationGateway(),
+      platform: _FailingNotificationPlatform(),
+    );
+    await tester.pumpWidget(
+      TimeCueApp(repository: repo, notifications: bridge),
+    );
+    await tester.pump();
+    expect(find.text('重试连接'), findsOneWidget);
+
+    final addButton = find.widgetWithText(FilledButton, '添加日程');
+    final addRect = tester.getRect(addButton);
+    final errorRect = tester.getRect(find.text('重试连接'));
+    expect(addRect.overlaps(errorRect), isFalse);
+    await tester.tap(addButton);
+    await tester.pumpAndSettle();
+    expect(find.byType(ScheduleCreateDialog), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    repo.dispose();
+  });
   testWidgets('房间到双页、空白右页、右页编辑和 Escape 合上', (tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1;
@@ -215,4 +282,64 @@ void main() {
 class _ThursdayMarkedRepository extends DemoNotebookRepository {
   @override
   bool markedOn(DateTime date) => date.weekday == DateTime.thursday;
+}
+
+class _WriteGateRepository extends DemoNotebookRepository {
+  bool _loading = false;
+  bool _hasSnapshot = false;
+  String? _error;
+
+  @override
+  bool get serverPagination => true;
+  @override
+  bool get loading => _loading;
+  @override
+  bool get hasSnapshot => _hasSnapshot;
+  @override
+  String? get refreshError => _error;
+
+  void setState({required bool loading, bool? hasSnapshot, String? error}) {
+    _loading = loading;
+    if (hasSnapshot != null) _hasSnapshot = hasSnapshot;
+    _error = error;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> refresh({DateTime? month, DateTime? date}) async {}
+}
+
+class _ErrorNotificationGateway implements NotificationDeliveryGateway {
+  @override
+  Future<DeliveryRuntime> deliveryRuntime() async =>
+      const DeliveryRuntime('test-instance');
+  @override
+  Future<List<DeliveryClaim>> claimNotifications() async => const [];
+  @override
+  Future<DeliveryStart> startNotification(String attemptId) async =>
+      throw UnimplementedError();
+  @override
+  Future<void> reportNotification(
+    String attemptId,
+    DeliveryOutcome outcome,
+  ) async {}
+  @override
+  Future<void> reportExecutorExited(
+    String instanceId,
+    List<String> attemptIds, {
+    required Duration timeout,
+  }) async {}
+}
+
+class _FailingNotificationPlatform implements NotificationPlatform {
+  @override
+  Future<void> initialize() async => throw StateError('初始化失败');
+  @override
+  Future<DeliveryOutcome?> show({
+    required int id,
+    required DeliveryStart start,
+    required String payload,
+  }) async => null;
+  @override
+  void dispose() {}
 }

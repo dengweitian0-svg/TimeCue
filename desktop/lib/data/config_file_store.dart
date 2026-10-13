@@ -10,6 +10,15 @@ class ConfigOverrides {
   final String? logLevel;
   final String? logPath;
   final String? databasePath;
+
+  /// 配置仍保存 Go 所需的文件路径，设置界面只显示所属目录。
+  String? get databaseDirectory {
+    final value = databasePath;
+    if (value == null || value == ':memory:' || value.startsWith('file:')) {
+      return value;
+    }
+    return p.dirname(value);
+  }
 }
 
 class ConfigSaveResult {
@@ -37,32 +46,86 @@ class ConfigFileStore {
 
   Future<ConfigOverrides> read() => _serialize(() async {
     final editor = _parse(await _readContents());
-    return _overrides(editor);
+    final values = _overrides(editor);
+    return ConfigOverrides(
+      logLevel: values.logLevel,
+      logPath: values.logPath,
+      databasePath: await _databaseFilePath(values.databasePath),
+    );
   });
+
+  /// 托管 Go 启动前修正旧设置保存的目录值，不创建或迁移数据库。
+  Future<ConfigSaveResult> normalizeLegacyDatabaseDirectory() =>
+      _serialize(() async {
+        final editor = _parse(await _readContents());
+        final before = _overrides(editor);
+        final databasePath = await _databaseFilePath(before.databasePath);
+        if (databasePath != before.databasePath) {
+          await _validateResourcePath(databasePath!, database: true);
+          _set(editor, 'db', 'db_path', databasePath);
+          await _save(editor.toString());
+        }
+        return _result(before, _overrides(editor));
+      });
+
+  // 只将已存在的普通目录识别为旧值，避免猜测文件名或改写 SQLite 特殊数据源。
+  Future<String?> _databaseFilePath(String? value) async {
+    if (value == null ||
+        value.trim().isEmpty ||
+        value == ':memory:' ||
+        value.startsWith('file:')) {
+      return value;
+    }
+    final path = p.isAbsolute(value)
+        ? value
+        : p.join(p.dirname(configPath), value);
+    return await FileSystemEntity.type(path) == FileSystemEntityType.directory
+        ? p.join(value, 'timecue.db')
+        : value;
+  }
 
   Future<ConfigSaveResult> update({
     String? logLevel,
     String? logPath,
     String? databasePath,
+    String? databaseDirectory,
   }) => _serialize(() async {
-    if (logLevel == null && logPath == null && databasePath == null) {
+    if (databasePath != null && databaseDirectory != null) {
+      throw ArgumentError('数据库文件路径和目录不能同时指定');
+    }
+    if (logLevel == null &&
+        logPath == null &&
+        databasePath == null &&
+        databaseDirectory == null) {
       throw ArgumentError('至少指定一个配置项');
     }
     if (logLevel != null &&
         !const {'debug', 'info', 'warn', 'error'}.contains(logLevel)) {
       throw ArgumentError.value(logLevel, 'logLevel', '不支持的日志级别');
     }
-    for (final value in [logPath, databasePath]) {
+    for (final value in [logPath, databasePath, databaseDirectory]) {
       if (value != null && (value.trim().isEmpty || value.contains('\u0000'))) {
         throw ArgumentError('路径不能为空或包含空字符');
       }
+    }
+    if (logPath != null) await _validateResourcePath(logPath, database: false);
+    if (databaseDirectory != null) {
+      await _validateResourcePath(databaseDirectory, database: false);
+    }
+    final nextDatabasePath = databaseDirectory == null
+        ? databasePath
+        : p.join(databaseDirectory, 'timecue.db');
+    if (nextDatabasePath != null) {
+      await _validateResourcePath(nextDatabasePath, database: true);
     }
 
     final editor = _parse(await _readContents());
     final before = _overrides(editor);
     if (logLevel != null) _set(editor, 'log', 'level', logLevel);
     if (logPath != null) _set(editor, 'log', 'log_path', logPath);
-    if (databasePath != null) _set(editor, 'db', 'db_path', databasePath);
+    if (nextDatabasePath != null) {
+      _set(editor, 'db', 'db_path', nextDatabasePath);
+    }
     final after = _overrides(editor);
     await _save(editor.toString());
     return _result(before, after);
@@ -105,6 +168,30 @@ class ConfigFileStore {
         before.logPath != after.logPath ||
         before.databasePath != after.databasePath,
   );
+
+  // 只检查路径类型，不创建运行资源；相对路径与 Go 使用相同的数据目录。
+  Future<void> _validateResourcePath(
+    String value, {
+    required bool database,
+  }) async {
+    if (database && (value == ':memory:' || value.startsWith('file:'))) return;
+    if (database &&
+        (value.endsWith('/') || (Platform.isWindows && value.endsWith('\\')))) {
+      throw const FormatException('数据库路径必须包含文件名，例如 D:\\time_cue\\timecue.db');
+    }
+    final path = p.isAbsolute(value)
+        ? value
+        : p.join(p.dirname(configPath), value);
+    final type = await FileSystemEntity.type(path);
+    if (database && type == FileSystemEntityType.directory) {
+      throw const FormatException('数据库文件位置被目录占用，请更换数据库目录');
+    }
+    if (!database &&
+        type != FileSystemEntityType.notFound &&
+        type != FileSystemEntityType.directory) {
+      throw const FormatException('目录不能指向文件');
+    }
+  }
 
   // 同一文件的读取与修改串行化，即使不同组件创建了多个存储实例也不会互相覆盖。
   Future<T> _serialize<T>(Future<T> Function() operation) {

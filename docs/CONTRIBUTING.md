@@ -42,7 +42,7 @@ TimeCue 采用 `main + dev` 双主干模式：
 
 ## 版本发布流程
 
-Windows 完整包使用 `scripts/build-release.ps1`，版本来自 desktop/pubspec.yaml；产物包含完整 Flutter 目录及 timecue-core.exe、校验清单和 ZIP。dev PR 的 CI 保存同轮发行产物，手动 Windows Release Package 工作流用于稳定 SDK 全量验证和打包，不自动创建 Tag/Release。发布前按 docs/RELEASE.md 检查首次运行、重启数据、迁移备份和系统交互；本地 master SDK 通过不能替代 stable CI。
+Windows 完整包使用 `scripts/build-release.ps1`，版本来自 desktop/pubspec.yaml；产物包含完整 Flutter 目录、timecue-core.exe、update.py、发行说明、校验清单和 ZIP。dev PR 的 CI 保存同轮发行产物，手动 Windows Release Package 工作流使用 Flutter stable 和 Python 3.11 进行全量验证与打包，不自动创建 Tag/Release。发布前按 docs/RELEASE.md 检查首次运行、重启数据、更新、迁移备份和系统交互；本地 master SDK 通过不能替代 stable CI。
 
 当 `dev` 中的修改已经达到一个可发布版本，并完成必要验证后：
 
@@ -113,12 +113,13 @@ git switch -c feat/12-recurring-reminder
 
 ## CI 规则
 
-向 `dev` 或 `main` 提交 Pull Request 时，`.github/workflows/ci.yml` 的 Go 和 Flutter 检查均运行在 Windows runner，与应用目标平台一致。Go 工作流脚本使用 PowerShell；Flutter 工程位于 `desktop/`。
+向 `dev` 或 `main` 提交 Pull Request 时，`.github/workflows/ci.yml` 的 Go 和 Flutter 检查均运行在 Windows runner，与应用目标平台一致。Go 工作流脚本使用 PowerShell；Flutter 工程位于 `desktop/`。Python 更新脚本测试使用 Python 3.11 和标准库，不安装额外包。
 
 - Go：`gofmt`、`go vet ./...`、`go test -p 1 ./...`；固定业务端口的跨包测试串行运行。
 - Flutter：CI 固定 Flutter 3.47.0，保留本机 master SDK；运行 `flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`，通知插件及传递依赖提交 lockfile。
-- Windows 构建：`flutter build windows --release`，发行包默认托管同目录 Go；开发外连显式指定 backend=external。在 desktop 执行 `cmake -S test/native -B build/desktop-native -A x64`、`cmake --build build/desktop-native --config Release` 和 `ctest --test-dir build/desktop-native -C Release --output-on-failure` 验证原生单实例、IPC、自有进程与 Job 清理。
-- 本地运行：先在根目录运行 `go run ./cmd/flutter --data-dir .`，再在 `desktop/` 执行 `flutter run -d windows -a --backend=external -a --data-dir=<仓库绝对目录>`；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
+- Python：在仓库根目录运行 `python -m unittest discover -s scripts -p test_update.py -v`，覆盖发行清单更新与安装路径登记逻辑。
+- Windows 构建：`flutter build windows --release`，Go 需安装并在 PATH；Windows CMake 每次构建都会编译 Go 服务并安装到 runner 旁，发行包默认托管同目录 Go。开发默认使用 managed；独立后端联调显式指定 backend=external。在 desktop 执行 `cmake -S test/native -B build/desktop-native -A x64`、`cmake --build build/desktop-native --config Release` 和 `ctest --test-dir build/desktop-native -C Release --output-on-failure` 验证原生单实例、IPC、自有进程、Job 清理和安装目录登记。
+- 本地运行：在 `desktop/` 执行 `flutter run -d windows --debug -a --backend=managed -a --data-dir=<仓库绝对目录>`，Flutter 会启动同目录 Go 服务；已有实例切换 backend 前需完整退出，Go 源码更改需退出并重新运行 Flutter，热重载不会重建 Go。独立后端联调可先在根目录运行 `go run ./cmd/flutter --data-dir .`，再指定 backend=external；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
 CI 通过后再合并 PR。
 
 ## main 分支策略

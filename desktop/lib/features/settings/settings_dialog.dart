@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_selector/file_selector.dart';
+import 'package:path/path.dart' as p;
+import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
 
 /// 编辑用户覆盖值；默认基线与运行资源仍由 Go 管理。
@@ -24,11 +27,29 @@ class _SettingsDialogState extends State<SettingsDialog> {
   bool _confirming = false;
   bool _allowClose = false;
 
+  String? get _originalLogPath => _displayDirectory(_original?.logPath);
+
+  String? get _originalDatabasePath {
+    final value = _original?.databaseDirectory;
+    if (value == null || value == ':memory:' || value.startsWith('file:')) {
+      return value;
+    }
+    return _displayDirectory(value);
+  }
+
+  String? _displayDirectory(String? value) {
+    if (value == null || value.isEmpty) return value;
+    final dataDirectory = p.dirname(widget.store.configPath);
+    return p.normalize(
+      p.isAbsolute(value) ? value : p.join(dataDirectory, value),
+    );
+  }
+
   bool get _dirty =>
       _original != null &&
       (_level != _original!.logLevel ||
-          _logPath.text != (_original!.logPath ?? '') ||
-          _databasePath.text != (_original!.databasePath ?? ''));
+          _logPath.text != (_originalLogPath ?? '') ||
+          _databasePath.text != (_originalDatabasePath ?? ''));
 
   @override
   void initState() {
@@ -40,8 +61,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _form = GlobalKey<FormState>();
     _original = values;
     _level = values.logLevel;
-    _logPath.text = values.logPath ?? '';
-    _databasePath.text = values.databasePath ?? '';
+    _logPath.text = _displayDirectory(values.logPath) ?? '';
+    _databasePath.text = _originalDatabasePath ?? '';
   }
 
   Future<void> _load() async {
@@ -53,7 +74,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
       final values = await widget.store.read();
       if (mounted) setState(() => _apply(values));
     } catch (failure) {
-      if (mounted) setState(() => _error = '读取设置失败：$failure');
+      if (mounted) {
+        final message = '读取设置失败：$failure';
+        setState(() => _error = message);
+        OperationToast.error(context, '设置未能读取，请查看弹窗中的错误并重试。');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -65,14 +90,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
   });
 
   Future<void> _save() async {
-    if (_busy || !_dirty || !_form.currentState!.validate()) return;
+    if (_busy || !_dirty) return;
+    if (!_form.currentState!.validate()) {
+      OperationToast.error(context, '请检查设置字段并修正错误。');
+      return;
+    }
     await _write(
       () => widget.store.update(
         logLevel: _level != _original!.logLevel ? _level : null,
-        logPath: _logPath.text != (_original!.logPath ?? '')
+        logPath: _logPath.text != (_originalLogPath ?? '')
             ? _logPath.text
             : null,
-        databasePath: _databasePath.text != (_original!.databasePath ?? '')
+        databaseDirectory: _databasePath.text != (_originalDatabasePath ?? '')
             ? _databasePath.text
             : null,
       ),
@@ -92,14 +121,31 @@ class _SettingsDialogState extends State<SettingsDialog> {
     try {
       final result = await operation();
       if (!mounted) return;
+      final resultMessage = result.pathsChanged
+          ? '$message。路径更改将在下次启动生效，已有数据不会自动搬迁。'
+          : '$message。日志级别由本地服务自动加载。';
       setState(() {
         _apply(result.overrides);
-        _message = result.pathsChanged
-            ? '$message。路径更改将在下次启动生效，已有数据不会自动搬迁。'
-            : '$message。日志级别由本地服务自动加载。';
+        _message = resultMessage;
       });
+      OperationToast.success(
+        context,
+        result.pathsChanged
+            ? message.contains('恢复')
+                  ? '已恢复默认设置，路径将在下次启动时生效'
+                  : '设置已保存，路径将在下次启动时生效'
+            : message.contains('恢复')
+            ? '已恢复默认设置'
+            : '设置已保存',
+      );
     } catch (failure) {
-      if (mounted) setState(() => _error = '保存设置失败：$failure');
+      if (mounted) {
+        final error = message.contains('恢复')
+            ? '恢复默认设置失败：$failure'
+            : '保存设置失败：$failure';
+        setState(() => _error = error);
+        OperationToast.error(context, '设置操作未完成，请查看弹窗中的错误。');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -135,7 +181,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     if (_busy || _confirming) return;
     final confirmed = await _confirm(
       '恢复默认设置？',
-      '日志级别、日志目录和数据库路径将恢复默认配置。未保存的修改会被舍弃，已有数据不会自动搬迁。',
+      '日志级别、日志目录和数据库目录将恢复默认配置。未保存的修改会被舍弃，已有数据不会自动搬迁。',
       '恢复默认',
     );
     if (!mounted || !confirmed) return;
@@ -167,6 +213,57 @@ class _SettingsDialogState extends State<SettingsDialog> {
     if (value.contains('\u0000')) return '路径不能包含空字符';
     return null;
   }
+
+  Future<void> _selectDirectory(TextEditingController controller) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _message = null;
+    });
+    try {
+      final currentDirectory = controller.text;
+      final selected = await getDirectoryPath(
+        initialDirectory: p.isAbsolute(currentDirectory)
+            ? currentDirectory
+            : p.dirname(widget.store.configPath),
+      );
+      if (!mounted || selected == null) return;
+      controller.text = p.normalize(selected);
+      _edited();
+    } catch (failure) {
+      if (mounted) {
+        setState(() => _error = '选择目录失败：$failure');
+        OperationToast.error(context, '无法打开目录选择器，请查看弹窗中的错误。');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _directoryField({
+    required Key key,
+    required String label,
+    required String hint,
+    required TextEditingController controller,
+    required String? original,
+  }) => TextFormField(
+    key: key,
+    controller: controller,
+    enabled: !_busy,
+    readOnly: true,
+    onTap: () => _selectDirectory(controller),
+    decoration: InputDecoration(
+      labelText: label,
+      hintText: hint,
+      suffixIcon: IconButton(
+        tooltip: '选择$label',
+        onPressed: _busy ? null : () => _selectDirectory(controller),
+        icon: const Icon(Icons.folder_open_outlined),
+      ),
+    ),
+    validator: (value) => _validatePath(value, original),
+  );
 
   @override
   void dispose() {
@@ -208,7 +305,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   if (_busy) const LinearProgressIndicator(),
                   const Text('日志与数据'),
                   const SizedBox(height: 8),
-                  const Text('日志级别会自动加载；日志目录和数据库路径在下次启动生效。'),
+                  const Text('日志级别会自动加载；日志目录和数据库目录在下次启动生效。'),
                   const SizedBox(height: 24),
                   if (_original != null) ...[
                     DropdownButtonFormField<String>(
@@ -235,38 +332,25 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             },
                     ),
                     const SizedBox(height: 20),
-                    TextFormField(
+                    _directoryField(
                       key: const ValueKey('settings-log-path'),
                       controller: _logPath,
-                      enabled: !_busy,
-                      decoration: const InputDecoration(
-                        labelText: '日志目录',
-                        hintText: '未设置，使用默认配置',
-                      ),
-                      validator: (value) =>
-                          _validatePath(value, _original!.logPath),
-                      onChanged: (_) => _edited(),
+                      label: '日志目录',
+                      hint: '未设置，使用默认配置',
+                      original: _originalLogPath,
                     ),
                     const SizedBox(height: 20),
-                    TextFormField(
+                    _directoryField(
                       key: const ValueKey('settings-database-path'),
                       controller: _databasePath,
-                      enabled: !_busy,
-                      decoration: const InputDecoration(
-                        labelText: '数据库路径',
-                        hintText: '未设置，使用默认配置',
-                      ),
-                      validator: (value) =>
-                          _validatePath(value, _original!.databasePath),
-                      onChanged: (_) => _edited(),
+                      label: '数据库目录',
+                      hint: '未设置，使用默认配置',
+                      original: _originalDatabasePath,
                     ),
                     const SizedBox(height: 16),
-                    const Text('相对路径以当前数据目录为基准。更改数据库路径不会搬迁已有日程数据。'),
+                    const Text('更改数据库目录不会搬迁已有日程数据。'),
                     const SizedBox(height: 20),
                   ],
-                  Text('配置文件', style: Theme.of(context).textTheme.labelMedium),
-                  const SizedBox(height: 4),
-                  SelectableText(widget.store.configPath),
                   if (_error != null) ...[
                     const SizedBox(height: 16),
                     Text(

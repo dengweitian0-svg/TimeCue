@@ -52,6 +52,22 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+# 每次构建桌面 runner 时同步构建同目录 Go 服务，确保源码和嵌入资源变更生效。
+find_program(TIMECUE_GO_EXECUTABLE NAMES go)
+if(NOT TIMECUE_GO_EXECUTABLE)
+  message(FATAL_ERROR "构建 TimeCue Windows 应用需要安装 Go 并将 go 添加到 PATH。")
+endif()
+set(TIMECUE_CORE_EXE "${CMAKE_CURRENT_BINARY_DIR}/timecue-core.exe")
+add_custom_target(timecue_core_build
+  COMMAND "${TIMECUE_GO_EXECUTABLE}" build -trimpath
+    -o "${TIMECUE_CORE_EXE}" ./cmd/flutter
+  BYPRODUCTS "${TIMECUE_CORE_EXE}"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../.."
+  COMMENT "构建 timecue-core.exe"
+  VERBATIM
+)
+add_dependencies(${BINARY_NAME} timecue_core_build)
+
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
@@ -73,6 +89,9 @@ set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  COMPONENT Runtime)
+
+install(FILES "${TIMECUE_CORE_EXE}" DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

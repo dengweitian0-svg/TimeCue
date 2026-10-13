@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
+import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
 import '../notebook/notebook_overlay.dart';
 import '../notebook/notebook_view_model.dart';
@@ -33,6 +34,17 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   late final notebook = NotebookViewModel(
     widget.repository,
     onRecovery: widget.onRecovery,
+    onOperationFeedback: (status, message) {
+      if (!mounted) return;
+      switch (status) {
+        case NotebookOperationStatus.success:
+          OperationToast.success(context, message);
+        case NotebookOperationStatus.warning:
+          OperationToast.warning(context, message);
+        case NotebookOperationStatus.error:
+          OperationToast.error(context, message);
+      }
+    },
   );
   Timer? _recoveryPoll;
   int _historyRequest = 0;
@@ -211,11 +223,21 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                     icon: const Icon(Icons.list_alt, size: 17),
                     label: const Text('管理日程'),
                   ),
-                  FilledButton.icon(
-                    onPressed: widget.repository.canWrite ? create : null,
-                    style: _roomActionStyle,
-                    icon: const Icon(Icons.add, size: 17),
-                    label: const Text('添加日程'),
+                  Tooltip(
+                    message: widget.repository.canWrite
+                        ? '添加日程'
+                        : widget.repository.loading &&
+                              !widget.repository.hasSnapshot
+                        ? '正在连接本地服务，暂时不能添加日程'
+                        : widget.repository.refreshError != null
+                        ? '本地服务连接失败，请重试后添加日程'
+                        : '提醒服务暂不可用，恢复连接后即可添加日程',
+                    child: FilledButton.icon(
+                      onPressed: widget.repository.canWrite ? create : null,
+                      style: _createScheduleActionStyle,
+                      icon: const Icon(Icons.add, size: 17),
+                      label: const Text('添加日程'),
+                    ),
                   ),
                 ],
               ),
@@ -311,6 +333,13 @@ ButtonStyle get _roomActionStyle => FilledButton.styleFrom(
   shape: const StadiumBorder(side: BorderSide.none),
   textStyle: const TextStyle(fontSize: 12),
 );
+
+ButtonStyle get _createScheduleActionStyle => FilledButton.styleFrom(
+  backgroundColor: const Color.fromARGB(128, 73, 61, 48),
+  foregroundColor: const Color.fromARGB(159, 255, 249, 237),
+  disabledBackgroundColor: const Color.fromARGB(225, 238, 222, 190),
+  disabledForegroundColor: const Color.fromARGB(255, 93, 66, 43),
+).merge(_roomActionStyle);
 
 class RoomActions extends StatelessWidget {
   const RoomActions({
