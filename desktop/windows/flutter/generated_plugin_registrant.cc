@@ -1,8 +1,8 @@
 //
-// Flutter 工具自动生成的文件；手工修改会在重新生成时被覆盖。
+//  Generated file. Do not edit.
 //
 
-// 本次按目录约定格式化；重新生成会覆盖。
+// clang-format off
 
 #include "generated_plugin_registrant.h"
 
@@ -11,8 +11,10 @@
 #include <window_manager/window_manager_plugin.h>
 
 void RegisterPlugins(flutter::PluginRegistry* registry) {
-    ScreenRetrieverWindowsPluginCApiRegisterWithRegistrar(
-        registry->GetRegistrarForPlugin("ScreenRetrieverWindowsPluginCApi"));
-    TrayManagerPluginRegisterWithRegistrar(registry->GetRegistrarForPlugin("TrayManagerPlugin"));
-    WindowManagerPluginRegisterWithRegistrar(registry->GetRegistrarForPlugin("WindowManagerPlugin"));
+  ScreenRetrieverWindowsPluginCApiRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("ScreenRetrieverWindowsPluginCApi"));
+  TrayManagerPluginRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("TrayManagerPlugin"));
+  WindowManagerPluginRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("WindowManagerPlugin"));
 }
