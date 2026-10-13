@@ -87,6 +87,13 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 运行发行更新脚本测试
+        working-directory: ..
+        run: python -m unittest discover -s scripts -p test_update.py -v
       - name: 设置 Flutter stable
         uses: subosito/flutter-action@v2
         with:

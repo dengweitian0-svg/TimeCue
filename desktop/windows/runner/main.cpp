@@ -5,6 +5,7 @@
 #include "flutter_window.h"
 #include "utils.h"
 #include "single_instance.h"
+#include "install_directory.h"
 
 // 取得主实例资格后创建 Flutter 窗口并运行 Windows 消息循环，二次启动仅转交参数。
 // instance：当前模块
@@ -45,6 +46,24 @@ int APIENTRY wWinMain(
     Win32Window::Size size(1280, 800);
     if (!window.Create(L"TimeCue", origin, size)) {
         return EXIT_FAILURE;
+    }
+    std::wstring executable_path;
+    std::wstring registration_error;
+    if (GetCurrentExecutablePath(&executable_path, &registration_error)) {
+        const auto registration = RegisterInstallDirectory(executable_path);
+        if (registration.status == InstallDirectoryRegistrationStatus::failed) {
+            MessageBoxW(
+                window.GetHandle(),
+                registration.error_message.c_str(),
+                L"TimeCue 安装路径登记失败",
+                MB_OK | MB_ICONWARNING);
+        }
+    } else {
+        MessageBoxW(
+            window.GetHandle(),
+            registration_error.c_str(),
+            L"TimeCue 安装路径登记失败",
+            MB_OK | MB_ICONWARNING);
     }
     window.SetQuitOnClose(true);
 

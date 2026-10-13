@@ -1,6 +1,6 @@
 # TimeCue
 
-- `scripts/build-release.ps1` 打包完整 Flutter Windows x64 目录、timecue-core.exe、版本/文件校验清单和 ZIP；发行说明见 docs/RELEASE.md。主实例默认 managed，使用当前用户 LocalAppData/TimeCue；Go 在监听前显式初始化新库或备份升级可识别 Flutter 旧库，拒绝自动转换 Wails 数据。
+- `scripts/build-release.ps1` 打包完整 Flutter Windows x64 目录、timecue-core.exe、update.py、发行说明、版本/文件校验清单和 ZIP；发行说明见 docs/RELEASE.md。正式发行目录的主实例窗口启动成功后会登记当前用户 `TIMECUE_INSTALL_DIR`，供 Python 更新脚本定位安装目录。主实例默认 managed，使用当前用户 LocalAppData/TimeCue；Go 在监听前显式初始化新库或备份升级可识别 Flutter 旧库，拒绝自动转换 Wails 数据。
 
 Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务，Flutter 提供房间与日程本界面。已接通查询、确认、规则操作、分钟调度、全期间恢复与汇总、任务成员分页及投递领取/开始/回填协议；Go 支持固定数据目录、运行身份、托管 ready 和父端停止控制。Flutter 已实现 Windows 即时通知桥、运行内结果重传、通知点击只读定位与恢复进度/成员展示；已接入托盘、关闭隐藏、原生单实例唤回与激活参数转交；Flutter 已接入自有 Go 的隐藏创建、身份握手、共享退出和 Job 崩溃清理。
 
