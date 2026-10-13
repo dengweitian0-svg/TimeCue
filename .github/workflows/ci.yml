@@ -123,7 +123,7 @@ jobs:
         run: ctest --test-dir build/desktop-native -C Release --output-on-failure
       - name: 打包完整 Windows 发行目录
         shell: pwsh
-        run: ../scripts/build-release.ps1 -SkipChecks -SkipFlutterBuild
+        run: ../scripts/build-release.ps1 -SkipFlutterBuild
       - name: 保存发行包及校验值
         uses: actions/upload-artifact@v4
         with:

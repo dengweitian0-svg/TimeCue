@@ -1,6 +1,5 @@
 ﻿param(
     [string]$OutputDirectory = '',
-    [switch]$SkipChecks,
     [switch]$SkipFlutterBuild
 )
 
@@ -24,21 +23,11 @@ function Invoke-Checked {
 
 Push-Location $taskRoot
 try {
-    if (!$SkipChecks) {
-        Invoke-Checked -Program 'go' -Arguments @('vet', './...')
-        Invoke-Checked -Program 'go' -Arguments @('test', '-p', '1', './...')
-        Invoke-Checked -Program 'python' -Arguments @('-m', 'unittest', 'discover', '-s', 'scripts', '-p', 'test_update.py')
-    }
     Invoke-Checked -Program 'go' -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $taskStaging 'timecue-core.exe'), './cmd/flutter')
     Push-Location (Join-Path $taskRoot 'desktop')
     try {
         if (!$SkipFlutterBuild) {
             Invoke-Checked -Program 'flutter' -Arguments @('pub', 'get')
-        }
-        if (!$SkipChecks) {
-            Invoke-Checked -Program 'dart' -Arguments @('format', '--output=none', '--set-exit-if-changed', 'lib', 'test')
-            Invoke-Checked -Program 'flutter' -Arguments @('analyze', '--no-pub')
-            Invoke-Checked -Program 'flutter' -Arguments @('test', '--no-pub')
         }
         if (!$SkipFlutterBuild) {
             Invoke-Checked -Program 'flutter' -Arguments @('build', 'windows', '--release', '--no-pub', '--target=lib/main.dart')
