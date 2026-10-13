@@ -15,10 +15,24 @@ class HttpNotebookRepository extends NotebookRepository
     DateTime Function()? now,
     bool managed = false,
   }) : _runtimeAccess = !managed,
-       _client = client ?? HttpClient(),
        _base = base ?? Uri.parse('http://127.0.0.1:10086/api/v1/scheduler/'),
+       _client =
+           client ??
+           _createClient(
+             base ?? Uri.parse('http://127.0.0.1:10086/api/v1/scheduler/'),
+           ),
        _clock = now ?? beijingNow,
        _now = (now ?? beijingNow)();
+
+  static HttpClient _createClient(Uri base) {
+    final client = HttpClient();
+    if (base.host == 'localhost' ||
+        InternetAddress.tryParse(base.host)?.isLoopback == true) {
+      client.findProxy = (_) => 'DIRECT';
+    }
+    return client;
+  }
+
   bool _runtimeAccess;
   String? _expectedInstance;
   int? _expectedPid;
@@ -179,7 +193,36 @@ class HttpNotebookRepository extends NotebookRepository
         throw StateError('本次运行已经结束，忽略迟到响应。');
       }
       if (response.statusCode == 204) return null;
-      final value = jsonDecode(text) as Map<String, dynamic>;
+      final endpoint = uri.path;
+      dynamic decoded;
+      try {
+        if (text.isEmpty) throw const FormatException();
+        decoded = jsonDecode(text);
+      } on FormatException {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw NotebookApiException(
+            'request_failed',
+            '请求 $endpoint 失败（HTTP ${response.statusCode}），服务未返回有效 JSON。',
+            status: response.statusCode,
+          );
+        }
+        throw FormatException(
+          '请求 $endpoint 返回空内容或无效 JSON（HTTP ${response.statusCode}）。请检查 Go 服务和接口响应。',
+        );
+      }
+      if (decoded is! Map<String, dynamic>) {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw NotebookApiException(
+            'request_failed',
+            '请求 $endpoint 失败（HTTP ${response.statusCode}），服务返回的错误格式无效。',
+            status: response.statusCode,
+          );
+        }
+        throw FormatException(
+          '请求 $endpoint 返回非对象 JSON（HTTP ${response.statusCode}）。请检查 Go 服务接口响应。',
+        );
+      }
+      final value = decoded;
       if (path == '/health' &&
           _expectedInstance != null &&
           (value['data']?['instanceId'] != _expectedInstance ||
@@ -190,11 +233,20 @@ class HttpNotebookRepository extends NotebookRepository
         throw const FormatException('端口上的服务不是本次自有进程。');
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        final error = value['error'] ?? value['data']?['error'];
+        final data = value['data'];
+        final nestedError = data is Map ? data['error'] : null;
+        final rawError = value['error'] ?? nestedError;
+        final error = rawError is Map ? rawError : null;
         throw NotebookApiException(
           error?['code']?.toString() ?? 'request_failed',
-          error?['message']?.toString() ?? '请求失败（${response.statusCode}）',
+          error?['message']?.toString() ??
+              '请求 $endpoint 失败（HTTP ${response.statusCode}）。',
           status: response.statusCode,
+        );
+      }
+      if (!value.containsKey('data') || value['data'] == null) {
+        throw FormatException(
+          '请求 $endpoint 返回的数据为空（HTTP ${response.statusCode}）。请检查 Go 服务接口响应。',
         );
       }
       return value['data'];

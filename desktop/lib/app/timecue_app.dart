@@ -231,6 +231,25 @@ class _DesktopShellState extends State<DesktopShell> {
     super.dispose();
   }
 
+  Widget _errorCard(String message, List<Widget> actions) => Material(
+    elevation: 4,
+    borderRadius: BorderRadius.circular(8),
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(message),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Wrap(children: actions),
+          ),
+        ],
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) => Scaffold(
     body: Stack(
@@ -290,76 +309,62 @@ class _DesktopShellState extends State<DesktopShell> {
                 ),
               ),
             ),
-        if (widget.desktop case final desktop?)
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: widget.notifications?.error == null ? 16 : 92,
-            child: ListenableBuilder(
-              listenable: desktop,
-              builder: (_, _) => desktop.error == null
-                  ? const SizedBox.shrink()
-                  : Material(
-                      elevation: 4,
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            Expanded(child: Text(desktop.error!)),
-                            TextButton(
-                              onPressed: desktop.stopping
-                                  ? null
-                                  : () => unawaited(
-                                      desktop.windowFailed
-                                          ? desktop.openWindow()
-                                          : desktop.retryTray(),
-                                    ),
-                              child: Text(
-                                desktop.windowFailed ? '重试窗口' : '重试托盘',
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: desktop.stopping
-                                  ? null
-                                  : () => unawaited(desktop.requestExit()),
-                              child: const Text('退出 TimeCue'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-        if (widget.notifications case final notifications?)
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: 16,
-            child: ListenableBuilder(
-              listenable: notifications,
-              builder: (_, _) => notifications.error == null
-                  ? const SizedBox.shrink()
-                  : Material(
-                      elevation: 4,
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            Expanded(child: Text(notifications.error!)),
-                            TextButton(
-                              onPressed: () =>
-                                  unawaited(notifications.initialize()),
-                              child: const Text('重试连接'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-            ),
-          ),
       ],
+    ),
+    bottomNavigationBar: ListenableBuilder(
+      listenable: Listenable.merge([?widget.desktop, ?widget.notifications]),
+      builder: (context, _) {
+        final banners = <Widget>[];
+        if (widget.desktop case final desktop?) {
+          if (desktop.error case final error?) {
+            banners.add(
+              _errorCard(error, [
+                TextButton(
+                  onPressed: desktop.stopping
+                      ? null
+                      : () => unawaited(
+                          desktop.windowFailed
+                              ? desktop.openWindow()
+                              : desktop.retryTray(),
+                        ),
+                  child: Text(desktop.windowFailed ? '重试窗口' : '重试托盘'),
+                ),
+                TextButton(
+                  onPressed: desktop.stopping
+                      ? null
+                      : () => unawaited(desktop.requestExit()),
+                  child: const Text('退出 TimeCue'),
+                ),
+              ]),
+            );
+          }
+        }
+        if (widget.notifications case final notifications?) {
+          if (notifications.error case final error?) {
+            banners.add(
+              _errorCard(error, [
+                TextButton(
+                  onPressed: () => unawaited(notifications.initialize()),
+                  child: const Text('重试连接'),
+                ),
+              ]),
+            );
+          }
+        }
+        if (banners.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < banners.length; i++) ...[
+                if (i > 0) const SizedBox(height: 8),
+                banners[i],
+              ],
+            ],
+          ),
+        );
+      },
     ),
   );
 }
