@@ -117,8 +117,8 @@ git switch -c feat/12-recurring-reminder
 
 - Go：`gofmt`、`go vet ./...`、`go test -p 1 ./...`；固定业务端口的跨包测试串行运行。
 - Flutter：CI 固定 Flutter 3.47.0，保留本机 master SDK；运行 `flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`，通知插件及传递依赖提交 lockfile。
-- Windows 构建：`flutter build windows --release`，发行包默认托管同目录 Go；开发外连显式指定 backend=external。在 desktop 执行 `cmake -S test/native -B build/desktop-native -A x64`、`cmake --build build/desktop-native --config Release` 和 `ctest --test-dir build/desktop-native -C Release --output-on-failure` 验证原生单实例、IPC、自有进程与 Job 清理。
-- 本地运行：先在根目录运行 `go run ./cmd/flutter --data-dir .`，再在 `desktop/` 执行 `flutter run -d windows -a --backend=external -a --data-dir=<仓库绝对目录>`；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
+- Windows 构建：`flutter build windows --release`，Go 需安装并在 PATH；Windows CMake 每次构建都会编译 Go 服务并安装到 runner 旁，发行包默认托管同目录 Go。开发默认使用 managed；独立后端联调显式指定 backend=external。在 desktop 执行 `cmake -S test/native -B build/desktop-native -A x64`、`cmake --build build/desktop-native --config Release` 和 `ctest --test-dir build/desktop-native -C Release --output-on-failure` 验证原生单实例、IPC、自有进程与 Job 清理。
+- 本地运行：在 `desktop/` 执行 `flutter run -d windows --debug -a --backend=managed -a --data-dir=<仓库绝对目录>`，Flutter 会启动同目录 Go 服务；已有实例切换 backend 前需完整退出，Go 源码更改需退出并重新运行 Flutter，热重载不会重建 Go。独立后端联调可先在根目录运行 `go run ./cmd/flutter --data-dir .`，再指定 backend=external；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
 CI 通过后再合并 PR。
 
 ## main 分支策略

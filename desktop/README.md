@@ -1,12 +1,14 @@
 # TimeCue Flutter 桌面端
 
 ```powershell
-go run ./cmd/flutter --data-dir .
+cd D:\go_project\src\TimeCue\desktop
+flutter pub get
+flutter run -d windows --debug -a --backend=managed -a --data-dir=D:\go_project\src\TimeCue
 ```
 
-`--backend=external` 使用手动启动的 Go 服务；连接 `127.0.0.1:10086` 前请先在仓库根目录运行上面的命令。本地 loopback 请求会直连，不经过系统 HTTP 代理。服务未连接就绪时，添加日程操作不可用；房间入口仍显示，连接恢复后可继续操作。
+Windows CMake 会在 Debug、Profile 和 Release 构建中编译 Go 服务并放到 runner 旁；开发前需安装 Go 并将 `go` 放入 PATH。managed 模式由 Flutter 启动自有 Go。切换 backend 前请完整退出已有实例；Go 源码更改后需退出并重新运行 Flutter，热重载不会重建 Go。
 
-另一个终端运行桌面界面：
+`--backend=external` 可选用于连接独立运行的 Go 服务：先在仓库根目录运行 `go run ./cmd/flutter --data-dir .`，再用 `flutter run -d windows --debug -a --backend=external -a --data-dir=D:\go_project\src\TimeCue` 启动桌面端。本地 loopback 请求会直连，不经过系统 HTTP 代理。服务未连接就绪时，添加日程操作不可用；房间入口仍显示，连接恢复后可继续操作。
 
 ```powershell
 cd D:\go_project\src\TimeCue\desktop
