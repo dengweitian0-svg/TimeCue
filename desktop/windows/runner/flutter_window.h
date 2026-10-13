@@ -5,6 +5,9 @@
 #include <flutter/flutter_view_controller.h>
 
 #include <memory>
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include <flutter/method_channel.h>
 #include <flutter/encodable_value.h>
 #include "single_instance.h"
@@ -43,7 +46,14 @@ private:
     SingleInstance* instance_;
     std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> desktop_channel_;
     std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> process_channel_;
+    std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> update_channel_;
     std::unique_ptr<ManagedProcess> managed_process_;
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> update_result_;
+    std::thread update_waiter_;
+    std::mutex update_mutex_;
+    std::string update_error_;
+    bool update_result_boolean_ = false;
+    std::atomic_bool cancel_update_wait_{false};
     bool host_ready_ = false;
     bool exiting_ = false;
     UINT taskbar_created_ = RegisterWindowMessageW(L"TaskbarCreated");

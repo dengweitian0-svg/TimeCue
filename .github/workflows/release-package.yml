@@ -22,6 +22,9 @@ jobs:
       - name: 检查并构建完整发行包
         shell: pwsh
         run: ./scripts/build-release.ps1
+      - name: 验证发行更新器安全与恢复
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./scripts/test-update.ps1
       - name: 验证原生生命周期
         shell: pwsh
         run: |

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
 import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
+import '../../app/software_update.dart';
 import '../notebook/notebook_overlay.dart';
 import '../notebook/notebook_view_model.dart';
 import '../notebook/schedule_management_dialog.dart';
@@ -21,11 +22,15 @@ class RoomScreen extends StatefulWidget {
     this.onRecovery,
     this.historyRequests,
     this.configFiles,
+    this.createSoftwareUpdateController,
+    this.requestExit,
   });
   final NotebookRepository repository;
   final VoidCallback? onRecovery;
   final ValueListenable<int>? historyRequests;
   final ConfigFileStore? configFiles;
+  final SoftwareUpdateController Function()? createSoftwareUpdateController;
+  final Future<void> Function()? requestExit;
   @override
   State<RoomScreen> createState() => _RoomScreenState();
 }
@@ -133,10 +138,15 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   Future<void> settings() async {
     final store = widget.configFiles;
     if (store == null) return;
+    final updateController = widget.createSoftwareUpdateController?.call();
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => SettingsDialog(store: store),
+      builder: (_) => SettingsDialog(
+        store: store,
+        updateController: updateController,
+        requestExit: widget.requestExit,
+      ),
     );
   }
 

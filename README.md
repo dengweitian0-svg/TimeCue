@@ -4,7 +4,7 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 > 当前可运行 Flutter 房间与日程本和独立 Go 本机 HTTP API。已接入托盘、单实例、自有 Go 进程及完整 Windows ZIP 打包；默认使用用户数据目录，首次启动初始化数据库。系统通知完整冷启动与人工安装态验收仍待核验。
 
-发行构建：在根目录运行 `powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1`，完整 ZIP 输出到 `build/releases/`。解压后双击 `timecue_desktop.exe`，无需手填参数；必须保留同目录 Go、DLL 和 data。数据升级及验收边界见[发行说明](docs/RELEASE.md)。
+发行构建：在根目录运行 `powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1`，完整 ZIP 输出到 `build/releases/`。解压后双击 `timecue_desktop.exe`，无需手填参数；必须保留同目录 Go、更新脚本、DLL 和 data。设置中的软件更新支持托管安装目录，下载完整 ZIP 与 SHA-256 sidecar 后由 Windows PowerShell 更新器校验、备份、替换并重启；外连模式只检查版本。数据升级及验收边界见[发行说明](docs/RELEASE.md)和[更新说明](docs/UPDATE.md)。
 
 ## 当前实现
 
@@ -15,7 +15,7 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 | 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
 | 日程与提醒 | 已有规则操作、查询与确认；D1 开放完整分钟分组，D2 提供领取、开始、结果回填和有限重试，D3 按历史版本分批恢复、开放唯一遗漏汇总并查询成员/进度。D5 已接 Windows 即时展示与内存结果重传，D6 已接冻结成员定位、持久提醒详情及恢复进度/历史分页。 |
 | SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；入口初始化空库或备份后升级可识别的 Flutter 旧库，事务提交前检查结构；拒绝自动转换 Wails 数据库。 |
-| Flutter | `desktop/` 已实现三时段房间、双页本子及创建/编辑视觉骨架，默认接入 Go 查询、单条/批量确认及真实规则变更，视觉示例仍用显式内存仓储。 |
+| Flutter | `desktop/` 已实现三时段房间、双页本子、规则管理与软件更新设置；真实模式接入 Go 查询、单条/批量确认及规则变更，更新只替换安装目录内的托管版本，视觉示例使用显式内存仓储。 |
 
 
 日程本已接入“今天｜历史待确认｜日历”三标签：按原计划时间及北京时间零点分类，两类分别分页和选择，房间统计全部到期未确认；跨日重载首分页，查询及查看详情不会确认或调用平台通知。接口和自动检查证据见[历史待确认验收记录](docs/design/historical-unacknowledged-reminders-validation.md)。

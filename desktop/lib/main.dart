@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'app/desktop_lifecycle.dart';
 import 'app/managed_backend.dart';
+import 'app/software_update.dart';
 import 'app/timecue_app.dart';
 import 'app/windows_notification_bridge.dart';
 import 'data/demo_notebook_repository.dart';
@@ -23,11 +25,22 @@ Future<void> main() async {
     return;
   }
   BackendConfiguration configuration;
+  SoftwareUpdateConfiguration? updateConfiguration;
   try {
     configuration = await WindowsOwnedProcessPlatform.configuration();
   } catch (failure) {
     runApp(_ConfigurationError(desktop: desktop, error: '$failure'));
     return;
+  }
+  try {
+    final updateSnapshot = await WindowsSoftwareUpdatePlatform.channel
+        .invokeMethod<Object?>('configuration');
+    updateConfiguration = SoftwareUpdateConfiguration.fromNative(
+      updateSnapshot,
+      applicationDirectory: File(Platform.resolvedExecutable).parent.path,
+    );
+  } catch (_) {
+    // 更新检查不可用不影响日程服务启动。
   }
   final repository = HttpNotebookRepository(managed: configuration.managed);
   final configFiles = configuration.configFiles;
@@ -73,6 +86,7 @@ Future<void> main() async {
       notifications: notifications,
       backend: backend,
       configFiles: configFiles,
+      softwareUpdateConfiguration: updateConfiguration,
       ownsRepository: true,
     ),
   );

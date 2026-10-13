@@ -12,6 +12,7 @@ import 'windows_notification_bridge.dart';
 import 'desktop_lifecycle.dart';
 import 'managed_backend.dart';
 import 'operation_toast.dart';
+import 'software_update.dart';
 
 class TimeCueApp extends StatelessWidget {
   const TimeCueApp({
@@ -22,6 +23,7 @@ class TimeCueApp extends StatelessWidget {
     this.desktop,
     this.notificationViews,
     this.configFiles,
+    this.softwareUpdateConfiguration,
     this.ownsRepository = false,
   });
   final NotebookRepository repository;
@@ -30,6 +32,7 @@ class TimeCueApp extends StatelessWidget {
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
   final ConfigFileStore? configFiles;
+  final SoftwareUpdateConfiguration? softwareUpdateConfiguration;
   final bool ownsRepository;
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -50,6 +53,7 @@ class TimeCueApp extends StatelessWidget {
       desktop: desktop,
       notificationViews: notificationViews,
       configFiles: configFiles,
+      softwareUpdateConfiguration: softwareUpdateConfiguration,
       ownsRepository: ownsRepository,
     ),
   );
@@ -65,6 +69,7 @@ class DesktopShell extends StatefulWidget {
     this.desktop,
     this.notificationViews,
     this.configFiles,
+    this.softwareUpdateConfiguration,
     this.ownsRepository = false,
   });
   final NotebookRepository repository;
@@ -73,6 +78,7 @@ class DesktopShell extends StatefulWidget {
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
   final ConfigFileStore? configFiles;
+  final SoftwareUpdateConfiguration? softwareUpdateConfiguration;
   final bool ownsRepository;
   @override
   State<DesktopShell> createState() => _DesktopShellState();
@@ -260,6 +266,28 @@ class _DesktopShellState extends State<DesktopShell> {
             child: RoomScreen(
               repository: widget.repository,
               configFiles: widget.configFiles,
+              requestExit: widget.desktop?.requestExit,
+              createSoftwareUpdateController:
+                  widget.softwareUpdateConfiguration == null
+                  ? null
+                  : () {
+                      final source = widget.softwareUpdateConfiguration!;
+                      final configuration = SoftwareUpdateConfiguration(
+                        backend: source.backend,
+                        dataDirectory: source.dataDirectory,
+                        goExecutable: source.goExecutable,
+                        currentVersion: source.currentVersion,
+                        installDirectory: source.installDirectory,
+                        applicationDirectory: source.applicationDirectory,
+                        updaterExecutable: source.updaterExecutable,
+                        ownedGoPid: widget.backend?.pid,
+                        restartArguments: source.restartArguments,
+                      );
+                      return SoftwareUpdateController(
+                        configuration: configuration,
+                        platform: WindowsSoftwareUpdatePlatform(),
+                      );
+                    },
               onRecovery: widget.notificationViews == null
                   ? null
                   : _openRecovery,

@@ -1,6 +1,8 @@
 # 构建脚本
 
-- `build-release.ps1`：检查 Go/Flutter、编译服务及正式 Flutter 入口，将完整 Windows x64 运行目录与 Go、说明、文件校验清单打包为 ZIP。
+- `build-release.ps1`：检查 Go/Flutter、编译服务及正式 Flutter 入口，复制 Flutter 运行目录后以当前 PowerShell 更新器覆盖同名文件并校验哈希，再将完整 Windows x64 运行目录与 Go、说明、文件校验清单打包为 ZIP。
+- `install-update.ps1`：Windows PowerShell 5.1 更新器，使用 .NET 流式 SHA-256 验证和暂存发行包、确认宿主退出、替换 Flutter 发行文件（包括根目录 `native_assets.json`）并支持按日志恢复，不依赖 Get-FileHash 模块。
+- `test-update.ps1`：在隔离临时目录中验证更新包安全校验、受保护数据、取消握手和中断恢复。
 - 打包优先完整复制 `docs/RELEASE.md`；该文档缺失时在发行目录生成 UTF-8 `README.md`，说明完整目录、默认托管启动与数据目录、托盘退出、自定义 data-dir、开发外连和端口占用行为。README 在发行清单枚举前生成并参与哈希。
 - 构建使用现有 SDK，版本来自 desktop/pubspec.yaml；每次创建新的输出目录，失败不生成完整包，不删除旧产物。默认输出 build/releases。
 - SkipChecks 只用于已完成本轮验证的本地构建；SkipFlutterBuild 只用于 CI 复用同一任务刚构建的正式入口。

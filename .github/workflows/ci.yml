@@ -108,6 +108,9 @@ jobs:
         run: flutter test
       - name: 构建 Windows 桌面端
         run: flutter build windows --release
+      - name: 验证 PowerShell 更新器
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ../scripts/test-update.ps1
       - name: 构建 Windows 单实例与进程原生测试
         run: cmake -S test/native -B build/desktop-native -A x64
       - name: 编译 Windows 单实例与进程原生测试

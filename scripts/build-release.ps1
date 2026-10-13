@@ -69,6 +69,12 @@ try {
         if (!(Test-Path -LiteralPath (Join-Path $taskFlutterOutput $taskRequired))) { throw "发行构建缺少 $taskRequired" }
     }
     Copy-Item -Path (Join-Path $taskFlutterOutput '*') -Destination $taskStaging -Recurse
+    $taskUpdaterSource = Join-Path $PSScriptRoot 'install-update.ps1'
+    $taskUpdaterPackage = Join-Path $taskStaging 'timecue-updater.ps1'
+    Copy-Item -LiteralPath $taskUpdaterSource -Destination $taskUpdaterPackage -Force
+    $taskUpdaterSourceHash = (Get-FileHash -LiteralPath $taskUpdaterSource -Algorithm SHA256).Hash
+    $taskUpdaterPackageHash = (Get-FileHash -LiteralPath $taskUpdaterPackage -Algorithm SHA256).Hash
+    if ($taskUpdaterPackageHash -ne $taskUpdaterSourceHash) { throw '发行目录中的更新器与当前脚本不一致。' }
     $taskReleaseNotes = Join-Path $taskRoot 'docs/RELEASE.md'
     $taskPackageReadme = Join-Path $taskStaging 'README.md'
     if (Test-Path -LiteralPath $taskReleaseNotes -PathType Leaf) {

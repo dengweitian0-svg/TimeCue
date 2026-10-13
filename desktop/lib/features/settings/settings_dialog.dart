@@ -1,12 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../app/software_update.dart';
 import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
+import 'software_update_section.dart';
 
 /// 编辑用户覆盖值；默认基线与运行资源仍由 Go 管理。
 class SettingsDialog extends StatefulWidget {
-  const SettingsDialog({super.key, required this.store});
+  const SettingsDialog({
+    super.key,
+    required this.store,
+    this.updateController,
+    this.requestExit,
+  });
   final ConfigFileStore store;
+  final SoftwareUpdateController? updateController;
+  final Future<void> Function()? requestExit;
 
   @override
   State<SettingsDialog> createState() => _SettingsDialogState();
@@ -169,6 +178,44 @@ class _SettingsDialogState extends State<SettingsDialog> {
     await _write(widget.store.restoreRuntimeDefaults, '已恢复默认设置');
   }
 
+  Future<void> _installUpdate() async {
+    final controller = widget.updateController;
+    final requestExit = widget.requestExit;
+    if (_busy || _confirming || controller == null || requestExit == null) {
+      return;
+    }
+    if (_dirty) {
+      final discard = await _confirm(
+        '舍弃未保存的设置？',
+        '更新重启后无法恢复当前草稿。继续更新会舍弃尚未保存的日志和数据设置。',
+        '舍弃并继续',
+      );
+      if (!mounted || !discard) return;
+      setState(() => _apply(_original!));
+    }
+    final confirmed = await _confirm(
+      '下载并安装更新？',
+      'TimeCue 会下载并校验更新包，然后关闭应用；安装完成后会自动重启。',
+      '更新并重启',
+    );
+    if (!mounted || !confirmed) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _message = null;
+    });
+    try {
+      await controller.downloadAndInstall(requestExit: requestExit);
+      if (mounted && controller.state == SoftwareUpdateState.failed) {
+        setState(() => _error = controller.error);
+      }
+    } catch (failure) {
+      if (mounted) setState(() => _error = '更新未能启动：$failure');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _close() async {
     if (_busy || _confirming || _allowClose) return;
     if (_dirty) {
@@ -197,6 +244,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   @override
   void dispose() {
+    widget.updateController?.dispose();
     _logPath.dispose();
     _databasePath.dispose();
     super.dispose();
@@ -292,6 +340,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     const Text('相对目录以当前数据目录为基准。更改数据库目录不会搬迁已有日程数据。'),
                     const SizedBox(height: 20),
                   ],
+                  SoftwareUpdateSection(
+                    controller: widget.updateController,
+                    onInstall: widget.requestExit == null
+                        ? null
+                        : _installUpdate,
+                    canInstall: widget.requestExit != null,
+                    disabledMessage: widget.requestExit == null
+                        ? '当前环境无法安全重启应用以安装更新。'
+                        : null,
+                  ),
+                  const SizedBox(height: 20),
                   Text('配置文件', style: Theme.of(context).textTheme.labelMedium),
                   const SizedBox(height: 4),
                   SelectableText(widget.store.configPath),
