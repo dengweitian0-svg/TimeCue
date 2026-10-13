@@ -263,6 +263,57 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual((self.target / "timecue-core.exe").read_bytes(), b"old core")
         self.assertFalse((self.target / "manifest.json").exists())
 
+    def test_keyboard_interrupt_during_replace_restores_old_files_and_manifest(self):
+        old = {"timecue_desktop.exe": b"old desktop", "timecue-core.exe": b"old core",
+               "data/app.so": b"old Flutter"}
+        self.old_manifest(old)
+        before = self.tree_snapshot(self.target)
+        original = update.os.replace
+        count = 0
+
+        def interrupt_second_replace(source, destination):
+            nonlocal count
+            if Path(source).parent.name == "new" and Path(destination).parent == self.target:
+                count += 1
+                if count == 2:
+                    raise KeyboardInterrupt()
+            return original(source, destination)
+
+        with mock.patch.object(update.os, "replace", side_effect=interrupt_second_replace):
+            with self.assertRaisesRegex(update.UpdateError, "已恢复"):
+                update.update(self.source, self.target)
+        self.assertEqual(self.tree_snapshot(self.target), before)
+
+    def test_keyboard_interrupt_during_rollback_keeps_and_reports_backup(self):
+        old = {"timecue_desktop.exe": b"old desktop", "timecue-core.exe": b"old core",
+               "data/app.so": b"old Flutter"}
+        self.old_manifest(old)
+        original = update.os.replace
+        count = 0
+
+        def interrupt_install_and_rollback(source, destination):
+            nonlocal count
+            source_path = Path(source)
+            destination_path = Path(destination)
+            if source_path.parent.name == "new" and destination_path.parent == self.target:
+                count += 1
+                if count == 2:
+                    raise OSError("injected install failure")
+            if source_path.parent.name == "restore" and destination_path == self.target / "timecue_desktop.exe":
+                raise KeyboardInterrupt()
+            return original(source, destination)
+
+        with mock.patch.object(update.os, "replace", side_effect=interrupt_install_and_rollback):
+            with self.assertRaisesRegex(update.UpdateError, "回滚也失败") as caught:
+                update.update(self.source, self.target)
+        backup_path = Path(str(caught.exception).split("备份保留在：", 1)[1])
+        try:
+            self.assertTrue(backup_path.is_dir())
+            self.assertEqual((backup_path / "backup/timecue_desktop.exe").read_bytes(), b"old desktop")
+            self.assertEqual((backup_path / "backup/timecue-core.exe").read_bytes(), b"old core")
+        finally:
+            update.shutil.rmtree(backup_path)
+
     def test_failed_manifest_commit_restores_old_manifest_and_removed_file(self):
         old = {
             "timecue_desktop.exe": b"old desktop",
@@ -369,6 +420,10 @@ class UpdateTests(unittest.TestCase):
             kernel.CloseHandle(handle)
         self.assertEqual((self.target / "timecue_desktop.exe").read_bytes(), b"old desktop")
         self.assertEqual((self.target / "manifest.json").read_bytes(), old_manifest)
+
+    def test_reparse_probe_treats_blocked_child_as_missing(self):
+        blocked_child = types.SimpleNamespace(lstat=mock.Mock(side_effect=NotADirectoryError))
+        self.assertFalse(update._is_reparse(blocked_child))
 
     @unittest.skipUnless(os.name == "nt", "Windows 已加载映像写权限检测")
     def test_windows_loaded_python_executable_is_detected_as_busy(self):

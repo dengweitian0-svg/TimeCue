@@ -33,7 +33,7 @@ class UpdateError(Exception):
 def _is_reparse(path):
     try:
         info = path.lstat()
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         return False
     return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400)
 
@@ -312,6 +312,7 @@ def update(source, target):
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(destination, backup)
 
+        preserve_backup = True
         try:
             for relative in removals:
                 destination = _checked_path(target, relative)
@@ -338,7 +339,8 @@ def update(source, target):
                 os.replace(staged.joinpath(*relative.split("/")), destination)
             operations.append(("file", "manifest.json"))
             os.replace(manifest_stage, old_manifest_path)
-        except Exception as error:
+            preserve_backup = False
+        except BaseException as error:
             rollback_errors = []
             for operation, relative in reversed(operations):
                 destination = target.joinpath(*relative.split("/"))
@@ -363,11 +365,11 @@ def update(source, target):
                             destination.rmdir()
                         elif destination.exists():
                             destination.unlink()
-                except Exception as rollback_error:
+                except BaseException as rollback_error:
                     rollback_errors.append(f"{relative}: {rollback_error}")
             if rollback_errors:
-                preserve_backup = True
                 raise UpdateError(f"更新失败：{error}；回滚也失败：{'；'.join(rollback_errors)}。备份保留在：{transaction}") from error
+            preserve_backup = False
             raise UpdateError(f"更新失败，已恢复原文件：{error}") from error
     finally:
         if not preserve_backup:
