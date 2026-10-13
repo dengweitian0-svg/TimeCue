@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cwchar>
+#include <filesystem>
 #include <vector>
 
 namespace {
@@ -99,16 +100,25 @@ bool SetProcessInstallDirectory(const std::wstring& directory) {
 
 }  // namespace
 
+bool ExtractInstallDirectory(
+    const std::filesystem::path& executable_path,
+    std::wstring* directory) {
+    if (!executable_path.is_absolute() || executable_path.parent_path().empty()) {
+        return false;
+    }
+    *directory = executable_path.parent_path().native();
+    return true;
+}
+
 InstallDirectoryRegistrationResult RegisterInstallDirectory(
     const std::wstring& executable_path,
     const InstallDirectoryRegistrationOptions& options) {
     InstallDirectoryRegistrationResult result;
-    const auto separator = executable_path.find_last_of(L"\\/");
-    if (separator == std::wstring::npos || separator == 0) {
+    std::wstring directory;
+    if (!ExtractInstallDirectory(std::filesystem::path(executable_path), &directory)) {
         result.error_message = L"无法从可执行文件路径确定 TimeCue 安装目录";
         return result;
     }
-    const std::wstring directory = executable_path.substr(0, separator);
     if (!HasReleaseMarkers(directory)) {
         result.status = InstallDirectoryRegistrationStatus::not_release;
         return result;

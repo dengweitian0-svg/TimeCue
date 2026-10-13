@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+#include <filesystem>
 #include <string>
 
 enum class InstallDirectoryRegistrationStatus {
@@ -22,6 +23,13 @@ struct InstallDirectoryRegistrationResult {
     InstallDirectoryRegistrationStatus status = InstallDirectoryRegistrationStatus::failed;
     std::wstring error_message;
 };
+
+// 从可执行文件绝对路径提取所在目录，并正确处理驱动器根及 UNC 共享根。
+// executable_path：可执行文件的绝对路径；directory：接收程序目录的输出字符串。
+// 提取成功返回 true；路径不是绝对路径或没有父目录时返回 false。
+bool ExtractInstallDirectory(
+    const std::filesystem::path& executable_path,
+    std::wstring* directory);
 
 // 读取当前进程模块的完整 Windows 路径。
 // executable_path：接收路径的输出字符串。

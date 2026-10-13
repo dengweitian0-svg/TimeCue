@@ -29,6 +29,28 @@ std::wstring MakeRegistrySubkey() {
         std::to_wstring(GetCurrentProcessId());
 }
 
+// 验证可执行路径目录提取对根目录和普通绝对路径的处理。
+// 无参数。
+// 所有路径断言通过时正常返回。
+void TestPathExtraction() {
+    std::wstring directory;
+    Check(ExtractInstallDirectory(std::filesystem::path(L"D:\\timecue_desktop.exe"), &directory),
+        "drive-root executable path should be accepted");
+    Check(directory == L"D:\\", "drive-root separator should be preserved");
+
+    Check(ExtractInstallDirectory(
+        std::filesystem::path(L"\\\\server\\share\\timecue_desktop.exe"), &directory),
+        "UNC share-root executable path should be accepted");
+    Check(directory == L"\\\\server\\share", "UNC share root should be preserved");
+
+    Check(ExtractInstallDirectory(
+        std::filesystem::path(L"C:\\Users\\邓伟天\\Time Cue\\TimeCue.exe"), &directory),
+        "Unicode absolute executable path should be accepted");
+    Check(directory == L"C:\\Users\\邓伟天\\Time Cue", "normal parent directory extraction");
+    Check(!ExtractInstallDirectory(std::filesystem::path(L"D:timecue_desktop.exe"), &directory),
+        "drive-relative executable path should be rejected");
+}
+
 // 创建包含发行包标记的测试目录。
 // directory：需要准备标记文件的程序目录。
 // 返回该目录中模拟的可执行文件完整路径。
@@ -171,6 +193,7 @@ int wmain(int argc, wchar_t** argv) {
         previous_environment.resize(wcslen(previous_environment.c_str()));
     }
     try {
+        TestPathExtraction();
         TestNonRelease(root, subkey + L"\\non-release");
         const auto release_executable = CreateReleaseDirectory(root / L"发行目录 初始");
         TestRegistration(root, subkey + L"\\registration");

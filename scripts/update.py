@@ -3,6 +3,7 @@ import argparse
 import ctypes
 import hashlib
 import json
+import ntpath
 import os
 import re
 import shutil
@@ -120,13 +121,25 @@ def _hash_file(path):
 
 
 def _inside_or_same(first, second):
-    first_text = os.path.normcase(str(first)).casefold().rstrip("\\/")
-    second_text = os.path.normcase(str(second)).casefold().rstrip("\\/")
+    first_text = str(first)
+    second_text = str(second)
+    first_drive = ntpath.splitdrive(first_text)[0]
+    second_drive = ntpath.splitdrive(second_text)[0]
+    if first_drive or second_drive:
+        if not first_drive or not second_drive:
+            return False
+        first_text = ntpath.normcase(ntpath.normpath(first_text))
+        second_text = ntpath.normcase(ntpath.normpath(second_text))
+        path_module = ntpath
+    else:
+        first_text = os.path.normcase(os.path.normpath(first_text))
+        second_text = os.path.normcase(os.path.normpath(second_text))
+        path_module = os.path
     try:
-        common = os.path.commonpath((first_text, second_text))
+        common = path_module.commonpath((first_text, second_text))
     except ValueError:
         return False
-    return common == first_text or common == second_text
+    return path_module.normcase(common) in (first_text, second_text)
 
 
 def _validate_target(target):

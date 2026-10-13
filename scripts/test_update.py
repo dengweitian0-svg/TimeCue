@@ -123,6 +123,18 @@ class UpdateTests(unittest.TestCase):
         with self.assertRaises(update.UpdateError):
             update.update(self.source, self.source / "installation")
 
+    def test_windows_root_and_unc_containment_uses_windows_path_rules(self):
+        self.assertTrue(update._inside_or_same(r"D:\source", "D:\\"))
+        self.assertTrue(update._inside_or_same("D:\\", r"D:\source"))
+        self.assertTrue(update._inside_or_same(r"d:\SOURCE", "D:\\"))
+        self.assertFalse(update._inside_or_same(r"C:\source", "D:\\"))
+        self.assertTrue(update._inside_or_same(r"\\server\share\source", "\\\\server\\share\\"))
+        self.assertTrue(update._inside_or_same("\\\\server\\share\\", r"\\server\share\source"))
+        self.assertFalse(update._inside_or_same(r"\\server\share-one\source", "\\\\server\\share-two\\"))
+        self.assertTrue(update._inside_or_same(r"D:\one\child", r"D:\one"))
+        self.assertTrue(update._inside_or_same(r"D:\one", r"D:\one\child"))
+        self.assertFalse(update._inside_or_same(r"D:\one", r"D:\two"))
+
     def test_hash_and_path_attacks_rejected(self):
         manifest = json.loads((self.source / "manifest.json").read_text())
         manifest["files"][0]["sha256"] = "0" * 64
