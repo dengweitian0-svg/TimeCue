@@ -92,7 +92,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: 运行发行更新脚本测试
-        working-directory: ..
+        working-directory: ${{ github.workspace }}
         run: python -m unittest discover -s scripts -p test_update.py -v
       - name: 设置 Flutter stable
         uses: subosito/flutter-action@v2
