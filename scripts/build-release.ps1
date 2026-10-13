@@ -23,7 +23,6 @@ function Invoke-Checked {
 
 Push-Location $taskRoot
 try {
-    Invoke-Checked -Program 'go' -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $taskStaging 'timecue-core.exe'), './cmd/flutter')
     Push-Location (Join-Path $taskRoot 'desktop')
     try {
         if (!$SkipFlutterBuild) {
@@ -59,6 +58,7 @@ try {
         if (!(Test-Path -LiteralPath (Join-Path $taskFlutterOutput $taskRequired))) { throw "发行构建缺少 $taskRequired" }
     }
     Copy-Item -Path (Join-Path $taskFlutterOutput '*') -Destination $taskStaging -Recurse
+    Invoke-Checked -Program 'go' -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $taskStaging 'timecue-core.exe'), './cmd/flutter')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'update.py') -Destination (Join-Path $taskStaging 'update.py')
     $taskReleaseNotes = Join-Path $taskRoot 'docs/RELEASE.md'
     $taskPackageReadme = Join-Path $taskStaging 'README.md'
