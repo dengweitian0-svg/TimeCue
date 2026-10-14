@@ -16,7 +16,8 @@ frontend/package.json.md5
 
 .apifox/
 
-.codex/
+.codex/*
+!.codex/workflow.md
 
 .worktrees/*
 
