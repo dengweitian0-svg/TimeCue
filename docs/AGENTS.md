@@ -1,6 +1,7 @@
 # 工程说明
 
 - `CONTRIBUTING.md`：分支、贡献、检查及正式版本发布流程。
+- `DESIGN.md`：当前 Flutter 前端的视觉风格、基础参数、组件样式、信息层级、交互状态与 Windows 使用环境；区分已实现规范和待完善建议。
 - `RELEASE.md`：完整 Windows ZIP 的启动、数据目录、托盘退出、安装路径登记、Python 更新步骤、构建和人工验收边界；作为发行包 README 面向用户。
 - `RELEASE-VALIDATION.md`：本地发行候选包的实际自动检查、SDK、隔离验收证据和未验证项。
 - `design/`：设计契约及各阶段实施验收，结构见其 AGENTS.md。
