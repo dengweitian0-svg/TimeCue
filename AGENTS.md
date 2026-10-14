@@ -15,7 +15,7 @@ Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务
 - [desktop](desktop/AGENTS.md)：Flutter 桌面界面、HTTP 数据接入和内存演示。
 
 # 约束
-- 编码任务开始前必须读取并遵循 [Codex 工作流](.codex/workflow.md)；主代理只推进到 PR 就绪，不自动合并
+- 如果项目中存在 `.codex/` 目录，开始任务前先读取其中的 `AGENTS.md`（若存在），并遵循其适用规则。
 - 代码注释使用中文；模块变更同步对应 AGENTS.md 和工程说明。Go 管理日程规则与提醒状态，Flutter 通过业务接口操作；平台副作用结果回传 Go。开发分支与检查流程见 [贡献规范](docs/CONTRIBUTING.md)
 - 任何改动数据库表结构的操作必须获取请求
 - 在新增，删除，更新 HTTP 接口后，必须要先在 Apifox 创建测试并通过后才能继续前端的开发
