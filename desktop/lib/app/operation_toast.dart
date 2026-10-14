@@ -149,16 +149,16 @@ class _ToastCard extends StatelessWidget {
     final (icon, color) = switch (toast.kind) {
       _ToastKind.success => (
         Icons.check_circle_outline,
-        const Color(0xFF56744D),
+        const Color.fromARGB(255, 86, 116, 77),
       ),
       _ToastKind.error => (Icons.error_outline, palette.error),
       _ToastKind.warning => (
         Icons.warning_amber_rounded,
-        const Color(0xFF9A6B25),
+        const Color.fromARGB(255, 154, 107, 37),
       ),
     };
     return Material(
-      color: const Color(0xFFFFFCF5),
+      color: const Color.fromARGB(255, 255, 252, 245),
       elevation: 8,
       shadowColor: Colors.black26,
       borderRadius: BorderRadius.circular(12),

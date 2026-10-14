@@ -270,7 +270,7 @@ class _DesktopShellState extends State<DesktopShell> {
           if (!backend.ready)
             Positioned.fill(
               child: ColoredBox(
-                color: const Color(0xEEFAF7F0),
+                color: const Color.fromARGB(238, 250, 247, 240),
                 child: Center(
                   child: Padding(
                     padding: const EdgeInsets.all(32),
