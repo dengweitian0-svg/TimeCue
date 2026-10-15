@@ -5,6 +5,10 @@
 - `config_file_store_test.dart`：缺少用户文件、未知字段及注释保留、多实例并发、非法输入/文件错误后继续保存、大小写键兼容、恢复运行覆盖值和固定目录测试；数据库目录自动补齐文件名、目录指向文件时拒绝保存且保留原配置，保存不创建或迁移数据库；检查 Go default.yaml 的字节保持不变。
 
 - `widget_test.dart`：房间入口、本子页面、编辑弹层、焦点、动效与布局测试；连接加载/失败时添加日程按钮仍可见且有原因提示、仓储恢复后可打开创建弹窗，并验证系统通知错误栏出现时添加入口仍可点击。
+- `ai_chat_room_test.dart`：从猫咪入口和本子第四标签进入 AI 对话，验证切换旧标签、日程草稿守卫、猫咪完全裁切时的固定入口、双倍文字下的提示及键盘打开；关闭本子后运行和聊天草稿仍保留。
+- `http_ai_chat_gateway_test.dart`：验证七个 AI 对话 HTTP 接口、请求与响应校验、幂等请求头、SSE 帧、204 终态回读、断线游标及运行失效。
+- `ai_chat_model_test.dart`：验证会话历史同步、三会话并发上限、原文和幂等重试、事件顺序/去重/恢复、取消终态与会话删除。
+- `ai_chat_spread_test.dart`：验证 AI 会话双页、搜索和删除、文本输入、Enter/Shift+Enter、流式内容、取消/重试及小窗口和大字布局。
 - `notebook_model_test.dart`：示例数据、提醒确认、分页选择和页面状态测试。
 - `http_notebook_repository_test.dart`：HTTP 路径、快照、分页、确认、错误和刷新测试。
 - HTTP 投递测试复用原 HttpServer 夹具，覆盖 health 根路径、同级通知 POST、JSON、完整 recovery 响应、不改变界面加载状态、执行者退出身份/attempt 列表与 deadline 及矛盾回填/未知任务拒绝。
@@ -30,7 +34,7 @@
 - 时间选择器不再包含步进工具行；滚轮跨 59→00 仍可调整。规则转换回归验证同频率日期与时间配对无损，不把周一 09:00、周三 18:00 扩展成四次安排。
 
 - historical_pending_test.dart：复用 HTTP 夹具，验证 0/50/51/125 条两范围完整分页、独立请求与迟到响应、位置/选择/提交隔离、确认失败及成功刷新失败、跨午夜分页重载、混合日期不发布、旧游标 400 重读、读取失败禁止过期今日提交与演示时钟。
-- historical_pending_widget_test.dart：独立于网络测试的 Widget 夹具，验证三标签顺序、今日左右范围、历史日期分组、完整时间、四种真实状态及查看详情只读；Widget 绑定不用于 HTTP 服务测试。
+- historical_pending_widget_test.dart：独立于网络测试的 Widget 夹具，验证原有三个日程标签顺序、今日左右范围、历史日期分组、完整时间、四种真实状态及查看详情只读；Widget 绑定不用于 HTTP 服务测试。
 
 - `desktop_lifecycle_test.dart`：关闭不释放、最新显隐意图、托盘不可用/恢复、隐藏未知结果、就绪回应与新目标竞争、登录意图、D6 冻结成员弹窗、退出监听重入、共享预算及迟到操作隔离、窗口失败后成功唤回清除提示、保留独立托盘错误及重试入口准确性；平台替身不冒充系统点击证据。
 - `operation_toast_test.dart`：验证全局 Toast 位于导航和模态路由上层、独立关闭与数量上限、成功/失败/警告自动消失、卸载释放计时、小窗口高缩放长文案和空白点击穿透；仅在设置 `TIMECUE_CAPTURE_OPERATION_TOAST=true` 时生成 `build/visuals/operation-toast.png`。

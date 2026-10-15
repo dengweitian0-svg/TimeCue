@@ -38,6 +38,24 @@ attempt、平台整数映射和待回填结果只在内存。重复领取、开�
 
 宿主退出请求先停止新领取和展示，最多 5 秒尽力提交已知结果；通知桥另提供 stopAndDrain(budget) 供 D8 共用停止预算，不停止手动 Go。系统通知的 payload 只携带运行/任务/尝试/类型身份，点击不确认；点击定位与恢复页面已由 D6 接入；D7 已接入托盘、单实例及明确退出，D8 已接入自有 Go 进程与 Job 清理；登录自启仍由 D9 接入。实现和验收范围见 [D5 规划](../docs/design/phase-d5-windows-notification-bridge.md)。
 
+## AI 对话
+
+真实模式通过猫咪入口或日程本第四标签“AI 对话”打开同一会话。`HttpAiChatGateway` 使用 `http://127.0.0.1:10086`，仅接入以下七个接口；服务端 Mock 的会话和历史只保存在 Go 进程内存中：
+
+| 请求 | 用途 |
+| --- | --- |
+| `POST /v1/run` | 使用 `session_id`、`input`、`model` 和 `Idempotency-Key` 创建一轮对话 |
+| `GET /v1/run/:run_id` | 读取 run 状态和正式终态结果 |
+| `GET /v1/run/:run_id/event` | 通过 SSE 回放并接收运行事件 |
+| `POST /v1/run/:run_id/cancel` | 请求取消运行中的一轮 |
+| `GET /v1/session/:session_id` | 读取会话所属 run ID |
+| `DELETE /v1/session/:session_id` | 删除整个会话及其运行历史 |
+| `GET /v1/session` | 读取可见会话列表 |
+
+输入框按 Enter 发送，Shift+Enter 换行。最多同时运行 3 个会话；创建重试复用原幂等键和输入。关闭日程本或隐藏窗口不会停止 run，只有用户取消会话中的当前 run 才请求后端取消，并等待后端确认终态。应用退出或已打开的托管运行失效时，前端停止 SSE 监听并封锁网关请求。演示模式不创建聊天网关，入口会说明 AI 服务不可用。当前协议只提供文本和 thinking 事件，不支持由回复文本构造结构化日程卡片。
+
+在 Windows 上运行 `flutter test --dart-define=TIMECUE_CHAT_CAPTURE=true test/ai_chat_room_test.dart`，会用会话模型加载的历史生成 `build/visuals/12-ai-chat.png` 和 `13-cat-chat.png`；不启用该 define 时不生成截图。
+
 
 ### HTTP 查询契约
 
@@ -68,7 +86,7 @@ attempt、平台整数映射和待回填结果只在内存。重复领取、开�
 
 ### 快照、分页与失败行为
 
-- 标签依次为今天、历史待确认、日历。今日左页保留今日全部安排，右页仅今日到期未确认；历史按原计划完整日期分组，四种投递状态保持真实。两类待确认默认每页 50，房间徽标读取组合快照的全部待确认总数；全选只捕获当前页，跨页选择保留，不随后台新记录扩大。批量请求提交明确 ID，最多 500 条，非法成员整批拒绝。
+- 标签依次为今天、历史待确认、日历、AI 对话。今日左页保留今日全部安排，右页仅今日到期未确认；历史按原计划完整日期分组，四种投递状态保持真实。两类待确认默认每页 50，房间徽标读取组合快照的全部待确认总数；全选只捕获当前页，跨页选择保留，不随后台新记录扩大。批量请求提交明确 ID，最多 500 条，非法成员整批拒绝。
 - 今日/历史各自保存分页位置、游标、加载/错误及选择；普通刷新保留有效位置，范围游标不混用。成功发布新北京日期时两类回首分页并清空旧范围选择，新历史记录不自动选中；混合日期及旧响应不发布，400 后重读首分页，跨日读取失败保留内容并阻止旧今日选择提交。
 - 本子打开期间每 5 秒刷新；打开、恢复前台和确认后立即查询，关闭或后台停止普通轮询。请求代次阻止旧响应覆盖新状态。
 - 确认响应同时更新今日、日期清单和待确认；确认失败保持旧内容及选择。确认成功后的刷新失败单独提示，保留已成功的完成事实。
@@ -85,6 +103,7 @@ TimeCueApp                              MaterialApp、主题、构造注入
       ├─ RoomClock                      独立 ValueListenableBuilder
       ├─ DeskNotebookHotspot            原图本子的透明家具入口
       ├─ RoomActions                    固定入口、待确认数量
+      ├─ CatChatHotspot                 猫咪 AI 对话入口；完全裁切时显示固定备用入口
       ├─ 设置按钮                        独立配置弹窗，演示模式禁用
       ├─ 添加日程 / 管理日程按钮（包含已暂停）
       └─ NotebookOverlay                焦点作用域、单控制器开合、遮罩
@@ -94,13 +113,14 @@ TimeCueApp                              MaterialApp、主题、构造注入
             │  └─ PaperPage             待确认、选择工具栏、分页、逐条确认
             ├─ HistorySpread            第二组跨页：完整日期分组、历史说明
             │  └─ PendingList           共用状态/详情/选择/确认/分页
-            └─ CalendarSpread           第三组跨页
+            ├─ CalendarSpread           第三组跨页
                ├─ PaperPage             月份导航 → MonthGrid、管理日程分页弹层
                └─ PaperPage             互斥右页
                   ├─ BlankPage          首次进入，无内容
                   ├─ DateListPage       日期清单 → TriggerRow
                   ├─ LoadingDatePage / ErrorDatePage  真实查询加载与重试
                   └─ EditingPage        ScheduleEditor（完整规则及 revision）
+            └─ AiChatSpread             第四组跨页：会话历史、流式文本及草稿输入
 
 RoomScreen → showDialog
 ├─ SettingsDialog                       日志级别/日志目录/数据库目录原生选择、保存与恢复默认
@@ -126,9 +146,13 @@ flowchart LR
   Main[main.dart 组合入口] --> Demo[DemoNotebookRepository]
   Main --> App[TimeCueApp]
   App --> Room[RoomScreen]
+  App --> ChatModel[AiChatModel]
   Room --> VM[NotebookViewModel]
   Overlay[NotebookOverlay] --> VM
   Spreads[TodaySpread / HistorySpread / CalendarSpread] --> VM
+  ChatSpread[AiChatSpread] --> ChatModel
+  ChatModel --> ChatContract[AiChatGateway 契约]
+  ChatHTTP[HttpAiChatGateway] -.实现.-> ChatContract
   Editor[ScheduleEditor] --> EVM[ScheduleEditorViewModel]
   VM --> Contract[NotebookRepository 契约]
   EVM --> Contract
@@ -148,6 +172,7 @@ flowchart LR
 | 场景已解码图片 | RoomBackdrop | 解码成功再淡入，失败保留旧图 |
 | 入口焦点、本子显隐 | RoomScreen | 合上后回到实际入口；热区裁切后回固定入口 |
 | 配置覆盖草稿、读取/保存状态及关闭守卫 | SettingsDialog | 通过注入的 ConfigFileStore 读写，保留未知字段；路径下次启动生效 |
+| AI 会话历史、草稿、并发名额、run 状态及 SSE 监听 | AiChatModel | DesktopShell 唯一持有；关闭本子保留运行，退出或托管运行失效时封锁请求 |
 
 业务快照不与表单共享可变对象。每次确认针对触发 ID；失败投递也可确认，确认不会将失败改成成功。全选只选择点击时本页记录，跨页保留，确认没有撤销。删除与未来编辑保留历史。
 

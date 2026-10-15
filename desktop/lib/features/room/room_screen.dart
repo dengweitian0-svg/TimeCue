@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
 import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
+import '../ai_chat/ai_chat_model.dart';
 import '../notebook/notebook_overlay.dart';
 import '../notebook/notebook_view_model.dart';
 import '../notebook/schedule_management_dialog.dart';
 import '../schedule_editor/schedule_editor.dart';
 import '../settings/settings_dialog.dart';
 import 'desk_notebook_hotspot.dart';
+import 'cat_chat_hotspot.dart';
 import 'room_backdrop.dart';
 import 'room_clock.dart';
 import 'room_geometry.dart';
@@ -21,11 +23,13 @@ class RoomScreen extends StatefulWidget {
     this.onRecovery,
     this.historyRequests,
     this.configFiles,
+    this.chatModel,
   });
   final NotebookRepository repository;
   final VoidCallback? onRecovery;
   final ValueListenable<int>? historyRequests;
   final ConfigFileStore? configFiles;
+  final AiChatModel? chatModel;
   @override
   State<RoomScreen> createState() => _RoomScreenState();
 }
@@ -52,8 +56,12 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   late final clock = RoomClockController();
   final deskFocus = FocusNode(debugLabel: '桌面本子入口');
   final actionFocus = FocusNode(debugLabel: '固定本子入口');
+  final catFocus = FocusNode(debugLabel: '猫咪 AI 对话入口');
+  final chatFallbackFocus = FocusNode(debugLabel: '固定 AI 对话入口');
   bool bookVisible = false;
   bool fromDesk = false;
+  bool fromCat = false;
+  bool fromChatFallback = false;
   @override
   void initState() {
     super.initState();
@@ -110,6 +118,21 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     notebook.open();
     setState(() {
       fromDesk = desk;
+      fromCat = false;
+      fromChatFallback = false;
+      bookVisible = true;
+    });
+    _coordinateRecoveryPolling();
+  }
+
+  void openChat({required bool fromCat}) {
+    if (bookVisible || widget.chatModel == null) return;
+    notebook.open();
+    notebook.changeTab(NotebookTab.aiChat);
+    setState(() {
+      this.fromCat = fromCat;
+      fromChatFallback = !fromCat;
+      fromDesk = false;
       bookVisible = true;
     });
     _coordinateRecoveryPolling();
@@ -140,6 +163,21 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _disabledCatHotspot() => Tooltip(
+    message: '演示模式未连接 AI 对话服务',
+    excludeFromSemantics: true,
+    preferBelow: false,
+    child: Semantics(
+      label: 'AI 对话不可用，演示模式未连接服务',
+      button: true,
+      enabled: false,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.basic,
+        child: const SizedBox.expand(),
+      ),
+    ),
+  );
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -150,6 +188,8 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     clock.dispose();
     deskFocus.dispose();
     actionFocus.dispose();
+    catFocus.dispose();
+    chatFallbackFocus.dispose();
     super.dispose();
   }
 
@@ -184,6 +224,16 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
+          if (geometry.catVisible)
+            Positioned.fromRect(
+              rect: geometry.visibleCatBounds,
+              child: widget.chatModel == null
+                  ? _disabledCatHotspot()
+                  : CatChatHotspot(
+                      onOpen: () => openChat(fromCat: true),
+                      focusNode: catFocus,
+                    ),
+            ),
           Positioned(
             top: 24,
             left: 24,
@@ -197,6 +247,38 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
               ),
             ),
           ),
+          if (!bookVisible && !geometry.catVisible)
+            Positioned(
+              right: 24,
+              top: constraints.maxHeight * .52,
+              child: widget.chatModel == null
+                  ? Tooltip(
+                      message: '演示模式未连接 AI 对话服务',
+                      excludeFromSemantics: true,
+                      child: Semantics(
+                        label: 'AI 对话不可用，演示模式未连接服务',
+                        button: true,
+                        enabled: false,
+                        child: FilledButton.icon(
+                          onPressed: null,
+                          style: _roomActionStyle,
+                          icon: const Icon(Icons.chat_bubble_outline, size: 17),
+                          label: const Text('AI 对话'),
+                        ),
+                      ),
+                    )
+                  : Tooltip(
+                      message: '打开 AI 对话',
+                      child: FilledButton.icon(
+                        key: const ValueKey('ai-chat-fallback'),
+                        focusNode: chatFallbackFocus,
+                        onPressed: () => openChat(fromCat: false),
+                        style: _roomActionStyle,
+                        icon: const Icon(Icons.chat_bubble_outline, size: 17),
+                        label: const Text('AI 对话'),
+                      ),
+                    ),
+            ),
           Positioned(
             top: 24,
             right: 24,
@@ -264,18 +346,30 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             Positioned.fill(
               child: NotebookOverlay(
                 model: notebook,
+                chatModel: widget.chatModel,
                 origin: fromDesk && geometry.notebookVisible
                     ? geometry.visibleNotebookBounds.center
+                    : fromCat && geometry.catVisible
+                    ? geometry.visibleCatBounds.center
+                    : fromChatFallback
+                    ? Offset(
+                        constraints.maxWidth - 72,
+                        constraints.maxHeight * .52 + 20,
+                      )
                     : fixedOrigin,
                 historyRequest: _historyRequest,
                 onClosed: () {
                   notebook.close();
                   setState(() => bookVisible = false);
                   _coordinateRecoveryPolling();
-                  (fromDesk && geometry.notebookVisible
-                          ? deskFocus
-                          : actionFocus)
-                      .requestFocus();
+                  final focus = fromCat && geometry.catVisible
+                      ? catFocus
+                      : fromChatFallback
+                      ? chatFallbackFocus
+                      : fromDesk && geometry.notebookVisible
+                      ? deskFocus
+                      : actionFocus;
+                  focus.requestFocus();
                 },
               ),
             ),

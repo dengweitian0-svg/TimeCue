@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../contracts/notebook_repository.dart';
 
-enum NotebookTab { today, history, calendar }
+enum NotebookTab { today, history, calendar, aiChat }
 
 enum NotebookOperationStatus { success, warning, error }
 

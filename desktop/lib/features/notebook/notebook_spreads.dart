@@ -604,12 +604,14 @@ class NotebookFrame extends StatelessWidget {
     required this.onManage,
     required this.onTab,
     required this.spread,
+    this.chatAvailable = true,
   });
   final NotebookViewModel model;
   final VoidCallback onClose;
   final VoidCallback onManage;
   final ValueChanged<NotebookTab> onTab;
   final Widget spread;
+  final bool chatAvailable;
   @override
   Widget build(BuildContext context) => Stack(
     clipBehavior: Clip.none,
@@ -656,37 +658,55 @@ class NotebookFrame extends StatelessWidget {
       Positioned(
         top: 0,
         left: 28,
-        child: Row(
-          children: [
-            for (final tab in NotebookTab.values)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Semantics(
-                  selected: model.tab == tab,
-                  child: TextButton(
-                    autofocus: tab == NotebookTab.today,
-                    style: TextButton.styleFrom(
-                      backgroundColor: model.tab == tab
-                          ? NotebookTheme.paper
-                          : const Color.fromARGB(255, 219, 202, 174),
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: BorderRadius.vertical(
-                          top: Radius.circular(7),
+        right: 52,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final tab in NotebookTab.values)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Semantics(
+                    selected: model.tab == tab,
+                    child: Tooltip(
+                      message: tab == NotebookTab.aiChat && !chatAvailable
+                          ? '演示模式未连接 AI 对话服务'
+                          : switch (tab) {
+                              NotebookTab.today => '今日安排',
+                              NotebookTab.history => '历史待确认',
+                              NotebookTab.calendar => '日历',
+                              NotebookTab.aiChat => 'AI 对话',
+                            },
+                      excludeFromSemantics: true,
+                      child: TextButton(
+                        autofocus: tab == NotebookTab.today,
+                        style: TextButton.styleFrom(
+                          backgroundColor: model.tab == tab
+                              ? NotebookTheme.paper
+                              : const Color.fromARGB(255, 219, 202, 174),
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(7),
+                            ),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          minimumSize: const Size(80, 40),
                         ),
+                        onPressed: tab == NotebookTab.aiChat && !chatAvailable
+                            ? null
+                            : () => onTab(tab),
+                        child: Text(switch (tab) {
+                          NotebookTab.today => '今天',
+                          NotebookTab.history => '历史待确认',
+                          NotebookTab.calendar => '日历',
+                          NotebookTab.aiChat => 'AI 对话',
+                        }),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      minimumSize: const Size(80, 40),
                     ),
-                    onPressed: () => onTab(tab),
-                    child: Text(switch (tab) {
-                      NotebookTab.today => '今天',
-                      NotebookTab.history => '历史待确认',
-                      NotebookTab.calendar => '日历',
-                    }),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
       Positioned(
@@ -739,6 +759,7 @@ class NotebookFrame extends StatelessWidget {
                 NotebookTab.today => '01 — 02',
                 NotebookTab.history => '03 — 04',
                 NotebookTab.calendar => '05 — 06',
+                NotebookTab.aiChat => '07 — 08',
               },
               style: const TextStyle(
                 fontSize: 10,

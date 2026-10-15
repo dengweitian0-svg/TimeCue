@@ -266,12 +266,18 @@ void main() {
     await tester.pump();
     expect(find.text('今日安排'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    final horizontal = find.byWidgetPredicate(
-      (w) => w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
+    final horizontalSpread = find.ancestor(
+      of: find.byType(TodaySpread),
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.horizontal,
+      ),
     );
-    await tester.drag(horizontal, const Offset(-600, 0));
+    expect(horizontalSpread, findsOneWidget);
+    await tester.drag(horizontalSpread, const Offset(-600, 0));
     await tester.pumpAndSettle();
-    expect(find.text('待确认'), findsOneWidget);
+    expect(find.text('待确认').hitTestable(), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     vm.dispose();

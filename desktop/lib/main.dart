@@ -6,6 +6,7 @@ import 'app/timecue_app.dart';
 import 'app/windows_notification_bridge.dart';
 import 'data/demo_notebook_repository.dart';
 import 'data/http_notebook_repository.dart';
+import 'data/http_ai_chat_gateway.dart';
 import 'features/notebook/notification_view_model.dart';
 
 Future<void> main() async {
@@ -64,6 +65,9 @@ Future<void> main() async {
       }
     });
   }
+  final chatGateway = HttpAiChatGateway(
+    canRequest: () => !configuration.managed || backend?.ready == true,
+  );
   desktop.onActivate = views.activate;
   runApp(
     TimeCueApp(
@@ -73,6 +77,8 @@ Future<void> main() async {
       notifications: notifications,
       backend: backend,
       configFiles: configFiles,
+      chatGateway: chatGateway,
+      ownsChatGateway: true,
       ownsRepository: true,
     ),
   );

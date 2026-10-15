@@ -2,6 +2,8 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../theme/notebook_theme.dart';
+import '../ai_chat/ai_chat_model.dart';
+import '../ai_chat/ai_chat_spread.dart';
 import '../schedule_editor/schedule_editor.dart';
 import 'notebook_view_model.dart';
 import 'notebook_spreads.dart';
@@ -16,11 +18,13 @@ class NotebookOverlay extends StatefulWidget {
     required this.origin,
     required this.onClosed,
     this.historyRequest = 0,
+    this.chatModel,
   });
   final NotebookViewModel model;
   final Offset origin;
   final VoidCallback onClosed;
   final int historyRequest;
+  final AiChatModel? chatModel;
   @override
   State<NotebookOverlay> createState() => _NotebookOverlayState();
 }
@@ -209,6 +213,7 @@ class _NotebookOverlayState extends State<NotebookOverlay>
                                       onTab: (tab) => navigate(
                                         () => widget.model.changeTab(tab),
                                       ),
+                                      chatAvailable: widget.chatModel != null,
                                       spread: Opacity(
                                         opacity:
                                             ((controller.value - .75) / .25)
@@ -231,6 +236,16 @@ class _NotebookOverlayState extends State<NotebookOverlay>
                                                 onManage: manage,
                                                 editor: buildEditor(),
                                               ),
+                                            NotebookTab.aiChat =>
+                                              widget.chatModel == null
+                                                  ? const Center(
+                                                      child: Text(
+                                                        '演示模式未连接 AI 对话服务',
+                                                      ),
+                                                    )
+                                                  : AiChatSpread(
+                                                      model: widget.chatModel!,
+                                                    ),
                                           },
                                         ),
                                       ),

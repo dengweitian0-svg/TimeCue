@@ -3,8 +3,10 @@ import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import '../contracts/notebook_repository.dart';
+import '../contracts/ai_chat.dart';
 import '../data/config_file_store.dart';
 import '../features/room/room_screen.dart';
+import '../features/ai_chat/ai_chat_model.dart';
 import '../features/notebook/notification_view_model.dart';
 import '../features/notebook/notification_reader_dialog.dart';
 import '../theme/notebook_theme.dart';
@@ -22,6 +24,8 @@ class TimeCueApp extends StatelessWidget {
     this.desktop,
     this.notificationViews,
     this.configFiles,
+    this.chatGateway,
+    this.ownsChatGateway = false,
     this.ownsRepository = false,
   });
   final NotebookRepository repository;
@@ -30,6 +34,8 @@ class TimeCueApp extends StatelessWidget {
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
   final ConfigFileStore? configFiles;
+  final AiChatGateway? chatGateway;
+  final bool ownsChatGateway;
   final bool ownsRepository;
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -50,6 +56,8 @@ class TimeCueApp extends StatelessWidget {
       desktop: desktop,
       notificationViews: notificationViews,
       configFiles: configFiles,
+      chatGateway: chatGateway,
+      ownsChatGateway: ownsChatGateway,
       ownsRepository: ownsRepository,
     ),
   );
@@ -65,6 +73,8 @@ class DesktopShell extends StatefulWidget {
     this.desktop,
     this.notificationViews,
     this.configFiles,
+    this.chatGateway,
+    this.ownsChatGateway = false,
     this.ownsRepository = false,
   });
   final NotebookRepository repository;
@@ -73,6 +83,8 @@ class DesktopShell extends StatefulWidget {
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
   final ConfigFileStore? configFiles;
+  final AiChatGateway? chatGateway;
+  final bool ownsChatGateway;
   final bool ownsRepository;
   @override
   State<DesktopShell> createState() => _DesktopShellState();
@@ -85,7 +97,18 @@ class _DesktopShellState extends State<DesktopShell> {
   bool _businessOpened = false;
   String? _pendingPayload;
   bool _runtimeReleased = false;
+  bool _chatInvalidated = false;
   String? _notificationError;
+  late final AiChatModel? _chatModel = widget.chatGateway == null
+      ? null
+      : AiChatModel(widget.chatGateway!);
+
+  void _stopChatWork() {
+    if (_chatInvalidated) return;
+    _chatInvalidated = true;
+    _chatModel?.invalidate();
+    widget.chatGateway?.invalidate();
+  }
 
   Future<void> _activate(String payload) async {
     if (_runtimeReleased || widget.desktop?.stopping == true) return;
@@ -107,6 +130,8 @@ class _DesktopShellState extends State<DesktopShell> {
       if (payload != null) unawaited(_activate(payload));
     }
     if (backend.state == BackendState.failed) {
+      // 启动首次失败仍可重试；只有曾开放过业务的运行失效才封锁 AI 对话。
+      if (_businessOpened) _stopChatWork();
       unawaited(_revealFailure());
     }
     if (mounted && !_runtimeReleased) setState(() {});
@@ -178,6 +203,7 @@ class _DesktopShellState extends State<DesktopShell> {
       desktop.stopNewWork = () {
         widget.backend?.cancelStart();
         widget.notifications?.stopClaiming();
+        _stopChatWork();
       };
       desktop.stopOwnedProcess = widget.backend?.stopOwned;
       desktop.finalizeOwnedProcess = widget.backend?.releaseOwned;
@@ -199,6 +225,7 @@ class _DesktopShellState extends State<DesktopShell> {
           return AppExitResponse.cancel;
         }
         widget.backend?.cancelStart();
+        _stopChatWork();
         widget.notificationViews?.close();
         await widget.notifications?.stopAndDrain(
           const Duration(seconds: 5),
@@ -213,6 +240,11 @@ class _DesktopShellState extends State<DesktopShell> {
   void _releaseRuntime() {
     if (_runtimeReleased) return;
     _runtimeReleased = true;
+    _stopChatWork();
+    _chatModel?.dispose();
+    if (widget.ownsChatGateway) {
+      widget.chatGateway?.dispose();
+    }
     widget.backend?.removeListener(_backendChanged);
     widget.backend?.dispose();
     widget.notificationViews?.removeListener(_showReader);
@@ -257,13 +289,17 @@ class _DesktopShellState extends State<DesktopShell> {
         if (_businessOpened)
           AbsorbPointer(
             absorbing: widget.backend != null && !widget.backend!.ready,
-            child: RoomScreen(
-              repository: widget.repository,
-              configFiles: widget.configFiles,
-              onRecovery: widget.notificationViews == null
-                  ? null
-                  : _openRecovery,
-              historyRequests: _historyRequests,
+            child: ExcludeFocus(
+              excluding: widget.backend != null && !widget.backend!.ready,
+              child: RoomScreen(
+                repository: widget.repository,
+                configFiles: widget.configFiles,
+                chatModel: _chatModel,
+                onRecovery: widget.notificationViews == null
+                    ? null
+                    : _openRecovery,
+                historyRequests: _historyRequests,
+              ),
             ),
           ),
         if (widget.backend case final backend?)

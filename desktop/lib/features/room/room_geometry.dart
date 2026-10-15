@@ -16,6 +16,13 @@ class RoomGeometry {
     Offset(292, 544),
     Offset(151, 574),
   ];
+  // 三张房间背景中的猫都位于原图同一处，热区覆盖插画轮廓。
+  static const catCorners = [
+    Offset(930, 440),
+    Offset(1125, 440),
+    Offset(1125, 520),
+    Offset(930, 520),
+  ];
   final Size viewport;
   final double scale;
   Offset project(Offset point) => Offset(
@@ -39,10 +46,33 @@ class RoomGeometry {
     ),
     Path()..addRect(Offset.zero & viewport),
   );
+
+  /// 返回与房间背景同步缩放、裁切后的猫咪点击区域。
+  Path get visibleCatPath => Path.combine(
+    PathOperation.intersect,
+    Path()..addPolygon(
+      catCorners
+          .map(
+            (point) => project(
+              Offset(point.dx / source.width, point.dy / source.height),
+            ),
+          )
+          .toList(),
+      true,
+    ),
+    Path()..addRect(Offset.zero & viewport),
+  );
   // 再约束矩形边界，消除路径布尔运算在窗口边缘的浮点误差。
   Rect get visibleNotebookBounds =>
       visibleNotebookPath.getBounds().intersect(Offset.zero & viewport);
   bool get notebookVisible => !visibleNotebookBounds.isEmpty;
+
+  /// 返回猫咪点击区域可见部分的外接矩形。
+  Rect get visibleCatBounds =>
+      visibleCatPath.getBounds().intersect(Offset.zero & viewport);
+
+  /// 猫咪区域至少有一部分处于视口中时返回 true。
+  bool get catVisible => !visibleCatBounds.isEmpty;
 }
 
 class WindowGlassClipper extends CustomClipper<Path> {
