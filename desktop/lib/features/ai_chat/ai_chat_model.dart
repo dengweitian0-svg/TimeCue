@@ -83,6 +83,7 @@ class AiChatSession {
     this.turns = const [],
     this.creating = false,
     this.createResultUnknown = false,
+    this.createRetryable = false,
     this.deleting = false,
     this.error,
   });
@@ -93,6 +94,7 @@ class AiChatSession {
   final List<AiChatTurn> turns;
   final bool creating;
   final bool createResultUnknown;
+  final bool createRetryable;
   final bool deleting;
   final String? error;
 
@@ -106,6 +108,7 @@ class AiChatSession {
     List<AiChatTurn>? turns,
     bool? creating,
     bool? createResultUnknown,
+    bool? createRetryable,
     bool? deleting,
     String? error,
     bool clearError = false,
@@ -116,6 +119,7 @@ class AiChatSession {
     turns: turns ?? this.turns,
     creating: creating ?? this.creating,
     createResultUnknown: createResultUnknown ?? this.createResultUnknown,
+    createRetryable: createRetryable ?? this.createRetryable,
     deleting: deleting ?? this.deleting,
     error: clearError ? null : error ?? this.error,
   );
@@ -186,6 +190,7 @@ class AiChatModel extends ChangeNotifier {
     final session = _session(sessionId);
     if (session == null) return '请先选择一个会话。';
     if (session.createResultUnknown) return '上次提交结果未确认，请重试原始输入。';
+    if (session.createRetryable) return _createRetryMessage;
     if (session.deleting) return '正在删除会话。';
     if (_sessionIsRunning(session)) return '当前会话仍有一轮对话正在运行。';
     if (!_hasCapacityForAttempt) {
@@ -198,11 +203,11 @@ class AiChatModel extends ChangeNotifier {
     final active = <String>{};
     for (final session in _sessions) {
       if (session.creating ||
+          session.createResultUnknown ||
           session.turns.any((turn) => turn.status == AiChatStatus.running)) {
         active.add(session.id);
       }
     }
-    active.addAll(_pendingCreates.keys);
     active.addAll(_deletedActiveRuns);
     return active;
   }
@@ -211,11 +216,11 @@ class AiChatModel extends ChangeNotifier {
     final active = <String>{};
     for (final session in _sessions) {
       if (session.creating ||
+          session.createResultUnknown ||
           session.turns.any((turn) => turn.status == AiChatStatus.running)) {
         active.add(session.id);
       }
     }
-    active.addAll(_pendingCreates.keys);
     return active;
   }
 
@@ -223,6 +228,20 @@ class AiChatModel extends ChangeNotifier {
       activeSessionCount < maxSessionCount ||
       (_deletedActiveRuns.isNotEmpty &&
           _visibleActiveSessionIds.length < maxSessionCount);
+
+  static const String _createRetryMessage = '会话正在停止，请稍后重试原内容。';
+
+  /// 判断创建拒绝状态是否可以安全重试原文和幂等键。
+  bool canRetryCreate(String sessionId) {
+    final session = _session(sessionId);
+    return _synchronized &&
+        !_loading &&
+        session != null &&
+        !session.creating &&
+        _pendingCreates.containsKey(sessionId) &&
+        (session.createResultUnknown ||
+            (session.createRetryable && _hasCapacityForAttempt));
+  }
 
   /// 新建本地会话并选中它；远端会话在首次发送时创建。
   AiChatSession createSession() {
@@ -247,7 +266,10 @@ class AiChatModel extends ChangeNotifier {
   void setDraft(String sessionId, String value) {
     if (_disposed || _invalidated) return;
     final session = _session(sessionId);
-    if (session == null || session.creating || session.createResultUnknown) {
+    if (session == null ||
+        session.creating ||
+        session.createResultUnknown ||
+        session.createRetryable) {
       return;
     }
     _replaceSession(session.copyWith(draft: value));
@@ -298,6 +320,7 @@ class AiChatModel extends ChangeNotifier {
             turns: List.unmodifiable(turns),
             creating: current?.creating ?? false,
             createResultUnknown: current?.createResultUnknown ?? false,
+            createRetryable: current?.createRetryable ?? false,
             deleting: current?.deleting ?? false,
             error: current?.error,
           ),
@@ -368,7 +391,7 @@ class AiChatModel extends ChangeNotifier {
     }
     var session = _session(sessionId);
     if (session == null) return;
-    if (session.createResultUnknown) {
+    if (session.createResultUnknown || session.createRetryable) {
       _error = '上次提交结果尚未确认，请重试原始输入。';
       _notify();
       return;
@@ -400,11 +423,16 @@ class AiChatModel extends ChangeNotifier {
     if (session == null) return;
     final pending = _pendingCreates[sessionId];
     if (pending != null) {
-      if (session.creating) return;
+      if (session.creating ||
+          (!session.createResultUnknown && !session.createRetryable)) {
+        return;
+      }
+      if (session.createRetryable && !_hasCapacityForAttempt) return;
       _replaceSession(
         session.copyWith(
           creating: true,
           createResultUnknown: false,
+          createRetryable: false,
           clearError: true,
         ),
       );
@@ -468,8 +496,9 @@ class AiChatModel extends ChangeNotifier {
     if (session.turns.isEmpty &&
         !session.creating &&
         !session.createResultUnknown &&
-        !_pendingCreates.containsKey(sessionId)) {
+        (!_pendingCreates.containsKey(sessionId) || session.createRetryable)) {
       _deletedIds.add(sessionId);
+      _pendingCreates.remove(sessionId);
       _sessions.removeWhere((item) => item.id == sessionId);
       if (_selectedSessionId == sessionId) {
         _selectedSessionId = _sessions.isEmpty ? null : _sessions.first.id;
@@ -575,9 +604,14 @@ class AiChatModel extends ChangeNotifier {
           draft: '',
           creating: false,
           createResultUnknown: false,
+          createRetryable: false,
           turns: List.unmodifiable([...session.turns, turn]),
         ),
       );
+      final updated = _session(sessionId)!;
+      _sessions
+        ..removeWhere((item) => item.id == sessionId)
+        ..insert(0, updated);
       _notify();
       _connect(runId);
     } catch (error) {
@@ -587,16 +621,19 @@ class AiChatModel extends ChangeNotifier {
       final session = _session(sessionId);
       if (session == null) return;
       final unknown = _isUnknownCreateResult(error);
-      if (!unknown) _pendingCreates.remove(sessionId);
+      final retryable = _isRetryableConcurrencyRejection(error, sessionId);
+      if (!unknown && !retryable) _pendingCreates.remove(sessionId);
+      final message = retryable ? _createRetryMessage : _messageFor(error);
       _replaceSession(
         session.copyWith(
           creating: false,
           createResultUnknown: unknown,
-          draft: unknown ? pending.input : session.draft,
-          error: _messageFor(error),
+          createRetryable: retryable,
+          draft: unknown || retryable ? pending.input : session.draft,
+          error: message,
         ),
       );
-      _error = _messageFor(error);
+      _error = message;
       _notify();
     }
   }
@@ -707,20 +744,18 @@ class AiChatModel extends ChangeNotifier {
     if (_disposed || _streamGenerations[runId] != generation) return;
     final turn = _findTurn(runId);
     if (turn == null || turn.status != AiChatStatus.running) return;
-    var updated = turn;
     final content = event.data['content'];
     final rawError = event.data['error'];
     final eventError = rawError == null ? null : AiChatError.fromJson(rawError);
+    var updated = turn.copyWith(
+      error: eventError,
+      clearError: turn.retryable && eventError == null,
+      retryable: false,
+    );
     if (event.type == 'thinking' && content is String) {
-      updated = updated.copyWith(
-        thinking: updated.thinking + content,
-        error: eventError,
-      );
+      updated = updated.copyWith(thinking: updated.thinking + content);
     } else if (event.type == 'text' && content is String) {
-      updated = updated.copyWith(
-        text: updated.text + content,
-        error: eventError,
-      );
+      updated = updated.copyWith(text: updated.text + content);
     } else if (event.type == 'end') {
       await _refreshFormalRun(runId, generation);
       final latest = _findTurn(runId);
@@ -939,6 +974,14 @@ class AiChatModel extends ChangeNotifier {
       (error.statusCode >= 200 && error.statusCode < 300) ||
       error.statusCode == 408 ||
       error.statusCode >= 500;
+
+  bool _isRetryableConcurrencyRejection(Object error, String sessionId) =>
+      error is AiChatGatewayException &&
+      error.statusCode == 409 &&
+      error.code == 'session_concurrency_limit' &&
+      _deletedActiveRuns.isNotEmpty &&
+      _visibleActiveSessionIds.where((id) => id != sessionId).length <
+          maxSessionCount;
 
   bool _isAlreadyConnected(Object error) =>
       error is AiChatGatewayException &&

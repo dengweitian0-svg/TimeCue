@@ -162,6 +162,46 @@ void main() {
     expect(gateway.inputs, ['保留失败前输入', '保留失败前输入']);
   });
 
+  testWidgets('删除会话尚在停止时锁定原文并提供明确重试', (tester) async {
+    gateway.sessionIds.add('stopping-session');
+    gateway.runsBySession['stopping-session'] = [
+      _run('stopping-run', 'stopping-session', status: AiChatStatus.running),
+    ];
+    await mount(tester);
+    await tester.pump();
+    await model.deleteSession('stopping-session');
+    await tester.pumpAndSettle();
+
+    gateway.createError = const AiChatGatewayException(
+      statusCode: 409,
+      endpoint: '/v1/run',
+      code: 'session_concurrency_limit',
+      message: '并发名额尚未释放',
+    );
+    final field = find.byKey(const ValueKey('composer-new-id-0'));
+    await tester.enterText(field, '需要保留的原文');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+
+    expect(model.selectedSession!.createRetryable, isTrue);
+    expect(tester.widget<TextField>(field).readOnly, isTrue);
+    expect(tester.widget<TextField>(field).controller!.text, '需要保留的原文');
+    expect(find.text('会话正在停止，请稍后重试原内容。'), findsWidgets);
+    expect(model.canRetryCreate(model.selectedSessionId!), isTrue);
+    final originalKey = gateway.keys.single;
+
+    gateway.createError = null;
+    await tester.tap(find.widgetWithText(TextButton, '重试原内容'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(gateway.keys, [originalKey, originalKey]);
+    expect(gateway.inputs, ['需要保留的原文', '需要保留的原文']);
+    expect(model.selectedSession!.createRetryable, isFalse);
+    expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+  });
+
   testWidgets('会话草稿按会话保留，搜索过滤并在确认后删除', (tester) async {
     gateway.sessionIds.addAll(['history-a', 'history-b']);
     gateway.runsBySession['history-a'] = [

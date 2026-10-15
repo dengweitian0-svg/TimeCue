@@ -7,8 +7,8 @@
 - `widget_test.dart`：房间入口、本子页面、编辑弹层、焦点、动效与布局测试；连接加载/失败时添加日程按钮仍可见且有原因提示、仓储恢复后可打开创建弹窗，并验证系统通知错误栏出现时添加入口仍可点击。
 - `ai_chat_room_test.dart`：从猫咪入口和本子第四标签进入 AI 对话，验证切换旧标签、日程草稿守卫、猫咪完全裁切时的固定入口、双倍文字下的提示及键盘打开；关闭本子后运行和聊天草稿仍保留。
 - `http_ai_chat_gateway_test.dart`：验证七个 AI 对话 HTTP 接口、请求与响应校验、幂等请求头、SSE 帧、204 终态回读、断线游标及运行失效。
-- `ai_chat_model_test.dart`：验证会话历史同步、三会话并发上限、原文和幂等重试、事件顺序/去重/恢复、取消终态与会话删除。
-- `ai_chat_spread_test.dart`：验证 AI 会话双页、搜索和删除、文本输入、Enter/Shift+Enter、流式内容、取消/重试及小窗口和大字布局。
+- `ai_chat_model_test.dart`：验证会话历史同步、三会话并发上限、删除名额的明确可重试拒绝及原文/幂等键复用、重试名额、事件顺序/去重/恢复与错误清理、最新会话排序、取消终态和会话删除。
+- `ai_chat_spread_test.dart`：验证 AI 会话双页、搜索和删除、文本输入、Enter/Shift+Enter、流式内容、删除名额等待提示与原文重试、取消/重试及小窗口和大字布局。
 - `notebook_model_test.dart`：示例数据、提醒确认、分页选择和页面状态测试。
 - `http_notebook_repository_test.dart`：HTTP 路径、快照、分页、确认、错误和刷新测试。
 - HTTP 投递测试复用原 HttpServer 夹具，覆盖 health 根路径、同级通知 POST、JSON、完整 recovery 响应、不改变界面加载状态、执行者退出身份/attempt 列表与 deadline 及矛盾回填/未知任务拒绝。

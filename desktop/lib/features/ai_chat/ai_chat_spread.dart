@@ -560,6 +560,7 @@ class _AiChatSpreadState extends State<AiChatSpread> {
   String _sessionStatus(AiChatSession session) {
     if (session.creating) return '正在开始';
     if (session.createResultUnknown) return '等待确认';
+    if (session.createRetryable) return '等待会话停止';
     final turn = session.turns.lastOrNull;
     if (turn == null) return '新会话';
     if (turn.status == AiChatStatus.running) {
@@ -783,6 +784,7 @@ class _AiChatSpreadState extends State<AiChatSpread> {
             ),
           ),
           if (!session.createResultUnknown &&
+              !session.createRetryable &&
               !session.creating &&
               session.turns.isEmpty)
             Text(
@@ -824,7 +826,10 @@ class _AiChatSpreadState extends State<AiChatSpread> {
               key: ValueKey('composer-${session.id}'),
               controller: controller,
               focusNode: _initialFocus,
-              readOnly: session.createResultUnknown || session.creating,
+              readOnly:
+                  session.createResultUnknown ||
+                  session.createRetryable ||
+                  session.creating,
               minLines: 2,
               maxLines: 5,
               keyboardType: TextInputType.multiline,
@@ -874,6 +879,26 @@ class _AiChatSpreadState extends State<AiChatSpread> {
                         ? null
                         : () => _retry(model, session.id),
                     child: Text(session.creating ? '正在重试…' : '重试原内容'),
+                  ),
+                ],
+              ),
+            )
+          else if (session.createRetryable)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, left: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      reason ?? '会话正在停止，请稍后重试原内容。',
+                      style: const TextStyle(color: _muted, fontSize: 12),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: model.canRetryCreate(session.id)
+                        ? () => _retry(model, session.id)
+                        : null,
+                    child: const Text('重试原内容'),
                   ),
                 ],
               ),
