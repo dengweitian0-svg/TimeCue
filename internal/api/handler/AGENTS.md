@@ -21,4 +21,4 @@
 - 创建的 period.open 可选，默认 true；PUT 必须带正整数 expectedRevision，返回递增 revision 和 effectiveAt。创建/更新接受可选 Idempotency-Key，同键同内容返回原结果，异内容及过期草稿返回 409；已到期单次只能保留原触发时间。
 - `schedule_log.go` 将 service 的受控摘要转换为 `HTTPResult.LogFields`；创建/更新/删除附加日程 ID、类型和 mutation，幂等重放附加成功消息 `schedule write replayed`。仅生成素材，不直接写日志；内部素材不进入响应 JSON，业务拒绝与回滚不附加成功摘要。
 - scope 仅用于 state=unacknowledged，接受 today/history；拒绝空值、重复、非法值及与 deliveryTaskId/attemptId 混用。scoped 模式拒绝未知参数，无 scope 模式保留原有额外参数及空 cursor 兼容行为。
-- 聊天 Handler 使用 `internal/agent/chat.Service`；session/run 路径 ID 必须是规范 UUID v4，创建输入严格 JSON 限制为 1 MiB，并且仅接受 deepseek-flash。SSE 保留下层事件 ID 和顺序，断连只关闭订阅，不取消 run。
+- 聊天 Handler 使用 `internal/agent/chat.Service`；session/run 路径 ID 必须是规范 UUID v4，创建输入严格 JSON 限制为 1 MiB，并且仅接受 deepseek-flash。SSE 保留下层事件 ID 和顺序；请求上下文取消按正常断开完成处理，统一关闭订阅以支持重连，不取消 run。

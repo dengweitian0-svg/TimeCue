@@ -34,7 +34,7 @@ App 改为通过 `service.App.ChatService` 装配后，主任务已重新运行 
 | Go 文件格式检查（internal/agent、internal/api、internal/middleware、internal/service、cmd/flutter；71 个文件） | 通过 |
 | `git diff --check` | 通过 |
 | `go vet ./...` | 通过 |
-| `go test -p 1 ./...` | 通过：cmd/flutter 9.387s、agent/chat 0.841s、api 6.073s、middleware 3.008s、service 1.643s、store 27.265s；其余包无测试或使用缓存。本机已有用户实例占用固定端口，相关用例可能跳过；本结果不代表完整验证了运行实例生命周期。 |
+| `go test -p 1 ./...` | 通过：api 6.104s、middleware 3.100s、service 1.678s；其余包无测试或使用缓存。本机已有用户实例占用固定端口，相关用例可能跳过；本结果不代表完整验证了运行实例生命周期。 |
 | Go race 检查（agent/chat、api、middleware） | 通过 |
 
 执行命令：
@@ -58,6 +58,17 @@ go test -race -p 1 ./internal/agent/chat ./internal/api ./internal/middleware -r
 | `GET /v1/session` | `524788166` | `421668970` | 2 请求，3 断言，通过 |
 
 Apifox fixture 重新构建并通过 `service.App.ChatService` 注入 Mock，监听 `127.0.0.1:10087` 并设置 `Host: 127.0.0.1:10086`，没有中断用户正在 `10086` 端口运行的实例。fixture 源码位于忽略路径 `.apifox/chat100/server/main.go`，测试后已停止。最新执行报告位于忽略的本地路径 `.apifox/chat100/reports/{key}.json` 和 `final-summary.json`；本地 JSON 未上传 Apifox 云端，不能作为云端报告链接。
+
+## P2 审查修复复验
+
+- `go vet ./...` 与 `go test -p 1 ./...` 复验通过。新增 SSE 回归测试的定向 race 检查通过：
+
+```powershell
+go test -race ./internal/api -run 'TestSSE(IOErrorsAfterRequestCancellationAreClean|ClientDisconnectIsCleanAndRunCanReconnect|UnexpectedEventSourceCloseRemainsError)$' -count=1
+```
+
+- `TestSSEClientDisconnectIsCleanAndRunCanReconnect` 验证正常断线及游标重连保持 run 运行且没有 ERROR 日志；`TestSSEUnexpectedEventSourceCloseRemainsError` 验证事件源意外提前关闭仍报告错误；`TestSSEIOErrorsAfterRequestCancellationAreClean` 验证写入或 flush 与请求取消竞争时正常结束。
+- App 装配的 fixture 停止并重建后，单独重跑 Apifox SSE case `421668960`：创建请求返回 202，SSE 请求返回 200 并收到 `end`，三条断言通过。报告为 `.apifox/chat100/reports/run-events.json`。此前七接口总计 13 请求、20 断言、0 失败的基线保留；本次只重跑 SSE case，没有重跑其余六个接口。
 
 ## 后续替换与复验
 

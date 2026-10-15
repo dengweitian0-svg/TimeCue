@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
+	"github.com/dengweitian0-svg/TimeCue/internal/api/handler"
 	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
+	"github.com/gin-gonic/gin"
 )
 
 const sseWaitLimit = 2 * time.Second
@@ -497,4 +499,148 @@ func TestSSEDeleteHidesNewRequestsButExistingConnectionGetsRealEnd_SSE14_DELETE0
 func readBody(body io.Reader) string {
 	data, _ := io.ReadAll(body)
 	return string(bytes.TrimSpace(data))
+}
+
+func waitForHTTPLogRecords(t *testing.T, readLogs func() []byte, count int) []byte {
+	t.Helper()
+	deadline := time.Now().Add(sseWaitLimit)
+	for time.Now().Before(deadline) {
+		logs := readLogs()
+		lines := bytes.Split(bytes.TrimSpace(logs), []byte("\n"))
+		if len(lines) >= count && len(lines[0]) > 0 {
+			return logs
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d HTTP log records: %s", count, readLogs())
+	return nil
+}
+
+type cancelDuringSSEWrite struct {
+	cancel context.CancelFunc
+	err    error
+}
+
+// Write 在模拟写入中先触发请求取消，再返回预设错误。
+func (w cancelDuringSSEWrite) Write([]byte) (int, error) {
+	w.cancel()
+	return 0, w.err
+}
+
+// TestSSEIOErrorsAfterRequestCancellationAreClean 验证取消与写入或刷新竞争时正常结束流。
+func TestSSEIOErrorsAfterRequestCancellationAreClean(t *testing.T) {
+	for _, phase := range []string{"write", "flush"} {
+		t.Run(phase, func(t *testing.T) {
+			events := make(chan chat.Event, 1)
+			events <- chat.Event{ID: 1, Type: chat.EventStart, Data: json.RawMessage(`{}`)}
+			closed := false
+			stub := &chatServiceStub{subscribe: func(context.Context, string, int64) (*chat.Subscription, error) {
+				return &chat.Subscription{Events: events, Close: func() { closed = true }}, nil
+			}}
+			ginContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ginContext.Request = httptest.NewRequest(http.MethodGet, "/v1/run/"+testRunID+"/event", nil)
+			ginContext.Params = gin.Params{{Key: "run_id", Value: testRunID}}
+			result := handler.RunEventsHandler(stub)(ginContext)
+			if result.Stream == nil {
+				t.Fatal("expected event stream")
+			}
+			defer result.Stream.Close()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var err error
+			if phase == "write" {
+				err = result.Stream.Write(ctx, cancelDuringSSEWrite{cancel: cancel, err: io.ErrClosedPipe}, func() error { return nil })
+			} else {
+				err = result.Stream.Write(ctx, io.Discard, func() error {
+					cancel()
+					return context.Canceled
+				})
+			}
+			if err != nil {
+				t.Fatalf("canceled %s returned error: %v", phase, err)
+			}
+			result.Stream.Close()
+			if !closed {
+				t.Fatal("subscription was not closed")
+			}
+		})
+	}
+}
+
+// TestSSEClientDisconnectIsCleanAndRunCanReconnect 验证主动断开只释放订阅、不取消 run，且可用事件游标重连。
+func TestSSEClientDisconnectIsCleanAndRunCanReconnect(t *testing.T) {
+	readLogs := captureHTTPLogs(t)
+	mock, runID, server := newSSEFixture(t)
+	response, cancel, err := openSSE(t, server, runID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishSSE(t, mock, runID, chat.EventStart, `{}`)
+	first := readSSEFrameWithin(t, bufio.NewReader(response.Body), sseWaitLimit)
+	if first.id != "1" || first.event != "start" {
+		t.Fatalf("initial event=%+v", first)
+	}
+	closeAndWaitForSSERelease(t, mock, runID, 1, response, cancel)
+
+	run, err := mock.GetRun(context.Background(), runID)
+	if err != nil || run.Status != chat.StatusRunning {
+		t.Fatalf("run after client disconnect = %q, err=%v", run.Status, err)
+	}
+	response, cancel, err = openSSE(t, server, runID, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishSSE(t, mock, runID, chat.EventText, `{"content":"resumed","error":null}`)
+	resumed := readSSEFrameWithin(t, bufio.NewReader(response.Body), sseWaitLimit)
+	if resumed.id != "2" || resumed.event != "text" {
+		t.Fatalf("resumed event=%+v", resumed)
+	}
+	closeAndWaitForSSERelease(t, mock, runID, 2, response, cancel)
+
+	logs := waitForHTTPLogRecords(t, readLogs, 2)
+	for _, line := range bytes.Split(bytes.TrimSpace(logs), []byte("\n")) {
+		var record map[string]any
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatalf("decode HTTP log: %v", err)
+		}
+		if record["level"] != "INFO" || record["msg"] != "[http] run events streamed" {
+			t.Fatalf("client disconnect logged as failure: %s", line)
+		}
+		if _, exists := record["error"]; exists {
+			t.Fatalf("normal disconnect has error field: %s", line)
+		}
+	}
+}
+
+// TestSSEUnexpectedEventSourceCloseRemainsError 验证未取消请求时事件源提前关闭仍记录流错误。
+func TestSSEUnexpectedEventSourceCloseRemainsError(t *testing.T) {
+	readLogs := captureHTTPLogs(t)
+	events := make(chan chat.Event)
+	close(events)
+	stub := &chatServiceStub{subscribe: func(context.Context, string, int64) (*chat.Subscription, error) {
+		return &chat.Subscription{Events: events, Close: func() {}}, nil
+	}}
+	server := httptest.NewServer(newChatHTTPTestRouter(stub))
+	t.Cleanup(server.Close)
+	response, cancel, err := openSSE(t, server, testRunID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+
+	logs := waitForHTTPLogRecords(t, readLogs, 1)
+	lines := bytes.Split(bytes.TrimSpace(logs), []byte("\n"))
+	var record map[string]any
+	if err := json.Unmarshal(lines[0], &record); err != nil {
+		t.Fatalf("decode HTTP log: %v", err)
+	}
+	if record["level"] != "ERROR" || record["msg"] != "[http] failed to stream run events" {
+		t.Fatalf("unexpected source close log = %s", lines[0])
+	}
+	if record["error"] == nil {
+		t.Fatalf("unexpected source close omitted error: %s", lines[0])
+	}
 }

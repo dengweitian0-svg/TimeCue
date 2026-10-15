@@ -83,9 +83,12 @@ func (s *chatEventStream) Write(ctx context.Context, writer io.Writer, flush fun
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		case event, ok := <-s.subscription.Events:
 			if !ok {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return fmt.Errorf("chat event subscription closed before end event")
 			}
 			frame, err := middleware.EncodeSSE(event.ID, string(event.Type), event.Data)
@@ -97,9 +100,15 @@ func (s *chatEventStream) Write(ctx context.Context, writer io.Writer, flush fun
 				err = io.ErrShortWrite
 			}
 			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return err
 			}
 			if err := flush(); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return err
 			}
 			if event.Type == chat.EventEnd {
