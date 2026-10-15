@@ -19,6 +19,7 @@ type httpLogDetails struct {
 	Panicked       bool
 	PanicValue     any
 	SuccessMessage string
+	LogLevel       *slog.Level
 }
 
 // setHTTPLogDetails 合并当前请求的日志素材，不直接输出日志。
@@ -28,6 +29,10 @@ func setHTTPLogDetails(c *gin.Context, details httpLogDetails) {
 	current.Fields = append(current.Fields, details.Fields...)
 	if details.SuccessMessage != "" {
 		current.SuccessMessage = details.SuccessMessage
+	}
+	if details.LogLevel != nil {
+		level := *details.LogLevel
+		current.LogLevel = &level
 	}
 	if details.Error != nil {
 		if current.Error == nil {
@@ -62,6 +67,13 @@ type httpEvent struct {
 
 // 路由事件只描述 HTTP 语义，不依赖 handler、服务层或响应体。
 var httpEvents = map[httpEventKey]httpEvent{
+	{http.MethodPost, "/v1/run"}:                                             {slog.LevelInfo, "run created", "failed to create run"},
+	{http.MethodGet, "/v1/run/:run_id"}:                                      {slog.LevelDebug, "run retrieved", "failed to get run"},
+	{http.MethodGet, "/v1/run/:run_id/event"}:                                {slog.LevelInfo, "run events streamed", "failed to stream run events"},
+	{http.MethodPost, "/v1/run/:run_id/cancel"}:                              {slog.LevelInfo, "run cancellation requested", "failed to cancel run"},
+	{http.MethodGet, "/v1/session/:session_id"}:                              {slog.LevelDebug, "session retrieved", "failed to get session"},
+	{http.MethodDelete, "/v1/session/:session_id"}:                           {slog.LevelInfo, "session deleted", "failed to delete session"},
+	{http.MethodGet, "/v1/session"}:                                          {slog.LevelDebug, "sessions listed", "failed to list sessions"},
 	{http.MethodPost, "/api/v1/notifications/claim"}:                         {slog.LevelDebug, "delivery tasks claimed", "failed to claim delivery tasks"},
 	{http.MethodPost, "/api/v1/notifications/executor-exit"}:                 {slog.LevelInfo, "delivery executor exited", "failed to record delivery executor exit"},
 	{http.MethodPost, "/api/v1/notifications/delivery-attempts/:id/start"}:   {slog.LevelInfo, "delivery attempt started", "failed to start delivery attempt"},
@@ -94,12 +106,25 @@ func httpLogEvent(c *gin.Context, details httpLogDetails) (slog.Level, string) {
 		return slog.LevelWarn, "HTTP request rejected"
 	case details.SuccessMessage != "":
 		if matched {
-			return event.level, details.SuccessMessage
+			level := event.level
+			if details.LogLevel != nil {
+				level = *details.LogLevel
+			}
+			return level, details.SuccessMessage
+		}
+		if details.LogLevel != nil {
+			return *details.LogLevel, details.SuccessMessage
 		}
 		return slog.LevelInfo, details.SuccessMessage
 	case matched:
+		if details.LogLevel != nil {
+			return *details.LogLevel, event.success
+		}
 		return event.level, event.success
 	default:
+		if details.LogLevel != nil {
+			return *details.LogLevel, "HTTP request completed"
+		}
 		return slog.LevelInfo, "HTTP request completed"
 	}
 }

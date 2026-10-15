@@ -4,7 +4,7 @@
 
 组合日程、提醒的业务操作，提供规则计算和查询视图。
 
-- `app.go`：业务服务与 RuntimeDatabase/HTTP handler 装配契约、固定目录运行路径、公开 RuntimeInfo、可选 OnReady 回调；App.Run 管理配置/日志/数据库/HTTP/调度/恢复生命周期、请求等待与退出清理，以及日程基础用例。
+- `app.go`：业务服务与 RuntimeDatabase/HTTP handler 装配契约、固定目录运行路径、公开 RuntimeInfo、可选 OnReady 回调；App 持有由入口注入的 ChatService 端口。App.Run 管理配置/日志/数据库/HTTP/调度/恢复生命周期、请求等待与退出清理，以及日程基础用例。
 - `notification_loading.go`：调度存储端口和纯版本窗口计算，保留严格生效边界、重合去重及旧秒级排除。
 - `scheduler.go`：单循环每 30 秒扫描前后各 30 秒、未来 1 分钟首提醒提交后加载、内存等待与完整分钟分组、成员失效、遗漏登记及回拨后重扫。
 - `scheduler_test.go` / `app_test.go`：扫描/到点/取消、版本端点、退出等待及真实 HTTP 优雅窗口中的结果回填测试。

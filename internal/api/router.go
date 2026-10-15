@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// NewRouter 注册本地健康检查和日程 HTTP 接口。
+// NewRouter 注册本地业务接口；聊天路由仅在 App 提供聊天服务时启用。
 func NewRouter(app *service.App, healthCheck handler.HealthCheck, info ...service.RuntimeInfo) *gin.Engine {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
@@ -45,6 +45,9 @@ func NewRouter(app *service.App, healthCheck handler.HealthCheck, info ...servic
 	notify.POST("/notifications/executor-exit", middleware.WrapHTTPHandler(handler.DeliveryExecutorExitHandler(app, runtimeInfo), nil))
 	notify.POST("/notifications/delivery-attempts/:id/start", middleware.WrapHTTPHandler(handler.StartDeliveryHandler(app), nil))
 	notify.POST("/notifications/delivery-attempts/:id/results", middleware.WrapHTTPHandler(handler.DeliveryResultsHandler(app), nil))
+	if app != nil && app.ChatService != nil {
+		registerChatRoutes(router, app.ChatService)
+	}
 	return router
 }
 

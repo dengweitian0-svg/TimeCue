@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
@@ -34,7 +35,9 @@ type App struct {
 	Scheduler  *Scheduler
 	Delivery   *DeliveryService
 	Recovery   *RecoveryService
-	operations sync.Mutex // 正式写入、开始冻结和回填共用操作边界，避免提交后回调竞争。
+	// ChatService 是由应用入口注入的聊天应用服务端口。
+	ChatService chat.Service
+	operations  sync.Mutex // 正式写入、开始冻结和回填共用操作边界，避免提交后回调竞争。
 }
 
 // NewApp 使用依赖注入的配置与 Repo 接口组装应用服务。
@@ -137,6 +140,7 @@ type RuntimeInfo struct {
 	Capabilities []string `json:"capabilities"`
 }
 
+// NewRuntimeInfo 构造当前进程的公开运行身份信息。
 func NewRuntimeInfo(instanceID string) RuntimeInfo {
 	return RuntimeInfo{InstanceID: instanceID, PID: os.Getpid(), APIVersion: "v1",
 		Capabilities: []string{"delivery-v1", "recovery-v1", "task-members-v1", "managed-lifecycle-v1"}}
@@ -292,6 +296,7 @@ type readyListener struct {
 	once    sync.Once
 }
 
+// Accept 在首次等待连接时通知 HTTP 服务已进入接收循环。
 func (l *readyListener) Accept() (net.Conn, error) {
 	l.once.Do(func() { close(l.started) })
 	return l.Listener.Accept()
@@ -315,6 +320,7 @@ type requestTracker struct {
 	active  sync.WaitGroup
 }
 
+// ServeHTTP 跟踪正在处理的请求，并在停止接入后拒绝新请求。
 func (t *requestTracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	t.mu.Lock()
 	if t.closing {

@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
 	"github.com/dengweitian0-svg/TimeCue/internal/api"
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
@@ -76,6 +77,8 @@ func runApp(ctx context.Context, options startupOptions, log *logger.Logger) err
 	if err != nil {
 		return err
 	}
+	// TODO: 接入真实聊天应用服务后，替换临时 Mock。
+	app.ChatService = chat.NewMock()
 	info := service.NewRuntimeInfo(options.instanceID)
 	runtime := service.RuntimeOptions{Database: db, PrepareDatabase: db.PrepareSchema, Handler: api.NewRouter(app, db.CheckHealth, info), Log: log}
 	if options.managed {
