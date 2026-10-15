@@ -21,6 +21,7 @@ void main() {
     DemoNotebookRepository repository,
     _FakeAiChatGateway gateway, {
     Size size = const Size(1280, 800),
+    bool ownsChatGateway = true,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -30,7 +31,7 @@ void main() {
       TimeCueApp(
         repository: repository,
         chatGateway: gateway,
-        ownsChatGateway: true,
+        ownsChatGateway: ownsChatGateway,
       ),
     );
     await tester.pump();
@@ -173,6 +174,10 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    expect(gateway.invalidateCalls, 1);
+    expect(gateway.disposeCalls, 1);
+    expect(gateway.events[runId]!.hasListener, isFalse);
     repository.dispose();
   });
 
@@ -190,6 +195,42 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     repository.dispose();
   });
+
+  testWidgets('借用聊天网关时释放宿主只停止宿主模型', (tester) async {
+    final repository = DemoNotebookRepository();
+    final gateway = _FakeAiChatGateway();
+    await mount(tester, repository, gateway, ownsChatGateway: false);
+    final independentEvents = <AiChatEvent>[];
+    gateway.watchRun('independent-run').listen(independentEvents.add);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    expect(gateway.invalidateCalls, 0);
+    expect(gateway.disposeCalls, 0);
+    var sessionsLoaded = false;
+    List<String>? sessions;
+    gateway.listSessions().then((value) {
+      sessions = value;
+      sessionsLoaded = true;
+    });
+    await tester.pump();
+    expect(sessionsLoaded, isTrue);
+    expect(sessions, isEmpty);
+    gateway.addText('independent-run', 1, '共享网关仍可用');
+    await tester.pump();
+    expect(independentEvents, hasLength(1));
+    expect(independentEvents.single.data['content'], '共享网关仍可用');
+    var streamClosed = false;
+    gateway.events['independent-run']!.close().then((_) {
+      streamClosed = true;
+    });
+    for (var pump = 0; pump < 5 && !streamClosed; pump++) {
+      await tester.pump();
+    }
+    expect(streamClosed, isTrue);
+
+    repository.dispose();
+  }, timeout: const Timeout(Duration(seconds: 15)));
 
   testWidgets('备用 AI 入口打开后放大窗口，关闭时焦点回到新挂载的猫咪', (tester) async {
     final repository = DemoNotebookRepository();
@@ -354,17 +395,32 @@ class _FakeAiChatGateway implements AiChatGateway {
   final List<String> createdRunIds = [];
   int createCalls = 0;
   int cancelCalls = 0;
+  int invalidateCalls = 0;
+  int disposeCalls = 0;
   bool disposed = false;
+  bool invalidated = false;
+
+  void _ensureAvailable() {
+    if (invalidated || disposed) throw StateError('gateway unavailable');
+  }
 
   @override
-  Future<List<String>> listSessions() async => List.of(sessionIds);
+  Future<List<String>> listSessions() async {
+    _ensureAvailable();
+    return List.of(sessionIds);
+  }
 
   @override
-  Future<List<AiChatRun>> getSessionRuns(String sessionId) async =>
-      List.of(sessions[sessionId] ?? const []);
+  Future<List<AiChatRun>> getSessionRuns(String sessionId) async {
+    _ensureAvailable();
+    return List.of(sessions[sessionId] ?? const []);
+  }
 
   @override
-  Future<AiChatRun> getRun(String runId) async => runs[runId]!;
+  Future<AiChatRun> getRun(String runId) async {
+    _ensureAvailable();
+    return runs[runId]!;
+  }
 
   @override
   Future<String> createRun(
@@ -373,6 +429,7 @@ class _FakeAiChatGateway implements AiChatGateway {
     required String idempotencyKey,
     String model = 'deepseek-flash',
   }) async {
+    _ensureAvailable();
     createCalls++;
     final runId = 'run-$createCalls';
     createdRunIds.add(runId);
@@ -391,19 +448,28 @@ class _FakeAiChatGateway implements AiChatGateway {
 
   @override
   Future<AiChatStatus> cancelRun(String runId) async {
+    _ensureAvailable();
     cancelCalls++;
     return AiChatStatus.running;
   }
 
   @override
   Future<void> deleteSession(String sessionId) async {
+    _ensureAvailable();
     sessionIds.remove(sessionId);
     sessions.remove(sessionId);
   }
 
   @override
   Stream<AiChatEvent> watchRun(String runId, {int? lastEventId}) =>
-      events.putIfAbsent(runId, StreamController<AiChatEvent>.broadcast).stream;
+      _watchRun(runId);
+
+  Stream<AiChatEvent> _watchRun(String runId) {
+    _ensureAvailable();
+    return events
+        .putIfAbsent(runId, StreamController<AiChatEvent>.broadcast)
+        .stream;
+  }
 
   void addText(String runId, int id, String content) {
     events[runId]!.add(
@@ -412,13 +478,22 @@ class _FakeAiChatGateway implements AiChatGateway {
   }
 
   @override
-  void invalidate() {}
+  void invalidate() {
+    if (invalidated || disposed) return;
+    invalidateCalls++;
+    invalidated = true;
+    for (final event in events.values) {
+      if (!event.isClosed) unawaited(event.close());
+    }
+  }
 
   @override
   void dispose() {
+    if (disposed) return;
+    disposeCalls++;
     disposed = true;
     for (final event in events.values) {
-      unawaited(event.close());
+      if (!event.isClosed) unawaited(event.close());
     }
   }
 }

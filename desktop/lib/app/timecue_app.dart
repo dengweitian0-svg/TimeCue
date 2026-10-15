@@ -107,7 +107,7 @@ class _DesktopShellState extends State<DesktopShell> {
     if (_chatInvalidated) return;
     _chatInvalidated = true;
     _chatModel?.invalidate();
-    widget.chatGateway?.invalidate();
+    if (widget.ownsChatGateway) widget.chatGateway?.invalidate();
   }
 
   Future<void> _activate(String payload) async {

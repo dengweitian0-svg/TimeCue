@@ -146,6 +146,8 @@ class AiChatModel extends ChangeNotifier {
   final Map<String, StreamSubscription<AiChatEvent>> _subscriptions = {};
   final Map<String, Future<void>> _eventQueues = {};
   final Map<String, int> _streamGenerations = {};
+  final Map<String, int> _connectionFailures = {};
+  final Map<String, int> _handledConnectionFailures = {};
   final Map<String, Map<int, AiChatEvent>> _bufferedEvents = {};
   final Set<String> _deletedIds = {};
   final Set<String> _deletedActiveRuns = {};
@@ -467,6 +469,8 @@ class AiChatModel extends ChangeNotifier {
     );
     if (active.isNotEmpty) {
       _blockedReconnects.remove(active.last.runId);
+      _connectionFailures[active.last.runId] = 0;
+      _handledConnectionFailures.remove(active.last.runId);
       _connect(active.last.runId, explicit: true);
       return;
     }
@@ -595,6 +599,8 @@ class AiChatModel extends ChangeNotifier {
     _subscriptions.clear();
     _eventQueues.clear();
     _streamGenerations.updateAll((_, value) => value + 1);
+    _connectionFailures.clear();
+    _handledConnectionFailures.clear();
     _notify();
   }
 
@@ -633,7 +639,7 @@ class AiChatModel extends ChangeNotifier {
       );
       _replaceSession(
         session.copyWith(
-          title: session.title == '新对话'
+          title: session.turns.isEmpty
               ? _shortTitle(pending.input)
               : session.title,
           draft: '',
@@ -681,7 +687,7 @@ class AiChatModel extends ChangeNotifier {
     }
   }
 
-  void _connect(String runId, {bool explicit = false, int attempt = 0}) {
+  void _connect(String runId, {bool explicit = false}) {
     if (_disposed || _invalidated || _subscriptions.containsKey(runId)) return;
     if (_blockedReconnects.contains(runId) && !explicit) return;
     final turn = _findTurn(runId);
@@ -692,7 +698,7 @@ class AiChatModel extends ChangeNotifier {
       runId,
       explicit
           ? AiChatConnectionState.reconnecting
-          : (attempt == 0
+          : ((_connectionFailures[runId] ?? 0) == 0
                 ? AiChatConnectionState.connecting
                 : AiChatConnectionState.reconnecting),
     );
@@ -705,50 +711,42 @@ class AiChatModel extends ChangeNotifier {
           .watchRun(runId, lastEventId: cursor)
           .listen(
             (event) {
-              _eventQueues[runId] =
-                  (_eventQueues[runId] ?? Future<void>.value())
-                      .then((_) => _handleEvent(runId, event, nextGeneration))
-                      .catchError((Object error) {
-                        _setTurnError(runId, error);
-                        _stopSubscription(runId);
-                        _reconnect(runId, nextGeneration, attempt);
-                      });
+              final processing = (_eventQueues[runId] ?? Future<void>.value())
+                  .then((_) => _handleEvent(runId, event, nextGeneration));
+              _eventQueues[runId] = processing.catchError((Object error) {
+                return _handleConnectionFailure(
+                  runId,
+                  nextGeneration,
+                  error,
+                  queueSettled: true,
+                );
+              });
             },
             onError: (Object error, StackTrace stack) {
-              _stopSubscription(runId);
-              _setConnection(runId, AiChatConnectionState.disconnected);
-              _setTurnError(runId, error);
-              if (_isAlreadyConnected(error)) {
-                _blockedReconnects.add(runId);
-              } else {
-                _reconnect(runId, nextGeneration, attempt);
-              }
+              unawaited(_handleConnectionFailure(runId, nextGeneration, error));
             },
             onDone: () {
-              unawaited(() async {
-                await _eventQueues[runId];
-                if (_streamGenerations[runId] != nextGeneration) return;
-                _stopSubscription(runId);
-                final latest = _findTurn(runId);
-                if (latest?.status == AiChatStatus.running &&
-                    !_blockedReconnects.contains(runId)) {
-                  _setConnection(runId, AiChatConnectionState.disconnected);
-                  _reconnect(runId, nextGeneration, attempt);
-                }
-              }());
+              unawaited(
+                _handleConnectionFailure(
+                  runId,
+                  nextGeneration,
+                  StateError('事件流已结束。'),
+                ),
+              );
             },
             cancelOnError: true,
           );
       _subscriptions[runId] = subscription;
       _setConnection(runId, AiChatConnectionState.connected);
     } catch (error) {
-      _setTurnError(runId, error);
-      _setConnection(runId, AiChatConnectionState.disconnected);
-      if (_isAlreadyConnected(error)) {
-        _blockedReconnects.add(runId);
-      } else {
-        _reconnect(runId, nextGeneration, attempt);
-      }
+      unawaited(
+        _handleConnectionFailure(
+          runId,
+          nextGeneration,
+          error,
+          queueSettled: true,
+        ),
+      );
     }
   }
 
@@ -769,6 +767,7 @@ class AiChatModel extends ChangeNotifier {
     }
     final id = event.id;
     if (id != null) {
+      if (id <= 0) throw const FormatException('事件 ID 无效。');
       final current = _findTurn(runId);
       if (current == null || id <= current.lastProcessedEventId) return;
       final buffer = _bufferedEvents.putIfAbsent(runId, () => {});
@@ -792,9 +791,34 @@ class AiChatModel extends ChangeNotifier {
     if (_disposed || _streamGenerations[runId] != generation) return;
     final turn = _findTurn(runId);
     if (turn == null || turn.status != AiChatStatus.running) return;
+    if (event.id == null) throw const FormatException('事件 ID 缺失。');
     final content = event.data['content'];
     final rawError = event.data['error'];
     final eventError = rawError == null ? null : AiChatError.fromJson(rawError);
+    switch (event.type) {
+      case 'start':
+        if (event.data.isNotEmpty) {
+          throw const FormatException('start 事件内容无效。');
+        }
+      case 'thinking':
+      case 'text':
+        if (content is! String ||
+            !_hasOnlyKeys(event.data, const {'content', 'error'})) {
+          throw const FormatException('文本事件内容无效。');
+        }
+      case 'tool':
+        if (!_isValidToolEvent(event.data)) {
+          throw const FormatException('tool 事件内容无效。');
+        }
+      case 'end':
+        if (event.data['stop_reason'] is! String ||
+            (event.data['stop_reason'] as String).trim().isEmpty ||
+            !_hasOnlyKeys(event.data, const {'stop_reason', 'error'})) {
+          throw const FormatException('end 事件原因无效。');
+        }
+      default:
+        throw const FormatException('事件类型无效。');
+    }
     var updated = turn.copyWith(
       error: eventError,
       clearError: turn.retryable && eventError == null,
@@ -821,10 +845,9 @@ class AiChatModel extends ChangeNotifier {
       }
       return;
     }
-    if (event.id != null) {
-      updated = updated.copyWith(lastProcessedEventId: event.id);
-    }
+    updated = updated.copyWith(lastProcessedEventId: event.id);
     _replaceTurn(runId, updated);
+    _connectionFailures.remove(runId);
     _notify();
   }
 
@@ -887,21 +910,48 @@ class AiChatModel extends ChangeNotifier {
     _notify();
   }
 
-  void _reconnect(String runId, int generation, int attempt) {
+  Future<void> _handleConnectionFailure(
+    String runId,
+    int generation,
+    Object error, {
+    bool queueSettled = false,
+  }) async {
+    if (!queueSettled) await _eventQueues[runId];
+    if (_disposed ||
+        _invalidated ||
+        _streamGenerations[runId] != generation ||
+        _handledConnectionFailures[runId] == generation) {
+      return;
+    }
+    _handledConnectionFailures[runId] = generation;
+    _stopSubscription(runId);
+    final turn = _findTurn(runId);
+    if (turn == null || turn.status != AiChatStatus.running) return;
+    _setConnection(runId, AiChatConnectionState.disconnected);
+    _setTurnError(runId, error);
+    if (_isAlreadyConnected(error)) {
+      _blockedReconnects.add(runId);
+      return;
+    }
+    _connectionFailures[runId] = (_connectionFailures[runId] ?? 0) + 1;
+    _reconnect(runId, generation);
+  }
+
+  void _reconnect(String runId, int generation) {
     if (_disposed || _streamGenerations[runId] != generation) return;
     final turn = _findTurn(runId);
     if (turn == null || turn.status != AiChatStatus.running) return;
-    final nextAttempt = attempt + 1;
-    if (nextAttempt > _retryDelays.length) {
+    final failures = _connectionFailures[runId] ?? 0;
+    if (failures > _retryDelays.length) {
       _updateTurnByRun(runId, (value) => value.copyWith(retryable: true));
       _notify();
       return;
     }
-    final delay = _retryDelays[attempt];
+    final delay = _retryDelays[failures - 1];
     Timer(delay, () {
       if (_disposed || _streamGenerations[runId] != generation) return;
       if (_subscriptions.containsKey(runId)) return;
-      _connect(runId, attempt: nextAttempt);
+      _connect(runId);
     });
   }
 
@@ -933,6 +983,8 @@ class AiChatModel extends ChangeNotifier {
     if (terminal) {
       _stopSubscription(run.runId);
       _blockedReconnects.remove(run.runId);
+      _connectionFailures.remove(run.runId);
+      _handledConnectionFailures.remove(run.runId);
       if (_deletedSessions.containsKey(sessionId)) {
         _finishDeletedSession(sessionId);
       }
@@ -1096,6 +1148,25 @@ class AiChatModel extends ChangeNotifier {
       error is AiChatGatewayException &&
       error.statusCode == 409 &&
       error.code == 'sse_connection_exists';
+
+  bool _isValidToolEvent(Map<String, dynamic> data) {
+    final function = data['function'];
+    if (data['id'] is! String ||
+        function is! Map ||
+        !_hasOnlyKeys(data, const {'id', 'function'}) ||
+        !_hasOnlyKeys(function, const {'name', 'args'})) {
+      return false;
+    }
+    final arguments = function['args'];
+    return function['name'] is String &&
+        arguments is Map &&
+        _hasOnlyKeys(arguments, const {'name', 'val'}) &&
+        arguments['name'] is String &&
+        arguments.containsKey('val');
+  }
+
+  bool _hasOnlyKeys(Map<dynamic, dynamic> value, Set<String> allowed) =>
+      value.keys.every((key) => key is String && allowed.contains(key));
 
   void _ensureUsable() {
     if (_disposed || _invalidated) throw StateError('AI 对话状态已失效。');

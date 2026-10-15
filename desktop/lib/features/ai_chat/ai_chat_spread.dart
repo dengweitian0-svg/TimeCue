@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 
 import '../../contracts/ai_chat.dart';
@@ -26,6 +27,9 @@ class _AiChatSpreadState extends State<AiChatSpread> {
   final _inputControllers = <String, TextEditingController>{};
   final _scrollControllers = <String, ScrollController>{};
   final _followTail = <String, bool>{};
+  final _userScrollTowardTail = <String, bool>{};
+  final _tailAnimationActive = <String>{};
+  final _tailScrollPending = <String>{};
   final _thinkingExpanded = <String, bool>{};
   final _initialFocus = FocusNode();
   bool _startedRefresh = false;
@@ -84,9 +88,13 @@ class _AiChatSpreadState extends State<AiChatSpread> {
         );
       }
       if (_followTail[selected.id] != false) {
-        WidgetsBinding.instance.addPostFrameCallback(
-          (_) => _scrollToTail(selected.id),
-        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted &&
+              widget.model.selectedSessionId == selected.id &&
+              _followTail[selected.id] != false) {
+            _scrollToTail(selected.id);
+          }
+        });
       }
     }
     setState(() {});
@@ -99,25 +107,73 @@ class _AiChatSpreadState extends State<AiChatSpread> {
       );
 
   ScrollController _scrollControllerFor(String id) =>
-      _scrollControllers.putIfAbsent(id, () {
-        final controller = ScrollController();
-        controller.addListener(() {
-          if (!controller.hasClients) return;
-          _followTail[id] =
-              controller.position.maxScrollExtent - controller.position.pixels <
-              48;
-        });
-        return controller;
-      });
+      _scrollControllers.putIfAbsent(id, ScrollController.new);
+
+  bool _trackUserScroll(String id, ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    if (notification is UserScrollNotification) {
+      switch (notification.direction) {
+        case ScrollDirection.forward:
+          _userScrollTowardTail[id] = false;
+          _followTail[id] = false;
+        case ScrollDirection.reverse:
+          _userScrollTowardTail[id] = true;
+          _followTail[id] = notification.metrics.extentAfter <= 2;
+        case ScrollDirection.idle:
+          if (_userScrollTowardTail[id] == true &&
+              notification.metrics.extentAfter <= 2) {
+            _followTail[id] = true;
+          }
+      }
+    } else if (notification is ScrollUpdateNotification &&
+        notification.dragDetails != null &&
+        _userScrollTowardTail[id] == true &&
+        notification.metrics.extentAfter <= 2) {
+      _followTail[id] = true;
+    } else if (notification is ScrollEndNotification &&
+        _userScrollTowardTail[id] == true) {
+      if (notification.metrics.extentAfter <= 2) _followTail[id] = true;
+      _userScrollTowardTail.remove(id);
+    }
+    if (_followTail[id] == false) _tailScrollPending.remove(id);
+    return false;
+  }
 
   void _scrollToTail(String id) {
+    if (!mounted ||
+        widget.model.selectedSessionId != id ||
+        _followTail[id] == false) {
+      return;
+    }
     final controller = _scrollControllers[id];
     if (controller == null || !controller.hasClients) return;
-    controller.animateTo(
-      controller.position.maxScrollExtent,
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-    );
+    if (_tailAnimationActive.contains(id)) {
+      _tailScrollPending.add(id);
+      return;
+    }
+    if (controller.position.extentAfter <= 1) return;
+    _tailAnimationActive.add(id);
+    unawaited(_animateToTail(id, controller));
+  }
+
+  Future<void> _animateToTail(String id, ScrollController controller) async {
+    try {
+      await controller.animateTo(
+        controller.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
+    } finally {
+      _tailAnimationActive.remove(id);
+      final hasPendingRequest = _tailScrollPending.remove(id);
+      if (mounted &&
+          widget.model.selectedSessionId == id &&
+          _followTail[id] != false &&
+          controller.hasClients &&
+          (hasPendingRequest || controller.position.extentAfter > 1)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToTail(id));
+      }
+    }
   }
 
   void _createSession() {
@@ -528,7 +584,16 @@ class _AiChatSpreadState extends State<AiChatSpread> {
     );
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 20, 22, 14),
-      child: compact ? SingleChildScrollView(child: body) : body,
+      child: compact
+          ? NotificationListener<ScrollNotification>(
+              onNotification: (notification) =>
+                  _trackUserScroll(session.id, notification),
+              child: SingleChildScrollView(
+                controller: _scrollControllerFor(session.id),
+                child: body,
+              ),
+            )
+          : body,
     );
   }
 
@@ -642,13 +707,17 @@ class _AiChatSpreadState extends State<AiChatSpread> {
         ],
       );
     }
-    return ListView.builder(
-      key: PageStorageKey('messages-${session.id}'),
-      controller: scroll,
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 18),
-      itemCount: session.turns.length,
-      itemBuilder: (context, index) =>
-          _turnView(model, session, session.turns[index]),
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) =>
+          _trackUserScroll(session.id, notification),
+      child: ListView.builder(
+        key: PageStorageKey('messages-${session.id}'),
+        controller: scroll,
+        padding: const EdgeInsets.fromLTRB(8, 6, 8, 18),
+        itemCount: session.turns.length,
+        itemBuilder: (context, index) =>
+            _turnView(model, session, session.turns[index]),
+      ),
     );
   }
 

@@ -136,6 +136,25 @@ void main() {
     }
   });
 
+  test('首条输入恰为新对话时续聊保留原标题', () async {
+    await model.refresh();
+    final session = model.createSession();
+    await model.send(session.id, '新对话');
+    expect(model.selectedSession!.title, '新对话');
+
+    gateway.completeRun(
+      _run(_runA, session.id, status: AiChatStatus.succeeded, output: '首条已完成'),
+    );
+    gateway.controllers[_runA]!.add(
+      const AiChatEvent(id: 1, type: 'end', data: {'stop_reason': 'stop'}),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+
+    gateway.createdRunId = 'second-title-run';
+    await model.send(session.id, '后续问题不应改标题');
+    expect(model.selectedSession!.title, '新对话');
+  });
+
   test('删除运行的并发拒绝保留原内容和幂等键供明确重试', () async {
     gateway.sessionIds.add(_sessionA);
     gateway.runsBySession[_sessionA] = [_runA];
@@ -461,6 +480,82 @@ void main() {
     expect(failedTurn.lastProcessedEventId, 4);
   });
 
+  test('每次有效进展重置连续断线预算并保留游标', () async {
+    await model.refresh();
+    final session = model.createSession();
+    await model.send(session.id, '长连接问题');
+
+    for (var id = 1; id <= 5; id++) {
+      final connection = gateway.controllers[_runA]!;
+      connection.add(
+        AiChatEvent(id: id, type: 'text', data: {'content': '$id'}),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      connection.addError(StateError('第$id次断线'));
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      expect(gateway.watchCursors[_runA], hasLength(id + 1));
+    }
+    gateway.controllers[_runA]!.add(
+      const AiChatEvent(id: 6, type: 'text', data: {'content': '6'}),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+
+    final turn = model.sessions.single.turns.single;
+    expect(turn.text, '123456');
+    expect(turn.lastProcessedEventId, 6);
+    expect(turn.retryable, isFalse);
+  });
+
+  test('无效帧不重置连续失败预算且最终等待手动重试', () async {
+    await model.refresh();
+    final session = model.createSession();
+    await model.send(session.id, '校验问题');
+
+    Future<void> waitForWatchCount(int count) async {
+      for (
+        var tick = 0;
+        tick < 600 && (gateway.watchCursors[_runA]?.length ?? 0) < count;
+        tick++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(gateway.watchCursors[_runA]!.length, greaterThanOrEqualTo(count));
+    }
+
+    for (var attempt = 0; attempt < 4; attempt++) {
+      final connection = gateway.controllers[_runA]!;
+      final previousClosures = gateway.closedControllers;
+      connection.add(
+        AiChatEvent(id: 1, type: 'text', data: {'content': attempt}),
+      );
+      for (
+        var tick = 0;
+        tick < 200 && gateway.closedControllers == previousClosures;
+        tick++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(gateway.closedControllers, greaterThan(previousClosures));
+      if (attempt < 3) await waitForWatchCount(attempt + 2);
+    }
+
+    final turn = model.sessions.single.turns.single;
+    expect(gateway.watchCursors[_runA], hasLength(4));
+    expect(turn.text, isEmpty);
+    expect(turn.lastProcessedEventId, 0);
+    expect(turn.retryable, isTrue);
+
+    await model.retry(session.id);
+    await waitForWatchCount(5);
+    gateway.controllers[_runA]!.add(
+      const AiChatEvent(id: 1, type: 'text', data: {'content': '手动恢复'}),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(model.sessions.single.turns.single.text, '手动恢复');
+    expect(model.sessions.single.turns.single.lastProcessedEventId, 1);
+    expect(model.sessions.single.turns.single.retryable, isFalse);
+  });
+
   test('发送旧会话后将其移到历史列表顶部', () async {
     gateway.sessionIds.addAll([_sessionA, _sessionB]);
     gateway.runsBySession[_sessionA] = ['old-a'];
@@ -562,10 +657,14 @@ void main() {
     await model.refresh();
     final session = model.createSession();
     await model.send(session.id, '输入');
+    gateway.controllers[_runA]!.addError(StateError('连接断开'));
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(gateway.watchCalls, 1);
     expect(gateway.cancelCalls, 0);
     model.dispose();
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 180));
     expect(gateway.cancelCalls, 0);
+    expect(gateway.watchCalls, 1);
     expect(gateway.closedControllers, 1);
   });
 

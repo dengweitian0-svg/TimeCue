@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -332,6 +333,130 @@ void main() {
     expect(gateway.cancelCalls, 1);
   });
 
+  testWidgets('自动跟随最新底部，用户上滑可暂停并滚回底部恢复', (tester) async {
+    gateway.sessionIds.addAll(['follow-session', 'other-session']);
+    gateway.runsBySession['follow-session'] = [
+      _run('follow-run', 'follow-session', status: AiChatStatus.running),
+    ];
+    gateway.runsBySession['other-session'] = [
+      _run('other-run', 'other-session', input: '另一段对话'),
+    ];
+
+    Widget page(double height) => MaterialApp(
+      home: MediaQuery(
+        data: MediaQueryData(size: Size(1040, height)),
+        child: Scaffold(
+          body: SizedBox.expand(child: AiChatSpread(model: model)),
+        ),
+      ),
+    );
+
+    await tester.binding.setSurfaceSize(const Size(1040, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(page(700));
+    await tester.pump();
+    final events = gateway.events['follow-run']!;
+    final list = find.byKey(const PageStorageKey('messages-follow-session'));
+    ScrollPosition position() {
+      final scrollable = find.descendant(
+        of: list,
+        matching: find.byType(Scrollable),
+      );
+      return tester.state<ScrollableState>(scrollable.first).position;
+    }
+
+    void check(String stage) {
+      final exception = tester.takeException();
+      if (exception is Error) {
+        fail('$stage\n$exception\n${exception.stackTrace}');
+      }
+      if (exception != null) fail('$stage\n$exception');
+    }
+
+    Future<void> pumpFrames(int count, String stage) async {
+      for (var frame = 0; frame < count; frame++) {
+        await tester.pump(const Duration(milliseconds: 30));
+        check('$stage 第${frame + 1}帧');
+      }
+    }
+
+    var eventId = 0;
+    Future<void> append(String text, {int frameMs = 30}) async {
+      eventId++;
+      events.add(
+        AiChatEvent(id: eventId, type: 'text', data: {'content': text}),
+      );
+      await tester.pump(Duration(milliseconds: frameMs));
+      check('追加第$eventId段流式文本');
+    }
+
+    final chunk = '连续到达的回复内容。' * 90;
+    for (var frame = 0; frame < 12; frame++) {
+      await append(chunk);
+    }
+    for (var frame = 0; frame < 30; frame++) {
+      await tester.pump(const Duration(milliseconds: 30));
+      check('尾部动画追到最新内容第${frame + 1}帧');
+    }
+    expect(position().extentAfter, lessThanOrEqualTo(2));
+
+    await tester.drag(list, const Offset(0, 260));
+    await tester.pump(const Duration(milliseconds: 30));
+    check('用户上滑暂停跟随');
+    expect(position().extentAfter, greaterThan(2));
+    final readingPosition = position().pixels;
+    await append(chunk);
+    await pumpFrames(8, '用户阅读期间继续收到增量');
+    expect((position().pixels - readingPosition).abs(), lessThanOrEqualTo(2));
+
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(list),
+        scrollDelta: const Offset(0, -260),
+      ),
+    );
+    await tester.pump();
+    check('滚轮上滑暂停跟随');
+    expect(position().extentAfter, greaterThan(2));
+    final wheelReadingPosition = position().pixels;
+    await append(chunk);
+    await pumpFrames(8, '滚轮阅读期间继续收到增量');
+    expect(
+      (position().pixels - wheelReadingPosition).abs(),
+      lessThanOrEqualTo(2),
+    );
+
+    await tester.drag(list, const Offset(0, -100000));
+    await tester.pump(const Duration(milliseconds: 30));
+    check('用户滚回底部恢复跟随');
+    expect(position().extentAfter, lessThanOrEqualTo(2));
+    await append(chunk);
+    await pumpFrames(8, '滚回底部后继续自动跟随');
+    expect(position().extentAfter, lessThanOrEqualTo(2));
+
+    await append(chunk);
+    await tester.binding.setSurfaceSize(const Size(1040, 390));
+    await tester.pumpWidget(page(390));
+    await tester.pump(const Duration(milliseconds: 240));
+    check('动画中切换紧凑布局');
+    await tester.binding.setSurfaceSize(const Size(1040, 700));
+    await tester.pumpWidget(page(700));
+    await tester.pump(const Duration(milliseconds: 30));
+    check('恢复常规布局');
+
+    model.selectSession('other-session');
+    await tester.pump(const Duration(milliseconds: 30));
+    check('动画期间切换会话');
+    model.selectSession('follow-session');
+    await tester.pump(const Duration(milliseconds: 240));
+    check('返回持续流会话');
+
+    await append(chunk);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 240));
+    check('组件释放后动画结束');
+  });
+
   testWidgets('思考区流式更新时可展开滚动切换会话调整尺寸并完成', (tester) async {
     gateway.sessionIds.addAll(['thinking-a', 'thinking-b']);
     gateway.runsBySession['thinking-a'] = [
@@ -482,7 +607,9 @@ void main() {
     stream.add(
       const AiChatEvent(id: 14, type: 'text', data: {'content': '最终回答'}),
     );
-    stream.add(const AiChatEvent(id: 15, type: 'end', data: {}));
+    stream.add(
+      const AiChatEvent(id: 15, type: 'end', data: {'stop_reason': 'stop'}),
+    );
     await tester.pump(const Duration(milliseconds: 30));
     await tester.pump(const Duration(milliseconds: 30));
     check('正式终态回填');
@@ -588,7 +715,9 @@ class _Gateway implements AiChatGateway {
       output: output,
       createdAt: old.createdAt,
     );
-    events[id]!.add(const AiChatEvent(id: 1, type: 'end', data: {}));
+    events[id]!.add(
+      const AiChatEvent(id: 1, type: 'end', data: {'stop_reason': 'stop'}),
+    );
   }
 
   @override
