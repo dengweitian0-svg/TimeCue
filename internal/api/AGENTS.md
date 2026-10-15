@@ -4,7 +4,7 @@
 
 提醒视图 deliveryStatus 使用 pending/loaded/sent/failed；loaded 表示加载/等待执行，不能当作展示成功。待确认查询仍按确认时间筛选，确认不改变投递状态。枚举扩展须完成 Apifox 验收后再接前端。
 
-- `router.go`：注册健康检查、日程创建/更新/启停/删除及提醒路由，装配中间件、404/405 响应及请求日志字段提取。
+- `router.go`、`chat_routes.go`：注册健康检查、日程/提醒路由；唯一装配入口 `NewRouter` 从 `App.ChatService` 注册可选 `/v1` 聊天路由。
 - [handler](handler/AGENTS.md)：请求解析与校验、服务调用、响应 DTO 和业务错误映射。
 - `router_test.go`：验证路由、输入校验、响应协议和 HTTP 日志。
 - `health_runtime_test.go`：健康成功及两类失败的运行身份、PID、版本、能力和 HostGuard 回归。
@@ -13,6 +13,9 @@
 - `schedule_logging_test.go`：使用真实 SQLite 验证创建、更新、启停、删除、幂等重放及提交后响应失败的日志；`http_log_helpers_test.go` 复用 API 路由装配，提供日志捕获、断言和响应短写模拟。
 
 工程约束：
+
+- 聊天 API 仅提供创建/查询/取消 run、run SSE、查询/列出/删除 session 七个接口；Handler 只校验输入、调用 `internal/agent/chat` 契约并构造 HTTPResult。聊天服务端口由 `App.ChatService` 持有，路由装配不构造服务或 Mock。
+- 聊天路由使用 `/v1` 前缀，成功日志只提取 ID、状态和数量；SSE 通过统一流式响应出口逐事件刷新并关闭订阅。
 
 - NewRouter 可选注入 RuntimeInfo，保留原两参数调用及 nil App 健康检查测试。生产入口注入的运行信息在 `/health` 成功和失败中一致，沿用 200/503、data.error、错误码及 healthFields；不增加停止路由。
 

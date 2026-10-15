@@ -8,6 +8,7 @@
 - `acknowledgements_handler.go`：单条及批量提醒确认。
 - `claim_delivery_handler.go`、`start_delivery_handler.go`、`delivery_results_handler.go`、`delivery_executor_exit_handler.go`：完整任务领取、展示开始、结果回填和校验当前运行身份的执行者退出通知；`delivery_http_helpers.go`：严格 JSON 解析、业务错误映射及受控日志字段。
 - `health_handler.go`：数据库健康复查和成功/失败响应，可选携带与 ready 相同的不可变运行身份、PID、HTTP 版本及已实现能力。
+- `create_run_handler.go`、`get_run_handler.go`、`run_events_handler.go`、`cancel_run_handler.go`、`get_session_handler.go`、`list_sessions_handler.go`、`delete_session_handler.go`：聊天接口请求校验、应用服务调用和直接响应 DTO；`chat_http_helpers.go`：聊天 ID、时间、输入及业务错误适配。
 - `error.go`：业务错误码、错误映射和公共参数解析。
 
 # 工程约束
@@ -20,3 +21,4 @@
 - 创建的 period.open 可选，默认 true；PUT 必须带正整数 expectedRevision，返回递增 revision 和 effectiveAt。创建/更新接受可选 Idempotency-Key，同键同内容返回原结果，异内容及过期草稿返回 409；已到期单次只能保留原触发时间。
 - `schedule_log.go` 将 service 的受控摘要转换为 `HTTPResult.LogFields`；创建/更新/删除附加日程 ID、类型和 mutation，幂等重放附加成功消息 `schedule write replayed`。仅生成素材，不直接写日志；内部素材不进入响应 JSON，业务拒绝与回滚不附加成功摘要。
 - scope 仅用于 state=unacknowledged，接受 today/history；拒绝空值、重复、非法值及与 deliveryTaskId/attemptId 混用。scoped 模式拒绝未知参数，无 scope 模式保留原有额外参数及空 cursor 兼容行为。
+- 聊天 Handler 使用 `internal/agent/chat.Service`；session/run 路径 ID 必须是规范 UUID v4，创建输入严格 JSON 限制为 1 MiB，并且仅接受 deepseek-flash。SSE 保留下层事件 ID 和顺序，断连只关闭订阅，不取消 run。

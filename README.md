@@ -103,6 +103,8 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 | POST | `/api/v1/notifications/delivery-attempts/:id/results` | 回填整次平台请求的 sent/failed，原子更新实际成员；重复结果不再次执行 |
 | POST | `/api/v1/notifications/executor-exit` | 当前 instanceId 和执行者持有的 attemptIds；只整理精确匹配的活动尝试，保留展示预算及迟到真实结果 |
 
+AI Chat HTTP 接口当前进入仅 Mock 的 API 验收阶段，提供设计文档列出的七个 `/v1` run/session 接口。临时内存服务不连接数据库、真实模型或 Agent loop；自动化 HTTP/SSE 覆盖情况和待完成项见 [AI Chat API 验收记录](docs/AI-CHAT-API-VALIDATION.md)。接入真实应用层后需复验接口契约，并删除或替换临时 Mock。
+
 创建请求示例：
 
 ```json
