@@ -62,6 +62,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool fromDesk = false;
   bool fromCat = false;
   bool fromChatFallback = false;
+  RoomGeometry? _currentGeometry;
   @override
   void initState() {
     super.initState();
@@ -197,6 +198,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final geometry = RoomGeometry(constraints.biggest);
+      _currentGeometry = geometry;
       final fixedOrigin = Offset(constraints.maxWidth - 100, 48);
       return Stack(
         fit: StackFit.expand,
@@ -362,6 +364,20 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                   notebook.close();
                   setState(() => bookVisible = false);
                   _coordinateRecoveryPolling();
+                  if (fromCat || fromChatFallback) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!mounted || bookVisible) return;
+                      final latestGeometry = _currentGeometry;
+                      if (latestGeometry == null) return;
+                      final chatFocus = latestGeometry.catVisible
+                          ? catFocus
+                          : chatFallbackFocus;
+                      if (chatFocus.context != null) {
+                        chatFocus.requestFocus();
+                      }
+                    });
+                    return;
+                  }
                   final focus = fromCat && geometry.catVisible
                       ? catFocus
                       : fromChatFallback

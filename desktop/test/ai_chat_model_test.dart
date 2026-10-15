@@ -40,14 +40,100 @@ void main() {
     expect(model.sendDisabledReasonFor(local.id), contains('正在运行'));
     model.setDraft(local.id, '提交中的编辑');
     expect(model.draftFor(local.id), '新输入');
-    final competing = model.createSession();
-    await model.send(competing.id, '竞争输入');
+    final selectedId = model.selectedSessionId;
+    expect(model.canCreateSession, isFalse);
+    expect(() => model.createSession(), throwsStateError);
+    expect(model.sessions, hasLength(3));
+    expect(model.selectedSessionId, selectedId);
+    expect(model.draftFor(local.id), '新输入');
     expect(gateway.keys, hasLength(1));
     gateway.createGate!.complete('r-new');
     await send;
     expect(model.draftFor(local.id), isEmpty);
     model.setDraft(local.id, '下一条输入');
     expect(model.draftFor(local.id), '下一条输入');
+  });
+
+  test('新建守卫允许首个、已选历史会话时的新建并锁住当前空会话', () async {
+    await model.refresh();
+    expect(model.canCreateSession, isTrue);
+    final first = model.createSession();
+    model.setDraft(first.id, '未发送草稿');
+    expect(model.canCreateSession, isFalse);
+    final firstSelectedId = model.selectedSessionId;
+    expect(() => model.createSession(), throwsStateError);
+    expect(model.sessions, hasLength(1));
+    expect(model.selectedSessionId, firstSelectedId);
+    expect(model.draftFor(first.id), '未发送草稿');
+
+    gateway.sessionIds.add(_sessionA);
+    gateway.runsBySession[_sessionA] = ['history-run'];
+    gateway.runs['history-run'] = _run(
+      'history-run',
+      _sessionA,
+      status: AiChatStatus.succeeded,
+      output: '历史答复',
+    );
+    await model.refresh();
+    model.selectSession(_sessionA);
+    expect(model.canCreateSession, isTrue);
+    final another = model.createSession();
+    expect(model.selectedSessionId, another.id);
+    expect(model.draftFor(first.id), '未发送草稿');
+    expect(model.canCreateSession, isFalse);
+  });
+
+  test('历史会话数量不占活跃名额', () async {
+    gateway.sessionIds.addAll(['old-1', 'old-2', 'old-3', 'old-4']);
+    for (final sessionId in gateway.sessionIds) {
+      final runId = 'run-$sessionId';
+      gateway.runsBySession[sessionId] = [runId];
+      gateway.runs[runId] = _run(
+        runId,
+        sessionId,
+        status: AiChatStatus.succeeded,
+        output: '完成',
+      );
+    }
+    await model.refresh();
+
+    expect(model.sessions, hasLength(4));
+    expect(model.activeSessionCount, 0);
+    expect(model.canCreateSession, isTrue);
+  });
+
+  test('标题按Unicode字素截断，保留emoji及组合字符', () async {
+    await model.refresh();
+    final ascii = _repeat('a', 27);
+    final combiningBase = _repeat('文', 27);
+    final familyBase = _repeat('中', 27);
+    final chinese = _repeat('中', 30);
+    final examples = <(String input, String expected)>[
+      ('$ascii🙂x', '$ascii🙂…'),
+      ('$combiningBase${'e\u0301'}文', '$combiningBase${'e\u0301'}…'),
+      ('$familyBase👨‍👩‍👧‍👦x', '$familyBase👨‍👩‍👧‍👦…'),
+      (chinese, '${_repeat('中', 28)}…'),
+    ];
+
+    for (var index = 0; index < examples.length; index++) {
+      final (input, expected) = examples[index];
+      gateway.createdRunId = 'title-run-$index';
+      final session = model.createSession();
+      await model.send(session.id, input);
+      expect(model.selectedSession!.title, expected);
+      gateway.completeRun(
+        _run(
+          'title-run-$index',
+          session.id,
+          status: AiChatStatus.succeeded,
+          output: '完成',
+        ),
+      );
+      gateway.controllers['title-run-$index']!.add(
+        const AiChatEvent(id: 1, type: 'end', data: {'stop_reason': 'stop'}),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
   });
 
   test('删除运行的并发拒绝保留原内容和幂等键供明确重试', () async {
@@ -98,10 +184,35 @@ void main() {
     await model.deleteSession(_sessionA);
     expect(model.activeSessionCount, 4);
 
-    final local = model.createSession();
-    expect(model.sendDisabledReasonFor(local.id), contains('最多同时运行 3'));
-    await model.send(local.id, '不能发送第四个');
+    expect(model.canCreateSession, isFalse);
+    expect(model.createSessionDisabledReason, contains('最多同时运行 3'));
+    expect(() => model.createSession(), throwsStateError);
     expect(gateway.keys, isEmpty);
+  });
+
+  test('删除运行会话后收到终态 end 才释放墓碑名额', () async {
+    final sessions = [_sessionA, _sessionB, 'session-c'];
+    gateway.sessionIds.addAll(sessions);
+    for (final sessionId in sessions) {
+      final runId = 'run-$sessionId';
+      gateway.runsBySession[sessionId] = [runId];
+      gateway.runs[runId] = _run(runId, sessionId);
+    }
+    await model.refresh();
+    expect(model.activeSessionCount, 3);
+    await model.deleteSession(_sessionA);
+    expect(model.activeSessionCount, 3);
+    expect(model.canCreateSession, isFalse);
+
+    gateway.controllers['run-$_sessionA']!.add(
+      const AiChatEvent(id: 1, type: 'end', data: {'stop_reason': 'cancelled'}),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+
+    expect(model.activeSessionCount, 2);
+    expect(model.canCreateSession, isTrue);
+    final local = model.createSession();
+    expect(model.selectedSessionId, local.id);
   });
 
   test('并发拒绝的本地空会话可直接删除', () async {
@@ -124,6 +235,47 @@ void main() {
 
     expect(model.sessions, isEmpty);
     expect(gateway.deleteCalls, deleteCalls);
+    expect(gateway.keys, hasLength(1));
+  });
+
+  test('删除请求等待时禁止重试已有历史会话的并发拒绝', () async {
+    gateway.sessionIds.addAll([_sessionA, _sessionB]);
+    gateway.runsBySession[_sessionA] = [_runA];
+    gateway.runs[_runA] = _run(_runA, _sessionA);
+    gateway.runsBySession[_sessionB] = ['history-b'];
+    gateway.runs['history-b'] = _run(
+      'history-b',
+      _sessionB,
+      status: AiChatStatus.succeeded,
+      output: '旧回复',
+    );
+    await model.refresh();
+    await model.deleteSession(_sessionA);
+
+    gateway.createError = const AiChatGatewayException(
+      statusCode: 409,
+      endpoint: '/v1/run',
+      code: 'session_concurrency_limit',
+    );
+    await model.send(_sessionB, '等待重试的原文');
+    expect(
+      model.sessions
+          .firstWhere((session) => session.id == _sessionB)
+          .createRetryable,
+      isTrue,
+    );
+    final deleteGate = Completer<void>();
+    gateway.deleteGate = deleteGate;
+    final deletion = model.deleteSession(_sessionB);
+
+    expect(model.canRetryCreate(_sessionB), isFalse);
+    gateway.createError = null;
+    await model.retry(_sessionB);
+    expect(gateway.keys, hasLength(1));
+
+    deleteGate.complete();
+    await deletion;
+    expect(model.sessions.any((session) => session.id == _sessionB), isFalse);
     expect(gateway.keys, hasLength(1));
   });
 
@@ -182,6 +334,29 @@ void main() {
     gateway.createGate!.complete(_runA);
     await retry;
     expect(model.sessions.single.turns, hasLength(1));
+  });
+
+  test('结果未知的会话拒绝删除，重试取得run ID后可删除', () async {
+    await model.refresh();
+    final session = model.createSession();
+    gateway.createError = StateError('响应丢失');
+    await model.send(session.id, '原始请求');
+    expect(model.sessions.single.createResultUnknown, isTrue);
+
+    await model.deleteSession(session.id);
+    expect(model.sessions, hasLength(1));
+    expect(gateway.deleteCalls, 0);
+    expect(model.sessions.single.error, contains('确认结果'));
+
+    gateway.createError = null;
+    gateway.createdRunId = 'resolved-run';
+    await model.retry(session.id);
+    expect(model.sessions.single.turns.single.runId, 'resolved-run');
+
+    await model.deleteSession(session.id);
+    expect(model.sessions, isEmpty);
+    expect(gateway.deleteCalls, 1);
+    expect(model.activeSessionCount, 1);
   });
 
   test('重复事件忽略，按顺序拼接并只推进成功处理的游标', () async {
@@ -363,7 +538,7 @@ void main() {
     expect(model.sessions.single.turns.single.cancelling, isFalse);
   });
 
-  test('删除成功立即移除，迟到创建响应不会复活会话', () async {
+  test('创建进行中拒绝删除，取得run ID后删除且不复活会话', () async {
     await model.refresh();
     final session = model.createSession();
     gateway.createGate = Completer<String>();
@@ -371,12 +546,16 @@ void main() {
     final deleteGate = Completer<void>();
     gateway.deleteGate = deleteGate;
     final deletion = model.deleteSession(session.id);
-    deleteGate.complete();
     await deletion;
+    expect(model.sessions, hasLength(1));
+    expect(gateway.deleteCalls, 0);
     gateway.createGate!.complete(_runA);
     await send;
+    final acceptedDeletion = model.deleteSession(session.id);
+    deleteGate.complete();
+    await acceptedDeletion;
     expect(model.sessions, isEmpty);
-    expect(model.activeSessionCount, 1); // 删除中的创建结果按不确定名额保守保留
+    expect(model.activeSessionCount, 1); // 删除运行中的会话时保留名额直至终态
   });
 
   test('dispose 关闭监听但不取消外部运行', () async {
@@ -424,6 +603,8 @@ void main() {
   });
 }
 
+String _repeat(String value, int count) => List.filled(count, value).join();
+
 AiChatRun _run(
   String id,
   String sessionId, {
@@ -443,6 +624,7 @@ class _FakeGateway implements AiChatGateway {
   final List<String> sessionIds = [];
   final Map<String, List<String>> runsBySession = {};
   final Map<String, AiChatRun> runs = {};
+  final Set<String> deletedSessions = {};
   final Map<String, StreamController<AiChatEvent>> controllers = {};
   final Map<String, List<int?>> watchCursors = {};
   final List<String> keys = [];
@@ -468,8 +650,17 @@ class _FakeGateway implements AiChatGateway {
           .toList();
 
   @override
-  Future<AiChatRun> getRun(String runId) async =>
-      runs[runId] ?? _run(runId, '');
+  Future<AiChatRun> getRun(String runId) async {
+    final run = runs[runId] ?? _run(runId, '');
+    if (deletedSessions.contains(run.sessionId)) {
+      throw const AiChatGatewayException(
+        statusCode: 404,
+        endpoint: '/v1/run',
+        code: 'run_not_found',
+      );
+    }
+    return run;
+  }
 
   @override
   Future<String> createRun(
@@ -497,6 +688,7 @@ class _FakeGateway implements AiChatGateway {
     deleteCalls++;
     await deleteGate?.future;
     sessionIds.remove(sessionId);
+    deletedSessions.add(sessionId);
   }
 
   @override

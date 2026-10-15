@@ -191,6 +191,55 @@ void main() {
     repository.dispose();
   });
 
+  testWidgets('备用 AI 入口打开后放大窗口，关闭时焦点回到新挂载的猫咪', (tester) async {
+    final repository = DemoNotebookRepository();
+    final gateway = _FakeAiChatGateway();
+    await mount(tester, repository, gateway, size: const Size(150, 800));
+    await tester.tap(find.byKey(const ValueKey('ai-chat-fallback')));
+    await tester.pumpAndSettle();
+
+    tester.view.physicalSize = const Size(1280, 800);
+    await tester.pumpAndSettle();
+    final catFocus = tester
+        .widget<CatChatHotspot>(find.byType(CatChatHotspot))
+        .focusNode;
+    await tester.tap(find.byTooltip('合上日程本'));
+    await tester.pumpAndSettle();
+    expect(catFocus.context, isNotNull);
+    expect(catFocus.hasFocus, isTrue);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+    repository.dispose();
+  });
+
+  testWidgets('猫咪打开后缩窄窗口，关闭时焦点回到备用入口并可用 Enter 重开', (tester) async {
+    final repository = DemoNotebookRepository();
+    final gateway = _FakeAiChatGateway();
+    await mount(tester, repository, gateway);
+    await tester.tap(find.byType(CatChatHotspot));
+    await tester.pumpAndSettle();
+
+    tester.view.physicalSize = const Size(150, 800);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    final fallback = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('ai-chat-fallback')),
+    );
+    final fallbackFocus = fallback.focusNode!;
+    expect(fallbackFocus.context, isNotNull);
+    expect(fallbackFocus.hasFocus, isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.byType(AiChatSpread), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+    repository.dispose();
+  });
+
   testWidgets('可选：生成 AI 对话与猫咪提示视觉截图', (tester) async {
     if (!const bool.fromEnvironment('TIMECUE_CHAT_CAPTURE')) return;
     if (!Platform.isWindows) {

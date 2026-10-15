@@ -122,6 +122,19 @@ void main() {
     expect(composer.controller!.text, '等待返回期间保留这段原文');
     expect(model.draftFor('new-id-0'), '等待返回期间保留这段原文');
     expect(find.text('正在提交本轮输入，请稍候。'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pumpAndSettle();
+    expect(find.text('请等待本次提交完成后再删除。'), findsOneWidget);
+    expect(
+      tester
+          .widget<PopupMenuItem<String>>(
+            find.widgetWithText(PopupMenuItem<String>, '请等待本次提交完成后再删除。'),
+          )
+          .enabled,
+      isFalse,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
 
     gateway.createGate!.complete('delayed-run');
     await tester.pump();
@@ -160,6 +173,37 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 20));
     expect(gateway.inputs, ['保留失败前输入', '保留失败前输入']);
+  });
+
+  testWidgets('新建守卫只阻止当前选中的空白会话', (tester) async {
+    gateway.sessionIds.add('history-session');
+    gateway.runsBySession['history-session'] = [
+      _run('history-run', 'history-session', input: '已有话题'),
+    ];
+    await mount(tester);
+    await tester.pumpAndSettle();
+
+    final existing = model.selectedSession!;
+    expect(existing.id, 'history-session');
+    expect(model.canCreateSession, isTrue);
+
+    final parkedDraft = model.createSession();
+    expect(model.selectedSessionId, parkedDraft.id);
+    expect(model.canCreateSession, isFalse);
+    expect(model.createSessionDisabledReason, '请先完成或删除当前新会话。');
+    model.selectSession(existing.id);
+    await tester.pump();
+
+    expect(model.canCreateSession, isTrue);
+    final button = find.widgetWithText(TextButton, '新会话');
+    expect(tester.widget<TextButton>(button).onPressed, isNotNull);
+    await tester.tap(button);
+    await tester.pump();
+    expect(model.selectedSessionId, isNot(parkedDraft.id));
+    expect(
+      model.sessions.any((session) => session.id == parkedDraft.id),
+      isTrue,
+    );
   });
 
   testWidgets('删除会话尚在停止时锁定原文并提供明确重试', (tester) async {
@@ -286,6 +330,170 @@ void main() {
     await tester.tap(find.byTooltip('停止回复'));
     await tester.pumpAndSettle();
     expect(gateway.cancelCalls, 1);
+  });
+
+  testWidgets('思考区流式更新时可展开滚动切换会话调整尺寸并完成', (tester) async {
+    gateway.sessionIds.addAll(['thinking-a', 'thinking-b']);
+    gateway.runsBySession['thinking-a'] = [
+      _run('thinking-run', 'thinking-a', status: AiChatStatus.running),
+    ];
+    gateway.runsBySession['thinking-b'] = [
+      _run('other-run', 'thinking-b', input: '另一段对话'),
+    ];
+
+    Widget page(double height) => MaterialApp(
+      home: MediaQuery(
+        data: MediaQueryData(size: Size(1040, height)),
+        child: Scaffold(
+          body: SizedBox.expand(child: AiChatSpread(model: model)),
+        ),
+      ),
+    );
+
+    await tester.binding.setSurfaceSize(const Size(1040, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(page(700));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(model.selectedSessionId, 'thinking-a');
+    final stream = gateway.events['thinking-run']!;
+
+    void check(String stage) {
+      final exception = tester.takeException();
+      final stack = exception is Error ? exception.stackTrace : null;
+      if (exception != null) fail('$stage\n$exception\n$stack');
+    }
+
+    stream.add(
+      const AiChatEvent(id: 1, type: 'thinking', data: {'content': '开始思考'}),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    check('首次思考增量');
+    final expansionHeader = find.descendant(
+      of: find.byType(ExpansionTile),
+      matching: find.byType(ListTile),
+    );
+    await Scrollable.ensureVisible(
+      tester.element(expansionHeader),
+      alignment: 0.4,
+    );
+    await tester.tap(expansionHeader);
+    await tester.pump(const Duration(milliseconds: 220));
+    check('展开思考区');
+    expect(find.text('开始思考'), findsOneWidget);
+
+    for (var id = 2; id <= 3; id++) {
+      stream.add(
+        AiChatEvent(
+          id: id,
+          type: 'thinking',
+          data: {'content': '第$id步分析。' * 40},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 20));
+      check('展开过程中追加第$id段思考');
+    }
+
+    await Scrollable.ensureVisible(
+      tester.element(expansionHeader),
+      alignment: 0.4,
+    );
+    await tester.tap(expansionHeader);
+    stream.add(
+      const AiChatEvent(id: 4, type: 'thinking', data: {'content': '收起期间继续到达'}),
+    );
+    await tester.pump(const Duration(milliseconds: 30));
+    check('收起动画期间追加思考');
+    await tester.pump(const Duration(milliseconds: 220));
+    check('思考区完成收起');
+    expect(
+      find.byKey(const ValueKey('thinking-selection-thinking-a-thinking-run')),
+      findsNothing,
+    );
+    await Scrollable.ensureVisible(
+      tester.element(expansionHeader),
+      alignment: 0.4,
+    );
+    await tester.tap(expansionHeader);
+    await tester.pump(const Duration(milliseconds: 220));
+    check('再次展开思考区');
+
+    for (var id = 5; id <= 12; id++) {
+      stream.add(
+        AiChatEvent(
+          id: id,
+          type: 'thinking',
+          data: {'content': '第$id步分析。' * 40},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 20));
+      check('展开过程中追加第$id段思考');
+    }
+
+    final thoughtText = find.textContaining('第2步分析。');
+    final thoughtBottom = tester.getBottomLeft(thoughtText);
+    await tester.longPressAt(
+      Offset(
+        (thoughtBottom.dx + 12).clamp(220, 880),
+        (thoughtBottom.dy - 18).clamp(110, 680),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    check('长按选择思考内容');
+    final thoughtSelection = find.byKey(
+      const ValueKey('thinking-selection-thinking-a-thinking-run'),
+    );
+    expect(thoughtSelection, findsOneWidget);
+    stream.add(
+      const AiChatEvent(id: 13, type: 'thinking', data: {'content': '选择时继续到达'}),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    check('选择状态中追加思考');
+
+    expect(thoughtSelection, findsOneWidget);
+
+    final list = find.byKey(const PageStorageKey('messages-thinking-a'));
+    await tester.drag(list, const Offset(0, -500));
+    await tester.pump(const Duration(milliseconds: 30));
+    check('滚动长思考内容');
+    await tester.tap(find.byKey(const ValueKey('history-thinking-b')));
+    await tester.pump(const Duration(milliseconds: 20));
+    check('切换到第二个会话');
+    await tester.tap(find.byKey(const ValueKey('history-thinking-a')));
+    await tester.pump(const Duration(milliseconds: 20));
+    check('返回运行中的思考会话');
+
+    await tester.binding.setSurfaceSize(const Size(1040, 390));
+    await tester.pumpWidget(page(390));
+    await tester.pump(const Duration(milliseconds: 30));
+    check('切换到紧凑布局');
+    await tester.binding.setSurfaceSize(const Size(1040, 700));
+    await tester.pumpWidget(page(700));
+    await tester.pump(const Duration(milliseconds: 30));
+    check('恢复常规布局');
+
+    gateway.runs['thinking-run'] = _run(
+      'thinking-run',
+      'thinking-a',
+      input: '问题',
+      output: '最终回答',
+      status: AiChatStatus.succeeded,
+    );
+    stream.add(
+      const AiChatEvent(id: 14, type: 'text', data: {'content': '最终回答'}),
+    );
+    stream.add(const AiChatEvent(id: 15, type: 'end', data: {}));
+    await tester.pump(const Duration(milliseconds: 30));
+    await tester.pump(const Duration(milliseconds: 30));
+    check('正式终态回填');
+    expect(
+      model.sessions
+          .firstWhere((session) => session.id == 'thinking-a')
+          .turns
+          .first
+          .status,
+      AiChatStatus.succeeded,
+    );
   });
 
   testWidgets('长回复、小高度和大字可滚动访问，不触发布局异常', (tester) async {

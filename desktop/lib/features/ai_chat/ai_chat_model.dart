@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show StringCharacters;
 
 import '../../contracts/ai_chat.dart';
 
@@ -148,6 +149,7 @@ class AiChatModel extends ChangeNotifier {
   final Map<String, Map<int, AiChatEvent>> _bufferedEvents = {};
   final Set<String> _deletedIds = {};
   final Set<String> _deletedActiveRuns = {};
+  final Map<String, AiChatSession> _deletedSessions = {};
   final Set<String> _blockedReconnects = {};
   final Set<String> _knownRemoteIds = {};
   String? _selectedSessionId;
@@ -182,6 +184,23 @@ class AiChatModel extends ChangeNotifier {
 
   /// 当前是否还可提交新的会话输入。
   bool get canSend => _synchronized && !_loading && _hasCapacityForAttempt;
+
+  /// 当前是否可以新建一个本地空白会话。
+  bool get canCreateSession => createSessionDisabledReason == null;
+
+  /// 返回新建会话按钮不可用的原因；可用时返回 null。
+  String? get createSessionDisabledReason {
+    if (!_synchronized) return '正在同步会话状态，请稍后再新建。';
+    if (_loading) return '正在加载会话历史。';
+    final selected = _session(_selectedSessionId);
+    if (selected != null && selected.turns.isEmpty) {
+      return '请先完成或删除当前新会话。';
+    }
+    if (activeSessionCount >= maxSessionCount) {
+      return '最多同时运行 $maxSessionCount 个会话。';
+    }
+    return null;
+  }
 
   /// 返回指定会话发送按钮当前不可用的具体原因；可用时返回 null。
   String? sendDisabledReasonFor(String sessionId) {
@@ -238,6 +257,7 @@ class AiChatModel extends ChangeNotifier {
         !_loading &&
         session != null &&
         !session.creating &&
+        !session.deleting &&
         _pendingCreates.containsKey(sessionId) &&
         (session.createResultUnknown ||
             (session.createRetryable && _hasCapacityForAttempt));
@@ -246,6 +266,8 @@ class AiChatModel extends ChangeNotifier {
   /// 新建本地会话并选中它；远端会话在首次发送时创建。
   AiChatSession createSession() {
     _ensureUsable();
+    final reason = createSessionDisabledReason;
+    if (reason != null) throw StateError(reason);
     final session = AiChatSession(id: _createId());
     _sessions.insert(0, session);
     _selectedSessionId = session.id;
@@ -420,7 +442,7 @@ class AiChatModel extends ChangeNotifier {
   Future<void> retry(String sessionId) async {
     _ensureUsable();
     final session = _session(sessionId);
-    if (session == null) return;
+    if (session == null || session.deleting) return;
     final pending = _pendingCreates[sessionId];
     if (pending != null) {
       if (session.creating ||
@@ -493,6 +515,15 @@ class AiChatModel extends ChangeNotifier {
     if (_disposed || _invalidated) return;
     final session = _session(sessionId);
     if (session == null || session.deleting) return;
+    if (session.creating || session.createResultUnknown) {
+      final message = session.creating
+          ? '请等待本次提交完成后再删除会话。'
+          : '请先重试原始输入确认结果，再删除会话。';
+      _replaceSession(session.copyWith(error: message));
+      _error = message;
+      _notify();
+      return;
+    }
     if (session.turns.isEmpty &&
         !session.creating &&
         !session.createResultUnknown &&
@@ -516,13 +547,17 @@ class AiChatModel extends ChangeNotifier {
       }
       final current = _session(sessionId);
       if (current == null) return;
-      if (current.turns.any((turn) => turn.status == AiChatStatus.running) ||
-          current.creating ||
-          current.createResultUnknown) {
+      if (current.turns.any((turn) => turn.status == AiChatStatus.running)) {
         _deletedActiveRuns.add(sessionId);
+        _deletedSessions[sessionId] = current.copyWith(deleting: false);
       }
       for (final turn in current.turns) {
-        _stopSubscription(turn.runId);
+        if (turn.status != AiChatStatus.running) {
+          _stopSubscription(turn.runId);
+        } else if (!_subscriptions.containsKey(turn.runId) &&
+            !_blockedReconnects.contains(turn.runId)) {
+          _connect(turn.runId, explicit: true);
+        }
       }
       _deletedIds.add(sessionId);
       _sessions.removeWhere((item) => item.id == sessionId);
@@ -582,11 +617,11 @@ class AiChatModel extends ChangeNotifier {
       if (_disposed ||
           _invalidated ||
           lifecycle != _lifecycleGeneration ||
-          _session(sessionId) == null) {
+          _sessionState(sessionId) == null) {
         return;
       }
       _pendingCreates.remove(sessionId);
-      final session = _session(sessionId)!;
+      final session = _sessionState(sessionId)!;
       final turn = AiChatTurn(
         runId: runId,
         input: pending.input,
@@ -605,22 +640,30 @@ class AiChatModel extends ChangeNotifier {
           creating: false,
           createResultUnknown: false,
           createRetryable: false,
+          clearError: true,
           turns: List.unmodifiable([...session.turns, turn]),
         ),
       );
-      final updated = _session(sessionId)!;
-      _sessions
-        ..removeWhere((item) => item.id == sessionId)
-        ..insert(0, updated);
-      _notify();
+      _error = null;
+      if (_sessions.any((item) => item.id == sessionId)) {
+        final updated = _session(sessionId)!;
+        _sessions
+          ..removeWhere((item) => item.id == sessionId)
+          ..insert(0, updated);
+        _notify();
+      }
       _connect(runId);
     } catch (error) {
       if (_disposed || _invalidated || lifecycle != _lifecycleGeneration) {
         return;
       }
-      final session = _session(sessionId);
-      if (session == null) return;
       final unknown = _isUnknownCreateResult(error);
+      final session = _sessionState(sessionId);
+      if (session == null) return;
+      if (_deletedSessions.containsKey(sessionId)) {
+        if (!unknown) _finishDeletedSession(sessionId);
+        return;
+      }
       final retryable = _isRetryableConcurrencyRejection(error, sessionId);
       if (!unknown && !retryable) _pendingCreates.remove(sessionId);
       final message = retryable ? _createRetryMessage : _messageFor(error);
@@ -716,6 +759,11 @@ class AiChatModel extends ChangeNotifier {
   ) async {
     if (_disposed || _streamGenerations[runId] != generation) return;
     if (event.noContent) {
+      final sessionId = _sessionIdForRun(runId);
+      if (sessionId != null && _deletedSessions.containsKey(sessionId)) {
+        await _confirmDeletedTerminal(sessionId, runId);
+        return;
+      }
       await _refreshFormalRun(runId, generation);
       return;
     }
@@ -757,6 +805,11 @@ class AiChatModel extends ChangeNotifier {
     } else if (event.type == 'text' && content is String) {
       updated = updated.copyWith(text: updated.text + content);
     } else if (event.type == 'end') {
+      final sessionId = _sessionIdForRun(runId);
+      if (sessionId != null && _deletedSessions.containsKey(sessionId)) {
+        await _confirmDeletedTerminal(sessionId, runId);
+        return;
+      }
       await _refreshFormalRun(runId, generation);
       final latest = _findTurn(runId);
       if (event.id != null &&
@@ -794,6 +847,44 @@ class AiChatModel extends ChangeNotifier {
       _setTurnError(runId, error);
       rethrow;
     }
+  }
+
+  Future<void> _confirmDeletedTerminal(String sessionId, String runId) async {
+    final generation = _streamGenerations[runId];
+    try {
+      final run = await _gateway.getRun(runId);
+      if (_disposed ||
+          _invalidated ||
+          generation != _streamGenerations[runId]) {
+        return;
+      }
+      if (run.status != AiChatStatus.running) {
+        _finishDeletedSession(sessionId);
+      }
+    } catch (_) {
+      if (_disposed ||
+          _invalidated ||
+          generation != _streamGenerations[runId]) {
+        return;
+      }
+      // 删除后的 404 不能单独证明终态；当前调用已经收到明确终止事件。
+      _finishDeletedSession(sessionId);
+    }
+  }
+
+  void _finishDeletedSession(String sessionId) {
+    final deleted = _deletedSessions.remove(sessionId);
+    if (deleted == null) return;
+    _deletedActiveRuns.remove(sessionId);
+    _pendingCreates.remove(sessionId);
+    for (final turn in deleted.turns) {
+      _streamGenerations[turn.runId] =
+          (_streamGenerations[turn.runId] ?? 0) + 1;
+      _stopSubscription(turn.runId);
+      _blockedReconnects.remove(turn.runId);
+      _bufferedEvents.remove(turn.runId);
+    }
+    _notify();
   }
 
   void _reconnect(String runId, int generation, int attempt) {
@@ -842,7 +933,9 @@ class AiChatModel extends ChangeNotifier {
     if (terminal) {
       _stopSubscription(run.runId);
       _blockedReconnects.remove(run.runId);
-      _deletedActiveRuns.remove(sessionId);
+      if (_deletedSessions.containsKey(sessionId)) {
+        _finishDeletedSession(sessionId);
+      }
     }
     _notify();
   }
@@ -896,7 +989,7 @@ class AiChatModel extends ChangeNotifier {
   void _replaceTurn(String runId, AiChatTurn updated) {
     final sessionId = _sessionIdForRun(runId);
     if (sessionId == null) return;
-    final session = _session(sessionId)!;
+    final session = _sessionState(sessionId)!;
     final turns = session.turns
         .map((turn) => turn.runId == runId ? updated : turn)
         .toList(growable: false);
@@ -912,7 +1005,8 @@ class AiChatModel extends ChangeNotifier {
   }
 
   AiChatTurn? _turn(String sessionId, String runId) {
-    for (final turn in _session(sessionId)?.turns ?? const <AiChatTurn>[]) {
+    for (final turn
+        in _sessionState(sessionId)?.turns ?? const <AiChatTurn>[]) {
       if (turn.runId == runId) return turn;
     }
     return null;
@@ -924,6 +1018,11 @@ class AiChatModel extends ChangeNotifier {
         if (turn.runId == runId) return turn;
       }
     }
+    for (final session in _deletedSessions.values) {
+      for (final turn in session.turns) {
+        if (turn.runId == runId) return turn;
+      }
+    }
     return null;
   }
 
@@ -931,14 +1030,25 @@ class AiChatModel extends ChangeNotifier {
     for (final session in _sessions) {
       if (session.turns.any((turn) => turn.runId == runId)) return session.id;
     }
+    for (final session in _deletedSessions.values) {
+      if (session.turns.any((turn) => turn.runId == runId)) return session.id;
+    }
     return null;
   }
 
   void _replaceSession(AiChatSession updated) {
     final index = _sessions.indexWhere((session) => session.id == updated.id);
-    if (index == -1) return;
+    if (index == -1) {
+      if (_deletedSessions.containsKey(updated.id)) {
+        _deletedSessions[updated.id] = updated;
+      }
+      return;
+    }
     _sessions[index] = updated;
   }
+
+  AiChatSession? _sessionState(String id) =>
+      _session(id) ?? _deletedSessions[id];
 
   bool _sessionIsRunning(AiChatSession session) =>
       session.creating ||
@@ -954,9 +1064,8 @@ class AiChatModel extends ChangeNotifier {
 
   String _shortTitle(String input) {
     final normalized = input.trim().replaceAll(RegExp(r'\s+'), ' ');
-    return normalized.length <= 28
-        ? normalized
-        : '${normalized.substring(0, 28)}…';
+    final characters = normalized.characters;
+    return characters.length <= 28 ? normalized : '${characters.take(28)}…';
   }
 
   String _messageFor(Object error) =>

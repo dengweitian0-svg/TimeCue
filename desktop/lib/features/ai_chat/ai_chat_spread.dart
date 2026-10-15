@@ -121,10 +121,15 @@ class _AiChatSpreadState extends State<AiChatSpread> {
   }
 
   void _createSession() {
-    if (!widget.model.synchronized || widget.model.loading) return;
-    final session = widget.model.createSession();
-    _controllerFor(session.id).clear();
-    _followTail[session.id] = true;
+    final model = widget.model;
+    if (!model.canCreateSession) return;
+    try {
+      final session = model.createSession();
+      _controllerFor(session.id).clear();
+      _followTail[session.id] = true;
+    } on StateError {
+      // 状态在按钮回调前改变时保持当前页面，不创建半成品会话。
+    }
   }
 
   Future<void> _retry(AiChatModel model, String sessionId) async {
@@ -167,6 +172,8 @@ class _AiChatSpreadState extends State<AiChatSpread> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _selectionScheduled = false;
           if (mounted &&
+              identical(model, widget.model) &&
+              model.canCreateSession &&
               model.sessions.isEmpty &&
               model.selectedSessionId == null) {
             _createSession();
@@ -285,49 +292,72 @@ class _AiChatSpreadState extends State<AiChatSpread> {
     );
   }
 
-  Widget _historyHeader(AiChatModel model, bool compact) => Padding(
-    padding: const EdgeInsets.fromLTRB(2, 0, 10, 0),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '历史会话',
-                style: TextStyle(
-                  fontFamily: 'SimSun',
-                  fontSize: compact ? 22 : 28,
-                  color: _ink,
+  Widget _historyHeader(AiChatModel model, bool compact) {
+    final createDisabledReason = model.createSessionDisabledReason;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 0, 10, 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '历史会话',
+                  style: TextStyle(
+                    fontFamily: 'SimSun',
+                    fontSize: compact ? 22 : 28,
+                    color: _ink,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                '从上次的话题继续',
-                style: TextStyle(color: _muted, fontSize: 14),
-              ),
-            ],
-          ),
-        ),
-        TextButton.icon(
-          onPressed: model.synchronized && !model.loading
-              ? _createSession
-              : null,
-          icon: const Icon(Icons.add, size: 19),
-          label: const Text('新会话'),
-          style: TextButton.styleFrom(
-            foregroundColor: Colors.white,
-            backgroundColor: _brown,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(7),
+                const SizedBox(height: 4),
+                const Text(
+                  '从上次的话题继续',
+                  style: TextStyle(color: _muted, fontSize: 14),
+                ),
+              ],
             ),
           ),
-        ),
-      ],
-    ),
-  );
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Tooltip(
+                message: createDisabledReason ?? '新建会话',
+                child: TextButton.icon(
+                  onPressed: model.canCreateSession ? _createSession : null,
+                  icon: const Icon(Icons.add, size: 19),
+                  label: const Text('新会话'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    backgroundColor: _brown,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                  ),
+                ),
+              ),
+              if (createDisabledReason != null)
+                SizedBox(
+                  width: 150,
+                  child: Text(
+                    createDisabledReason,
+                    textAlign: TextAlign.right,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: _muted, fontSize: 11),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _loadError(AiChatModel model) => Padding(
     padding: const EdgeInsets.all(24),
@@ -502,60 +532,73 @@ class _AiChatSpreadState extends State<AiChatSpread> {
     );
   }
 
-  Widget _conversationHeader(AiChatSession session) => Row(
-    children: [
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              session.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontFamily: 'SimSun',
-                fontSize: 25,
-                color: _ink,
+  Widget _conversationHeader(AiChatSession session) {
+    final deleteDisabledReason = session.creating
+        ? '请等待本次提交完成后再删除。'
+        : session.createResultUnknown
+        ? '请先重试原始输入确认结果，再删除会话。'
+        : null;
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                session.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'SimSun',
+                  fontSize: 25,
+                  color: _ink,
+                ),
               ),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              'AI 助手 · ${session.turns.lastOrNull?.model ?? AiChatModel.defaultModel} · ${_sessionStatus(session)}',
-              style: const TextStyle(color: _muted, fontSize: 13),
+              const SizedBox(height: 5),
+              Text(
+                'AI 助手 · ${session.turns.lastOrNull?.model ?? AiChatModel.defaultModel} · ${_sessionStatus(session)}',
+                style: const TextStyle(color: _muted, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuButton<String>(
+          tooltip: deleteDisabledReason ?? '更多会话操作',
+          icon: const Icon(Icons.more_horiz, color: _brown),
+          onSelected: (value) async {
+            if (value != 'delete' || deleteDisabledReason != null) return;
+            final confirmed = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('删除会话？'),
+                content: Text('“${session.title}”及其对话记录将被删除。'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('取消'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('删除'),
+                  ),
+                ],
+              ),
+            );
+            if (confirmed == true) {
+              await widget.model.deleteSession(session.id);
+            }
+          },
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              value: 'delete',
+              enabled: deleteDisabledReason == null,
+              child: Text(deleteDisabledReason ?? '删除会话'),
             ),
           ],
         ),
-      ),
-      PopupMenuButton<String>(
-        tooltip: '更多会话操作',
-        icon: const Icon(Icons.more_horiz, color: _brown),
-        onSelected: (value) async {
-          if (value != 'delete') return;
-          final confirmed = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('删除会话？'),
-              content: Text('“${session.title}”及其对话记录将被删除。'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('取消'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('删除'),
-                ),
-              ],
-            ),
-          );
-          if (confirmed == true) await widget.model.deleteSession(session.id);
-        },
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: 'delete', child: Text('删除会话')),
-        ],
-      ),
-    ],
-  );
+      ],
+    );
+  }
 
   String _sessionStatus(AiChatSession session) {
     if (session.creating) return '正在开始';
@@ -609,109 +652,114 @@ class _AiChatSpreadState extends State<AiChatSpread> {
     );
   }
 
-  Widget _turnView(AiChatModel model, AiChatSession session, AiChatTurn turn) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: 18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Align(
-              alignment: Alignment.centerRight,
-              child: _bubble(turn.input, user: true),
-            ),
-            if (turn.thinking.isNotEmpty)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 440),
-                  child: Card(
-                    elevation: 0,
-                    color: const Color.fromARGB(255, 241, 237, 226),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: ExpansionTile(
-                      key: ValueKey('thinking-${session.id}-${turn.runId}'),
-                      initiallyExpanded: _thinkingExpanded[turn.runId] ?? false,
-                      onExpansionChanged: (value) =>
-                          _thinkingExpanded[turn.runId] = value,
-                      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-                      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                      title: const Text(
-                        '思考过程',
-                        style: TextStyle(color: _muted, fontSize: 13),
-                      ),
-                      children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: SelectableText(
-                            turn.thinking,
-                            style: const TextStyle(color: _muted, height: 1.5),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+  Widget _turnView(
+    AiChatModel model,
+    AiChatSession session,
+    AiChatTurn turn,
+  ) => Padding(
+    padding: const EdgeInsets.only(bottom: 18),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: _bubble(turn.input, user: true),
+        ),
+        if (turn.thinking.isNotEmpty)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Card(
+                elevation: 0,
+                color: const Color.fromARGB(255, 241, 237, 226),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
                 ),
-              ),
-            if (turn.text.isNotEmpty)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Flexible(child: _bubble(turn.text, user: false)),
-                  if (turn.status == AiChatStatus.succeeded) ...[
-                    const SizedBox(width: 4),
-                    IconButton(
-                      tooltip: '复制回复',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () =>
-                          Clipboard.setData(ClipboardData(text: turn.text)),
-                      icon: const Icon(
-                        Icons.copy_rounded,
-                        size: 16,
-                        color: _muted,
+                child: ExpansionTile(
+                  // ExpansionTile 会把展开状态写入 PageStorage；独立键可与消息列表滚动偏移隔离。
+                  key: PageStorageKey('thinking-${session.id}-${turn.runId}'),
+                  initiallyExpanded: _thinkingExpanded[turn.runId] ?? false,
+                  onExpansionChanged: (value) =>
+                      _thinkingExpanded[turn.runId] = value,
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                  childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  title: const Text(
+                    '思考过程',
+                    style: TextStyle(color: _muted, fontSize: 13),
+                  ),
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: SelectionArea(
+                        key: ValueKey(
+                          'thinking-selection-${session.id}-${turn.runId}',
+                        ),
+                        child: Text(
+                          turn.thinking,
+                          style: const TextStyle(color: _muted, height: 1.5),
+                        ),
                       ),
                     ),
                   ],
-                ],
-              ),
-            if (turn.loading && turn.text.isEmpty && turn.thinking.isEmpty)
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: EdgeInsets.all(12),
-                  child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
                 ),
               ),
-            if (turn.error != null || turn.status == AiChatStatus.failed)
-              _turnError(context, model, session, turn),
-            if (turn.status == AiChatStatus.running && turn.retryable)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => _retry(model, session.id),
-                  icon: const Icon(Icons.refresh, size: 17),
-                  label: const Text('重新连接'),
+            ),
+          ),
+        if (turn.text.isNotEmpty)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Flexible(child: _bubble(turn.text, user: false)),
+              if (turn.status == AiChatStatus.succeeded) ...[
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: '复制回复',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () =>
+                      Clipboard.setData(ClipboardData(text: turn.text)),
+                  icon: const Icon(Icons.copy_rounded, size: 16, color: _muted),
                 ),
+              ],
+            ],
+          ),
+        if (turn.loading && turn.text.isEmpty && turn.thinking.isEmpty)
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
-            if (turn.status == AiChatStatus.running)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: turn.cancelling
-                      ? null
-                      : () => model.cancel(session.id, turn.runId),
-                  icon: const Icon(Icons.stop_circle_outlined, size: 17),
-                  label: Text(turn.cancelling ? '正在取消…' : '停止回复'),
-                ),
-              ),
-          ],
-        ),
-      );
+            ),
+          ),
+        if (turn.error != null || turn.status == AiChatStatus.failed)
+          _turnError(context, model, session, turn),
+        if (turn.status == AiChatStatus.running && turn.retryable)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => _retry(model, session.id),
+              icon: const Icon(Icons.refresh, size: 17),
+              label: const Text('重新连接'),
+            ),
+          ),
+        if (turn.status == AiChatStatus.running)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: turn.cancelling
+                  ? null
+                  : () => model.cancel(session.id, turn.runId),
+              icon: const Icon(Icons.stop_circle_outlined, size: 17),
+              label: Text(turn.cancelling ? '正在取消…' : '停止回复'),
+            ),
+          ),
+      ],
+    ),
+  );
 
   Widget _bubble(String value, {required bool user}) => ConstrainedBox(
     constraints: const BoxConstraints(maxWidth: 440),
@@ -723,9 +771,8 @@ class _AiChatSpreadState extends State<AiChatSpread> {
             : const Color.fromARGB(255, 241, 237, 226),
         borderRadius: BorderRadius.circular(13),
       ),
-      child: SelectableText(
-        value,
-        style: const TextStyle(color: _ink, height: 1.55),
+      child: SelectionArea(
+        child: Text(value, style: const TextStyle(color: _ink, height: 1.55)),
       ),
     ),
   );
