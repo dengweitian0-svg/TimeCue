@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - dev
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.mdx'
+      - '**/*.rst'
+      - 'docs/**'
+      - '.codex/**'
   workflow_dispatch:
 
 permissions:

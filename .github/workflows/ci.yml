@@ -20,15 +20,92 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Classify PR Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      go: ${{ steps.classify.outputs.go }}
+      flutter: ${{ steps.classify.outputs.flutter }}
+      python: ${{ steps.classify.outputs.python }}
+    steps:
+      - name: 按变更路径分类
+        id: classify
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+
+            const selected = { go: false, flutter: false, python: false };
+            const selectAll = () => {
+              selected.go = true;
+              selected.flutter = true;
+              selected.python = true;
+            };
+            const isDocumentation = (path) => {
+              const normalized = path.replaceAll('\\', '/');
+              const lower = normalized.toLowerCase();
+              return normalized.startsWith('docs/') ||
+                normalized.startsWith('.codex/') ||
+                /\.(md|mdx|rst)$/.test(lower);
+            };
+            const classify = (path) => {
+              const normalized = path.replaceAll('\\', '/');
+              if (isDocumentation(normalized)) return;
+              if (/\.(go)$/.test(normalized) ||
+                  /^(go\.mod|go\.sum|go\.work|go\.work\.sum)$/.test(normalized) ||
+                  /^(cmd|internal|migrations)\//.test(normalized)) {
+                selected.go = true;
+                return;
+              }
+              if (normalized.startsWith('desktop/')) {
+                selected.flutter = true;
+                return;
+              }
+              if (/^scripts\/[^/]+\.py$/.test(normalized)) {
+                selected.python = true;
+                return;
+              }
+              selectAll();
+            };
+
+            if (files.length >= 3000) {
+              selectAll();
+              core.warning('PR 文件数达到 GitHub REST API 的 3000 文件上限，保守运行全部检查。');
+            } else {
+              for (const file of files) {
+                classify(file.filename);
+                if (file.previous_filename) classify(file.previous_filename);
+              }
+            }
+
+            for (const [name, enabled] of Object.entries(selected)) {
+              core.setOutput(name, String(enabled));
+            }
+
   go-checks:
     name: Go Windows Checks
     runs-on: windows-latest
     timeout-minutes: 20
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.go == 'true')
     defaults:
       run:
         shell: pwsh
 
     steps:
+      - name: 检测变更分类失败
+        if: needs.changes.result != 'success'
+        run: exit 1
+
       - name: 检出代码
         uses: actions/checkout@v4
 
@@ -93,22 +170,19 @@ jobs:
     name: Flutter Windows Checks
     runs-on: windows-latest
     timeout-minutes: 20
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.flutter == 'true')
     defaults:
       run:
         working-directory: desktop
 
     steps:
+      - name: 检测变更分类失败
+        if: needs.changes.result != 'success'
+        run: exit 1
+
       - name: 检出代码
         uses: actions/checkout@v4
-
-      - name: 设置 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: 运行发行更新脚本测试
-        working-directory: ${{ github.workspace }}
-        run: python -m unittest discover -s scripts -p test_update.py -v
 
       - name: 设置 Flutter stable
         uses: subosito/flutter-action@v2
@@ -128,3 +202,26 @@ jobs:
 
       - name: 运行 Flutter 测试
         run: flutter test
+
+  python-updater-checks:
+    name: Python Updater Checks
+    runs-on: windows-latest
+    timeout-minutes: 10
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.python == 'true')
+
+    steps:
+      - name: 检测变更分类失败
+        if: needs.changes.result != 'success'
+        run: exit 1
+
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 运行发行更新脚本测试
+        run: python -m unittest discover -s scripts -p test_update.py -v

@@ -144,7 +144,7 @@ flutter pub get
 flutter run -d windows --dart-define=TIMECUE_DEMO=true
 ```
 
-Widget 关系、状态所有权与验证命令见 [Flutter 工程说明](desktop/README.md)。普通 PR 的 Go 与 Flutter 快速检查均在 Windows 执行；Go 检查格式、vet 和串行测试，Flutter 固定 3.47.0 检查格式、分析和测试。dev push 后自动执行完整 Windows 构建与原生测试；所有 main PR 执行发布构建与原生验证，手动运行发布工作流时才上传发行包。分支保护所需检查和失败处理见[贡献规范](docs/CONTRIBUTING.md)。
+Widget 关系、状态所有权与验证命令见 [Flutter 工程说明](desktop/README.md)。PR 按改动路径运行 Go、Flutter 或 Windows Python 更新脚本检查；纯文档 PR 只运行轻量路径分类，不运行这三类检查。Go/Flutter 检查固定在 Windows，Go 保持串行测试，Flutter 固定 3.47.0。非文档 dev push 后自动执行完整 Windows 构建与原生测试，手动触发仍始终运行；所有 main PR 执行发布构建与原生验证，手动运行发布工作流时才上传发行包。分支保护所需检查和失败处理见[贡献规范](docs/CONTRIBUTING.md)。
 
 
 分支与 Pull Request 流程、Go 与 Flutter CI 约定见[贡献规范](docs/CONTRIBUTING.md)。
