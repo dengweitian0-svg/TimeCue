@@ -1,0 +1,67 @@
+name: Dev Windows Integration
+
+on:
+  push:
+    branches:
+      - dev
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.mdx'
+      - '**/*.rst'
+      - 'docs/**'
+      - '.codex/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-integration:
+    name: Dev Windows Integration
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 设置 Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+          cache: true
+
+      - name: 构建完整 Windows 发行目录
+        shell: pwsh
+        run: ./scripts/build-release.ps1
+
+      - name: 构建 Windows 原生生命周期测试
+        shell: pwsh
+        run: |
+          cmake -S desktop/test/native -B desktop/build/dev-native -A x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          cmake --build desktop/build/dev-native --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 验证 Windows 单实例、参数转交与 Job 清理
+        shell: pwsh
+        run: |
+          ctest --test-dir desktop/build/dev-native -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
