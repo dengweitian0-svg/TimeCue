@@ -126,6 +126,11 @@ func (s *Service) RecoveryRetireTask(id string) (RecoveryTask, bool) {
 		return RecoveryTask{}, false
 	}
 	value := RecoveryTask{ID: id, Minute: task.minute, FactIDs: append([]int(nil), task.facts...), Attempts: task.attempts}
+	for attemptID, attempt := range d.attempts {
+		if attempt.task == task {
+			delete(d.attempts, attemptID)
+		}
+	}
 	s.transferTask(d, task)
 	delete(d.recoveryTasks, id)
 	return value, true

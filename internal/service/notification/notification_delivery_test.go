@@ -2,6 +2,7 @@ package notification
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -48,5 +49,69 @@ func TestDeliveryClaimTaskLimitAndFuture(t *testing.T) {
 	last, err := service.ClaimDelivery(ctx, 20)
 	if err != nil || len(last) != 1 {
 		t.Fatal("剩余任务遗失或未来任务泄漏", last, err)
+	}
+}
+
+// TestRecoveryRetireRemovesExitedAttemptsOnlyForRetiredTask 验证退役只清理该恢复任务的旧 attempt。
+func TestRecoveryRetireRemovesExitedAttemptsOnlyForRetiredTask(t *testing.T) {
+	now := time.Date(2030, 10, 9, 10, 0, 0, 0, model.BeijingLocation())
+	delivery, err := NewDeliveryService(deliveryTestRepo{}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Delivery: delivery}
+	service.RecoveryCreateTask("retired-task", now, []int{1})
+	service.RecoveryCreateTask("surviving-task", now, []int{2})
+	if err := service.RecoveryCompleteTask(context.Background(), "retired-task", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecoveryCompleteTask(context.Background(), "surviving-task", now); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := service.ClaimDelivery(context.Background(), 20)
+	if err != nil || len(first) != 2 {
+		t.Fatalf("首次claim失败: %#v %v", first, err)
+	}
+	var retiredInitial, survivorCurrent string
+	for _, claim := range first {
+		switch claim.DeliveryTaskID {
+		case "retired-task":
+			retiredInitial = claim.AttemptID
+		case "surviving-task":
+			survivorCurrent = claim.AttemptID
+		}
+	}
+	if retiredInitial == "" || survivorCurrent == "" {
+		t.Fatalf("缺少预期任务: %#v", first)
+	}
+	service.DeliveryExecutorExitedAttempts([]string{retiredInitial})
+
+	second, err := service.ClaimDelivery(context.Background(), 20)
+	if err != nil || len(second) != 2 {
+		t.Fatalf("执行者退出后重复claim失败: %#v %v", second, err)
+	}
+	var retiredSecond string
+	for _, claim := range second {
+		if claim.DeliveryTaskID == "retired-task" && claim.AttemptID != retiredInitial {
+			retiredSecond = claim.AttemptID
+		}
+	}
+	if retiredSecond == "" {
+		t.Fatalf("未重新领取退役前任务: %#v", second)
+	}
+	service.DeliveryExecutorExitedAttempts([]string{retiredSecond})
+
+	if _, ok := service.RecoveryRetireTask("retired-task"); !ok {
+		t.Fatal("未退役恢复任务")
+	}
+	for _, attemptID := range []string{retiredInitial, retiredSecond} {
+		if _, err := service.StartDelivery(context.Background(), attemptID); !errors.Is(err, ErrAttemptNotFound) {
+			t.Fatalf("退役后旧attempt仍可启动: %s: %v", attemptID, err)
+		}
+	}
+	started, err := service.StartDelivery(context.Background(), survivorCurrent)
+	if err != nil || !started.ShouldDisplay {
+		t.Fatalf("其他任务的当前attempt受影响: %#v %v", started, err)
 	}
 }

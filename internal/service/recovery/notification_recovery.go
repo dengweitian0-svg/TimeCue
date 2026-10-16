@@ -169,7 +169,7 @@ func (s *Service) prepare(ctx context.Context, now time.Time, schedulerWindows [
 	return nil
 }
 
-// Snapshot returns read-only progress and counts.
+// Snapshot 返回当前恢复轮次的只读进度与统计。
 func (s *Service) Snapshot(ctx context.Context, deliveries DeliveryPort, now time.Time) (*model.RecoveryView, error) {
 	r := s.current
 	if r == nil {
