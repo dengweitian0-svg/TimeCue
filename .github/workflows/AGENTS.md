@@ -3,6 +3,7 @@
 - `ci.yml` 对 dev/main PR 执行路径分类，仅运行受 Go、Python 或 Flutter 变更影响的检查；纯文档 PR 只运行分类。`dev-integration.yml` 在非纯文档 dev push 或手动触发时执行完整 Windows 构建、发行打包和原生 CTest；`release-package.yml` 对所有 main PR 执行完整发布构建和原生验证，仅手动触发时上传产物，不创建 Tag 或 GitHub Release。
 
 - `ci.yml`：面向 dev 和 main 的快速 PR 检查；Ubuntu `changes` job 通过 GitHub REST API 分页读取 PR 文件，以当前路径和重命名前路径分类；纯文档路径只运行分类。文件数达到 3000 或出现未知非文档路径时运行全部检查；分类失败会使 Go 和 Flutter job 直接失败。Go 与 Flutter job 名称分别为 Go Windows Checks 和 Flutter Windows Checks，均运行在 Windows runner。Go 使用 PowerShell 检查模块、格式、vet 和串行测试；Flutter 固定 3.47.0，检查格式、分析和测试。Python 更新脚本测试由 Flutter Windows Checks 在 Windows 上使用 Python 3.11 执行，但只在 Python 路径有改动时安装 Python；纯 Python 改动不会安装 Flutter，纯 Flutter 改动不会运行 Python 测试。两个必需 job 最多 20 分钟，分类最多 5 分钟。
+- `ci.yml`：取消过期运行后，不继续启动 Go 或 Flutter 检查 job。
 - `dev-integration.yml`：非纯文档 dev 分支 push 或手动触发时执行 Go、Flutter stable 3.47.0 的完整 Windows 发行构建和原生 CTest；手动触发始终运行；按工作流和 ref 隔离并发，每次最多 45 分钟。
 - `release-package.yml`：所有目标为 main 的 PR 执行完整 Windows 发行构建和原生 CTest；手动触发时额外上传 ZIP 与校验值。使用缓存，按 PR 或 ref 隔离并发，每次最多 60 分钟。main 合法来源由 `protect-main.yml` 管理。
 - `protect-main.yml`：main 发布 PR 只允许本仓库 dev 来源且作者为 dengweitian0-svg；不满足时留言并关闭 PR。
