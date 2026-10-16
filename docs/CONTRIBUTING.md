@@ -113,14 +113,14 @@ git switch -c feat/12-recurring-reminder
 
 ## CI 规则
 
-向 `dev` 或 `main` 提交 Pull Request 时，`.github/workflows/ci.yml` 先在 Ubuntu 上通过 GitHub REST API 分类文件，再按变更运行 Go、Flutter 和 Python 检查。Go 与 Flutter 检查均在 Windows runner，与应用目标平台一致；Go 使用 PowerShell，Flutter 工程位于 `desktop/`。Python 更新脚本测试使用 Windows runner、Python 3.11 和标准库，不安装额外包。纯文档 PR 只运行轻量分类，不运行 Go、Flutter 或 Python 检查；未知非文档路径或文件数达到 3000 时运行全部检查，分类失败时 Go、Flutter 和 Python 检查直接失败。非纯文档 dev push 后由 `dev-integration.yml` 运行完整 Windows 构建和原生测试；手动触发仍始终执行。所有 main PR 由 `release-package.yml` 执行完整发布构建和原生验证，不按路径跳过。
+向 `dev` 或 `main` 提交 Pull Request 时，`.github/workflows/ci.yml` 先在 Ubuntu 上通过 GitHub REST API 分类文件，再按变更运行 Go、Flutter 和 Python 检查。Go 与 Flutter 检查均在 Windows runner，与应用目标平台一致；Go 使用 PowerShell，Flutter 工程位于 `desktop/`。Python 更新脚本测试由 `Flutter Windows Checks` 在 Windows 上使用 Python 3.11 执行。纯文档 PR 只运行轻量分类，不运行 Go、Flutter 或 Python 检查；未知非文档路径或文件数达到 3000 时运行全部检查，分类失败时 Go 和 Flutter 检查直接失败。非纯文档 dev push 后由 `dev-integration.yml` 运行完整 Windows 构建和原生测试；手动触发仍始终执行。所有 main PR 由 `release-package.yml` 执行完整发布构建和原生验证，不按路径跳过。
 
 - Go：`gofmt`、`go vet ./...`、`go test -p 1 ./...`；固定业务端口的跨包测试串行运行。
 - Flutter：CI 固定 Flutter 3.47.0，保留本机 master SDK；运行 `flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`，通知插件及传递依赖提交 lockfile。
-- Python：Windows Python 3.11 job 在仓库根目录运行 `python -m unittest discover -s scripts -p test_update.py -v`，覆盖发行清单更新与安装路径登记逻辑及 Windows 文件共享锁/映像权限行为。
+- Python：`Flutter Windows Checks` 按 Python 路径条件设置 Windows Python 3.11，并在仓库根目录运行 `python -m unittest discover -s scripts -p test_update.py -v`，覆盖发行清单更新与安装路径登记逻辑及 Windows 文件共享锁/映像权限行为；纯 Python 改动不安装 Flutter。
 - Windows 构建：完整发行构建、Go 服务打包和 CMake 原生生命周期测试由 dev push 集成工作流及 main PR 发布验证执行；普通 PR 不构建发行包。开发默认使用 managed；独立后端联调显式指定 backend=external。原生验证覆盖单实例、IPC、自有进程、Job 清理和安装目录登记。
 - 本地运行：在 `desktop/` 执行 `flutter run -d windows --debug -a --backend=managed -a --data-dir=<仓库绝对目录>`，Flutter 会启动同目录 Go 服务；已有实例切换 backend 前需完整退出，Go 源码更改需退出并重新运行 Flutter，热重载不会重建 Go。独立后端联调可先在根目录运行 `go run ./cmd/flutter --data-dir .`，再指定 backend=external；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
-`dev` 的 Required Checks 保持 `Go Windows Checks` 和 `Flutter Windows Checks` 两项；建议额外将 `Python Updater Checks` 设为 Required Check。按路径跳过的 job 在 GitHub 中显示为 skipped，并视为成功；纯文档 PR 仍会运行轻量分类。dev 集成工作流在合并后运行，失败时先修复或回退 dev 变更；纯文档 push 不触发集成构建。`main` 还应将 `Windows Release Verify` 加入 Required Checks；该检查规则需在 GitHub Branch Protection / Ruleset 中配置。此文档只说明所需配置，不代表远端规则已更新。main 发布验证对所有 PR 全量运行。CI 通过后再合并 PR。
+`dev` 的 Required Checks 保持 `Go Windows Checks` 和 `Flutter Windows Checks` 两项；Python 更新脚本检查由 `Flutter Windows Checks` 承载，并按 Python 路径独立执行，无需新增 required check 名称。按路径跳过的 job 在 GitHub 中显示为 skipped，并视为成功；纯文档 PR 仍会运行轻量分类。dev 集成工作流在合并后运行，失败时先修复或回退 dev 变更；纯文档 push 不触发集成构建。`main` 还应将 `Windows Release Verify` 加入 Required Checks；该检查规则需在 GitHub Branch Protection / Ruleset 中配置。此文档只说明所需配置，不代表远端规则已更新。main 发布验证对所有 PR 全量运行。CI 通过后再合并 PR。
 
 ## main 分支策略
 

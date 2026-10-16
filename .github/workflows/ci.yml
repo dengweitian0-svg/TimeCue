@@ -171,7 +171,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.flutter == 'true')
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.flutter == 'true' || needs.changes.outputs.python == 'true')
     defaults:
       run:
         working-directory: desktop
@@ -184,7 +184,19 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 设置 Python
+        if: needs.changes.outputs.python == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 运行发行更新脚本测试
+        if: needs.changes.outputs.python == 'true'
+        working-directory: ${{ github.workspace }}
+        run: python -m unittest discover -s scripts -p test_update.py -v
+
       - name: 设置 Flutter stable
+        if: needs.changes.outputs.flutter == 'true'
         uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -192,36 +204,17 @@ jobs:
           cache: true
 
       - name: 安装 Flutter 依赖
+        if: needs.changes.outputs.flutter == 'true'
         run: flutter pub get
 
       - name: 检查 Dart 格式
+        if: needs.changes.outputs.flutter == 'true'
         run: dart format --output=none --set-exit-if-changed lib test
 
       - name: 静态检查
+        if: needs.changes.outputs.flutter == 'true'
         run: flutter analyze
 
       - name: 运行 Flutter 测试
+        if: needs.changes.outputs.flutter == 'true'
         run: flutter test
-
-  python-updater-checks:
-    name: Python Updater Checks
-    runs-on: windows-latest
-    timeout-minutes: 10
-    needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.python == 'true')
-
-    steps:
-      - name: 检测变更分类失败
-        if: needs.changes.result != 'success'
-        run: exit 1
-
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 设置 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: 运行发行更新脚本测试
-        run: python -m unittest discover -s scripts -p test_update.py -v
