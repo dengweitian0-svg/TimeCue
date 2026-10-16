@@ -14,6 +14,7 @@ Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务
 - [internal/config](internal/config/AGENTS.md)：只读加载配置、发布快照、目录监听及运行路径解析；用户配置由 Flutter 写入。
 - [internal/log](internal/log/AGENTS.md)：全局日志、JSONL 输出与级别热更新。
 - [desktop](desktop/AGENTS.md)：Flutter 桌面界面、HTTP 数据接入和内存演示。
+- [.github/workflows](.github/workflows/AGENTS.md)：PR 快速检查、dev 集成构建和 main 发布验证。
 
 # 约束
 - 如果项目中存在 `.codex/` 目录，开始任务前先读取其中的 `AGENTS.md`（若存在），并遵循其适用规则。
@@ -24,3 +25,4 @@ Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务
 - 当前项目不需要过多的工程约束，简单够用即可
 - 需要根据功能创建新分支来开发，而不是在 dev 分支中开发
 - Flutter 已接入显式 managed/external 模式、隐藏自有 Go、ready/health 身份门禁和共享退出回填；Job Object 在进程创建时关联，最终回收及宿主崩溃只清理自有进程。开发外连不停止手动 Go，启动失败可重试、运行中异常退出不自动重启
+- CI 的 dev/main PR 快速检查保留 Go Windows Checks 与 Flutter Windows Checks；dev push 后执行完整 Windows 集成验证；所有 main PR 执行 Windows Release Verify，手动运行时上传发行产物。

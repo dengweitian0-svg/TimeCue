@@ -42,7 +42,7 @@ TimeCue 采用 `main + dev` 双主干模式：
 
 ## 版本发布流程
 
-Windows 完整包使用 `scripts/build-release.ps1`，版本来自 desktop/pubspec.yaml；产物包含完整 Flutter 目录、timecue-core.exe、update.py、发行说明、校验清单和 ZIP。dev PR 的 CI 保存同轮发行产物，手动 Windows Release Package 工作流使用 Flutter stable 和 Python 3.11 进行全量验证与打包，不自动创建 Tag/Release。发布前按 docs/RELEASE.md 检查首次运行、重启数据、更新、迁移备份和系统交互；本地 master SDK 通过不能替代 stable CI。
+Windows 完整包使用 `scripts/build-release.ps1`，版本来自 desktop/pubspec.yaml；产物包含完整 Flutter 目录、timecue-core.exe、update.py、发行说明、校验清单和 ZIP。合并到 dev 后自动运行 Windows 集成构建与原生验证；目标为 main 的 PR 自动执行完整发布构建和原生验证；只有手动运行 Windows Release Package 才上传发行产物。工作流不自动创建 Tag/Release。发布前按 docs/RELEASE.md 检查首次运行、重启数据、更新、迁移备份和系统交互；本地 master SDK 通过不能替代 stable CI。
 
 当 `dev` 中的修改已经达到一个可发布版本，并完成必要验证后：
 
@@ -113,17 +113,17 @@ git switch -c feat/12-recurring-reminder
 
 ## CI 规则
 
-向 `dev` 或 `main` 提交 Pull Request 时，`.github/workflows/ci.yml` 的 Go 和 Flutter 检查均运行在 Windows runner，与应用目标平台一致。Go 工作流脚本使用 PowerShell；Flutter 工程位于 `desktop/`。Python 更新脚本测试使用 Python 3.11 和标准库，不安装额外包。
+向 `dev` 或 `main` 提交 Pull Request 时，`.github/workflows/ci.yml` 的 Go 和 Flutter 检查均运行在 Windows runner，与应用目标平台一致。Go 工作流脚本使用 PowerShell；Flutter 工程位于 `desktop/`。Python 更新脚本测试使用 Python 3.11 和标准库，不安装额外包。普通 PR 只运行快速检查；dev push 后由 `dev-integration.yml` 运行完整 Windows 构建和原生测试；所有 main PR 由 `release-package.yml` 执行完整发布构建和原生验证。
 
 - Go：`gofmt`、`go vet ./...`、`go test -p 1 ./...`；固定业务端口的跨包测试串行运行。
 - Flutter：CI 固定 Flutter 3.47.0，保留本机 master SDK；运行 `flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`，通知插件及传递依赖提交 lockfile。
 - Python：在仓库根目录运行 `python -m unittest discover -s scripts -p test_update.py -v`，覆盖发行清单更新与安装路径登记逻辑。
-- Windows 构建：`flutter build windows --release`，Go 需安装并在 PATH；Windows CMake 每次构建都会编译 Go 服务并安装到 runner 旁，发行包默认托管同目录 Go。开发默认使用 managed；独立后端联调显式指定 backend=external。在 desktop 执行 `cmake -S test/native -B build/desktop-native -A x64`、`cmake --build build/desktop-native --config Release` 和 `ctest --test-dir build/desktop-native -C Release --output-on-failure` 验证原生单实例、IPC、自有进程、Job 清理和安装目录登记。
+- Windows 构建：完整发行构建、Go 服务打包和 CMake 原生生命周期测试由 dev push 集成工作流及 main PR 发布验证执行；普通 PR 不构建发行包。开发默认使用 managed；独立后端联调显式指定 backend=external。原生验证覆盖单实例、IPC、自有进程、Job 清理和安装目录登记。
 - 本地运行：在 `desktop/` 执行 `flutter run -d windows --debug -a --backend=managed -a --data-dir=<仓库绝对目录>`，Flutter 会启动同目录 Go 服务；已有实例切换 backend 前需完整退出，Go 源码更改需退出并重新运行 Flutter，热重载不会重建 Go。独立后端联调可先在根目录运行 `go run ./cmd/flutter --data-dir .`，再指定 backend=external；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
-CI 通过后再合并 PR。
+`dev` 的 Required Checks 保持 `Go Windows Checks` 和 `Flutter Windows Checks` 两项；dev 集成工作流在合并后运行，失败时先修复或回退 dev 变更。`main` 还应将 `Windows Release Verify` 加入 Required Checks；该检查规则需在 GitHub Branch Protection / Ruleset 中配置。此文档只说明所需配置，不代表远端规则已更新。CI 通过后再合并 PR。
 
 ## main 分支策略
 
-`main` 只接受本仓库 `dev → main` 且由发布负责人 dengweitian0-svg 提出的版本发布 PR。protect-main.yml 对不满足条件的 PR 留言并关闭；CI 验证 dev/main 两类 PR。
+`main` 只接受本仓库 `dev → main` 且由发布负责人 dengweitian0-svg 提出的版本发布 PR。protect-main.yml 对不满足条件的 PR 留言并关闭；所有 main PR 均执行完整 Windows Release Verify，合法来源由 protect-main 管理。
 
 Windows CI 的 Go 格式检查会先统一 CRLF/LF 并比较 gofmt 输出；只消除换行差异，实际代码排版仍须一致，不格式化未修改的 Go 文件。
