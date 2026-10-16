@@ -1,6 +1,6 @@
 # SQLite 存储
 
-提供日程与提醒的持久化、事务操作和数据库健康检查。健康检查验证通知 schedule_id/notify_time 完整唯一键；Unix 纳秒时间写入前拒绝超出 int64 范围的日程及提醒时间。
+提供日程与提醒的持久化、事务操作和数据库健康检查，满足 `service/schedule` 与 `service/notification` 定义的存储接口。健康检查验证通知 schedule_id/notify_time 完整唯一键；Unix 纳秒时间写入前拒绝超出 int64 范围的日程及提醒时间。
 
 - `db.go`：SQLite 连接与关闭、版本 2 表结构和 loaded 状态约束检查（当前 001 + 002）。
 - `schedule.go`：日程创建、查询、暂停/恢复、取消、软删除，日程与首提醒联合创建，以及日期/待确认事务快照读取。

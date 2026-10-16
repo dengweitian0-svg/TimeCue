@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/dengweitian0-svg/TimeCue/internal/app"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
 	"io"
 	"net"
 	"net/http"
@@ -16,8 +18,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
 )
 
 // processFixture 只在测试新目录中手动应用已有迁移，不操作用户数据库。
@@ -121,13 +121,13 @@ func (p *testProcess) wait(t *testing.T, success bool) {
 	}
 }
 
-func (p *testProcess) ready(t *testing.T) service.RuntimeInfo {
+func (p *testProcess) ready(t *testing.T) app.RuntimeInfo {
 	t.Helper()
 	select {
 	case b := <-p.lines:
 		var ready struct {
 			Event, Address string
-			service.RuntimeInfo
+			app.RuntimeInfo
 		}
 		if err := json.Unmarshal(b, &ready); err != nil {
 			t.Fatal("stdout 混入非协议文本", string(b), err)
@@ -139,7 +139,7 @@ func (p *testProcess) ready(t *testing.T) service.RuntimeInfo {
 	case <-time.After(10 * time.Second):
 		t.Fatal("没有收到 ready")
 	}
-	return service.RuntimeInfo{}
+	return app.RuntimeInfo{}
 }
 
 // TestManagedProcess 使用编译后的自有进程和匿名管道串行验证固定端口协议。
@@ -182,7 +182,7 @@ func TestManagedProcess(t *testing.T) {
 			}
 			var health struct {
 				Data struct {
-					service.RuntimeInfo
+					app.RuntimeInfo
 					Status string
 				}
 			}
@@ -270,11 +270,11 @@ func TestManagedProcess(t *testing.T) {
 		_ = p.input.Close()
 		client := &http.Client{Timeout: time.Second}
 		deadline := time.Now().Add(5 * time.Second)
-		var info service.RuntimeInfo
+		var info app.RuntimeInfo
 		for {
 			resp, err := client.Get("http://127.0.0.1:10086/health")
 			if err == nil {
-				var body struct{ Data service.RuntimeInfo }
+				var body struct{ Data app.RuntimeInfo }
 				_ = json.NewDecoder(resp.Body).Decode(&body)
 				_ = resp.Body.Close()
 				info = body.Data
@@ -325,13 +325,13 @@ func TestManagedProcess(t *testing.T) {
 		p := launchProcess(t, binary, "--data-dir", dir, "--instance-id", "old-run")
 		p.ready(t)
 		deadline := time.Now().Add(4 * time.Second)
-		var claim service.DeliveryClaim
+		var claim notification.DeliveryClaim
 		for {
 			resp, err := client.Post("http://127.0.0.1:10086/api/v1/notifications/claim", "application/json", strings.NewReader("{}"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			var body struct{ Data []service.DeliveryClaim }
+			var body struct{ Data []notification.DeliveryClaim }
 			err = json.NewDecoder(resp.Body).Decode(&body)
 			_ = resp.Body.Close()
 			if err != nil || resp.StatusCode != 200 {

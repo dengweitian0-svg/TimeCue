@@ -3,14 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
 )
 
 func TestStartupParameters(t *testing.T) {
@@ -123,7 +122,7 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestReadyWriteFailure(t *testing.T) {
-	if err := writeReady(failingWriter{}, service.NewRuntimeInfo("launch")); !errors.Is(err, io.ErrClosedPipe) {
+	if err := writeReady(failingWriter{}, app.NewRuntimeInfo("launch")); !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatal(err)
 	}
 }

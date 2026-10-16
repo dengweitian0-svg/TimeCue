@@ -16,10 +16,12 @@ import (
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/api"
+	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
 	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -92,7 +94,7 @@ func scheduleLogRouter(t *testing.T) *gin.Engine {
 	return router
 }
 
-func resourceLogRouter(t *testing.T) (*gin.Engine, *service.App) {
+func resourceLogRouter(t *testing.T) (*gin.Engine, *app.App) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "api.db")
 	db := store.NewSqlite()
@@ -130,7 +132,7 @@ func resourceLogRouter(t *testing.T) (*gin.Engine, *service.App) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := &service.App{Schedule: repo, Notify: notify}
+	app := &app.App{Schedule: repo, Notify: notify}
 	return api.NewRouter(app, db.CheckHealth), app
 }
 
@@ -292,7 +294,7 @@ func TestHTTPLoggerScheduleRoutes(t *testing.T) {
 }
 
 type failingScheduleRepo struct {
-	service.ScheduleRepo
+	schedule.Repo
 	cause error
 }
 
@@ -325,7 +327,7 @@ func (r failingScheduleRepo) ReadScheduleState(context.Context, time.Time, time.
 }
 
 type failingNotifyRepo struct {
-	service.NotifyRepo
+	notification.Repo
 	cause error
 }
 
@@ -340,7 +342,7 @@ func (r failingNotifyRepo) AcknowledgeNotifications(context.Context, []int, time
 func TestHTTPLoggerFailures(t *testing.T) {
 	readLog := captureHTTPLogs(t)
 	cause := errors.New("original database failure")
-	router := api.NewRouter(&service.App{Schedule: failingScheduleRepo{cause: cause}, Notify: failingNotifyRepo{cause: cause}}, func(context.Context) error { return cause })
+	router := api.NewRouter(&app.App{Schedule: failingScheduleRepo{cause: cause}, Notify: failingNotifyRepo{cause: cause}}, func(context.Context) error { return cause })
 	const base = "/api/v1/scheduler/schedules"
 	for _, tc := range []struct {
 		method, target, message string
