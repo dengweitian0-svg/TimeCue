@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:timecue_desktop/app/desktop_lifecycle.dart';
 import 'package:timecue_desktop/app/timecue_app.dart';
 import 'package:timecue_desktop/contracts/chat_contracts.dart';
 import 'package:timecue_desktop/data/demo_notebook_repository.dart';
@@ -17,6 +18,8 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final repository = DemoNotebookRepository();
+    final platform = _HostDesktopPlatform();
+    final desktop = DesktopLifecycle(platform);
     final gateway = _HostChatGateway();
     var sessionSequence = 0;
     var keySequence = 0;
@@ -26,6 +29,8 @@ void main() {
       createIdempotencyKey: () => 'create_session:key-${++keySequence}',
       retryDelay: (_) => const Duration(hours: 1),
     );
+    var chatUpdates = 0;
+    chat.addListener(() => chatUpdates++);
     var releases = 0;
     await tester.pumpWidget(
       MaterialApp(
@@ -33,12 +38,17 @@ void main() {
           data: const MediaQueryData(disableAnimations: true),
           child: DesktopShell(
             repository: repository,
+            desktop: desktop,
             chat: chat,
-            releaseChatTransport: () => releases++,
+            releaseChatTransport: () {
+              releases++;
+              throw StateError('transport close failed');
+            },
           ),
         ),
       ),
     );
+    await tester.pump();
 
     await tester.tap(find.textContaining('日程本'));
     await tester.pump(const Duration(milliseconds: 50));
@@ -62,6 +72,26 @@ void main() {
     expect(gateway.createdInputs, ['发给宿主模型']);
     expect(gateway.eventConnections, 1);
 
+    chatUpdates = 0;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    gateway.emitText('失焦期间仍可见');
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(chat.selectedConversation!.runs.single.rawText, '失焦期间仍可见');
+    expect(chatUpdates, 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+    chatUpdates = 0;
+    await desktop.hideWindow();
+    expect(desktop.state, DesktopState.hidden);
+    gateway.emitText('隐藏期间到达');
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(chat.selectedConversation!.runs.single.rawText, '失焦期间仍可见隐藏期间到达');
+    expect(chatUpdates, 0);
+    await desktop.openWindow();
+    expect(desktop.state, DesktopState.visible);
+    expect(chatUpdates, 1);
+    expect(gateway.eventConnections, 1);
+
     await tester.enterText(input, '切页后保留的草稿');
     await tester.tap(find.text('日历'));
     await tester.pump(const Duration(milliseconds: 50));
@@ -77,6 +107,9 @@ void main() {
     expect(tester.widget<TextField>(input).controller!.text, '切页后保留的草稿');
     expect(gateway.eventConnections, 1);
 
+    await desktop.requestExit();
+    expect(platform.destroyed, isTrue);
+    expect(platform.trayRemoved, isTrue);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
     expect(releases, 1);
@@ -88,11 +121,84 @@ void main() {
     expect(gateway.createdInputs, ['发给宿主模型']);
     repository.dispose();
   });
+
+  testWidgets(
+    'exit does not wait for pending create and ignores late response',
+    (tester) async {
+      final repository = DemoNotebookRepository();
+      final platform = _HostDesktopPlatform();
+      final desktop = DesktopLifecycle(platform);
+      final gateway = _HostChatGateway()
+        ..pendingCreate = Completer<ChatCreateRunResult>();
+      final chat = ChatViewModel(gateway: gateway);
+      var modelUpdates = 0;
+      chat.addListener(() => modelUpdates++);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DesktopShell(
+            repository: repository,
+            desktop: desktop,
+            chat: chat,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final conversation = chat.createLocalSession();
+      chat.updateDraft(conversation.sessionId, '退出时仍在创建');
+      final pending = chat.send(
+        conversation.sessionId,
+        model: 'deepseek-flash',
+      );
+      await desktop.requestExit();
+      await tester.pump();
+      final updatesAtExit = modelUpdates;
+      expect(platform.destroyed, isTrue);
+      gateway.pendingCreate!.complete(ChatCreateRunResult('late-run'));
+      await pending;
+      await tester.pump();
+
+      expect(conversation.runs.single.runId, isNull);
+      expect(conversation.runs.single.error, isNull);
+      expect(gateway.eventConnections, 0);
+      expect(modelUpdates, updatesAtExit);
+      await tester.pumpWidget(const SizedBox.shrink());
+      repository.dispose();
+    },
+  );
+}
+
+class _HostDesktopPlatform implements DesktopPlatform {
+  bool destroyed = false, trayRemoved = false;
+
+  @override
+  Future<void> initialize(DesktopLifecycle lifecycle) async {}
+  @override
+  Future<List<DesktopLaunchRequest>> ready() async => const [];
+  @override
+  Future<void> createTray() async {}
+  @override
+  Future<bool> hasTray() async => true;
+  @override
+  Future<void> show() async {}
+  @override
+  Future<void> hide() async {}
+  @override
+  Future<void> beginExit() async {}
+  @override
+  Future<void> removeTray() async => trayRemoved = true;
+  @override
+  Future<void> destroy() async => destroyed = true;
+  @override
+  void detach() {}
 }
 
 class _HostChatGateway implements ChatGateway {
   final List<String> createdInputs = [];
   int eventConnections = 0, cancelledConnections = 0;
+  int _eventId = 0;
+  Completer<ChatCreateRunResult>? pendingCreate;
+  MultiStreamController<ChatRunEventSignal>? _eventController;
 
   @override
   Future<ChatCreateRunResult> createRun({
@@ -102,6 +208,7 @@ class _HostChatGateway implements ChatGateway {
     required String idempotencyKey,
   }) async {
     createdInputs.add(input);
+    if (pendingCreate != null) return pendingCreate!.future;
     return ChatCreateRunResult('run-${createdInputs.length}');
   }
 
@@ -122,9 +229,24 @@ class _HostChatGateway implements ChatGateway {
   Stream<ChatRunEventSignal> runEvents(String runId, {int? lastEventId}) {
     eventConnections++;
     return Stream<ChatRunEventSignal>.multi((controller) {
-      controller.onCancel = () => cancelledConnections++;
+      _eventController = controller;
+      controller.onCancel = () {
+        cancelledConnections++;
+        if (identical(_eventController, controller)) _eventController = null;
+      };
     });
   }
+
+  void emitText(String text) => _eventController?.add(
+    ChatRunEventFrame(
+      ChatSseEvent(
+        // SSE 身份按事件递增；后台增量应继续驱动模型游标。
+        eventId: ++_eventId,
+        type: ChatEventType.text,
+        data: ChatContentEventData(content: text, error: null),
+      ),
+    ),
+  );
 
   @override
   Future<ChatCancelRunResult> cancelRun(String runId) async =>

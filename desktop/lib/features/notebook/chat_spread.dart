@@ -1,12 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../chat/chat_composer.dart';
 import '../chat/chat_message_list.dart';
+import '../chat/chat_session_list.dart';
 import '../chat/chat_view_model.dart';
 import '../../theme/notebook_theme.dart';
 import 'notebook_view_model.dart';
 
-/// 展示 AI 对话的双页与单栏欢迎框架，输入内容仅作为运行内草稿保存。
+/// 展示 AI 对话的双页与单栏页面，聊天模型由宿主持有。
 class ChatSpread extends StatefulWidget {
   const ChatSpread({super.key, required this.model, this.chat});
 
@@ -20,7 +23,6 @@ class ChatSpread extends StatefulWidget {
 class _ChatSpreadState extends State<ChatSpread> {
   late final TextEditingController _draftController;
   String? _chatSessionId;
-  final GlobalKey _messageListKey = GlobalKey();
 
   @override
   void initState() {
@@ -33,6 +35,9 @@ class _ChatSpreadState extends State<ChatSpread> {
           chat.selectedConversation ?? chat.createLocalSession();
       _chatSessionId = conversation.sessionId;
       _draftController = TextEditingController(text: conversation.draft);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !chat.historyLoaded) unawaited(chat.loadHistory());
+      });
     }
   }
 
@@ -41,9 +46,10 @@ class _ChatSpreadState extends State<ChatSpread> {
     if (widget.chat == null) {
       widget.model.updateChatDraft(_draftController.text);
     } else if (_chatSessionId case final sessionId?) {
-      final conversation = widget.chat!.selectedConversation;
-      if (conversation?.sessionId == sessionId &&
-          conversation!.draft != _draftController.text) {
+      final conversation = widget.chat!.conversations
+          .where((item) => item.sessionId == sessionId)
+          .firstOrNull;
+      if (conversation != null && conversation.draft != _draftController.text) {
         widget.chat!.updateDraft(sessionId, _draftController.text);
       }
     }
@@ -89,51 +95,53 @@ class _ChatSpreadState extends State<ChatSpread> {
                 ),
               ),
             Expanded(
-              child: SingleChildScrollView(
-                child: widget.chat == null
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Expanded(
-                                child: _PageTitle(
-                                  title: '历史会话',
-                                  subtitle: '已聊过的内容会出现在这里。',
-                                ),
-                              ),
-                              IconButton.filledTonal(
-                                onPressed: _startNewDraft,
-                                tooltip: '新会话',
-                                icon: const Icon(Icons.add),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          const TextField(
-                            enabled: false,
-                            decoration: InputDecoration(
-                              prefixIcon: Icon(Icons.search),
-                              hintText: '搜索暂未开放',
-                              hintStyle: TextStyle(color: NotebookTheme.ink),
-                              isDense: true,
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          const Center(
-                            child: Text(
-                              '历史会话暂不可用',
-                              style: TextStyle(color: NotebookTheme.ink),
-                            ),
-                          ),
-                        ],
-                      )
-                    : const _ChatHistoryPlaceholder(),
-              ),
+              child: widget.chat == null
+                  ? _legacyHistory()
+                  : ChatSessionList(
+                      chat: widget.chat!,
+                      selectedSessionId: widget.chat!.selectedSessionId,
+                      onSelect: (id) {
+                        widget.chat!.selectSession(id);
+                        widget.model.returnToChat();
+                      },
+                    ),
             ),
           ],
         ),
       );
+
+  Widget _legacyHistory() => SingleChildScrollView(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: _PageTitle(title: '历史会话', subtitle: '已聊过的内容会出现在这里。'),
+            ),
+            IconButton.filledTonal(
+              onPressed: _startNewDraft,
+              tooltip: '新会话',
+              icon: const Icon(Icons.add),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        const TextField(
+          enabled: false,
+          decoration: InputDecoration(
+            prefixIcon: Icon(Icons.search),
+            hintText: '搜索暂未开放',
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 20),
+        const Center(
+          child: Text('历史会话暂不可用', style: TextStyle(color: NotebookTheme.ink)),
+        ),
+      ],
+    ),
+  );
 
   Widget _conversationPage(
     BuildContext context, {
@@ -167,13 +175,13 @@ class _ChatSpreadState extends State<ChatSpread> {
         child: SingleChildScrollView(
           child: Center(
             child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (!showHistoryButton)
                     const _PageTitle(title: 'AI 对话', subtitle: '把想法写下来，我们慢慢聊。'),
-                  Text(
+                  const Text(
                     '你好，今天想从什么开始？',
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -202,7 +210,6 @@ class _ChatSpreadState extends State<ChatSpread> {
               textInputAction: TextInputAction.newline,
               decoration: const InputDecoration(
                 hintText: '写下你的想法…',
-                hintStyle: TextStyle(color: NotebookTheme.ink),
                 border: OutlineInputBorder(),
               ),
             ),
@@ -218,10 +225,7 @@ class _ChatSpreadState extends State<ChatSpread> {
         ],
       ),
       const SizedBox(height: 4),
-      const Text(
-        '发送暂未开放',
-        style: TextStyle(fontSize: 12, color: NotebookTheme.ink),
-      ),
+      const Text('发送暂未开放', style: TextStyle(fontSize: 12)),
     ],
   );
 
@@ -232,18 +236,51 @@ class _ChatSpreadState extends State<ChatSpread> {
     listenable: widget.chat!,
     builder: (context, _) {
       final chat = widget.chat!;
-      var conversation = chat.selectedConversation;
+      final conversation = chat.selectedConversation;
       if (conversation == null) {
-        conversation = chat.createLocalSession();
+        return Column(
+          children: [
+            if (showHistoryButton)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: widget.model.showChatHistory,
+                  icon: const Icon(Icons.history),
+                  label: const Text('历史会话'),
+                ),
+              ),
+            const Expanded(child: Center(child: Text('当前没有可显示的会话。'))),
+            FilledButton.icon(
+              onPressed: () => chat.createLocalSession(),
+              icon: const Icon(Icons.add),
+              label: const Text('新会话'),
+            ),
+          ],
+        );
+      }
+      if (conversation.sessionId != _chatSessionId) {
+        _saveCurrentDraft();
         _chatSessionId = conversation.sessionId;
-        _draftController.value = TextEditingValue(text: conversation.draft);
-      } else if (conversation.sessionId != _chatSessionId) {
-        _chatSessionId = conversation.sessionId;
-        _draftController.value = TextEditingValue(text: conversation.draft);
+        _draftController.value = TextEditingValue(
+          text: conversation.draft,
+          selection: TextSelection.collapsed(offset: conversation.draft.length),
+        );
       }
       final sessionId = conversation.sessionId;
       final activeRun = conversation.activeRun;
       final canSend = chat.canSend(sessionId);
+      final disabledReason = chat.activeRunCount >= 3
+          ? '已有 3 轮回复正在运行，请等待完成后发送'
+          : !chat.acceptingOperations
+          ? '聊天服务不可用，无法发送新消息'
+          : chat.historyError != null || chat.historyHasFailures
+          ? '历史读取失败，请先重试'
+          : chat.historyLoading
+          ? '正在整理历史，请稍后发送'
+          : !conversation.isLocal && !conversation.historyLoaded
+          ? '正在读取会话，请稍后发送'
+          : '当前不能开始新一轮对话';
+      final displayName = conversation.displayName;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -260,47 +297,83 @@ class _ChatSpreadState extends State<ChatSpread> {
             children: [
               Expanded(
                 child: Tooltip(
-                  message: conversation.isLocal && conversation.name.isEmpty
-                      ? '新会话'
-                      : conversation.name.isEmpty
-                      ? '未命名会话'
-                      : conversation.name,
-                  child: Text(
-                    conversation.isLocal && conversation.name.isEmpty
-                        ? '新会话'
-                        : conversation.name.isEmpty
-                        ? '未命名会话'
-                        : conversation.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleLarge,
+                  message: displayName,
+                  child: Semantics(
+                    header: true,
+                    child: Text(
+                      displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              const Text(
-                'AI 对话',
-                style: TextStyle(fontSize: 11, color: NotebookTheme.ink),
-              ),
+              if (!conversation.isLocal)
+                PopupMenuButton<String>(
+                  tooltip: '会话操作',
+                  onSelected: (value) {
+                    if (value == 'refresh') {
+                      unawaited(chat.refreshSession(sessionId));
+                    } else if (value == 'delete') {
+                      unawaited(_confirmDeleteCurrent(conversation));
+                    }
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'refresh', child: Text('刷新会话')),
+                    PopupMenuItem(value: 'delete', child: Text('删除会话')),
+                  ],
+                ),
             ],
           ),
+          Text(
+            _conversationStatus(conversation),
+            style: const TextStyle(fontSize: 12, color: NotebookTheme.ink),
+          ),
           if (conversation.error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: SelectableText(
-                '会话信息读取失败：${conversation.error}',
-                style: const TextStyle(fontSize: 12, color: NotebookTheme.ink),
-              ),
+            _InlineError(
+              message: '会话信息读取失败：${conversation.error}',
+              onRetry: () => chat.refreshSession(sessionId),
+            ),
+          if (chat.runtimeError != null)
+            _InlineError(
+              message: '聊天服务不可用：${chat.runtimeError}',
+              onRetry: () => chat.refreshSession(sessionId),
             ),
           const Divider(),
           Expanded(
-            child: ChatMessageList(
-              key: _messageListKey,
-              sessionId: sessionId,
-              runs: conversation.runs,
-              onRetryCreate: (id) => chat.retryCreate(id),
-              onRetryConnection: (id) => chat.retryConnection(id),
-            ),
+            child:
+                !conversation.isLocal &&
+                    conversation.runs.isEmpty &&
+                    conversation.error != null
+                ? _InlineError(
+                    message: '读取会话失败：${conversation.error}',
+                    onRetry: () => chat.refreshSession(sessionId),
+                  )
+                : !conversation.isLocal &&
+                      conversation.runs.isEmpty &&
+                      !conversation.historyLoaded
+                ? const Center(child: CircularProgressIndicator())
+                : ChatMessageList(
+                    key: ValueKey('chat-message-list-$sessionId'),
+                    sessionId: sessionId,
+                    runs: _oldestFirst(conversation.runs),
+                    initialOffset: conversation.readingOffset,
+                    initiallyFollowLatest: conversation.followLatest,
+                    onReadingPosition: (offset, followLatest) {
+                      if (chat.conversations.any(
+                        (item) => item.sessionId == sessionId,
+                      )) {
+                        chat.updateReadingPosition(
+                          sessionId,
+                          offset: offset,
+                          followLatest: followLatest,
+                        );
+                      }
+                    },
+                    onRetryCreate: (id) => chat.retryCreate(id),
+                    onRetryConnection: (id) => chat.retryConnection(id),
+                  ),
           ),
           const Divider(),
           ChatComposer(
@@ -311,23 +384,21 @@ class _ChatSpreadState extends State<ChatSpread> {
               if (text.trim().isEmpty || !chat.canSend(sessionId)) return;
               chat.updateDraft(sessionId, text);
               _draftController.clear();
-              chat.send(sessionId, model: 'deepseek-flash');
+              unawaited(chat.send(sessionId, model: 'deepseek-flash'));
             },
             onStop: () => chat.cancel(sessionId),
             sending: activeRun != null,
             stopping: activeRun?.phase == ChatRunPhase.stopping,
             stoppable: activeRun?.runId != null,
             canSend: canSend,
-            disabledReason: chat.activeRunCount >= 3
-                ? '已有 3 轮回复正在运行，请等待完成后发送'
-                : null,
+            disabledReason: canSend ? null : disabledReason,
           ),
           if (!canSend && activeRun == null)
-            const Padding(
-              padding: EdgeInsets.only(top: 3),
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
               child: Text(
-                '当前不能开始新一轮对话',
-                style: TextStyle(fontSize: 11, color: NotebookTheme.ink),
+                disabledReason,
+                style: const TextStyle(fontSize: 11, color: NotebookTheme.ink),
               ),
             ),
         ],
@@ -335,13 +406,100 @@ class _ChatSpreadState extends State<ChatSpread> {
     },
   );
 
+  String _conversationStatus(ChatConversation conversation) {
+    if (conversation.isDeleting) return '正在删除';
+    final run = conversation.activeRun;
+    if (run != null) {
+      return switch (run.phase) {
+        ChatRunPhase.creating => '正在发送',
+        ChatRunPhase.connecting => '正在连接',
+        ChatRunPhase.reconnecting => '正在重连',
+        ChatRunPhase.stopping => '正在停止',
+        ChatRunPhase.thinking => 'Thinking · 正在思考',
+        ChatRunPhase.toolCalling => 'Tool calling',
+        ChatRunPhase.replying => 'Replying · 正在回复',
+        _ => '正在生成',
+      };
+    }
+    final latest = _latestRun(conversation.runs);
+    if (latest == null) return '开始一段新的对话';
+    return switch (latest.phase) {
+      ChatRunPhase.failed => '回复失败',
+      ChatRunPhase.cancelled => '已停止',
+      ChatRunPhase.succeeded => '最近回复已完成',
+      _ => '最近回复尚未完成',
+    };
+  }
+
+  ChatRunState? _latestRun(List<ChatRunState> runs) {
+    ChatRunState? latest;
+    for (final run in runs) {
+      if (latest == null || run.createdAt.isAfter(latest.createdAt)) {
+        latest = run;
+      }
+    }
+    return latest;
+  }
+
+  Future<void> _confirmDeleteCurrent(ChatConversation conversation) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除会话？'),
+        content: Text('“${conversation.displayName}”及其消息将从列表中删除。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final chat = widget.chat!;
+    if (conversation.activeRun != null) {
+      if (conversation.activeRun!.runId == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('创建结果尚未确认，请先恢复本轮状态再删除。')));
+        return;
+      }
+      await chat.cancel(conversation.sessionId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('已请求停止，请等待本轮进入终态后再删除。')));
+      return;
+    }
+    final deleted = await chat.deleteSession(conversation.sessionId);
+    if (!mounted || deleted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('删除失败，会话仍保留在历史列表中。')));
+  }
+
+  void _saveCurrentDraft() {
+    final chat = widget.chat;
+    final id = _chatSessionId;
+    if (chat == null || id == null) return;
+    if (chat.conversations.any(
+      (conversation) => conversation.sessionId == id,
+    )) {
+      chat.updateDraft(id, _draftController.text);
+    }
+  }
+
   Future<void> _startNewDraft() async {
     if (_draftController.text.isNotEmpty) {
       final discard = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('开始新会话？'),
-          content: const Text('当前草稿还没有保存，开始新会话会清空它。'),
+          content: const Text('演示页面只保留一个临时草稿，开始新会话会清空它。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -392,8 +550,8 @@ class _ChatPaper extends StatelessWidget {
     ),
     child: Padding(
       padding: compact
-          ? const EdgeInsets.fromLTRB(20, 16, 20, 12)
-          : const EdgeInsets.fromLTRB(24, 28, 24, 20),
+          ? const EdgeInsets.fromLTRB(20, 12, 20, 10)
+          : const EdgeInsets.fromLTRB(24, 20, 24, 16),
       child: child,
     ),
   );
@@ -411,43 +569,38 @@ class _PageTitle extends StatelessWidget {
     children: [
       const Text(
         'A LITTLE EVERYDAY',
-        style: TextStyle(
-          fontSize: 10,
-          letterSpacing: 2.4,
-          color: NotebookTheme.ink,
-        ),
+        style: TextStyle(fontSize: 10, letterSpacing: 2.4),
       ),
       const SizedBox(height: 8),
       Text(title, style: Theme.of(context).textTheme.titleLarge),
       const SizedBox(height: 6),
-      Text(
-        subtitle,
-        style: const TextStyle(fontSize: 12, color: NotebookTheme.ink),
-      ),
+      Text(subtitle, style: const TextStyle(fontSize: 12)),
       const SizedBox(height: 12),
       const Divider(),
     ],
   );
 }
 
-class _ChatHistoryPlaceholder extends StatelessWidget {
-  const _ChatHistoryPlaceholder();
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
 
   @override
-  Widget build(BuildContext context) => const Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) => Row(
     children: [
-      _PageTitle(title: '历史会话', subtitle: '会话列表与搜索将在后续阶段开放。'),
-      Center(
-        child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Text(
-            '本阶段提供当前会话的发送与回复。',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: NotebookTheme.ink),
-          ),
-        ),
-      ),
+      Expanded(child: SelectableText(message)),
+      TextButton(onPressed: onRetry, child: const Text('重试')),
     ],
   );
+}
+
+List<ChatRunState> _oldestFirst(List<ChatRunState> runs) {
+  final indexed = runs.indexed.toList()
+    ..sort((left, right) {
+      final byTime = left.$2.createdAt.compareTo(right.$2.createdAt);
+      return byTime == 0 ? left.$1.compareTo(right.$1) : byTime;
+    });
+  return indexed.map((entry) => entry.$2).toList(growable: false);
 }

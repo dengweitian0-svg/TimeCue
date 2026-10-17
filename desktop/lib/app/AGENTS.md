@@ -12,6 +12,10 @@
 - `managed_backend.dart`：BackendConfiguration 读取 runner 的固定绝对路径快照并为配置存储提供同一目录；WindowsOwnedProcessPlatform 封装进程窄接口与代次事件。ManagedBackend 使用安全新身份、16 KiB 单行 ready、完整 health/PID/能力及存活核验，共享 10 秒启动截止；运行中退出使旧资格失效，不自动重启，零预算释放仍回收自有 Job。
 - `timecue_app.dart` 的托管启动门禁只在双重核验后挂载 RoomScreen 和初始化通知桥；失败诊断可滚动并恢复可见窗口，激活仅缓冲最新目标。DesktopLifecycle 的 finalizeOwnedProcess 在所有优雅等待后无条件执行，再释放共享资源并销毁窗口。
 
+- `chat_runtime_guard.dart`：每次聊天请求检查服务健康和托管就绪；健康响应回来后复核退出/失效代次及身份，首次健康身份锚定只允许一次。启动门禁前的托管未就绪可重试，业务开放后的失效终止聊天运行；明确退出先关闭聊天守卫，再停止模型和释放传输。聊天传输释放异常由宿主隔离，不阻断通知、仓储和窗口清理。
+
+- `timecue_app.dart`：宿主监听 Flutter 生命周期和 DesktopLifecycle 显隐，只在 hidden、paused、detached 或窗口隐藏时暂停聊天 UI 通知；inactive 失焦及页面导航不暂停。后台仍消费聊天事件，恢复时发布累计状态；应用释放时移除生命周期监听。
+
 - ManagedBackend 在创建每个异步启动操作前检查取消和截止，启动状态监听重入请求退出时不创建 Go；健康错配通过正式 invalidateRuntime 操作撤销整个托管运行。
 - ManagedBackend 失败诊断保留有界 stderr；退出后同代次到达的输出仍补充可见错误，重试清空旧诊断。
 - ManagedBackend.prepareStart 在创建 Go 前执行配置准备，与 ready/health 共用启动截止；准备失败进入可见失败和显式重试，取消或预算耗尽后不创建进程。main.dart 注入同一 ConfigFileStore 的旧数据库目录修正，外连及演示模式不执行该写入。

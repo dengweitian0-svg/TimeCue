@@ -23,6 +23,7 @@ class TimeCueApp extends StatelessWidget {
     this.desktop,
     this.notificationViews,
     this.chat,
+    this.closeChatRuntime,
     this.releaseChatTransport,
     this.configFiles,
     this.ownsRepository = false,
@@ -33,6 +34,7 @@ class TimeCueApp extends StatelessWidget {
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
   final ChatViewModel? chat;
+  final VoidCallback? closeChatRuntime;
   final VoidCallback? releaseChatTransport;
   final ConfigFileStore? configFiles;
   final bool ownsRepository;
@@ -55,6 +57,7 @@ class TimeCueApp extends StatelessWidget {
       desktop: desktop,
       notificationViews: notificationViews,
       chat: chat,
+      closeChatRuntime: closeChatRuntime,
       releaseChatTransport: releaseChatTransport,
       configFiles: configFiles,
       ownsRepository: ownsRepository,
@@ -72,6 +75,7 @@ class DesktopShell extends StatefulWidget {
     this.desktop,
     this.notificationViews,
     this.chat,
+    this.closeChatRuntime,
     this.releaseChatTransport,
     this.configFiles,
     this.ownsRepository = false,
@@ -82,6 +86,7 @@ class DesktopShell extends StatefulWidget {
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
   final ChatViewModel? chat;
+  final VoidCallback? closeChatRuntime;
   final VoidCallback? releaseChatTransport;
   final ConfigFileStore? configFiles;
   final bool ownsRepository;
@@ -97,6 +102,8 @@ class _DesktopShellState extends State<DesktopShell> {
   String? _pendingPayload;
   bool _runtimeReleased = false;
   bool _chatTransportReleased = false;
+  bool _appPresentationHidden = false;
+  bool _lifecycleReleased = false;
   String? _notificationError;
 
   Future<void> _activate(String payload) async {
@@ -140,6 +147,31 @@ class _DesktopShellState extends State<DesktopShell> {
     if (instance != null) widget.notificationViews?.observeRuntime(instance);
   }
 
+  void _appLifecycleChanged(AppLifecycleState state) {
+    _appPresentationHidden = switch (state) {
+      AppLifecycleState.hidden ||
+      AppLifecycleState.paused ||
+      AppLifecycleState.detached => true,
+      _ => false,
+    };
+    _syncChatPresentationVisibility();
+  }
+
+  void _syncChatPresentationVisibility() {
+    if (_runtimeReleased) return;
+    final desktopHidden = widget.desktop?.state == DesktopState.hidden;
+    widget.chat?.setPresentationVisible(
+      !_appPresentationHidden && !desktopHidden,
+    );
+  }
+
+  void _releaseLifecycleListener() {
+    if (_lifecycleReleased) return;
+    _lifecycleReleased = true;
+    widget.desktop?.removeListener(_syncChatPresentationVisibility);
+    _lifecycle.dispose();
+  }
+
   void _showReader() {
     if (!mounted || _readerOpen || widget.notificationViews?.active != true) {
       return;
@@ -176,15 +208,28 @@ class _DesktopShellState extends State<DesktopShell> {
   void _stopNewWork() {
     widget.backend?.cancelStart();
     widget.notifications?.stopClaiming();
+    _closeChatRuntime();
     widget.chat?.stopNewWork();
     widget.chat?.invalidateRuntime();
     _releaseChatTransport();
   }
 
+  void _closeChatRuntime() {
+    try {
+      widget.closeChatRuntime?.call();
+    } catch (_) {
+      // 守卫关闭失败不能阻断模型和其他运行资源的释放。
+    }
+  }
+
   void _releaseChatTransport() {
     if (_chatTransportReleased) return;
     _chatTransportReleased = true;
-    widget.releaseChatTransport?.call();
+    try {
+      widget.releaseChatTransport?.call();
+    } catch (_) {
+      // 聊天传输释放失败不能阻断通知、仓储及窗口退出清理。
+    }
   }
 
   @override
@@ -200,6 +245,7 @@ class _DesktopShellState extends State<DesktopShell> {
     }
     final desktop = widget.desktop;
     if (desktop != null) {
+      desktop.addListener(_syncChatPresentationVisibility);
       desktop.onActivate = _activate;
       desktop.stopNewWork = _stopNewWork;
       desktop.stopOwnedProcess = widget.backend?.stopOwned;
@@ -213,9 +259,8 @@ class _DesktopShellState extends State<DesktopShell> {
       desktop.releaseResources = _releaseRuntime;
       unawaited(desktop.initialize());
     }
-    widget.backend?.addListener(_backendChanged);
-    unawaited(widget.backend?.start());
     _lifecycle = AppLifecycleListener(
+      onStateChange: _appLifecycleChanged,
       onExitRequested: () async {
         if (widget.desktop case final desktop?) {
           await desktop.requestExit();
@@ -232,11 +277,16 @@ class _DesktopShellState extends State<DesktopShell> {
         return AppExitResponse.exit;
       },
     );
+    _syncChatPresentationVisibility();
+    widget.backend?.addListener(_backendChanged);
+    unawaited(widget.backend?.start());
   }
 
   void _releaseRuntime() {
     if (_runtimeReleased) return;
     _runtimeReleased = true;
+    _releaseLifecycleListener();
+    _closeChatRuntime();
     widget.backend?.removeListener(_backendChanged);
     widget.backend?.dispose();
     widget.notificationViews?.removeListener(_showReader);
@@ -250,7 +300,7 @@ class _DesktopShellState extends State<DesktopShell> {
 
   @override
   void dispose() {
-    _lifecycle.dispose();
+    _releaseLifecycleListener();
     widget.desktop?.dispose();
     _releaseRuntime();
     _historyRequests.dispose();

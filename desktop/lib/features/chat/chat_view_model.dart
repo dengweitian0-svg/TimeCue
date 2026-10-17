@@ -25,10 +25,23 @@ class ChatViewModel extends ChangeNotifier {
   final int maxReconnectAttempts;
   final Map<String, ChatConversation> _conversations = {};
   final List<String> _conversationOrder = [];
+  final Set<String> _historySessionIds = {};
+  final Set<String> _deletedSessionIds = {};
+  final Map<String, int> _sessionGenerations = {};
+  final Map<String, ChatRunState> _runsById = {};
   String? _selectedSessionId;
   int _runtimeGeneration = 0;
   bool _acceptingOperations = true;
+  String? _runtimeError;
+  bool _historyLoading = false;
+  bool _historyLoaded = false;
+  String? _historyError;
+  int _historyCompletedCount = 0;
+  int _historyTotalCount = 0;
+  Future<void>? _historyFuture;
   bool _disposed = false;
+  bool _presentationVisible = true;
+  final ChangeNotifier _historyNotifier = ChangeNotifier();
   bool _notifyScheduled = false;
   Timer? _notifyTimer;
 
@@ -36,6 +49,43 @@ class ChatViewModel extends ChangeNotifier {
   List<ChatConversation> get conversations => List.unmodifiable(
     _conversationOrder.map((id) => _conversations[id]!).toList(),
   );
+
+  /// 已从服务端索引的会话，按最新 run 创建时间倒序排列。
+  List<ChatConversation> get historyConversations => List.unmodifiable(
+    _historySessionIds
+        .map((id) => _conversations[id])
+        .whereType<ChatConversation>()
+        .toList()
+      ..sort((a, b) => b.latestCreatedAt.compareTo(a.latestCreatedAt)),
+  );
+
+  /// 是否正在加载历史索引。
+  bool get historyLoading => _historyLoading;
+
+  /// 是否完成过一次历史索引；部分失败仍会标记为已加载。
+  bool get historyLoaded => _historyLoaded;
+
+  /// 历史会话 ID 列表整体读取失败时的错误。
+  String? get historyError => _historyError;
+
+  /// 已处理的历史会话数量。
+  int get historyCompletedCount => _historyCompletedCount;
+
+  /// 本轮历史索引需要处理的会话数量。
+  int get historyTotalCount => _historyTotalCount;
+
+  /// 是否至少有一个会话详情或运行快照读取失败。
+  bool get historyHasFailures =>
+      historyConversations.any((conversation) => conversation.error != null);
+
+  /// 后端运行身份失效时用于解释禁用操作的原因。
+  String? get runtimeError => _runtimeError;
+
+  /// 当前运行身份是否仍允许发起服务端操作。
+  bool get acceptingOperations => _acceptingOperations && !_disposed;
+
+  /// 仅在历史索引、进度或列表元数据变化时通知，避免 SSE 增量重建历史树。
+  Listenable get historyListenable => _historyNotifier;
 
   /// 当前选中的会话；未选择时返回 null。
   ChatConversation? get selectedConversation =>
@@ -57,8 +107,269 @@ class ChatViewModel extends ChangeNotifier {
   bool canSend(String sessionId) {
     final conversation = _conversations[sessionId];
     if (!_acceptingOperations || conversation == null) return false;
+    if (conversation.isDeleting ||
+        _historyLoading ||
+        _historyError != null ||
+        historyHasFailures ||
+        (_historySessionIds.contains(sessionId) &&
+            !conversation.historyLoaded)) {
+      return false;
+    }
     if (conversation.activeRun != null) return false;
     return activeRunCount < 3;
+  }
+
+  /// 读取历史会话并建立名称及正式回复摘要索引；并发最多四个会话。
+  Future<void> loadHistory({bool refresh = false}) async {
+    _ensureUsable();
+    if (!acceptingOperations) return;
+    if (_historyLoading) {
+      if (!refresh && _historyFuture != null) return _historyFuture;
+      return;
+    }
+    if (_historyLoaded && !refresh) return;
+    final generation = _runtimeGeneration;
+    _historyLoading = true;
+    _historyError = null;
+    _historyCompletedCount = 0;
+    _historyTotalCount = 0;
+    _scheduleNotify();
+    _scheduleHistoryNotify();
+    final future = _loadHistory(generation);
+    _historyFuture = future;
+    await future;
+  }
+
+  Future<void> _loadHistory(int generation) async {
+    try {
+      final ids = await _gateway.listSessions();
+      if (!_isRuntimeCurrent(generation)) return;
+      final uniqueIds = ids
+          .toSet()
+          .where((id) => !_deletedSessionIds.contains(id))
+          .toList();
+      _historyTotalCount = uniqueIds.length;
+      for (final sessionId in uniqueIds) {
+        _registerHistoryPlaceholder(sessionId);
+      }
+      _scheduleNotify();
+      _scheduleHistoryNotify();
+      final queue = List<String>.from(uniqueIds);
+      final workers = List<Future<void>>.generate(min(4, queue.length), (
+        _,
+      ) async {
+        while (queue.isNotEmpty && _isRuntimeCurrent(generation)) {
+          final sessionId = queue.removeAt(0);
+          await _loadHistorySession(sessionId, generation);
+          if (!_isRuntimeCurrent(generation)) return;
+          _historyCompletedCount++;
+          _scheduleNotify();
+          _scheduleHistoryNotify();
+        }
+      });
+      await Future.wait(workers);
+      if (!_isRuntimeCurrent(generation)) return;
+      _historyLoaded = true;
+      _scheduleHistoryNotify();
+    } catch (error) {
+      if (_isRuntimeCurrent(generation)) _historyError = _errorMessage(error);
+      _scheduleHistoryNotify();
+    } finally {
+      if (_isRuntimeCurrent(generation)) {
+        _historyLoading = false;
+        _historyFuture = null;
+        _scheduleNotify();
+        _scheduleHistoryNotify();
+      }
+    }
+  }
+
+  Future<void> _loadHistorySession(String sessionId, int generation) async {
+    if (_deletedSessionIds.contains(sessionId)) return;
+    final sessionGeneration = (_sessionGenerations[sessionId] ?? 0) + 1;
+    _sessionGenerations[sessionId] = sessionGeneration;
+    final existing = _conversations.putIfAbsent(
+      sessionId,
+      () => ChatConversation._(sessionId: sessionId, isLocal: false),
+    );
+    if (existing.isDeleting) return;
+    final creationInProgress = _hasUnconfirmedCreation(existing);
+    if (!creationInProgress) {
+      _registerHistoryPlaceholder(sessionId, existing: existing);
+      existing._historyLoaded = false;
+      _scheduleNotify();
+      _scheduleHistoryNotify();
+    }
+    try {
+      final session = await _gateway.getSession(sessionId);
+      if (!_isSessionCurrent(generation, sessionId, sessionGeneration)) return;
+      if (session.sessionId != sessionId) {
+        throw StateError('会话详情响应的 session ID 与当前会话不匹配');
+      }
+      // 创建结果不明时，run_ids 可能已包含同一幂等请求创建的 run。
+      // 契约没有幂等键可用于匹配，因此保留原占位，等待用户显式重试确认。
+      if (_hasUnconfirmedCreation(existing)) return;
+      existing._name = session.name;
+      existing._error = null;
+      _scheduleNotify();
+      _scheduleHistoryNotify();
+      // 保持服务端顺序，并复用已运行的 run，避免重置游标或连接。
+      final orderedRuns = <ChatRunState>[];
+      final runsToConnect = <ChatRunState>[];
+      final newlyLoadedRuns = <String, ChatRunState>{};
+      for (final runId in session.runIds) {
+        final cached = _runsById[runId];
+        if (cached != null) {
+          if (cached.sessionId != sessionId) {
+            throw StateError('缓存运行所属的 session ID 与当前会话不匹配');
+          }
+          if (!cached.isTerminal) {
+            final snapshot = await _gateway.getRun(runId);
+            if (!_isSessionCurrent(generation, sessionId, sessionGeneration)) {
+              return;
+            }
+            if (_hasUnconfirmedCreation(existing)) return;
+            if (snapshot.runId != runId || snapshot.sessionId != sessionId) {
+              throw StateError('运行快照身份与当前会话不匹配');
+            }
+            _mergeSnapshot(cached, snapshot);
+            if (!cached.isTerminal &&
+                snapshot.status == ChatRunStatus.running) {
+              runsToConnect.add(cached);
+            }
+          }
+          orderedRuns.add(cached);
+          continue;
+        }
+        final snapshot = await _gateway.getRun(runId);
+        if (!_isSessionCurrent(generation, sessionId, sessionGeneration)) {
+          return;
+        }
+        if (_hasUnconfirmedCreation(existing)) return;
+        if (snapshot.runId != runId || snapshot.sessionId != sessionId) {
+          throw StateError('运行快照身份与当前会话不匹配');
+        }
+        final state = ChatRunState._fromSnapshot(snapshot);
+        newlyLoadedRuns[runId] = state;
+        orderedRuns.add(state);
+        if (snapshot.status == ChatRunStatus.running) {
+          runsToConnect.add(state);
+        }
+      }
+      final serverRunIds = session.runIds.toSet();
+      for (final current in existing._runs) {
+        if (current.runId == null || !serverRunIds.contains(current.runId)) {
+          if (!orderedRuns.contains(current)) orderedRuns.add(current);
+        }
+      }
+      if (_hasUnconfirmedCreation(existing)) return;
+      _runsById.addAll(newlyLoadedRuns);
+      existing._runs
+        ..clear()
+        ..addAll(orderedRuns);
+      existing._historyLoaded = true;
+      for (final run in runsToConnect) {
+        unawaited(_connect(run, generation));
+      }
+    } catch (error) {
+      if (!_isSessionCurrent(generation, sessionId, sessionGeneration)) return;
+      existing._error = _errorMessage(error);
+    }
+    _scheduleNotify();
+    _scheduleHistoryNotify();
+  }
+
+  void _registerHistoryPlaceholder(
+    String sessionId, {
+    ChatConversation? existing,
+  }) {
+    if (_deletedSessionIds.contains(sessionId)) return;
+    final conversation =
+        existing ??
+        _conversations.putIfAbsent(
+          sessionId,
+          () => ChatConversation._(sessionId: sessionId, isLocal: false),
+        );
+    if (conversation.isDeleting || _hasUnconfirmedCreation(conversation)) {
+      return;
+    }
+    conversation._isLocal = false;
+    _historySessionIds.add(sessionId);
+    if (!_conversationOrder.contains(sessionId)) {
+      _conversationOrder.add(sessionId);
+    }
+  }
+
+  /// 刷新单个会话详情及正式 run 快照，旧代次响应不会覆盖新结果。
+  Future<void> refreshSession(String sessionId) async {
+    _ensureUsable();
+    if (!acceptingOperations ||
+        _deletedSessionIds.contains(sessionId) ||
+        _conversations[sessionId]?.isDeleting == true) {
+      return;
+    }
+    await _loadHistorySession(sessionId, _runtimeGeneration);
+  }
+
+  /// 删除服务端会话；运行仍占用名额时拒绝，成功后用墓碑阻止迟到恢复。
+  Future<bool> deleteSession(String sessionId) async {
+    _ensureUsable();
+    final conversation = _conversations[sessionId];
+    if (!acceptingOperations ||
+        conversation == null ||
+        conversation.isLocal ||
+        conversation.activeRun != null ||
+        conversation.isDeleting ||
+        (_historySessionIds.contains(sessionId) &&
+            !conversation.historyLoaded)) {
+      return false;
+    }
+    final generation = _runtimeGeneration;
+    _sessionGenerations[sessionId] = (_sessionGenerations[sessionId] ?? 0) + 1;
+    conversation._isDeleting = true;
+    _scheduleNotify();
+    _scheduleHistoryNotify();
+    try {
+      final result = await _gateway.deleteSession(sessionId);
+      if (!_isRuntimeCurrent(generation)) return false;
+      if (result.sessionId != sessionId) {
+        throw StateError('删除响应的 session ID 与当前会话不匹配');
+      }
+      _deletedSessionIds.add(sessionId);
+      _historySessionIds.remove(sessionId);
+      _conversations.remove(sessionId);
+      _conversationOrder.remove(sessionId);
+      for (final runId in conversation._runs.map((run) => run.runId)) {
+        if (runId != null) _runsById.remove(runId);
+      }
+      _sessionGenerations[sessionId] =
+          (_sessionGenerations[sessionId] ?? 0) + 1;
+      if (_selectedSessionId == sessionId) _selectedSessionId = null;
+      _scheduleNotify();
+      _scheduleHistoryNotify();
+      return true;
+    } catch (error) {
+      if (_isRuntimeCurrent(generation)) {
+        conversation._isDeleting = false;
+        conversation._error = _errorMessage(error);
+        _scheduleNotify();
+        _scheduleHistoryNotify();
+      }
+      return false;
+    }
+  }
+
+  /// 更新会话独立阅读位置及是否跟随最新消息。
+  void updateReadingPosition(
+    String sessionId, {
+    required double offset,
+    required bool followLatest,
+  }) {
+    if (_disposed) return;
+    final conversation = _conversations[sessionId];
+    if (conversation == null) return;
+    conversation._readingOffset = offset.isFinite ? max(0, offset) : 0;
+    conversation._followLatest = followLatest;
   }
 
   /// 新建仅保存在本地的空会话；首次发送时才请求服务端。
@@ -73,6 +384,7 @@ class ChatViewModel extends ChangeNotifier {
     _conversationOrder.add(id);
     _selectedSessionId = id;
     _scheduleNotify();
+    _scheduleHistoryNotify();
     return conversation;
   }
 
@@ -85,6 +397,7 @@ class ChatViewModel extends ChangeNotifier {
     if (_selectedSessionId == sessionId) return;
     _selectedSessionId = sessionId;
     _scheduleNotify();
+    _scheduleHistoryNotify();
   }
 
   /// 更新指定会话的独立输入草稿。
@@ -108,6 +421,7 @@ class ChatViewModel extends ChangeNotifier {
       sessionId: conversation.sessionId,
       input: input,
       model: model,
+      createdAt: DateTime.now(),
       phase: ChatRunPhase.creating,
       connectionState: ChatConnectionState.idle,
     );
@@ -115,6 +429,7 @@ class ChatViewModel extends ChangeNotifier {
     conversation._draft = '';
     conversation._error = null;
     _scheduleNotify();
+    _scheduleHistoryNotify();
     await _createRun(conversation, run);
   }
 
@@ -129,6 +444,7 @@ class ChatViewModel extends ChangeNotifier {
     run._phase = ChatRunPhase.creating;
     run._creationUncertain = false;
     _scheduleNotify();
+    _scheduleHistoryNotify();
     await _createRun(conversation, run);
   }
 
@@ -143,6 +459,7 @@ class ChatViewModel extends ChangeNotifier {
     run._phase = ChatRunPhase.stopping;
     run._error = null;
     _scheduleNotify();
+    _scheduleHistoryNotify();
     try {
       final result = await _gateway.cancelRun(run.runId!);
       if (!_isCurrent(generation, run)) return;
@@ -164,6 +481,7 @@ class ChatViewModel extends ChangeNotifier {
       run._phase = run._statusPhase;
     }
     _scheduleNotify();
+    _scheduleHistoryNotify();
   }
 
   /// 在自动重连预算耗尽后，按原游标人工恢复单个 run 的连接。
@@ -187,10 +505,27 @@ class ChatViewModel extends ChangeNotifier {
     _acceptingOperations = false;
   }
 
+  /// 控制界面通知；隐藏期间继续处理事件，重新显示时发布一次最新状态。
+  void setPresentationVisible(bool visible) {
+    if (_disposed || _presentationVisible == visible) return;
+    _presentationVisible = visible;
+    if (!visible) {
+      _notifyTimer?.cancel();
+      _notifyTimer = null;
+      _notifyScheduled = false;
+      return;
+    }
+    notifyListeners();
+    _historyNotifier.notifyListeners();
+  }
+
   /// 隔离当前运行代次并释放事件连接，供宿主退出或后端失效时调用。
   void invalidateRuntime() {
     ++_runtimeGeneration;
     _acceptingOperations = false;
+    _runtimeError ??= '聊天服务已失效，请重新打开应用后继续。';
+    _historyLoading = false;
+    _historyFuture = null;
     for (final run in _allRuns) {
       run._retryTimer?.cancel();
       run._retryTimer = null;
@@ -202,12 +537,14 @@ class ChatViewModel extends ChangeNotifier {
       }
     }
     _scheduleNotify();
+    _scheduleHistoryNotify();
   }
 
   Future<void> _createRun(
     ChatConversation conversation,
     ChatRunState run,
   ) async {
+    if (!acceptingOperations) return;
     final generation = _runtimeGeneration;
     try {
       final result = await _gateway.createRun(
@@ -222,7 +559,12 @@ class ChatViewModel extends ChangeNotifier {
       run._status = ChatRunStatus.running;
       run._phase = ChatRunPhase.connecting;
       conversation._isLocal = false;
+      conversation._historyLoaded = true;
+      _historySessionIds.add(conversation.sessionId);
+      run._createdAt = DateTime.now();
+      _runsById[result.runId] = run;
       _scheduleNotify();
+      _scheduleHistoryNotify();
       if (!_acceptingOperations) return;
       unawaited(_refreshSessionName(conversation, generation));
       await _connect(run, generation);
@@ -238,6 +580,7 @@ class ChatViewModel extends ChangeNotifier {
         run._error = _errorMessage(error);
       }
       _scheduleNotify();
+      _scheduleHistoryNotify();
     }
   }
 
@@ -245,9 +588,18 @@ class ChatViewModel extends ChangeNotifier {
     ChatConversation conversation,
     int generation,
   ) async {
+    final sessionGeneration =
+        (_sessionGenerations[conversation.sessionId] ?? 0) + 1;
+    _sessionGenerations[conversation.sessionId] = sessionGeneration;
     try {
       final session = await _gateway.getSession(conversation.sessionId);
-      if (_disposed || generation != _runtimeGeneration) return;
+      if (!_isSessionCurrent(
+        generation,
+        conversation.sessionId,
+        sessionGeneration,
+      )) {
+        return;
+      }
       if (_conversations[conversation.sessionId] != conversation) return;
       if (session.sessionId != conversation.sessionId) {
         throw StateError('会话名称响应的 session ID 与当前会话不匹配');
@@ -255,11 +607,18 @@ class ChatViewModel extends ChangeNotifier {
       conversation._name = session.name;
       conversation._error = null;
     } catch (error) {
-      if (_disposed || generation != _runtimeGeneration) return;
+      if (!_isSessionCurrent(
+        generation,
+        conversation.sessionId,
+        sessionGeneration,
+      )) {
+        return;
+      }
       if (_conversations[conversation.sessionId] != conversation) return;
       conversation._error = _errorMessage(error);
     }
     _scheduleNotify();
+    _scheduleHistoryNotify();
   }
 
   Future<void> _connect(ChatRunState run, int generation) async {
@@ -271,6 +630,8 @@ class ChatViewModel extends ChangeNotifier {
     }
     if (run._retryTimer != null) return;
     if (run._subscription != null) return;
+    final previousPhase = run._phase;
+    final previousConnection = run._connectionState;
     final connectionEpoch = ++run._connectionEpoch;
     run._connectionState = run._reconnectAttempts == 0
         ? ChatConnectionState.connected
@@ -279,6 +640,7 @@ class ChatViewModel extends ChangeNotifier {
       run._phase = ChatRunPhase.reconnecting;
     }
     _scheduleNotify();
+    _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
     try {
       final stream = _gateway.runEvents(
         run.runId!,
@@ -329,11 +691,14 @@ class ChatViewModel extends ChangeNotifier {
         run.isTerminal) {
       return;
     }
+    final previousPhase = run._phase;
+    final previousConnection = run._connectionState;
     if (signal is ChatRunEventsNoContent) {
       ++run._connectionEpoch;
       final subscription = run._subscription;
       run._subscription = null;
       if (subscription != null) await subscription.cancel();
+      _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
       if (!_acceptingOperations) return;
       await _loadRunSnapshot(run, generation);
       if (_isCurrent(generation, run) && !run.isTerminal) {
@@ -349,6 +714,7 @@ class ChatViewModel extends ChangeNotifier {
       ++run._connectionEpoch;
       if (subscription != null) await subscription.cancel();
       _scheduleReconnect(run, generation, StateError('事件序号存在缺口'));
+      _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
       return;
     }
 
@@ -380,6 +746,7 @@ class ChatViewModel extends ChangeNotifier {
         final subscription = run._subscription;
         run._subscription = null;
         if (subscription != null) await subscription.cancel();
+        _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
         _scheduleNotify();
         if (!_acceptingOperations) return;
         await _loadRunSnapshot(run, generation);
@@ -391,10 +758,13 @@ class ChatViewModel extends ChangeNotifier {
     run._lastEventId = event.eventId;
     run._status = ChatRunStatus.running;
     _scheduleNotify();
+    _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
   }
 
   Future<void> _loadRunSnapshot(ChatRunState run, int generation) async {
     if (run.runId == null) return;
+    final previousPhase = run._phase;
+    final previousConnection = run._connectionState;
     try {
       final snapshot = await _gateway.getRun(run.runId!);
       if (!_isCurrent(generation, run)) return;
@@ -403,6 +773,7 @@ class ChatViewModel extends ChangeNotifier {
         throw StateError('运行快照身份与当前会话不匹配');
       }
       run._status = snapshot.status;
+      run._createdAt = snapshot.createdAt;
       if (snapshot.error != null) {
         run._error = snapshot.error!.message;
       } else if (snapshot.status != ChatRunStatus.running) {
@@ -432,6 +803,34 @@ class ChatViewModel extends ChangeNotifier {
       run._error = _errorMessage(error);
     }
     _scheduleNotify();
+    _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
+  }
+
+  void _mergeSnapshot(ChatRunState run, ChatRun snapshot) {
+    if (run.isTerminal) return;
+    run._createdAt = snapshot.createdAt;
+    if (snapshot.status == ChatRunStatus.running) {
+      run._status = ChatRunStatus.running;
+      run._error = snapshot.error?.message;
+      return;
+    }
+    run._status = snapshot.status;
+    run._rawText = snapshot.output ?? '';
+    run._error = snapshot.error?.message;
+    run._cancelPending = false;
+    run._phase = switch (snapshot.status) {
+      ChatRunStatus.succeeded => ChatRunPhase.succeeded,
+      ChatRunStatus.failed => ChatRunPhase.failed,
+      ChatRunStatus.cancelled => ChatRunPhase.cancelled,
+      ChatRunStatus.running => ChatRunPhase.running,
+    };
+    run._connectionState = ChatConnectionState.idle;
+    run._retryTimer?.cancel();
+    run._retryTimer = null;
+    ++run._connectionEpoch;
+    final subscription = run._subscription;
+    run._subscription = null;
+    if (subscription != null) unawaited(subscription.cancel());
   }
 
   Future<void> _connectionLost(
@@ -445,12 +844,15 @@ class ChatViewModel extends ChangeNotifier {
         run.isTerminal) {
       return;
     }
+    final previousPhase = run._phase;
+    final previousConnection = run._connectionState;
     ++run._connectionEpoch;
     final subscription = run._subscription;
     run._subscription = null;
     if (subscription != null) await subscription.cancel();
     run._connectionState = ChatConnectionState.disconnected;
     run._error = _errorMessage(error);
+    _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
     if (!_acceptingOperations) {
       _scheduleNotify();
       return;
@@ -464,6 +866,8 @@ class ChatViewModel extends ChangeNotifier {
   void _scheduleReconnect(ChatRunState run, int generation, Object error) {
     if (!_isCurrent(generation, run) || run.isTerminal) return;
     if (!_acceptingOperations) return;
+    final previousPhase = run._phase;
+    final previousConnection = run._connectionState;
     run._connectionState = ChatConnectionState.disconnected;
     run._error ??= _errorMessage(error);
     if (run._reconnectAttempts >= maxReconnectAttempts) {
@@ -471,9 +875,13 @@ class ChatViewModel extends ChangeNotifier {
           ? ChatRunPhase.stopping
           : ChatRunPhase.reconnecting;
       _scheduleNotify();
+      _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
       return;
     }
-    if (run._retryTimer != null) return;
+    if (run._retryTimer != null) {
+      _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
+      return;
+    }
     final attempt = ++run._reconnectAttempts;
     run._phase = run._cancelPending
         ? ChatRunPhase.stopping
@@ -486,6 +894,18 @@ class ChatViewModel extends ChangeNotifier {
       unawaited(_connect(run, generation));
     });
     _scheduleNotify();
+    _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
+  }
+
+  void _notifyHistoryOnRunStateChange(
+    ChatRunState run,
+    ChatRunPhase previousPhase,
+    ChatConnectionState previousConnection,
+  ) {
+    if (run._phase != previousPhase ||
+        run._connectionState != previousConnection) {
+      _scheduleHistoryNotify();
+    }
   }
 
   bool _isCurrent(int generation, ChatRunState run) =>
@@ -495,6 +915,22 @@ class ChatViewModel extends ChangeNotifier {
         (conversation) => conversation._runs.contains(run),
       );
 
+  bool _isRuntimeCurrent(int generation) =>
+      !_disposed && generation == _runtimeGeneration && _acceptingOperations;
+
+  bool _isSessionCurrent(
+    int generation,
+    String sessionId,
+    int sessionGeneration,
+  ) =>
+      _isRuntimeCurrent(generation) &&
+      !_deletedSessionIds.contains(sessionId) &&
+      _conversations[sessionId]?.isDeleting != true &&
+      _sessionGenerations[sessionId] == sessionGeneration;
+
+  bool _hasUnconfirmedCreation(ChatConversation conversation) =>
+      conversation._runs.any((run) => !run.isTerminal && run.runId == null);
+
   ChatConversation _requireConversation(String sessionId) {
     final conversation = _conversations[sessionId];
     if (conversation == null) throw ArgumentError.value(sessionId, 'sessionId');
@@ -502,12 +938,21 @@ class ChatViewModel extends ChangeNotifier {
   }
 
   void _scheduleNotify() {
-    if (_disposed || _notifyScheduled) return;
+    if (_disposed || !_presentationVisible || _notifyScheduled) return;
     _notifyScheduled = true;
     _notifyTimer = Timer(const Duration(milliseconds: 16), () {
       _notifyTimer = null;
       _notifyScheduled = false;
-      if (!_disposed) notifyListeners();
+      if (!_disposed && _presentationVisible) notifyListeners();
+    });
+  }
+
+  void _scheduleHistoryNotify() {
+    if (_disposed || !_presentationVisible) return;
+    scheduleMicrotask(() {
+      if (!_disposed && _presentationVisible) {
+        _historyNotifier.notifyListeners();
+      }
     });
   }
 
@@ -527,6 +972,7 @@ class ChatViewModel extends ChangeNotifier {
       run._subscription = null;
       if (subscription != null) unawaited(subscription.cancel());
     }
+    _historyNotifier.dispose();
     super.dispose();
   }
 }
@@ -542,6 +988,13 @@ class ChatConversation {
 
   /// 服务端提供的会话名称，空字符串表示服务端名称为空。
   String get name => _name;
+
+  /// 对列表和页头使用的名称；空名称使用本地化占位，不改写服务端值。
+  String get displayName => _isLocal
+      ? '新会话'
+      : _name.isEmpty
+      ? '未命名会话'
+      : _name;
   bool _isLocal;
 
   /// 会话是否仍是尚未首次发送的本地草稿。
@@ -554,10 +1007,49 @@ class ChatConversation {
 
   /// 会话名称读取失败时显示的内联错误。
   String? get error => _error;
+  bool _historyLoaded = false;
+
+  /// 此会话详情和 run 快照是否已成功读取。
+  bool get historyLoaded => _historyLoaded;
+  bool _isDeleting = false;
+
+  /// 服务端删除请求是否正在进行。
+  bool get isDeleting => _isDeleting;
+  double _readingOffset = 0;
+
+  /// 会话独立保存的消息阅读位置。
+  double get readingOffset => _readingOffset;
+  bool _followLatest = true;
+
+  /// 阅读位置是否仍跟随最新消息。
+  bool get followLatest => _followLatest;
   final List<ChatRunState> _runs = [];
 
   /// 当前会话已有的运行记录。
   List<ChatRunState> get runs => List.unmodifiable(_runs);
+
+  /// 最近正式成功回复的纯文本摘要，最多四十个字符。
+  String get summary {
+    final completed =
+        _runs
+            .where(
+              (run) =>
+                  (run.status == ChatRunStatus.succeeded ||
+                      run.status == ChatRunStatus.cancelled) &&
+                  run.rawText.trim().isNotEmpty,
+            )
+            .toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return completed.isEmpty ? '' : _plainSummary(completed.first.rawText);
+  }
+
+  /// 会话最新 run 的服务端创建时间；空会话使用本地创建时刻。
+  DateTime get latestCreatedAt => _runs.isEmpty
+      ? _createdAt
+      : _runs
+            .map((run) => run.createdAt)
+            .reduce((left, right) => left.isAfter(right) ? left : right);
+  final DateTime _createdAt = DateTime.now();
 
   /// 当前会话唯一的非终态 run。
   ChatRunState? get activeRun =>
@@ -572,11 +1064,41 @@ class ChatRunState {
     required this.sessionId,
     required this.input,
     required this.model,
+    required DateTime createdAt,
     required ChatRunPhase phase,
     required ChatConnectionState connectionState,
   }) : _messageId = messageId,
+       _createdAt = createdAt,
        _phase = phase,
        _connectionState = connectionState;
+
+  factory ChatRunState._fromSnapshot(ChatRun snapshot) {
+    final state = ChatRunState._(
+      messageId: snapshot.runId,
+      idempotencyKey: snapshot.runId,
+      sessionId: snapshot.sessionId,
+      input: snapshot.input,
+      model: snapshot.model,
+      createdAt: snapshot.createdAt,
+      phase: switch (snapshot.status) {
+        ChatRunStatus.running => ChatRunPhase.running,
+        ChatRunStatus.succeeded => ChatRunPhase.succeeded,
+        ChatRunStatus.failed => ChatRunPhase.failed,
+        ChatRunStatus.cancelled => ChatRunPhase.cancelled,
+      },
+      connectionState: ChatConnectionState.idle,
+    );
+    state._runId = snapshot.runId;
+    state._status = snapshot.status;
+    state._rawText = snapshot.output ?? '';
+    state._error = snapshot.error?.message;
+    return state;
+  }
+
+  DateTime _createdAt;
+
+  /// run 的服务端创建时间，用于历史排序和日期分组。
+  DateTime get createdAt => _createdAt;
 
   final String _messageId;
 
@@ -695,6 +1217,30 @@ String _errorMessage(Object error) => error is ChatHttpError
     : error is StateError
     ? error.message.toString()
     : error.toString().replaceFirst('Exception: ', '');
+
+String _plainSummary(String markdown) {
+  final text = markdown
+      .replaceAll(RegExp(r'```[^\n]*\n?|~~~[^\n]*\n?'), '')
+      .replaceAllMapped(
+        RegExp(r'!\[([^\]]*)\]\([^)]*\)'),
+        (match) => match.group(1) ?? '',
+      )
+      .replaceAllMapped(
+        RegExp(r'\[([^\]]+)\]\([^)]*\)'),
+        (match) => match.group(1) ?? '',
+      )
+      .replaceAll(RegExp(r'<[^>]+>'), '')
+      .replaceAllMapped(
+        RegExp(r'(^|\s)#{1,6}\s*'),
+        (match) => match.group(1) ?? '',
+      )
+      .replaceAll(RegExp(r'[*_~`>|]'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  final characters = text.runes.toList(growable: false);
+  if (characters.length <= 40) return text;
+  return '${String.fromCharCodes(characters.take(39))}…';
+}
 
 Duration _defaultRetryDelay(int attempt) =>
     Duration(milliseconds: min(250 * (1 << (attempt - 1)), 4000));

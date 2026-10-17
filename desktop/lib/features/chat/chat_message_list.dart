@@ -11,12 +11,18 @@ class ChatMessageList extends StatefulWidget {
     super.key,
     required this.sessionId,
     required this.runs,
+    required this.initialOffset,
+    required this.initiallyFollowLatest,
+    required this.onReadingPosition,
     required this.onRetryCreate,
     required this.onRetryConnection,
   });
 
   final String sessionId;
   final List<ChatRunState> runs;
+  final double initialOffset;
+  final bool initiallyFollowLatest;
+  final void Function(double offset, bool followLatest) onReadingPosition;
   final ValueChanged<String> onRetryCreate;
   final ValueChanged<String> onRetryConnection;
 
@@ -26,7 +32,16 @@ class ChatMessageList extends StatefulWidget {
 
 class _ChatMessageListState extends State<ChatMessageList> {
   final ScrollController _scrollController = ScrollController();
-  bool _followLatest = true;
+  late bool _followLatest;
+  bool _restorePending = true;
+  double _lastSavedOffset = -1;
+
+  @override
+  void initState() {
+    super.initState();
+    _followLatest = widget.initiallyFollowLatest;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restorePosition());
+  }
 
   @override
   void didUpdateWidget(covariant ChatMessageList oldWidget) {
@@ -37,11 +52,40 @@ class _ChatMessageListState extends State<ChatMessageList> {
           _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         }
       });
+    } else if (_restorePending) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _restorePosition());
     }
+  }
+
+  void _restorePosition() {
+    if (!mounted || !_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    final target = _followLatest
+        ? position.maxScrollExtent
+        : widget.initialOffset.clamp(
+            position.minScrollExtent,
+            position.maxScrollExtent,
+          );
+    _scrollController.jumpTo(target);
+    _restorePending = false;
+    _savePosition(force: true);
+  }
+
+  void _savePosition({bool force = false}) {
+    if (!_scrollController.hasClients) return;
+    final offset = _scrollController.position.pixels;
+    if (!force &&
+        (offset - _lastSavedOffset).abs() < 4 &&
+        _followLatest == widget.initiallyFollowLatest) {
+      return;
+    }
+    _lastSavedOffset = offset;
+    widget.onReadingPosition(offset, _followLatest);
   }
 
   @override
   void dispose() {
+    _savePosition(force: true);
     _scrollController.dispose();
     super.dispose();
   }
@@ -64,6 +108,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
               if (following != _followLatest) {
                 setState(() => _followLatest = following);
               }
+              _savePosition();
             }
             return false;
           },
@@ -97,6 +142,9 @@ class _ChatMessageListState extends State<ChatMessageList> {
                 duration: const Duration(milliseconds: 180),
                 curve: Curves.easeOut,
               );
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _savePosition(force: true);
+              });
             },
             icon: const Icon(Icons.south, size: 16),
             label: const Text('回到最新'),
@@ -181,7 +229,7 @@ class _ChatTurn extends StatelessWidget {
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
-                            _phaseLabel(run.phase),
+                            _phaseLabel(run),
                             style: const TextStyle(
                               fontSize: 12,
                               color: NotebookTheme.ink,
@@ -236,12 +284,12 @@ class _ChatTurn extends StatelessWidget {
   );
 }
 
-String _phaseLabel(ChatRunPhase phase) => switch (phase) {
+String _phaseLabel(ChatRunState run) => switch (run.phase) {
   ChatRunPhase.creating => '正在发送',
   ChatRunPhase.connecting => '正在连接',
   ChatRunPhase.running => '正在生成',
   ChatRunPhase.thinking => 'Thinking · 正在思考',
-  ChatRunPhase.toolCalling => 'Tool calling',
+  ChatRunPhase.toolCalling => 'Tool calling · 已发起 ${run.toolCalls.length} 次调用',
   ChatRunPhase.replying => 'Replying · 正在回复',
   ChatRunPhase.reconnecting => '正在重连',
   ChatRunPhase.stopping => '正在停止',

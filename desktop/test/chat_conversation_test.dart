@@ -8,6 +8,7 @@ import 'package:timecue_desktop/data/demo_notebook_repository.dart';
 import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 import 'package:timecue_desktop/features/chat/chat_composer.dart';
 import 'package:timecue_desktop/features/chat/chat_markdown_body.dart';
+import 'package:timecue_desktop/features/chat/chat_session_list.dart';
 import 'package:timecue_desktop/features/notebook/chat_spread.dart';
 import 'package:timecue_desktop/features/notebook/notebook_view_model.dart';
 import 'package:timecue_desktop/theme/notebook_theme.dart';
@@ -137,7 +138,7 @@ void main() {
     expect(find.byKey(const ValueKey('chat-stop-button')), findsOneWidget);
     expect(tester.takeException(), isNull);
 
-    await tester.drag(find.byType(ListView), const Offset(0, 100));
+    await tester.drag(_chatMessageList(tester), const Offset(0, 250));
     await tester.pumpAndSettle();
     final readingOffset = _verticalScrollOffset(tester);
     expect(readingOffset, greaterThan(0));
@@ -202,7 +203,7 @@ void main() {
           '${stoppedRun?.phase} ${stoppedRun?.lastEventId} ${stoppedRun?.status} ${stoppedRun?.error} snapshot=${gateway.snapshot.status}',
     );
     expect(chat.activeRunCount, 0);
-    expect(find.text('final cancellation checkpoint'), findsOneWidget);
+    expect(find.text('final cancellation checkpoint'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
 
     for (final (width, height, scale) in [(640.0, 480.0, 2.0)]) {
@@ -211,7 +212,7 @@ void main() {
       expect(find.widgetWithText(TextButton, '历史会话'), findsOneWidget);
       await tester.tap(find.widgetWithText(TextButton, '历史会话'));
       await tester.pump();
-      expect(find.text('本阶段提供当前会话的发送与回复。'), findsOneWidget);
+      expect(find.text('测试会话'), findsOneWidget);
       await tester.tap(find.widgetWithText(TextButton, '返回对话'));
       await tester.pump();
       expect(find.byKey(const ValueKey('chat-draft-input')), findsOneWidget);
@@ -278,6 +279,190 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('历史 run 按创建时间从旧到新显示，即使服务端按新到旧返回', (tester) async {
+    final repository = DemoNotebookRepository();
+    final notebook = NotebookViewModel(repository);
+    final gateway = _ControllableChatGateway()
+      ..historySessionIds = const ['session-history']
+      ..historyRunIds = const ['run-new', 'run-old']
+      ..historySnapshots = {
+        'run-new': _historyRun(
+          runId: 'run-new',
+          input: '新输入',
+          output: null,
+          status: ChatRunStatus.failed,
+          error: const ChatProtocolError(code: 'fixture', message: '测试失败'),
+          createdAt: DateTime.utc(2026, 10, 17, 2),
+        ),
+        'run-old': _historyRun(
+          runId: 'run-old',
+          input: '旧输入',
+          output: '旧回答',
+          createdAt: DateTime.utc(2026, 10, 17, 1),
+        ),
+      };
+    final chat = ChatViewModel(gateway: gateway);
+    addTearDown(() {
+      chat.dispose();
+      notebook.dispose();
+      repository.dispose();
+      gateway.dispose();
+    });
+    await chat.loadHistory();
+    chat.selectSession('session-history');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NotebookTheme.data,
+        home: Scaffold(
+          body: ChatSpread(model: notebook, chat: chat),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('旧输入'), findsOneWidget);
+    expect(find.text('新输入'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('旧输入')).dy,
+      lessThan(tester.getTopLeft(find.text('新输入')).dy),
+    );
+    final failureLabels = find.text('回复失败');
+    expect(failureLabels, findsNWidgets(2));
+    expect(
+      tester.getTopLeft(failureLabels.first).dy,
+      lessThan(tester.getTopLeft(failureLabels.last).dy),
+      reason: '页头需按最新 run 显示失败状态，消息区仍保留该轮状态。',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('切换会话后各自恢复阅读位置', (tester) async {
+    final repository = DemoNotebookRepository();
+    final notebook = NotebookViewModel(repository);
+    final gateway = _ControllableChatGateway()
+      ..historySessionIds = const ['session-a', 'session-b']
+      ..historyRunIdsBySession = const {
+        'session-a': ['run-a'],
+        'session-b': ['run-b'],
+      }
+      ..historyNames = const {'session-a': 'A会话', 'session-b': 'B会话'}
+      ..historySnapshots = {
+        'run-a': _historyRun(
+          sessionId: 'session-a',
+          runId: 'run-a',
+          input: 'A的问题',
+          output: _readingBody('A'),
+          createdAt: DateTime.utc(2026, 10, 17, 1),
+        ),
+        'run-b': _historyRun(
+          sessionId: 'session-b',
+          runId: 'run-b',
+          input: 'B的问题',
+          output: _readingBody('B'),
+          createdAt: DateTime.utc(2026, 10, 17, 2),
+        ),
+      };
+    final chat = ChatViewModel(gateway: gateway);
+    addTearDown(() {
+      chat.dispose();
+      notebook.dispose();
+      repository.dispose();
+      gateway.dispose();
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    await chat.loadHistory();
+    chat.selectSession('session-a');
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NotebookTheme.data,
+        home: Scaffold(
+          body: ChatSpread(model: notebook, chat: chat),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.drag(_messageList('session-a'), const Offset(0, 240));
+    await tester.pumpAndSettle();
+    final aOffset = _messageOffset(tester, 'session-a');
+    expect(aOffset, greaterThan(0));
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(ChatSessionList),
+        matching: find.text('B会话'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(chat.selectedSessionId, 'session-b');
+    await tester.tap(
+      find.descendant(
+        of: find.byType(ChatSessionList),
+        matching: find.text('A会话'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(chat.selectedSessionId, 'session-a');
+    expect(_messageOffset(tester, 'session-a'), closeTo(aOffset, 1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('创建结果未知时页头删除提示不会谎称已请求停止', (tester) async {
+    final repository = DemoNotebookRepository();
+    final notebook = NotebookViewModel(repository);
+    final gateway = _ControllableChatGateway()
+      ..historySessionIds = const ['session-uncertain']
+      ..historyRunIdsBySession = const {'session-uncertain': <String>[]}
+      ..historyNames = const {'session-uncertain': '创建中的会话'}
+      ..createCompleter = Completer<ChatCreateRunResult>();
+    final chat = ChatViewModel(gateway: gateway);
+    addTearDown(() {
+      chat.dispose();
+      notebook.dispose();
+      repository.dispose();
+      gateway.dispose();
+    });
+    await chat.loadHistory();
+    chat.selectSession('session-uncertain');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NotebookTheme.data,
+        home: Scaffold(
+          body: SizedBox(
+            width: 1280,
+            height: 760,
+            child: ChatSpread(model: notebook, chat: chat),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    chat.updateDraft('session-uncertain', '待确认的请求');
+    unawaited(chat.send('session-uncertain', model: 'deepseek-flash'));
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(chat.selectedConversation?.activeRun?.runId, isNull);
+
+    await tester.tap(find.byTooltip('会话操作'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('删除会话').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('创建结果尚未确认，请先恢复本轮状态再删除。'), findsOneWidget);
+    expect(find.text('已请求停止，请等待本轮进入终态后再删除。'), findsNothing);
+    expect(gateway.cancelCalls, 0);
+
+    gateway.createCompleter!.complete(const ChatCreateRunResult('run-late'));
+    await tester.pump(const Duration(milliseconds: 20));
+  });
+
   testWidgets('Markdown 代码复制将代码原文写入系统剪贴板', (tester) async {
     String? copiedText;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -309,11 +494,21 @@ void main() {
   });
 }
 
-double _verticalScrollOffset(WidgetTester tester) => tester
+Finder _chatMessageList(WidgetTester tester) => _messageList('session-ui');
+
+Finder _messageList(String sessionId) => find.descendant(
+  of: find.byKey(ValueKey('chat-message-list-$sessionId')),
+  matching: find.byType(ListView),
+);
+
+double _verticalScrollOffset(WidgetTester tester) =>
+    _messageOffset(tester, 'session-ui');
+
+double _messageOffset(WidgetTester tester, String sessionId) => tester
     .state<ScrollableState>(
       find
           .descendant(
-            of: find.byType(ListView),
+            of: find.byKey(ValueKey('chat-message-list-$sessionId')),
             matching: find.byType(Scrollable),
           )
           .first,
@@ -354,6 +549,11 @@ const _longReply = '''
 段落 29：这是较长的滚动内容，用来确认阅读位置不会被布局切换抢走。
 ''';
 
+String _readingBody(String prefix) => List<String>.generate(
+  48,
+  (index) => '$prefix 段落 $index：这是一段较长的历史回复，用来验证切换会话时独立保存阅读位置。',
+).join('\n\n');
+
 ChatSseEvent _frame(int id, ChatEventType type, Object data) =>
     ChatSseEvent(eventId: id, type: type, data: data);
 
@@ -386,6 +586,26 @@ ChatRun _terminalRun({required ChatRunStatus status, required String output}) =>
       finishedAt: DateTime.utc(2026, 10, 17, 1),
     );
 
+ChatRun _historyRun({
+  String sessionId = 'session-history',
+  required String runId,
+  required String input,
+  required String? output,
+  required DateTime createdAt,
+  ChatRunStatus status = ChatRunStatus.succeeded,
+  ChatProtocolError? error,
+}) => ChatRun(
+  runId: runId,
+  sessionId: sessionId,
+  model: 'deepseek-flash',
+  input: input,
+  status: status,
+  output: output,
+  error: error,
+  createdAt: createdAt,
+  finishedAt: createdAt.add(const Duration(minutes: 1)),
+);
+
 class _CreateCall {
   const _CreateCall(this.sessionId, this.input, this.model, this.key);
 
@@ -399,6 +619,13 @@ class _ControllableChatGateway implements ChatGateway {
   final events = StreamController<ChatRunEventSignal>.broadcast();
   final createCalls = <_CreateCall>[];
   int getRunCalls = 0;
+  int cancelCalls = 0;
+  List<String> historySessionIds = const [];
+  List<String> historyRunIds = const [];
+  Map<String, List<String>> historyRunIdsBySession = const {};
+  Map<String, String> historyNames = const {};
+  Map<String, ChatRun> historySnapshots = const {};
+  Completer<ChatCreateRunResult>? createCompleter;
   ChatRun snapshot = _terminalRun(
     status: ChatRunStatus.succeeded,
     output: '最终回答',
@@ -414,13 +641,15 @@ class _ControllableChatGateway implements ChatGateway {
     required String idempotencyKey,
   }) async {
     createCalls.add(_CreateCall(sessionId, input, model, idempotencyKey));
-    return const ChatCreateRunResult('run-ui');
+    return createCompleter == null
+        ? const ChatCreateRunResult('run-ui')
+        : createCompleter!.future;
   }
 
   @override
   Future<ChatRun> getRun(String runId) async {
     getRunCalls++;
-    return snapshot;
+    return historySnapshots[runId] ?? snapshot;
   }
 
   @override
@@ -428,17 +657,24 @@ class _ControllableChatGateway implements ChatGateway {
       events.stream;
 
   @override
-  Future<ChatCancelRunResult> cancelRun(String runId) async =>
-      ChatCancelRunResult(runId: runId, status: ChatRunStatus.running);
+  Future<ChatCancelRunResult> cancelRun(String runId) async {
+    cancelCalls++;
+    return ChatCancelRunResult(runId: runId, status: ChatRunStatus.running);
+  }
 
   @override
-  Future<ChatSession> getSession(String sessionId) async =>
-      ChatSession(sessionId: sessionId, name: '测试会话', runIds: const ['run-ui']);
+  Future<ChatSession> getSession(String sessionId) async => ChatSession(
+    sessionId: sessionId,
+    name: historyNames[sessionId] ?? '测试会话',
+    runIds:
+        historyRunIdsBySession[sessionId] ??
+        (historyRunIds.isEmpty ? const ['run-ui'] : historyRunIds),
+  );
 
   @override
   Future<ChatDeleteSessionResult> deleteSession(String sessionId) async =>
       ChatDeleteSessionResult(sessionId: sessionId, status: 'deleted');
 
   @override
-  Future<List<String>> listSessions() async => const [];
+  Future<List<String>> listSessions() async => historySessionIds;
 }

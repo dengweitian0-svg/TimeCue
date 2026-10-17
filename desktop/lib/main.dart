@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'app/desktop_lifecycle.dart';
+import 'app/chat_runtime_guard.dart';
 import 'app/managed_backend.dart';
 import 'app/timecue_app.dart';
 import 'app/windows_notification_bridge.dart';
@@ -10,6 +11,7 @@ import 'data/http_notebook_repository.dart';
 import 'features/chat/chat_view_model.dart';
 import 'features/notebook/notification_view_model.dart';
 
+/// 创建桌面宿主及其应用级日程、通知和聊天运行。
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final desktop = DesktopLifecycle(WindowsDesktopPlatform());
@@ -44,8 +46,7 @@ Future<void> main() async {
   late final HttpChatGateway chatGateway;
   late final ChatViewModel chat;
   var businessOpened = false;
-  var chatRuntimeLost = false;
-  String? chatRuntimeInstance;
+  late final ChatRuntimeGuard chatGuard;
   if (configuration.managed) {
     backend = ManagedBackend(
       platform: WindowsOwnedProcessPlatform(),
@@ -60,40 +61,28 @@ Future<void> main() async {
       if (backend!.ready) {
         businessOpened = true;
         repository.enableManagedRuntime(backend.instanceId!, pid: backend.pid);
+        chatGuard.markBusinessOpened();
       }
     });
   }
-  chatGateway = HttpChatGateway(
-    beforeRequest: () async {
-      if (chatRuntimeLost) throw StateError('聊天所属本地服务运行已失效。');
-      if (configuration.managed && !(backend?.ready ?? false)) {
-        throw StateError('自有本地服务尚未就绪。');
-      }
-      final runtime = await repository.deliveryRuntime();
-      if (configuration.managed && !(backend?.ready ?? false)) {
-        throw StateError('自有本地服务已失效。');
-      }
-      final expected = chatRuntimeInstance;
-      if (expected == null) {
-        chatRuntimeInstance = runtime.instanceId;
-      } else if (expected != runtime.instanceId) {
-        chatRuntimeLost = true;
-        chat.invalidateRuntime();
-        chatGateway.invalidateRuntime();
-        throw StateError('聊天所属本地服务身份已变化，旧操作不会提交到新运行。');
-      }
+  chatGateway = HttpChatGateway(beforeRequest: () => chatGuard.beforeRequest());
+  chat = ChatViewModel(gateway: chatGateway);
+  chatGuard = ChatRuntimeGuard(
+    managed: configuration.managed,
+    health: repository.deliveryRuntime,
+    managedReady: () => backend?.ready ?? true,
+    onInvalidated: () {
+      chat.invalidateRuntime();
+      chatGateway.invalidateRuntime();
     },
   );
-  chat = ChatViewModel(gateway: chatGateway);
   if (backend != null) {
     backend.onInvalidated = () {
       repository.invalidateManagedRuntime();
       if (businessOpened) {
-        chatRuntimeLost = true;
         notifications.invalidateRuntime();
         views.observeRuntime(null);
-        chat.invalidateRuntime();
-        chatGateway.invalidateRuntime();
+        chatGuard.invalidateRuntime();
       }
     };
   }
@@ -104,6 +93,7 @@ Future<void> main() async {
       desktop: desktop,
       notificationViews: views,
       chat: chat,
+      closeChatRuntime: chatGuard.close,
       releaseChatTransport: chatGateway.dispose,
       notifications: notifications,
       backend: backend,
