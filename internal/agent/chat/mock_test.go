@@ -110,6 +110,72 @@ func TestMockDeleteHidesSessionAndRunImmediately(t *testing.T) {
 	}
 }
 
+// TestMockGetSessionReturnsNamedSortedCopy 验证 session 名称原样返回，run ID 排序且不泄漏内部切片。
+func TestMockGetSessionReturnsNamedSortedCopy(t *testing.T) {
+	ctx := context.Background()
+	mock := NewMockWithOptions(MockOptions{})
+	sessionID := uuid.NewString()
+	created := []time.Time{
+		time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+	var runIDs []string
+	for _, createdAt := range created {
+		mock.now = func() time.Time { return createdAt }
+		runID, err := mock.CreateRun(ctx, CreateRunInput{
+			SessionID: sessionID, Input: "输入", Model: mockModel,
+			IdempotencyKey: "create_session:" + uuid.NewString(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runIDs = append(runIDs, runID)
+		if err := mock.ConfirmRun(runID, StatusSucceeded, nil, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mock.mu.Lock()
+	mock.sessions[sessionID].name = "中文会话名"
+	mock.mu.Unlock()
+
+	session, err := mock.GetSession(ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.SessionID != sessionID || session.SessionName != "中文会话名" {
+		t.Fatalf("session identity/name = %#v", session)
+	}
+	if len(session.RunIDs) != 2 {
+		t.Fatalf("run IDs = %v, want 2 IDs", session.RunIDs)
+	}
+	if session.RunIDs[0] != runIDs[1] {
+		t.Fatalf("run IDs are not sorted by creation time: %v", session.RunIDs)
+	}
+	session.RunIDs[0] = "changed"
+	again, err := mock.GetSession(ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.RunIDs[0] == "changed" {
+		t.Fatal("mutating returned run IDs changed internal session state")
+	}
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := mock.GetSession(cancelled, sessionID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("GetSession canceled context error = %v", err)
+	}
+	if _, err := mock.GetSession(ctx, uuid.NewString()); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("GetSession missing session error = %v", err)
+	}
+	if err := mock.DeleteSession(ctx, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mock.GetSession(ctx, sessionID); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("GetSession deleted session error = %v", err)
+	}
+}
+
 // TestMockCancelRemainsRunningUntilConfirmed 验证取消请求在终态确认前不改变 run 状态。
 func TestMockCancelRemainsRunningUntilConfirmed(t *testing.T) {
 	ctx := context.Background()

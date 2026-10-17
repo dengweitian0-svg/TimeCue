@@ -30,7 +30,7 @@ type chatServiceStub struct {
 	create             func(context.Context, chat.CreateRunInput) (string, error)
 	getRun             func(context.Context, string) (chat.Run, error)
 	cancel             func(context.Context, string) (chat.Status, error)
-	getSession         func(context.Context, string) ([]string, error)
+	getSession         func(context.Context, string) (chat.Session, error)
 	listSessions       func(context.Context) ([]string, error)
 	deleteSession      func(context.Context, string) error
 	subscribe          func(context.Context, string, int64) (*chat.Subscription, error)
@@ -74,11 +74,11 @@ func (s *chatServiceStub) CancelRun(ctx context.Context, id string) (chat.Status
 	return s.cancel(ctx, id)
 }
 
-// GetSession 记录会话查询并返回测试预设的 run ID 列表。
-func (s *chatServiceStub) GetSession(ctx context.Context, id string) ([]string, error) {
+// GetSession 记录会话查询并返回测试预设的受控 session 视图。
+func (s *chatServiceStub) GetSession(ctx context.Context, id string) (chat.Session, error) {
 	s.getSessionCalls++
 	if s.getSession == nil {
-		return nil, errors.New("unexpected GetSession call")
+		return chat.Session{}, errors.New("unexpected GetSession call")
 	}
 	return s.getSession(ctx, id)
 }
@@ -175,7 +175,7 @@ func TestChatHTTPRoutesAndDirectResponses_HTTP01_HTTP02(t *testing.T) {
 		getRun: func(context.Context, string) (chat.Run, error) {
 			return chat.Run{RunID: testRunID, SessionID: testSessionID, Model: "deepseek-flash", Input: "x", Status: chat.StatusRunning, CreatedAt: time.Date(2026, 10, 15, 15, 0, 0, 0, time.FixedZone("UTC+08:00", 8*3600))}, nil
 		},
-		getSession:    func(context.Context, string) ([]string, error) { return []string{}, nil },
+		getSession:    func(context.Context, string) (chat.Session, error) { return chat.Session{RunIDs: []string{}}, nil },
 		listSessions:  func(context.Context) ([]string, error) { return []string{}, nil },
 		deleteSession: func(context.Context, string) error { return nil },
 		cancel:        func(context.Context, string) (chat.Status, error) { return chat.StatusRunning, nil },
@@ -480,8 +480,8 @@ func TestCancelRunStatusAndNotFound_CANCEL01_CANCEL02_CANCEL03_CANCEL04(t *testi
 func TestSessionQueriesAndDeletion_SESSION01_SESSION02_SESSION03_DELETE01_DELETE02_DELETE03_DELETE04(t *testing.T) {
 	deleted := false
 	stub := &chatServiceStub{
-		getSession: func(context.Context, string) ([]string, error) {
-			return []string{testRunID, "d9428888-122b-4f6f-9b47-5ea7b2915211"}, nil
+		getSession: func(context.Context, string) (chat.Session, error) {
+			return chat.Session{SessionName: "中文会话", RunIDs: []string{testRunID, "d9428888-122b-4f6f-9b47-5ea7b2915211"}}, nil
 		},
 		listSessions: func(context.Context) ([]string, error) {
 			if deleted {
@@ -499,6 +499,9 @@ func TestSessionQueriesAndDeletion_SESSION01_SESSION02_SESSION03_DELETE01_DELETE
 	obj := decodeChatObject(t, response.Body.Bytes())
 	if _, ok := obj["data"]; ok {
 		t.Fatal("unexpected wrapper")
+	}
+	if sessionName, ok := obj["session_name"]; !ok || string(sessionName) != `"中文会话"` {
+		t.Fatalf("session_name=%s, want original Chinese name", sessionName)
 	}
 	var ids []string
 	_ = json.Unmarshal(obj["run_ids"], &ids)
@@ -535,16 +538,25 @@ func TestSessionQueriesAndDeletion_SESSION01_SESSION02_SESSION03_DELETE01_DELETE
 	if string(obj["sessions"]) != "[]" {
 		t.Fatalf("empty sessions must be []: %s", response.Body.String())
 	}
-	stub.getSession = func(context.Context, string) ([]string, error) { return []string{}, nil }
+	stub.getSession = func(context.Context, string) (chat.Session, error) { return chat.Session{RunIDs: []string{}}, nil }
 	response = chatRequest(router, "GET", "/v1/session/"+testSessionID, nil, nil)
 	obj = decodeChatObject(t, response.Body.Bytes())
 	if string(obj["run_ids"]) != "[]" {
 		t.Fatalf("empty run_ids must be []: %s", response.Body.String())
 	}
+	if sessionName, ok := obj["session_name"]; !ok || string(sessionName) != `""` {
+		t.Fatalf("session_name=%s, want empty JSON string", sessionName)
+	}
+	stub.getSession = func(context.Context, string) (chat.Session, error) { return chat.Session{}, nil }
+	response = chatRequest(router, "GET", "/v1/session/"+testSessionID, nil, nil)
+	obj = decodeChatObject(t, response.Body.Bytes())
+	if string(obj["run_ids"]) != "[]" {
+		t.Fatalf("nil run_ids must be []: %s", response.Body.String())
+	}
 	stub.deleteSession = func(context.Context, string) error { return chat.ErrSessionNotFound }
 	response = chatRequest(router, "DELETE", "/v1/session/"+testSessionID, nil, nil)
 	assertErrorResponse(t, response, 400, "session_not_found")
-	stub.getSession = func(context.Context, string) ([]string, error) { return nil, chat.ErrSessionNotFound }
+	stub.getSession = func(context.Context, string) (chat.Session, error) { return chat.Session{}, chat.ErrSessionNotFound }
 	response = chatRequest(router, "GET", "/v1/session/"+testSessionID, nil, nil)
 	assertErrorResponse(t, response, 400, "session_not_found")
 }
@@ -573,7 +585,7 @@ func TestInvalidUUIDPathsDoNotCallChatService_HTTP04(t *testing.T) {
 
 // TestRunAndSessionBusinessErrorMappings_HTTP03 验证 run 和 session 查询错误的 HTTP 映射。
 func TestRunAndSessionBusinessErrorMappings_HTTP03(t *testing.T) {
-	stub := &chatServiceStub{getRun: func(context.Context, string) (chat.Run, error) { return chat.Run{}, chat.ErrRunNotFound }, getSession: func(context.Context, string) ([]string, error) { return nil, chat.ErrSessionNotFound }, listSessions: func(context.Context) ([]string, error) { return nil, chat.ErrInvalidRequest }}
+	stub := &chatServiceStub{getRun: func(context.Context, string) (chat.Run, error) { return chat.Run{}, chat.ErrRunNotFound }, getSession: func(context.Context, string) (chat.Session, error) { return chat.Session{}, chat.ErrSessionNotFound }, listSessions: func(context.Context) ([]string, error) { return nil, chat.ErrInvalidRequest }}
 	router := newChatHTTPTestRouter(stub)
 	for _, tc := range []struct {
 		method, path string

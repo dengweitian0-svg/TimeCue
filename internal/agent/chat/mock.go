@@ -27,6 +27,7 @@ type MockOptions struct {
 }
 
 type mockSession struct {
+	name    string
 	deleted bool
 	runIDs  []string
 }
@@ -167,22 +168,22 @@ func (m *Mock) CancelRun(ctx context.Context, runID string) (Status, error) {
 	return StatusRunning, nil
 }
 
-// GetSession 返回 session 内按创建时间升序排列的可见 run ID。
-func (m *Mock) GetSession(ctx context.Context, sessionID string) ([]string, error) {
+// GetSession 返回 session 及其按创建时间升序排列的可见 run ID。
+func (m *Mock) GetSession(ctx context.Context, sessionID string) (Session, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return Session{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	session := m.sessions[sessionID]
 	if session == nil || session.deleted {
-		return nil, ErrSessionNotFound
+		return Session{}, ErrSessionNotFound
 	}
 	ids := append([]string(nil), session.runIDs...)
 	sort.SliceStable(ids, func(i, j int) bool {
 		return m.runs[ids[i]].run.CreatedAt.Before(m.runs[ids[j]].run.CreatedAt)
 	})
-	return ids, nil
+	return Session{SessionID: sessionID, SessionName: session.name, RunIDs: ids}, nil
 }
 
 // ListSessions 返回有 run 的未删除 session，按最新 run 创建时间降序排列。
