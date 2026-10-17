@@ -68,6 +68,13 @@ type Run struct {
 	FinishedAt *time.Time `json:"finished_at"`
 }
 
+// Session 是 HTTP API 与应用层之间共享的受控 session 视图。
+type Session struct {
+	SessionID   string   `json:"session_id"`
+	SessionName string   `json:"session_name"`
+	RunIDs      []string `json:"run_ids"`
+}
+
 // Event 保留下层提供的事件 ID 和 JSON 数据，不由 HTTP Handler 生成。
 type Event struct {
 	ID   int64           `json:"id"`
@@ -128,8 +135,8 @@ type Service interface {
 	GetRun(context.Context, string) (Run, error)
 	// CancelRun 请求取消 run，并返回当前状态。
 	CancelRun(context.Context, string) (Status, error)
-	// GetSession 按创建时间顺序返回 session 的 run ID。
-	GetSession(context.Context, string) ([]string, error)
+	// GetSession 查询 session 的受控视图，run ID 按创建时间排序。
+	GetSession(context.Context, string) (Session, error)
 	// ListSessions 按最新 run 创建时间返回可见 session ID。
 	ListSessions(context.Context) ([]string, error)
 	// DeleteSession 隐藏 session 并请求异步清理其 run。
