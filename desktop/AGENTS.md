@@ -29,6 +29,7 @@
 
 日程本提供“今天｜历史待确认｜日历”三标签，今日安排与两类待确认分开读取。今日/历史各自分页与选择，房间总数继续包含全部到期未确认。跨北京日期废弃旧分页、重读两范围并清理旧范围选择；查询和标签切换只读，不调用平台投递。
 
-- 真实启动默认 managed、当前用户 LocalAppData/TimeCue 及同目录 timecue-core.exe，可显式覆盖路径。开发外连显式指定 backend=external 和 data-dir。主实例握手前不挂载业务房间或执行通知，失败保留可见错误/重试/退出；隐藏不停止自有 Go，退出回填与 Go 协作共用 5 秒预算，零预算仍最终关闭 Job。
+- 真实启动默认 managed、同目录 timecue-core.exe，可显式覆盖路径；Release 默认使用当前用户 LocalAppData/TimeCue，Debug/Profile 默认使用 LocalAppData/TimeCue-Dev。开发外连显式指定 backend=external 和 data-dir。主实例握手前不挂载业务房间或执行通知，失败保留可见错误/重试/退出；隐藏不停止自有 Go，退出回填与 Go 协作共用 5 秒预算，零预算仍最终关闭 Job。
 - Windows Flutter 构建要求 Go 已安装并位于 PATH；平台构建每次编译 Go 服务并安装到 runner 同目录，使默认 managed 开发启动可直接创建自有服务。切换 managed/external 前需完整退出旧实例，Go 源码更改需退出并重新运行 Flutter，热重载不重建 Go。
 - 托管启动在创建 Go 前修正旧设置保存的数据库目录值，自动追加 timecue.db；设置只读视图显示原目录，不误取父目录。配置修正失败走启动错误/重试，不创建 Go 或迁移数据库。
+- Debug/Profile 的托管 Go 与 HTTP 服务使用端口 1145 和独立单实例身份；Release 使用端口 10086。显式数据目录不改写，external 模式不创建或停止手动 Go。

@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:timecue_desktop/app/managed_backend.dart';
 import 'package:timecue_desktop/app/desktop_lifecycle.dart';
 import 'package:timecue_desktop/contracts/notification_delivery.dart';
+import 'package:timecue_desktop/data/http_notebook_repository.dart'
+    show defaultNotebookApiBase;
 import 'desktop_lifecycle_test.dart' show FakeDesktop;
 
 const capabilities = [
@@ -27,7 +29,7 @@ class FakeProcess implements OwnedProcessPlatform {
     'event': 'ready',
     'instanceId': instance,
     'pid': 77,
-    'address': 'http://127.0.0.1:10086',
+    'address': defaultNotebookApiBase.origin,
     'apiVersion': 'v1',
     'capabilities': capabilities,
     ...?readyOverrides,
@@ -84,6 +86,10 @@ DeliveryRuntime runtime(
 }) => DeliveryRuntime(id ?? process.instance, pid: pid, capabilities: caps);
 
 void main() {
+  test('Debug/Profile 默认服务端口为 1145', () {
+    expect(defaultNotebookApiBase.port, 1145);
+  });
+
   test('启动准备完成后才创建 Go，准备失败可见且重试重新准备', () async {
     final process = FakeProcess();
     var preparations = 0;
@@ -256,6 +262,21 @@ void main() {
     await backend.start();
     expect(backend.ready, false);
     expect(backend.state, BackendState.failed);
+  });
+  test('ready 拒绝非当前构建端口并回收自有进程', () async {
+    final wrongPort = defaultNotebookApiBase.port == 1145 ? 10086 : 1145;
+    final process = FakeProcess()
+      ..readyOverrides = {'address': 'http://127.0.0.1:$wrongPort'};
+    final backend = ManagedBackend(
+      platform: process,
+      health: () async => runtime(process),
+    );
+    addTearDown(backend.dispose);
+    await backend.start();
+    expect(backend.ready, false);
+    expect(backend.state, BackendState.failed);
+    expect(process.releases, greaterThanOrEqualTo(1));
+    expect(process.living, false);
   });
   test('ready 后立即退出不能假就绪', () async {
     final process = FakeProcess();

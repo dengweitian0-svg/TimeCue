@@ -4,6 +4,7 @@
 #include <flutter/standard_method_codec.h>
 #include <shellapi.h>
 #include <optional>
+#include <vector>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -149,12 +150,19 @@ bool FlutterWindow::OnCreate() {
             }
             DWORD pid = 0;
             std::wstring failure;
+            std::vector<std::wstring> process_arguments = {
+                L"--data-dir",
+                LaunchWide(configuration.data_dir),
+                L"--instance-id",
+                LaunchWide(id) };
+#ifdef TIMECUE_DEVELOPMENT
+            // 开发构建使用独立端口，避免与正式服务争用。
+            process_arguments.push_back(L"--port");
+            process_arguments.push_back(L"1145");
+#endif
             if (!managed_process_->Start(
                     LaunchWide(configuration.executable),
-                    { L"--data-dir",
-                        LaunchWide(configuration.data_dir),
-                        L"--instance-id",
-                        LaunchWide(id) },
+                    process_arguments,
                     generation,
                     pid,
                     failure)) {

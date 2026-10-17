@@ -82,6 +82,28 @@ func request(router http.Handler, method, path, body, mediaType string) *httptes
 	return response
 }
 
+func TestRouterWithPortChecksConfiguredHost(t *testing.T) {
+	router := api.NewRouterWithPort(nil, nil, 1145)
+
+	allowed := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:1145/unknown", nil)
+	allowed.Host = "127.0.0.1:1145"
+	allowedResponse := httptest.NewRecorder()
+	router.ServeHTTP(allowedResponse, allowed)
+	if allowedResponse.Code != http.StatusNotFound {
+		t.Fatalf("configured host status %d, want %d", allowedResponse.Code, http.StatusNotFound)
+	}
+
+	for _, host := range []string{"127.0.0.1:10086", "localhost:1145", "127.0.0.2:1145"} {
+		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:1145/health", nil)
+		req.Host = host
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "Host must be 127.0.0.1:1145") {
+			t.Fatalf("host %q was not rejected with configured port: %d %s", host, response.Code, response.Body.String())
+		}
+	}
+}
+
 func requireStatus(t *testing.T, response *httptest.ResponseRecorder, want int) {
 	t.Helper()
 	if response.Code != want {

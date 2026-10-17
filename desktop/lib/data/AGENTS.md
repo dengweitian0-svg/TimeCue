@@ -25,6 +25,7 @@ HTTP 仓储使用 scope=today/history 的独立首分页、游标链、位置、
 注入的北京时间墙上时钟检测跨日；新日期同时重读两范围首分页及今日安排，首分页响应日期不一致时只重试一次，不发布混合日期。旧游标 400 后废弃续页链，旧请求按全局及范围代次失效。跨日读取失败保留旧内容，pendingCurrent=false 禁止旧今日选择提交。演示仓储按计划时间及 ID 排序、分类已有事实，支持可控时钟；不触发平台投递。
 
 - HttpNotebookRepository 的 managed 门禁初始只开放 health；握手后绑定预期身份，运行失效禁止新业务请求、作废旧读取并关闭连接。启动前失败保留 health 客户端供显式重试；不接管不同健康身份、不向新运行补交旧 attempt。
+- 默认 HTTP 地址随 Flutter 构建模式选择端口：Debug/Profile 使用 1145，Release 使用 10086；scheduler 请求和根 `/health` 共用同一地址来源。
 - 默认本地 HTTP 客户端对 loopback 地址直连，不经系统 HTTP 代理；调用方注入的客户端保留其代理行为。空正文、非法 JSON 和非对象响应提供含状态及端点的有限诊断，不暴露响应正文；204 仍作为无正文成功处理。
 
 - 托管健康读取同时绑定 PID；运行身份/PID 错配立即封锁仓储并通过 onManagedRuntimeLost 回流到 ManagedBackend，进入全应用失效状态，不能仅停止通知桥后仍允许页面继续操作。

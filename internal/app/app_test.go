@@ -21,6 +21,8 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/service/recovery"
 )
 
+const testRuntimePort = 1145
+
 // TestRequestTrackerWaitsAndRejectsNewRequests 验证退出先等待已接收请求。
 func TestRequestTrackerWaitsAndRejectsNewRequests(t *testing.T) {
 	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -76,7 +78,7 @@ func runtimeTestApp(t *testing.T) (*App, string) {
 
 // TestRuntimeReadyFailureAndCancellation 验证就绪失败、取消及端口冲突均由原生命周期清理。
 func TestRuntimeReadyFailureAndCancellation(t *testing.T) {
-	probe, err := net.Listen("tcp", "127.0.0.1:10086")
+	probe, err := net.Listen("tcp", "127.0.0.1:1145")
 	if err != nil {
 		t.Skip("固定端口已占用")
 	}
@@ -94,7 +96,7 @@ func TestRuntimeReadyFailureAndCancellation(t *testing.T) {
 				db.check = func() error { return errors.New("invalid schema") }
 			}
 			if kind == "occupied" {
-				listener, err := net.Listen("tcp", "127.0.0.1:10086")
+				listener, err := net.Listen("tcp", "127.0.0.1:1145")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -102,7 +104,7 @@ func TestRuntimeReadyFailureAndCancellation(t *testing.T) {
 			}
 			calls := 0
 			readyError := errors.New("ready writer failed")
-			err := app.Run(ctx, RuntimeOptions{Database: db, Log: &logger.Logger{}, Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), OnReady: func() error { calls++; return readyError }})
+			err := app.Run(ctx, RuntimeOptions{Database: db, Log: &logger.Logger{}, Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), Port: testRuntimePort, OnReady: func() error { calls++; return readyError }})
 			if kind == "ready-failed" && (!errors.Is(err, readyError) || calls != 1) {
 				t.Fatal(calls, err)
 			}
@@ -114,6 +116,9 @@ func TestRuntimeReadyFailureAndCancellation(t *testing.T) {
 			}
 			if kind != "canceled" && err == nil {
 				t.Fatal("启动失败被吞掉", kind)
+			}
+			if kind == "occupied" && !strings.Contains(err.Error(), "127.0.0.1:1145") {
+				t.Fatal("监听错误未包含实际端口", err)
 			}
 			select {
 			case <-db.closed:
@@ -132,7 +137,7 @@ func TestRuntimeReadyFailureAndCancellation(t *testing.T) {
 
 // TestRuntimeShutdownTimeoutCancelsConnection 超时取消连接，但忽略取消的业务仍须结束后再关闭数据库。
 func TestRuntimeShutdownTimeoutCancelsConnection(t *testing.T) {
-	probe, err := net.Listen("tcp", "127.0.0.1:10086")
+	probe, err := net.Listen("tcp", "127.0.0.1:1145")
 	if err != nil {
 		t.Skip("固定端口已占用")
 	}
@@ -154,7 +159,7 @@ func TestRuntimeShutdownTimeoutCancelsConnection(t *testing.T) {
 		<-release
 	})
 	go func() {
-		finished <- app.Run(ctx, RuntimeOptions{Database: db, Handler: handler, Log: &logger.Logger{}, OnReady: func() error { close(ready); return nil }})
+		finished <- app.Run(ctx, RuntimeOptions{Database: db, Handler: handler, Log: &logger.Logger{}, Port: testRuntimePort, OnReady: func() error { close(ready); return nil }})
 	}()
 	select {
 	case <-ready:
@@ -167,7 +172,7 @@ func TestRuntimeShutdownTimeoutCancelsConnection(t *testing.T) {
 	go func() {
 		defer close(clientDone)
 		client := &http.Client{Timeout: 9 * time.Second}
-		resp, _ := client.Get("http://127.0.0.1:10086/hold")
+		resp, _ := client.Get("http://127.0.0.1:1145/hold")
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
@@ -216,7 +221,7 @@ func (r heldRuntimeRecovery) RecoveryStart(ctx context.Context, _ time.Time) (ti
 
 // TestRuntimeReadyDoesNotWaitForRecovery 就绪不等待历史整理，退出仍等待恢复不再使用数据库。
 func TestRuntimeReadyDoesNotWaitForRecovery(t *testing.T) {
-	probe, err := net.Listen("tcp", "127.0.0.1:10086")
+	probe, err := net.Listen("tcp", "127.0.0.1:1145")
 	if err != nil {
 		t.Skip("固定端口已占用")
 	}
@@ -233,7 +238,7 @@ func TestRuntimeReadyDoesNotWaitForRecovery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
-		finished <- app.Run(ctx, RuntimeOptions{Database: db, Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), Log: &logger.Logger{}, OnReady: func() error { close(ready); return nil }})
+		finished <- app.Run(ctx, RuntimeOptions{Database: db, Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), Log: &logger.Logger{}, Port: testRuntimePort, OnReady: func() error { close(ready); return nil }})
 	}()
 	select {
 	case <-ready:
@@ -312,7 +317,7 @@ func (r dueSchedulerRepo) PrepareNotifications(_ context.Context, w model.Notifi
 
 // TestAppRuntimeDrainsAcceptedResults 验证取消后台工作不取消已接收的平台结果请求。
 func TestAppRuntimeDrainsAcceptedResults(t *testing.T) {
-	probe, err := net.Listen("tcp", "127.0.0.1:10086")
+	probe, err := net.Listen("tcp", "127.0.0.1:1145")
 	if err != nil {
 		t.Skip("本机业务端口正在使用，生命周期集成检查需空闲端口")
 	}
@@ -353,14 +358,14 @@ func TestAppRuntimeDrainsAcceptedResults(t *testing.T) {
 	defer cancel()
 	finished := make(chan error, 1)
 	go func() {
-		finished <- app.Run(ctx, RuntimeOptions{Database: db, Handler: handler, Log: &logger.Logger{}})
+		finished <- app.Run(ctx, RuntimeOptions{Database: db, Handler: handler, Log: &logger.Logger{}, Port: testRuntimePort})
 	}()
 	response := make(chan error, 1)
 	go func() {
 		client := &http.Client{Timeout: 3 * time.Second}
 		deadline := time.Now().Add(3 * time.Second)
 		for {
-			r, err := client.Get("http://127.0.0.1:10086/hold")
+			r, err := client.Get("http://127.0.0.1:1145/hold")
 			if err == nil {
 				_ = r.Body.Close()
 				if r.StatusCode != 200 {

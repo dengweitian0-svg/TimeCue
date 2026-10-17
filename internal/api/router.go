@@ -3,6 +3,7 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/api/handler/schedule"
 	"github.com/dengweitian0-svg/TimeCue/internal/api/handler/utils"
@@ -14,11 +15,16 @@ import (
 
 // NewRouter 注册本地业务接口；聊天路由仅在 App 提供聊天服务时启用。
 func NewRouter(app *application.App, healthCheck utils.HealthCheck, info ...application.RuntimeInfo) *gin.Engine {
+	return NewRouterWithPort(app, healthCheck, 10086, info...)
+}
+
+// NewRouterWithPort 注册绑定指定本机端口的业务接口。
+func NewRouterWithPort(app *application.App, healthCheck utils.HealthCheck, port int, info ...application.RuntimeInfo) *gin.Engine {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 	router.RedirectTrailingSlash = false
 	router.Use(middleware.HTTPLogger())
-	router.Use(middleware.HostGuard("127.0.0.1:10086", utils.ForbiddenHostResult()))
+	router.Use(middleware.HostGuard("127.0.0.1:"+strconv.Itoa(port), utils.ForbiddenHostResultForPort(port)))
 	router.Use(middleware.Recovery())
 	router.NoRoute(middleware.WrapHTTPHandler(func(*gin.Context) middleware.HTTPResult {
 		return utils.RouteNotFoundResult()

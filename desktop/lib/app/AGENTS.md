@@ -14,5 +14,6 @@
 - ManagedBackend 在创建每个异步启动操作前检查取消和截止，启动状态监听重入请求退出时不创建 Go；健康错配通过正式 invalidateRuntime 操作撤销整个托管运行。
 - ManagedBackend 失败诊断保留有界 stderr；退出后同代次到达的输出仍补充可见错误，重试清空旧诊断。
 - ManagedBackend.prepareStart 在创建 Go 前执行配置准备，与 ready/health 共用启动截止；准备失败进入可见失败和显式重试，取消或预算耗尽后不创建进程。main.dart 注入同一 ConfigFileStore 的旧数据库目录修正，外连及演示模式不执行该写入。
+- ManagedBackend ready 地址必须匹配当前构建默认 HTTP 地址；Debug/Profile 使用 1145，Release 使用 10086。
 
 - `operation_toast.dart`：应用级操作结果提示宿主与 success/error/warning 入口。宿主包在 MaterialApp.builder 的 Navigator 外层，最多显示三条可关闭提示；每条单独计时，页面操作通过当前 BuildContext 发出反馈，未装配宿主时安全忽略。

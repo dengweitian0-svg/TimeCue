@@ -1,10 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import '../contracts/notebook_repository.dart';
 import '../contracts/notification_delivery.dart';
 import '../contracts/notification_query.dart';
 import '../contracts/schedule_rules.dart';
+
+/// 提供当前构建模式使用的本地 Go HTTP 服务地址。
+Uri get defaultNotebookApiBase => Uri.parse(
+  'http://127.0.0.1:${kReleaseMode ? 10086 : 1145}/api/v1/scheduler/',
+);
 
 /// Go 是唯一业务事实来源；本类只保存只读快照，不展开规则。
 class HttpNotebookRepository extends NotebookRepository
@@ -15,12 +21,8 @@ class HttpNotebookRepository extends NotebookRepository
     DateTime Function()? now,
     bool managed = false,
   }) : _runtimeAccess = !managed,
-       _base = base ?? Uri.parse('http://127.0.0.1:10086/api/v1/scheduler/'),
-       _client =
-           client ??
-           _createClient(
-             base ?? Uri.parse('http://127.0.0.1:10086/api/v1/scheduler/'),
-           ),
+       _base = base ?? defaultNotebookApiBase,
+       _client = client ?? _createClient(base ?? defaultNotebookApiBase),
        _clock = now ?? beijingNow,
        _now = (now ?? beijingNow)();
 

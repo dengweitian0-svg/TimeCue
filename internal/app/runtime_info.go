@@ -20,6 +20,7 @@ type RuntimeOptions struct {
 	Database        RuntimeDatabase
 	Handler         http.Handler
 	Log             *logger.Logger
+	Port            int
 	OnReady         func() error
 	PrepareDatabase func(context.Context) error
 }

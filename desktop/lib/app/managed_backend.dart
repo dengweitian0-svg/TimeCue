@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../contracts/notification_delivery.dart';
 import '../data/config_file_store.dart';
+import '../data/http_notebook_repository.dart' show defaultNotebookApiBase;
 
 class BackendConfiguration {
   const BackendConfiguration({
@@ -263,7 +264,7 @@ class ManagedBackend extends ChangeNotifier {
 
   void _verify(Map<String, dynamic> value, {required bool readyMessage}) {
     if ((readyMessage && value['event'] != 'ready') ||
-        value['address'] != 'http://127.0.0.1:10086') {
+        value['address'] != defaultNotebookApiBase.origin) {
       throw const FormatException('ready 地址或事件不匹配。');
     }
     DeliveryRuntime.fromJson({

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -34,7 +35,13 @@ var (
 
 // ForbiddenHostResult 返回 Host 校验失败的响应事实。
 func ForbiddenHostResult() middleware.HTTPResult {
-	return middleware.ErrorResult(http.StatusForbidden, ErrForbiddenHost, nil)
+	return ForbiddenHostResultForPort(10086)
+}
+
+// ForbiddenHostResultForPort 返回与指定本机端口匹配的 Host 校验失败响应。
+func ForbiddenHostResultForPort(port int) middleware.HTTPResult {
+	apiError := NewAPIError(ErrForbiddenHost.Code, fmt.Sprintf("Host must be 127.0.0.1:%d", port))
+	return middleware.ErrorResult(http.StatusForbidden, apiError, nil)
 }
 
 // RouteNotFoundResult 返回未注册路由的响应事实。

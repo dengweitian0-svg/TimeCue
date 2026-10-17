@@ -25,7 +25,12 @@ int APIENTRY wWinMain(
     }
 
     // 业务装配之前取得主实例资格；发送端不创建 Flutter 引擎。
+#ifdef TIMECUE_DEVELOPMENT
+    // 开发构建与正式实例使用独立单实例锁及转交窗口。
+    SingleInstance single_instance(L".Development");
+#else
     SingleInstance single_instance;
+#endif
     auto command_line_arguments = GetCommandLineArguments();
     const auto instance_result = single_instance.Start(command_line_arguments);
     if (instance_result == SingleInstance::Result::forwarded) return EXIT_SUCCESS;
