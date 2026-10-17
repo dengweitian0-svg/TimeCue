@@ -233,7 +233,7 @@ Python 脚本自行建立并手动迁移新的测试数据库，不接收业务�
 
 当前完成范围为设计阶段 0、1：聊天 DTO、事件及错误映射、HTTP/SSE 夹具、固定 `gpt_markdown 1.3.4` 渲染依赖，以及 AI 双页/单栏框架、本地输入草稿和导航。发送、停止、服务端历史读取、搜索、删除、多会话运行及后台生成将在后续阶段接入；页面不展示虚构会话或回复。Go 聊天服务为内存 Mock，不保证真实模型、真实工具执行、持久化或跨后端重启恢复。
 
-`ChatGateway` 与日程仓储独立，声明七操作契约；session 详情的 `session_name` 映射为 `name`，保留中文与空字符串，不以用户首句替代。列表响应仍是 ID 数组。工具名取 `function.name`，SSE 事件 ID 与工具调用 ID 分离；现有工具事件不包含执行关系或单工具结果。取消受理、断线和 SSE 204 都不由页面推断为生成完成。
+`ChatGateway` 与日程仓储独立，声明七操作契约；session 详情的 `session_name` 映射为 `name`，保留中文与空字符串，不以用户首句替代。列表响应仍是 ID 数组。工具名取 `function.name`，SSE 事件 ID 与工具调用 ID 分离；现有工具事件不包含执行关系或单工具结果。取消受理、断线和 SSE 204 都不由页面推断为生成完成。当前 Go Mock 允许终态快照的 output 或 error 为 null，DTO 保留可空值，运行结果始终由服务端 status 表达，不以是否有正文推断终态。
 
 `test/fixtures/chat_fixtures.dart` 固定正常、Thinking、多工具、同名多次调用、交错、失败、取消、重复与重连数据，供后续传输和运行模型复用。`chat_contracts_test.dart` 校验 DTO 与错误边界；`chat_markdown_compatibility_test.dart` 使用 `gpt_markdown` 验证累计文本、未闭合语法、代码与表格；`chat_spread_test.dart`、`cat_chat_hotspot_test.dart` 覆盖本阶段布局、入口与焦点。可选截图属于 Widget 绘制证据，不能代替 Windows DPI、输入法和真实鼠标键盘验收。
 

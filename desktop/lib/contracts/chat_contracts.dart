@@ -97,12 +97,10 @@ class ChatRun {
         'terminal run must contain finished_at',
       );
     }
-    if (status == ChatRunStatus.succeeded &&
-            (output == null || errorJson != null) ||
-        status == ChatRunStatus.failed &&
-            (output != null || errorJson == null) ||
-        status == ChatRunStatus.cancelled &&
-            (output == null || errorJson != null)) {
+    if ((status == ChatRunStatus.succeeded ||
+                status == ChatRunStatus.cancelled) &&
+            errorJson != null ||
+        status == ChatRunStatus.failed && output != null) {
       throw const ChatContractFormatException('run fields do not match status');
     }
     return ChatRun(

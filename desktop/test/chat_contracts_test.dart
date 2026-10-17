@@ -57,6 +57,29 @@ void main() {
         expect(cancelled.error, isNull);
         expect(ChatRun.fromJson(ChatFixtures.runningRun()).finishedAt, isNull);
 
+        final succeededWithoutOutput = ChatFixtures.succeededRun()
+          ..['output'] = null;
+        final decodedSucceededWithoutOutput = ChatRun.fromJson(
+          succeededWithoutOutput,
+        );
+        expect(decodedSucceededWithoutOutput.status, ChatRunStatus.succeeded);
+        expect(decodedSucceededWithoutOutput.output, isNull);
+
+        final failedWithoutError = ChatFixtures.terminalRun(status: 'failed')
+          ..['error'] = null;
+        final decodedFailedWithoutError = ChatRun.fromJson(failedWithoutError);
+        expect(decodedFailedWithoutError.status, ChatRunStatus.failed);
+        expect(decodedFailedWithoutError.error, isNull);
+
+        final cancelledWithoutOutput = ChatFixtures.terminalRun(
+          status: 'cancelled',
+        )..['output'] = null;
+        final decodedCancelledWithoutOutput = ChatRun.fromJson(
+          cancelledWithoutOutput,
+        );
+        expect(decodedCancelledWithoutOutput.status, ChatRunStatus.cancelled);
+        expect(decodedCancelledWithoutOutput.output, isNull);
+
         for (final (field, value) in <(String, Object?)>[
           ('input', 42),
           ('output', 42),
@@ -72,6 +95,17 @@ void main() {
         final missingInput = ChatFixtures.succeededRun()..remove('input');
         expect(
           () => ChatRun.fromJson(missingInput),
+          throwsA(isA<ChatContractFormatException>()),
+        );
+        final missingOutput = ChatFixtures.succeededRun()..remove('output');
+        expect(
+          () => ChatRun.fromJson(missingOutput),
+          throwsA(isA<ChatContractFormatException>()),
+        );
+        final missingError = ChatFixtures.terminalRun(status: 'failed')
+          ..remove('error');
+        expect(
+          () => ChatRun.fromJson(missingError),
           throwsA(isA<ChatContractFormatException>()),
         );
         final inconsistent = ChatFixtures.succeededRun()
