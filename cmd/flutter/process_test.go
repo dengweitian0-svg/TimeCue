@@ -73,6 +73,7 @@ type testProcess struct {
 
 func launchProcess(t *testing.T, binary string, args ...string) *testProcess {
 	t.Helper()
+	args = append([]string{"--port", "1145"}, args...)
 	p := &testProcess{cmd: exec.Command(binary, args...), done: make(chan error, 1), lines: make(chan []byte, 1)}
 	p.cmd.Dir = t.TempDir()
 	var err error
@@ -132,7 +133,7 @@ func (p *testProcess) ready(t *testing.T) app.RuntimeInfo {
 		if err := json.Unmarshal(b, &ready); err != nil {
 			t.Fatal("stdout 混入非协议文本", string(b), err)
 		}
-		if ready.Event != "ready" || ready.Address != "http://127.0.0.1:10086" || ready.PID != p.cmd.Process.Pid {
+		if ready.Event != "ready" || ready.Address != "http://127.0.0.1:1145" || ready.PID != p.cmd.Process.Pid {
 			t.Fatal(ready)
 		}
 		return ready.RuntimeInfo
@@ -155,12 +156,12 @@ func TestManagedProcess(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatal(string(output), err)
 	}
-	probe, err := net.Listen("tcp", "127.0.0.1:10086")
+	probe, err := net.Listen("tcp", "127.0.0.1:1145")
 	if err != nil {
 		// 已占用时仍验证拒绝启动，不停止占用者。
 		p := launchProcess(t, binary, "--data-dir", processFixture(t, root, "valid"), "--instance-id", "occupied")
 		p.wait(t, false)
-		if !strings.Contains(p.stderr.String(), "listen") {
+		if !strings.Contains(p.stderr.String(), "127.0.0.1:1145") {
 			t.Fatal(p.stderr.String())
 		}
 		t.Skip("端口已占用；正常握手集成需空闲固定端口，占用拒绝已验证")
@@ -176,7 +177,7 @@ func TestManagedProcess(t *testing.T) {
 				t.Fatal(info)
 			}
 			client := &http.Client{Timeout: 3 * time.Second}
-			resp, err := client.Get("http://127.0.0.1:10086/health")
+			resp, err := client.Get("http://127.0.0.1:1145/health")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,7 +226,7 @@ func TestManagedProcess(t *testing.T) {
 				fixtureKind = "valid"
 			}
 			if kind == "occupied" {
-				listener, err := net.Listen("tcp", "127.0.0.1:10086")
+				listener, err := net.Listen("tcp", "127.0.0.1:1145")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -272,7 +273,7 @@ func TestManagedProcess(t *testing.T) {
 		deadline := time.Now().Add(5 * time.Second)
 		var info app.RuntimeInfo
 		for {
-			resp, err := client.Get("http://127.0.0.1:10086/health")
+			resp, err := client.Get("http://127.0.0.1:1145/health")
 			if err == nil {
 				var body struct{ Data app.RuntimeInfo }
 				_ = json.NewDecoder(resp.Body).Decode(&body)
@@ -327,7 +328,7 @@ func TestManagedProcess(t *testing.T) {
 		deadline := time.Now().Add(4 * time.Second)
 		var claim notification.DeliveryClaim
 		for {
-			resp, err := client.Post("http://127.0.0.1:10086/api/v1/notifications/claim", "application/json", strings.NewReader("{}"))
+			resp, err := client.Post("http://127.0.0.1:1145/api/v1/notifications/claim", "application/json", strings.NewReader("{}"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -346,7 +347,7 @@ func TestManagedProcess(t *testing.T) {
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		start := "http://127.0.0.1:10086/api/v1/notifications/delivery-attempts/" + claim.AttemptID + "/start"
+		start := "http://127.0.0.1:1145/api/v1/notifications/delivery-attempts/" + claim.AttemptID + "/start"
 		resp, err := client.Post(start, "application/json", strings.NewReader("{}"))
 		if err != nil {
 			t.Fatal(err)
@@ -374,7 +375,7 @@ func TestManagedProcess(t *testing.T) {
 		if resp.StatusCode != 404 {
 			t.Fatal("旧运行 attempt 仍可开始", resp.StatusCode)
 		}
-		resp, err = client.Get("http://127.0.0.1:10086/api/v1/notifications?deliveryTaskId=" + claim.DeliveryTaskID)
+		resp, err = client.Get("http://127.0.0.1:1145/api/v1/notifications?deliveryTaskId=" + claim.DeliveryTaskID)
 		if err != nil {
 			t.Fatal(err)
 		}

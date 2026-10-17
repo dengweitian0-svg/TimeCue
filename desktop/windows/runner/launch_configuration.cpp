@@ -118,7 +118,12 @@ bool ResolveLaunchDefaults(LaunchConfiguration& configuration) {
         PWSTR directory = nullptr;
         const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &directory);
         if (FAILED(result)) return false;
+#ifdef TIMECUE_DEVELOPMENT
+        // 开发构建使用隔离数据目录，显式 data-dir 仍优先保留。
+        configuration.data_dir = Utf8((std::filesystem::path(directory) / L"TimeCue-Dev").wstring());
+#else
         configuration.data_dir = Utf8((std::filesystem::path(directory) / L"TimeCue").wstring());
+#endif
         CoTaskMemFree(directory);
         if (configuration.data_dir.empty()) return false;
     }

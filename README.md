@@ -82,7 +82,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 
 ## 本地 HTTP API
 
-首次使用空数据库时，直接运行 `go run ./cmd/flutter --data-dir .`，入口建立版本 2 数据库。可识别的 Flutter 版本 1 或缺少 loaded 约束的版本 2 旧库先备份再事务升级，未知和 Wails 旧库保留并拒绝，见[迁移说明](migrations/README.md)。服务固定监听 `http://127.0.0.1:10086`，仅接受对应 Host，不启用浏览器 CORS 或应用令牌。启动前和 `GET /health` 检查版本、结构及 loaded 约束。
+首次使用空数据库时，可按下文开发命令启动，入口建立版本 2 数据库。可识别的 Flutter 版本 1 或缺少 loaded 约束的版本 2 旧库先备份再事务升级，未知和 Wails 旧库保留并拒绝，见[迁移说明](migrations/README.md)。Release 服务监听 `http://127.0.0.1:10086`；Flutter Debug/Profile 默认使用 `http://127.0.0.1:1145`。两者仅接受对应 Host，不启用浏览器 CORS 或应用令牌。启动前和 `GET /health` 检查版本、结构及 loaded 约束。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
@@ -119,14 +119,14 @@ AI Chat HTTP 接口当前进入仅 Mock 的 API 验收阶段，提供设计文�
 
 ## 开发与检查
 
-打包后的 Go 服务直接启动时，默认读取可执行文件目录下的 config.yaml，默认数据库为 db/timecue.db，日志为 log/timecue.jsonl。开发手动启动可使用 `go run ./cmd/flutter --data-dir .`；显式目录允许从其他工作目录启动。托管启动使用编译后的 Go 可执行文件：`timecue.exe --data-dir "D:\TimeCue 数据" --instance-id launch_123`，身份每次由父进程生成，允许 1–128 个 ASCII 字母、数字、连字符或下划线。托管模式 stdout 仅有一行 JSON ready；父端须同时核对健康响应的身份、PID、版本及能力。ready 不代表历史整理完成或通知已展示。
+打包后的 Go 服务直接启动时，默认读取可执行文件目录下的 config.yaml，默认数据库为 db/timecue.db，日志为 log/timecue.jsonl。开发手动启动使用 `go run ./cmd/flutter --data-dir . --port 1145`；CLI 省略端口时仍默认监听 10086，显式目录允许从其他工作目录启动。Flutter Debug/Profile 的 managed 宿主会自动向自有 Go 传入 `--port 1145`；非 Release 单实例标识与 Release 分开，省略 `data-dir` 时分别使用当前用户 LocalAppData/TimeCue-Dev 与 LocalAppData/TimeCue。开发仍建议显式指定仓库绝对目录，便于隔离本地数据。托管启动使用编译后的 Go 可执行文件：`timecue.exe --data-dir "D:\TimeCue 数据" --instance-id launch_123`，身份每次由父进程生成，允许 1–128 个 ASCII 字母、数字、连字符或下划线。托管模式 stdout 仅有一行 JSON ready；父端须同时核对健康响应的身份、PID、版本及能力。ready 不代表历史整理完成或通知已展示。
 
 托管父端通过专用 stdin 管道发送 `{"command":"shutdown"}` 加换行，或关闭写端请求退出。非法/超长/不完整命令及管道故障返回非零退出码；手动运行不受 stdin EOF 影响。Go 优雅关闭保护已接收请求，HTTP 5 秒超时后关闭连接，等待仍在使用数据库的工作结束。D8 的总计 5 秒退出预算、自有进程强退和 Job Object 由 Flutter 负责。固定端口的跨包进程与生命周期测试使用 `go test -p 1 ./...` 串行执行。
 
 当前 Go 模块要求 `go.mod` 所列的 Go 版本。在仓库根目录可以运行：
 
 ```powershell
-go run ./cmd/flutter --data-dir .
+go run ./cmd/flutter --data-dir . --port 1145
 ```
 
 这会启动本地 HTTP 服务，不会打开桌面窗口。入口显式初始化新库或升级可识别 Flutter 旧库；独立 `Sqlite.Connect` 不执行迁移，详见[迁移说明](migrations/README.md)。

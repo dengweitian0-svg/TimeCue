@@ -19,6 +19,7 @@ func TestStartupParameters(t *testing.T) {
 		{"--data-dir="}, {"--data-dir", ".", "--instance-id", "a b"},
 		{"--data-dir", ".", "--instance-id", strings.Repeat("a", 129)},
 		{"--data-dir", ".", "--instance-id", "中文"}, {"unexpected"}, {"--unknown"},
+		{"--port", "0"}, {"--port", "65536"}, {"--port", "-1"}, {"--port", "abc"},
 	} {
 		if _, err := parseStartup(args); err == nil {
 			t.Fatal("非法参数被接受", args)
@@ -29,7 +30,7 @@ func TestStartupParameters(t *testing.T) {
 		t.Fatal(err)
 	}
 	two, _ := parseStartup(nil)
-	if one.managed || one.instanceID == "" || one.instanceID == two.instanceID {
+	if one.managed || one.instanceID == "" || one.instanceID == two.instanceID || one.port != 10086 {
 		t.Fatal("手动运行身份未更新")
 	}
 	executable, err := os.Executable()
@@ -50,6 +51,10 @@ func TestStartupParameters(t *testing.T) {
 	managed, err := parseStartup([]string{"--data-dir", ".", "--instance-id", "launch_A-123"})
 	if err != nil || !managed.managed || managed.instanceID != "launch_A-123" {
 		t.Fatal(managed, err)
+	}
+	customPort, err := parseStartup([]string{"--port", "1145"})
+	if err != nil || customPort.port != 1145 {
+		t.Fatal(customPort, err)
 	}
 }
 
@@ -122,7 +127,7 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestReadyWriteFailure(t *testing.T) {
-	if err := writeReady(failingWriter{}, app.NewRuntimeInfo("launch")); !errors.Is(err, io.ErrClosedPipe) {
+	if err := writeReady(failingWriter{}, app.NewRuntimeInfo("launch"), 1145); !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatal(err)
 	}
 }

@@ -24,6 +24,13 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 	if ctx.Err() != nil {
 		return nil
 	}
+	port := options.Port
+	if port == 0 {
+		port = 10086
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port must be between 1 and 65535")
+	}
 	defer a.Config.Close()
 	log := options.Log
 	if log == nil {
@@ -76,9 +83,10 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 			return err
 		}
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:10086")
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		return fmt.Errorf("listen on 127.0.0.1:10086: %w", err)
+		return fmt.Errorf("listen on %s: %w", address, err)
 	}
 	if a.Recovery == nil {
 		repo, ok := a.Notify.(recovery.Repo)

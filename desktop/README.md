@@ -8,7 +8,7 @@ flutter run -d windows --debug -a --backend=managed -a --data-dir=D:\go_project\
 
 Windows CMake 会在 Debug、Profile 和 Release 构建中编译 Go 服务并放到 runner 旁；开发前需安装 Go 并将 `go` 放入 PATH。managed 模式由 Flutter 启动自有 Go。切换 backend 前请完整退出已有实例；Go 源码更改后需退出并重新运行 Flutter，热重载不会重建 Go。
 
-`--backend=external` 可选用于连接独立运行的 Go 服务：先在仓库根目录运行 `go run ./cmd/flutter --data-dir .`，再用 `flutter run -d windows --debug -a --backend=external -a --data-dir=D:\go_project\src\TimeCue` 启动桌面端。本地 loopback 请求会直连，不经过系统 HTTP 代理。服务未连接就绪时，添加日程操作不可用；房间入口仍显示，连接恢复后可继续操作。
+Debug/Profile 的 managed 模式使用 1145；managed 宿主会自动向自有 Go 服务传入该端口。`--backend=external` 可选用于连接独立运行的 Go 服务：先在仓库根目录运行 `go run ./cmd/flutter --data-dir D:\go_project\src\TimeCue --port 1145`，再用 `flutter run -d windows --debug -a --backend=external -a --data-dir=D:\go_project\src\TimeCue` 启动桌面端。本地 loopback 请求会直连，不经过系统 HTTP 代理。服务未连接就绪时，添加日程操作不可用；房间入口仍显示，连接恢复后可继续操作。
 
 ```powershell
 cd D:\go_project\src\TimeCue\desktop
@@ -195,7 +195,7 @@ ctest --test-dir build/d7-native -C Release --output-on-failure
 
 ## 自有 Go 子进程
 
-发行包默认 managed，数据位于当前用户 LocalAppData/TimeCue，Go 位于程序目录的 timecue-core.exe。可显式覆盖 data-dir/go-executable；开发连接手动 Go 必须指定 backend=external 和 data-dir。完整打包运行根目录 scripts/build-release.ps1，见[发行说明](../docs/RELEASE.md)。以下为手动构建联调示例：
+发行包默认 managed，监听 10086，数据位于当前用户 LocalAppData/TimeCue，Go 位于程序目录的 timecue-core.exe。Debug/Profile 使用独立单实例标识，默认数据目录为当前用户 LocalAppData/TimeCue-Dev；开发仍建议显式指定仓库绝对 data-dir。可显式覆盖 data-dir/go-executable；开发连接手动 Go 必须指定 backend=external 和 data-dir。完整打包运行根目录 scripts/build-release.ps1，见[发行说明](../docs/RELEASE.md)。以下为手动构建联调示例：
 
 ```powershell
 $timecueDataDir = (Resolve-Path .).Path
@@ -222,4 +222,4 @@ python tool/d8_native_go_smoke.py --go ../.gotmp-d8/timecue-go.exe --driver buil
 flutter build windows --release --target=lib/main.dart
 ```
 
-Python 脚本自行建立并手动迁移新的测试数据库，不接收业务数据库路径。运行时需空闲的 10086 端口；不结束端口占用者。父测试通过隔离文件握手取得自有 Go 观察句柄，再允许宿主完成退出，避免快速退出产生缺失证据。原生驱动路径按实际 CMake build 目录调整。
+Python 脚本自行建立并手动迁移新的测试数据库，不接收业务数据库路径。Release 宿主 smoke 运行时需空闲的 10086 端口；不结束端口占用者。父测试通过隔离文件握手取得自有 Go 观察句柄，再允许宿主完成退出，避免快速退出产生缺失证据。原生驱动路径按实际 CMake build 目录调整。

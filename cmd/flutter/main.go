@@ -80,13 +80,13 @@ func runApp(ctx context.Context, options startupOptions, log *logger.Logger) err
 	// TODO: 接入真实聊天应用服务后，替换临时 Mock。
 	application.ChatService = chat.NewMock()
 	info := app.NewRuntimeInfo(options.instanceID)
-	runtime := app.RuntimeOptions{Database: db, PrepareDatabase: db.PrepareSchema, Handler: api.NewRouter(application, db.CheckHealth, info), Log: log}
+	runtime := app.RuntimeOptions{Database: db, PrepareDatabase: db.PrepareSchema, Handler: api.NewRouterWithPort(application, db.CheckHealth, options.port, info), Log: log, Port: options.port}
 	if options.managed {
 		runtime.OnReady = func() error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return writeReady(os.Stdout, info)
+			return writeReady(os.Stdout, info, options.port)
 		}
 	}
 	return application.Run(ctx, runtime)
