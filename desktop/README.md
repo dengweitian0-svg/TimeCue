@@ -68,7 +68,7 @@ attempt、平台整数映射和待回填结果只在内存。重复领取、开�
 
 ### 快照、分页与失败行为
 
-- 标签依次为今天、历史待确认、日历。今日左页保留今日全部安排，右页仅今日到期未确认；历史按原计划完整日期分组，四种投递状态保持真实。两类待确认默认每页 50，房间徽标读取组合快照的全部待确认总数；全选只捕获当前页，跨页选择保留，不随后台新记录扩大。批量请求提交明确 ID，最多 500 条，非法成员整批拒绝。
+- 标签依次为今天、历史待确认、日历、AI 对话。今日左页保留今日全部安排，右页仅今日到期未确认；历史按原计划完整日期分组，四种投递状态保持真实。两类待确认默认每页 50，房间徽标读取组合快照的全部待确认总数；全选只捕获当前页，跨页选择保留，不随后台新记录扩大。批量请求提交明确 ID，最多 500 条，非法成员整批拒绝。
 - 今日/历史各自保存分页位置、游标、加载/错误及选择；普通刷新保留有效位置，范围游标不混用。成功发布新北京日期时两类回首分页并清空旧范围选择，新历史记录不自动选中；混合日期及旧响应不发布，400 后重读首分页，跨日读取失败保留内容并阻止旧今日选择提交。
 - 本子打开期间每 5 秒刷新；打开、恢复前台和确认后立即查询，关闭或后台停止普通轮询。请求代次阻止旧响应覆盖新状态。
 - 确认响应同时更新今日、日期清单和待确认；确认失败保持旧内容及选择。确认成功后的刷新失败单独提示，保留已成功的完成事实。
@@ -84,6 +84,7 @@ TimeCueApp                              MaterialApp、主题、构造注入
       ├─ RoomBackdrop                   图片淡入、玻璃 ClipPath、明暗遮罩
       ├─ RoomClock                      独立 ValueListenableBuilder
       ├─ DeskNotebookHotspot            原图本子的透明家具入口
+      ├─ CatChatHotspot                 原图猫咪透明入口、悬停与焦点提示
       ├─ RoomActions                    固定入口、待确认数量
       ├─ 设置按钮                        独立配置弹窗，演示模式禁用
       ├─ 添加日程 / 管理日程按钮（包含已暂停）
@@ -94,13 +95,14 @@ TimeCueApp                              MaterialApp、主题、构造注入
             │  └─ PaperPage             待确认、选择工具栏、分页、逐条确认
             ├─ HistorySpread            第二组跨页：完整日期分组、历史说明
             │  └─ PendingList           共用状态/详情/选择/确认/分页
-            └─ CalendarSpread           第三组跨页
-               ├─ PaperPage             月份导航 → MonthGrid、管理日程分页弹层
-               └─ PaperPage             互斥右页
-                  ├─ BlankPage          首次进入，无内容
-                  ├─ DateListPage       日期清单 → TriggerRow
-                  ├─ LoadingDatePage / ErrorDatePage  真实查询加载与重试
-                  └─ EditingPage        ScheduleEditor（完整规则及 revision）
+            ├─ CalendarSpread           第三组跨页
+            │  ├─ PaperPage             月份导航 → MonthGrid、管理日程分页弹层
+            │  └─ PaperPage             互斥右页
+            │     ├─ BlankPage          首次进入，无内容
+            │     ├─ DateListPage       日期清单 → TriggerRow
+            │     ├─ LoadingDatePage / ErrorDatePage  真实查询加载与重试
+            │     └─ EditingPage        ScheduleEditor（完整规则及 revision）
+            └─ ChatSpread               第四标签，双页/单栏欢迎与本地草稿框架
 
 RoomScreen → showDialog
 ├─ SettingsDialog                       日志级别/日志目录/数据库目录原生选择、保存与恢复默认
@@ -117,7 +119,7 @@ RoomScreen → showDialog
       └─ 保存、重新开启、返回、删除     类型不可变，已到期单次时间只读
 ```
 
-`NotebookFrame` 通过 `spread` 插槽承载其中一组跨页，两个 `PaperPage` 各自纵向滚动。小窗口或高文本缩放保留两页最小可操作宽度并允许横向访问，标签和关闭按钮固定在书封上。
+`NotebookFrame` 通过 `spread` 插槽承载页面。日程标签保留两页最小可操作宽度并允许横向访问；AI 标签在内容可用宽度小于 840 或大字模式时切换单栏，通过“历史会话”与返回操作导航。书签支持横向访问，关闭按钮固定在书封上。
 
 ## 依赖和状态所有权
 
@@ -140,6 +142,7 @@ flowchart LR
 | --- | --- | --- |
 | Go 业务快照、确认结果 / 内存示例 | HTTP / 示例仓储 | 只读 DTO；确认必须调用正式用例，规则变更必须调用正式事务 |
 | 标签、月份、互斥右页、两范围分页及跨页勾选 | NotebookViewModel | 跨页监听状态，只发送界面操作 |
+| AI 本地空草稿和单栏导航 | NotebookViewModel | 切标签与合本后保留；不发送网络请求 |
 | 开合阶段、动画进度、编辑会话 | NotebookOverlay | 内容到位后才可操作；导航时守卫草稿 |
 | 字段、草稿、保存错误 | ScheduleEditorViewModel | 创建弹层、独立修改弹窗与右页编辑复用表单，版本冲突保留草稿 |
 | 真实环境时间 | RoomClockController | 每秒重读 UTC+8，恢复前台立即同步 |
@@ -223,3 +226,15 @@ flutter build windows --release --target=lib/main.dart
 ```
 
 Python 脚本自行建立并手动迁移新的测试数据库，不接收业务数据库路径。Release 宿主 smoke 运行时需空闲的 10086 端口；不结束端口占用者。父测试通过隔离文件握手取得自有 Go 观察句柄，再允许宿主完成退出，避免快速退出产生缺失证据。原生驱动路径按实际 CMake build 目录调整。
+
+## AI 对话：基础与页面框架
+
+房间设置、日程本、管理和添加入口共用米白底、暖棕文字及 44 高点击目标。原图猫咪增加透明入口，悬停或键盘聚焦显示“和我聊聊”；点击进入同一本子的 AI 标签。热区随三时段背景一起投影和裁切，猫咪不可见时仍可从固定日程本入口访问第四标签。合本后焦点返回实际入口，原入口不可见时返回固定本子按钮。
+
+当前完成范围为设计阶段 0、1：聊天 DTO、事件及错误映射、HTTP/SSE 夹具、固定 `gpt_markdown 1.3.4` 渲染依赖，以及 AI 双页/单栏框架、本地输入草稿和导航。发送、停止、服务端历史读取、搜索、删除、多会话运行及后台生成将在后续阶段接入；页面不展示虚构会话或回复。Go 聊天服务为内存 Mock，不保证真实模型、真实工具执行、持久化或跨后端重启恢复。
+
+`ChatGateway` 与日程仓储独立，声明七操作契约；session 详情的 `session_name` 映射为 `name`，保留中文与空字符串，不以用户首句替代。列表响应仍是 ID 数组。工具名取 `function.name`，SSE 事件 ID 与工具调用 ID 分离；现有工具事件不包含执行关系或单工具结果。取消受理、断线和 SSE 204 都不由页面推断为生成完成。
+
+`test/fixtures/chat_fixtures.dart` 固定正常、Thinking、多工具、同名多次调用、交错、失败、取消、重复与重连数据，供后续传输和运行模型复用。`chat_contracts_test.dart` 校验 DTO 与错误边界；`chat_markdown_compatibility_test.dart` 使用 `gpt_markdown` 验证累计文本、未闭合语法、代码与表格；`chat_spread_test.dart`、`cat_chat_hotspot_test.dart` 覆盖本阶段布局、入口与焦点。可选截图属于 Widget 绘制证据，不能代替 Windows DPI、输入法和真实鼠标键盘验收。
+
+Windows 渲染依赖兼容性可单独使用 `flutter build windows --release --target=tool/chat_markdown_smoke.dart`，该入口实际引用 gpt_markdown 并显示固定 Markdown，不连接后端。正式应用构建继续使用默认 `lib/main.dart` 入口。

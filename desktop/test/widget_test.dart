@@ -162,7 +162,7 @@ void main() {
     final disabledStyle = tester.widget<FilledButton>(addButton).style!;
     expect(
       disabledStyle.backgroundColor?.resolve({WidgetState.disabled}),
-      const Color.fromARGB(225, 238, 222, 190),
+      const Color.fromARGB(255, 238, 222, 190),
     );
 
     repo.setState(loading: false, error: '连接失败');
@@ -176,7 +176,7 @@ void main() {
     expect(enabledButton.onPressed, isNotNull);
     expect(
       enabledButton.style!.backgroundColor?.resolve({}),
-      const Color.fromARGB(128, 73, 61, 48),
+      NotebookTheme.paper,
     );
     await tester.tap(addButton);
     await tester.pumpAndSettle();
@@ -266,10 +266,15 @@ void main() {
     await tester.pump();
     expect(find.text('今日安排'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    final horizontal = find.byWidgetPredicate(
-      (w) => w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
+    final twoPageContentScroll = find.byWidgetPredicate(
+      (widget) =>
+          widget is SingleChildScrollView &&
+          widget.scrollDirection == Axis.horizontal &&
+          widget.child is SizedBox &&
+          (widget.child! as SizedBox).width == 840.0,
     );
-    await tester.drag(horizontal, const Offset(-600, 0));
+    expect(twoPageContentScroll, findsOneWidget);
+    await tester.drag(twoPageContentScroll, const Offset(-600, 0));
     await tester.pumpAndSettle();
     expect(find.text('待确认'), findsOneWidget);
     expect(tester.takeException(), isNull);

@@ -41,3 +41,8 @@
 - `managed_backend_test.dart` 同时验证 Debug/Profile 默认端口为 1145，并拒绝 ready 报告的其他端口。
 - 设置回归覆盖绝对数据库/日志目录选择及重开，数据库文件名不显示在目录字段，配置文件路径和相对目录说明不展示；启动错误回归覆盖 stderr 早于/晚于退出以及重试清除旧诊断。
 - 旧目录配置回归覆盖读取不误取父目录、启动前原子修正、相对目录、并发保存、注释及已有数据库保留、幂等及特殊数据源不变；托管启动准备失败可见并可重试，准备期间取消或截止后零进程创建。
+
+- `chat_contracts_test.dart` 与 `fixtures/chat_fixtures.dart`：聊天七操作响应、session_name 原样映射及缺失/类型错误、运行状态、HTTP 错误、五类 SSE 数据及独立事件/工具调用身份；固定正常、Thinking、多工具、同名、交错、失败、取消、重复与重连数据。夹具不代表真实模型或工具执行。
+- `chat_markdown_compatibility_test.dart`：固定 gpt_markdown 在累计完整文本、未闭合语法、代码、宽表格及文字缩放下的渲染兼容性，不实现运行连接或逐增量 Markdown 解析。
+- `chat_spread_test.dart`：AI 第四标签的双页/单栏、历史导航、本地草稿保留与清空前确认；既有 Widget 回归继续检查日程编辑草稿守卫。验证 640×480、1280×800、1440×900 与文字缩放布局。
+- `cat_chat_hotspot_test.dart`：三时段资源与 cover 几何、透明猫咪热区、裁切、鼠标/键盘入口、关闭焦点返回及米白暖棕入口样式。可选 `TIMECUE_CAPTURE_CHAT=true` 输出本地 Widget PNG；截图与替身键盘操作不替代 Windows 真机、DPI、输入法及跨显示器验收。

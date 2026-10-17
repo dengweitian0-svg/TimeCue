@@ -7,6 +7,24 @@ abstract final class NotebookTheme {
   static const sage = Color.fromARGB(255, 100, 119, 80);
   static const line = Color.fromARGB(255, 222, 212, 188);
   static const cover = Color.fromARGB(255, 145, 116, 79);
+
+  /// 房间固定入口共用米白底、暖棕文字和易识别的禁用状态。
+  static ButtonStyle roomActionStyle({bool disabledCreate = false}) =>
+      FilledButton.styleFrom(
+        backgroundColor: paper,
+        foregroundColor: ink,
+        disabledBackgroundColor: disabledCreate
+            ? const Color.fromARGB(255, 238, 222, 190)
+            : const Color.fromARGB(255, 242, 235, 218),
+        disabledForegroundColor: ink,
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+        ),
+        textStyle: const TextStyle(fontSize: 12),
+      );
+
   static ThemeData get data => ThemeData(
     useMaterial3: true,
     fontFamily: 'Microsoft YaHei',

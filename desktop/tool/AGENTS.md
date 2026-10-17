@@ -2,6 +2,8 @@
 
 - `capture_visuals_test.dart`：生成房间、日程本、编辑、日期/时间选择和确认弹层截图，输出到 `build/visuals/`。
 
+- `chat_markdown_smoke.dart`：引用 `gpt_markdown` 和 NotebookTheme，提供混合中文、代码及表格的 Windows 发行构建依赖验证入口。
+
 单次入口使用＋，日期与时间截图来自同一个左日历/右时间弹层；取消后重新打开＋，不依赖旧的两个圆角按钮。
 
 `10-monthly-date-time.png` 对照每月的新左右布局：选中 31 日、22:09，左侧日号网格和右侧时间转盘同屏显示。

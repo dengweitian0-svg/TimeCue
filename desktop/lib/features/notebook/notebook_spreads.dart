@@ -611,144 +611,186 @@ class NotebookFrame extends StatelessWidget {
   final ValueChanged<NotebookTab> onTab;
   final Widget spread;
   @override
-  Widget build(BuildContext context) => Stack(
-    clipBehavior: Clip.none,
-    children: [
-      Positioned.fill(
-        top: 32,
-        right: 16,
-        child: Container(
-          decoration: BoxDecoration(
-            color: NotebookTheme.cover,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: const [
-              BoxShadow(
-                color: Color.fromARGB(128, 48, 32, 21),
-                blurRadius: 70,
-                offset: Offset(0, 25),
+  Widget build(BuildContext context) {
+    final scaledLabelHeight = MediaQuery.textScalerOf(context).scale(14) + 24;
+    final tabHeight = scaledLabelHeight < 40 ? 40.0 : scaledLabelHeight;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Positioned.fill(
+          top: tabHeight - 8,
+          right: 16,
+          child: Container(
+            decoration: BoxDecoration(
+              color: NotebookTheme.cover,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color.fromARGB(128, 48, 32, 21),
+                  blurRadius: 70,
+                  offset: Offset(0, 25),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 34),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                if (model.tab == NotebookTab.ai) {
+                  return SizedBox(
+                    width: constraints.maxWidth,
+                    height: constraints.maxHeight,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: spread,
+                    ),
+                  );
+                }
+                // 小窗口和高文本缩放保留两张纸页，允许横向访问，不压缩字号。
+                final width =
+                    constraints.maxWidth < 840 ||
+                        MediaQuery.textScalerOf(context).scale(14) > 20
+                    ? 840.0
+                    : constraints.maxWidth;
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
+                    width: width,
+                    height: constraints.maxHeight,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: spread,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        Positioned(
+          top: 0,
+          left: 28,
+          right: 56,
+          height: tabHeight,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final tab in NotebookTab.values)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Semantics(
+                      selected: model.tab == tab,
+                      child: TextButton(
+                        autofocus: tab == NotebookTab.today,
+                        style: TextButton.styleFrom(
+                          backgroundColor: model.tab == tab
+                              ? NotebookTheme.paper
+                              : const Color.fromARGB(255, 219, 202, 174),
+                          foregroundColor: NotebookTheme.ink,
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(7),
+                            ),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          minimumSize: Size(80, tabHeight),
+                          maximumSize: Size(double.infinity, tabHeight),
+                        ),
+                        onPressed: () => onTab(tab),
+                        child: Text(switch (tab) {
+                          NotebookTab.today => '今天',
+                          NotebookTab.history => '历史待确认',
+                          NotebookTab.calendar => '日历',
+                          NotebookTab.ai => 'AI 对话',
+                        }),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          top: 6,
+          right: 0,
+          child: IconButton.filledTonal(
+            onPressed: onClose,
+            tooltip: '合上日程本',
+            icon: const Icon(Icons.close),
+          ),
+        ),
+        Positioned(
+          bottom: 10,
+          left: 28,
+          right: 44,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              TextButton.icon(
+                onPressed: onManage,
+                style: TextButton.styleFrom(
+                  foregroundColor: NotebookTheme.paper,
+                  textStyle: const TextStyle(fontSize: 11),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: const Icon(Icons.list_alt, size: 14),
+                label: const Text('管理日程'),
               ),
+              if (model.repository.recovery case final progress?)
+                Flexible(
+                  child: TextButton(
+                    onPressed: model.onRecovery,
+                    style: TextButton.styleFrom(
+                      foregroundColor: NotebookTheme.paper,
+                      textStyle: const TextStyle(fontSize: 11),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      '${model.repository.refreshError == null ? '' : '上次读取 · '}${recoveryLabel(progress)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+              if (model.tab == NotebookTab.ai)
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: NotebookTheme.paper,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    child: Text(
+                      '07 — 08',
+                      style: TextStyle(
+                        fontSize: 10,
+                        letterSpacing: 2,
+                        color: NotebookTheme.ink,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                Text(
+                  switch (model.tab) {
+                    NotebookTab.today => '01 — 02',
+                    NotebookTab.history => '03 — 04',
+                    NotebookTab.calendar => '05 — 06',
+                    NotebookTab.ai => '07 — 08',
+                  },
+                  style: const TextStyle(
+                    fontSize: 10,
+                    letterSpacing: 2,
+                    color: NotebookTheme.paper,
+                  ),
+                ),
             ],
           ),
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 34),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              // 小窗口和高文本缩放保留两张纸页，允许横向访问，不压缩字号。
-              final width =
-                  constraints.maxWidth < 840 ||
-                      MediaQuery.textScalerOf(context).scale(14) > 20
-                  ? 840.0
-                  : constraints.maxWidth;
-              return SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SizedBox(
-                  width: width,
-                  height: constraints.maxHeight,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(3),
-                    child: spread,
-                  ),
-                ),
-              );
-            },
-          ),
         ),
-      ),
-      Positioned(
-        top: 0,
-        left: 28,
-        child: Row(
-          children: [
-            for (final tab in NotebookTab.values)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Semantics(
-                  selected: model.tab == tab,
-                  child: TextButton(
-                    autofocus: tab == NotebookTab.today,
-                    style: TextButton.styleFrom(
-                      backgroundColor: model.tab == tab
-                          ? NotebookTheme.paper
-                          : const Color.fromARGB(255, 219, 202, 174),
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: BorderRadius.vertical(
-                          top: Radius.circular(7),
-                        ),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      minimumSize: const Size(80, 40),
-                    ),
-                    onPressed: () => onTab(tab),
-                    child: Text(switch (tab) {
-                      NotebookTab.today => '今天',
-                      NotebookTab.history => '历史待确认',
-                      NotebookTab.calendar => '日历',
-                    }),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-      Positioned(
-        top: 6,
-        right: 0,
-        child: IconButton.filledTonal(
-          onPressed: onClose,
-          tooltip: '合上日程本',
-          icon: const Icon(Icons.close),
-        ),
-      ),
-      Positioned(
-        bottom: 10,
-        left: 28,
-        right: 44,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            TextButton.icon(
-              onPressed: onManage,
-              style: TextButton.styleFrom(
-                foregroundColor: NotebookTheme.paper,
-                textStyle: const TextStyle(fontSize: 11),
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              icon: const Icon(Icons.list_alt, size: 14),
-              label: const Text('管理日程'),
-            ),
-            if (model.repository.recovery case final progress?)
-              Flexible(
-                child: TextButton(
-                  onPressed: model.onRecovery,
-                  style: TextButton.styleFrom(
-                    foregroundColor: NotebookTheme.paper,
-                    textStyle: const TextStyle(fontSize: 11),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text(
-                    '${model.repository.refreshError == null ? '' : '上次读取 · '}${recoveryLabel(progress)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ),
-            Text(
-              switch (model.tab) {
-                NotebookTab.today => '01 — 02',
-                NotebookTab.history => '03 — 04',
-                NotebookTab.calendar => '05 — 06',
-              },
-              style: const TextStyle(
-                fontSize: 10,
-                letterSpacing: 2,
-                color: NotebookTheme.paper,
-              ),
-            ),
-          ],
-        ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
