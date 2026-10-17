@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
+	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
 )
 
 type schedulerClock struct {
@@ -24,19 +25,19 @@ type schedulerClock struct {
 func (c *schedulerClock) now() time.Time   { c.mu.Lock(); defer c.mu.Unlock(); return c.at }
 func (c *schedulerClock) set(at time.Time) { c.mu.Lock(); defer c.mu.Unlock(); c.at = at }
 
-func schedulerFixture(t *testing.T) (*Sqlite, *ScheduleStore, *NotificationStore, *service.App, *schedulerClock) {
+func schedulerFixture(t *testing.T) (*Sqlite, *ScheduleStore, *NotificationStore, *application.App, *schedulerClock) {
 	t.Helper()
 	db, schedules, notifications := newMigratedStore(t)
 	clock := &schedulerClock{at: time.Date(2030, 10, 9, 8, 59, 0, 0, model.BeijingLocation())}
 	schedules.now = clock.now
-	scheduler, err := service.NewScheduler(notifications, service.SchedulerOptions{Now: clock.now, OnError: func(err error) { t.Errorf("调度错误: %v", err) }})
+	scheduler, err := notification.NewScheduler(notifications, notification.SchedulerOptions{Now: clock.now, OnError: func(err error) { t.Errorf("调度错误: %v", err) }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return db, schedules, notifications, &service.App{Schedule: schedules, Notify: notifications, Scheduler: scheduler}, clock
+	return db, schedules, notifications, &application.App{Schedule: schedules, Notify: notifications, Scheduler: scheduler}, clock
 }
 
-func writeRule(t *testing.T, app *service.App, name, cron string) *model.ScheduleWrite {
+func writeRule(t *testing.T, app *application.App, name, cron string) *model.ScheduleWrite {
 	t.Helper()
 	r, err := app.WriteSchedule(context.Background(), rule(name, cron, true, 0), 0, "")
 	if err != nil {
@@ -147,7 +148,7 @@ func TestMinuteGenerationUsesHistoricalVersion(t *testing.T) {
 	if _, err := app.WriteSchedule(ctx, rule("新文", "1 9 * * *", true, r.Schedule.ID), 1, ""); err != nil {
 		t.Fatal(err)
 	}
-	batch, err := notifications.PrepareNotifications(ctx, model.NotificationWindow{Start: minute, End: minute.Add(time.Minute), AsOf: clock.now(), FreezeDue: true}, service.PrepareNotificationCandidates)
+	batch, err := notifications.PrepareNotifications(ctx, model.NotificationWindow{Start: minute, End: minute.Add(time.Minute), AsOf: clock.now(), FreezeDue: true}, notification.PrepareNotificationCandidates)
 	if err != nil || len(batch.EligibleIDs) != 1 {
 		t.Fatalf("整点旧版本触发丢失: %#v %v", batch, err)
 	}
@@ -167,7 +168,7 @@ func TestMinuteGenerationUsesHistoricalVersion(t *testing.T) {
 	if _, err = notifications.db.db.Exec(`DELETE FROM notifications WHERE id = ?`, r.Notification.ID); err != nil {
 		t.Fatal(err)
 	}
-	batch, err = notifications.PrepareNotifications(ctx, model.NotificationWindow{Start: minute, End: minute.Add(time.Minute), AsOf: clock.now(), FreezeDue: true}, service.PrepareNotificationCandidates)
+	batch, err = notifications.PrepareNotifications(ctx, model.NotificationWindow{Start: minute, End: minute.Add(time.Minute), AsOf: clock.now(), FreezeDue: true}, notification.PrepareNotificationCandidates)
 	if err != nil || len(batch.EligibleIDs) != 0 || len(batch.Notifications) != 1 || !batch.Notifications[0].DeliveryStopped {
 		t.Fatalf("恢复复活旧触发: %#v %v", batch, err)
 	}
@@ -178,7 +179,7 @@ func TestSchedulerRestartFailureAndGaps(t *testing.T) {
 	_, _, notifications, app, clock := schedulerFixture(t)
 	ctx := context.Background()
 	r := writeRule(t, app, "重建", "0 9 * * *")
-	restarted, err := service.NewScheduler(notifications, service.SchedulerOptions{Now: clock.now})
+	restarted, err := notification.NewScheduler(notifications, notification.SchedulerOptions{Now: clock.now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +222,7 @@ func TestSchedulerRestartFailureAndGaps(t *testing.T) {
 func TestMinuteGenerationLargeGroupAndRollback(t *testing.T) {
 	db, schedules, notifications, _, clock := schedulerFixture(t)
 	ctx := context.Background()
-	app := &service.App{Schedule: schedules, Notify: notifications}
+	app := &application.App{Schedule: schedules, Notify: notifications}
 	for i := 0; i < 501; i++ {
 		writeRule(t, app, fmt.Sprintf("成员%d", i), "0 9 * * *")
 	}
@@ -230,7 +231,7 @@ func TestMinuteGenerationLargeGroupAndRollback(t *testing.T) {
 	if _, err := db.db.Exec(`CREATE TRIGGER fail_snapshot BEFORE UPDATE OF snapshot_taken ON notifications WHEN NEW.schedule_id = 2 BEGIN SELECT RAISE(ABORT, 'test rollback'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := notifications.PrepareNotifications(ctx, window, service.PrepareNotificationCandidates); err == nil {
+	if _, err := notifications.PrepareNotifications(ctx, window, notification.PrepareNotificationCandidates); err == nil {
 		t.Fatal("应触发整分钟回滚")
 	}
 	var count int
@@ -240,7 +241,7 @@ func TestMinuteGenerationLargeGroupAndRollback(t *testing.T) {
 	if _, err := db.db.Exec(`DROP TRIGGER fail_snapshot`); err != nil {
 		t.Fatal(err)
 	}
-	scheduler, _ := service.NewScheduler(notifications, service.SchedulerOptions{Now: clock.now})
+	scheduler, _ := notification.NewScheduler(notifications, notification.SchedulerOptions{Now: clock.now})
 	if err := scheduler.Step(ctx); err != nil {
 		t.Fatal(err)
 	}

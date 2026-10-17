@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
 )
 
 func rule(name, cron string, open bool, id int) model.Schedule {
@@ -22,7 +22,7 @@ func TestRuleChangesPreserveHistoryAndPauseBoundary(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2030, 10, 8, 11, 0, 0, 0, model.BeijingLocation())
 	schedules.now = func() time.Time { return now }
-	app := &service.App{Schedule: schedules, Notify: notifications}
+	app := &application.App{Schedule: schedules, Notify: notifications}
 	created, err := app.WriteSchedule(ctx, rule("旧名称", "0 13 * * *", true, 0), 0, "create")
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestRuleChangesPreserveHistoryAndPauseBoundary(t *testing.T) {
 	if _, err = app.AcknowledgeNotifications(ctx, []int{oldID}, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = app.WriteSchedule(ctx, rule("恢复删除", "0 17 * * *", true, created.Schedule.ID), 5, "invalid"); !errors.Is(err, service.ErrScheduleNotFound) {
+	if _, err = app.WriteSchedule(ctx, rule("恢复删除", "0 17 * * *", true, created.Schedule.ID), 5, "invalid"); !errors.Is(err, application.ErrScheduleNotFound) {
 		t.Fatalf("删除可恢复: %v", err)
 	}
 }
@@ -116,7 +116,7 @@ func TestRuleChangesPreserveHistoryAndPauseBoundary(t *testing.T) {
 func TestConcurrentRuleUpdatesAndRollback(t *testing.T) {
 	db, schedules, notifications := newMigratedStore(t)
 	ctx := context.Background()
-	app := &service.App{Schedule: schedules, Notify: notifications}
+	app := &application.App{Schedule: schedules, Notify: notifications}
 	created, err := app.WriteSchedule(ctx, rule("初始", "0 13 * * *", true, 0), 0, "create")
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +164,7 @@ func TestExpiredSingleAndReusedFuture(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2030, 10, 8, 11, 0, 0, 0, model.BeijingLocation())
 	schedules.now = func() time.Time { return now }
-	app := &service.App{Schedule: schedules, Notify: notifications}
+	app := &application.App{Schedule: schedules, Notify: notifications}
 	single := model.Schedule{Name: "单次", Type: model.SingleSchedule, Single: &model.Single{NotifyTime: now.Add(time.Hour)}}
 	created, err := app.WriteSchedule(ctx, single, 0, "single")
 	if err != nil {
@@ -177,7 +177,7 @@ func TestExpiredSingleAndReusedFuture(t *testing.T) {
 		t.Fatal(err)
 	}
 	single.Single = &model.Single{NotifyTime: now.Add(time.Hour)}
-	if _, err = app.WriteSchedule(ctx, single, 2, "rearrange"); !errors.Is(err, service.ErrInvalidSchedule) {
+	if _, err = app.WriteSchedule(ctx, single, 2, "rearrange"); !errors.Is(err, application.ErrInvalidSchedule) {
 		t.Fatalf("已到期单次可再安排: %v", err)
 	}
 	first, err := app.WriteSchedule(ctx, rule("周期", "0 17 * * *", true, 0), 0, "period")
@@ -207,7 +207,7 @@ func TestLegacySecondsCannotBeSavedAgain(t *testing.T) {
 	if _, err := db.db.Exec(`INSERT INTO notifications (schedule_id, notify_time) VALUES (1, ?)`, at.UnixNano()); err != nil {
 		t.Fatal(err)
 	}
-	app := &service.App{Schedule: schedules, Notify: notifications}
+	app := &application.App{Schedule: schedules, Notify: notifications}
 	if _, err := app.QueryScheduleState(ctx, "", now); err != nil {
 		t.Fatalf("旧事实查询失败: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestLegacySecondsCannotBeSavedAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	old.Name = "只改名称"
-	if _, err = app.WriteSchedule(ctx, *old, 1, "legacy-metadata"); !errors.Is(err, service.ErrInvalidSchedule) {
+	if _, err = app.WriteSchedule(ctx, *old, 1, "legacy-metadata"); !errors.Is(err, application.ErrInvalidSchedule) {
 		t.Fatalf("新版本原样接受了秒级规则: %v", err)
 	}
 	old.Single = &model.Single{NotifyTime: at.Truncate(time.Minute)}
@@ -234,7 +234,7 @@ func TestSingleScheduleUnixNanoBoundaryAndOverflow(t *testing.T) {
 	db, schedules, notifications := newMigratedStore(t)
 	ctx := context.Background()
 	schedules.now = func() time.Time { return time.Date(2200, 1, 1, 0, 0, 0, 0, model.BeijingLocation()) }
-	app := &service.App{Schedule: schedules, Notify: notifications}
+	app := &application.App{Schedule: schedules, Notify: notifications}
 	maxUnixNano := time.Unix(0, 1<<63-1)
 	lastSupportedMinute := maxUnixNano.Truncate(time.Minute)
 	if err := model.ValidateUnixNanoTime(lastSupportedMinute); err != nil {
@@ -257,7 +257,7 @@ func TestSingleScheduleUnixNanoBoundaryAndOverflow(t *testing.T) {
 	overflow := time.Date(9999, 1, 1, 0, 0, 0, 0, model.BeijingLocation())
 	if _, err = app.WriteSchedule(ctx, model.Schedule{
 		Name: "溢出时间", Type: model.SingleSchedule, Single: &model.Single{NotifyTime: overflow},
-	}, 0, "overflow"); !errors.Is(err, service.ErrInvalidSchedule) {
+	}, 0, "overflow"); !errors.Is(err, application.ErrInvalidSchedule) {
 		t.Fatalf("超出 Unix 纳秒范围的单次应被拒绝: %v", err)
 	}
 	var scheduleCount, receiptCount int

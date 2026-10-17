@@ -10,7 +10,7 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 | 部分 | 仓库中的现状 |
 | --- | --- |
-| 启动入口 | main 校验数据目录和运行身份并调用 service.App.Run；托管模式提供 ready 与父端 shutdown/EOF 控制，App 沿用原生命周期清理。 |
+| 启动入口 | main 校验数据目录和运行身份并调用 app.App.Run；托管模式提供 ready 与父端 shutdown/EOF 控制，App 管理启动与退出清理。 |
 | 配置 | Flutter 负责用户 config.yaml 的原子写入；Go 合并原有内嵌默认值、发布快照并监听。相对数据库/日志路径使用同一数据目录。 |
 | 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
 | 日程与提醒 | 已有规则操作、查询与确认；D1 开放完整分钟分组，D2 提供领取、开始、结果回填和有限重试，D3 按历史版本分批恢复、开放唯一遗漏汇总并查询成员/进度。D5 已接 Windows 即时展示与内存结果重传，D6 已接冻结成员定位、持久提醒详情及恢复进度/历史分页。 |
@@ -19,6 +19,8 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 
 日程本已接入“今天｜历史待确认｜日历”三标签：按原计划时间及北京时间零点分类，两类分别分页和选择，房间统计全部到期未确认；跨日重载首分页，查询及查看详情不会确认或调用平台通知。接口和自动检查证据见[历史待确认验收记录](docs/design/historical-unacknowledged-reminders-validation.md)。
+
+Go 代码按业务职责组织：`internal/api/handler` 分为 session、agent、schedule、utils，HTTP 回归集中在 `internal/api/test`；`internal/service` 分为 schedule、notification、recovery。`internal/app` 负责跨模块编排、共享正式操作边界和运行生命周期；服务通过各自的存储端口访问数据，具体 SQLite 适配器由入口注入。模块职责和约束见各目录 `AGENTS.md`。
 
 ## 产品目标与核心规则
 
@@ -43,7 +45,7 @@ D5 的 [Windows 通知桥](docs/design/phase-d5-windows-notification-bridge.md)�
 
 D6 已接入[通知点击与恢复展示](docs/design/phase-d6-click-recovery-display.md)：通知通过运行身份及原 task/attempt 查询本次冻结成员，单条 minute 打开详情，多条及恢复通知分页查看；房间和本子读取同一恢复摘要，完整历史与本次展示分开查询。详情独立显示真实投递/确认状态，点击不确认，原草稿与选择保留。自动回归和原生结果回流、视觉边界见[D6 验收记录](docs/design/phase-d6-validation.md)；系统横幅实际点击仍待真机确认，窗口唤回及冷启动转交归 D7/D8。
 
-D2 已实现三接口协议、开始资格及成员冻结、原子结果回填和运行内有限重试，核心实现见[投递服务](internal/service/notification_delivery.go)。任务及尝试不持久化，数据库继续使用原四张表和版本 2；Apifox 验收报告保留在本地 `.apifox/d2/reports/`。
+D2 已实现三接口协议、开始资格及成员冻结、原子结果回填和运行内有限重试，核心实现见[投递服务](internal/service/notification/notification_delivery.go)。任务及尝试不持久化，数据库继续使用原四张表和版本 2；Apifox 验收报告保留在本地 `.apifox/d2/reports/`。
 
 D3 已接入启动和运行间隙的全期间恢复：每事务最多补齐 500 条可证明的历史触发，排除暂停区间并保留旧文本和永久停止。整理完成后只开放一个 recovery 汇总；未开始旧分钟及连续遗漏的旧汇总合入新汇总，已开始任务保留身份和本运行预算。任务及 attempt 成员每页 50 条，组合快照区分恢复进度和投递结果；完整遗漏总数未确定时返回 null。设计和任务见[D3 契约](docs/design/phase-d3-recovery-query.md)，Go/race 和 Apifox 结果见[验收记录](docs/design/phase-d3-validation.md)。
 
@@ -103,7 +105,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 | POST | `/api/v1/notifications/delivery-attempts/:id/results` | 回填整次平台请求的 sent/failed，原子更新实际成员；重复结果不再次执行 |
 | POST | `/api/v1/notifications/executor-exit` | 当前 instanceId 和执行者持有的 attemptIds；只整理精确匹配的活动尝试，保留展示预算及迟到真实结果 |
 
-AI Chat HTTP 接口当前进入仅 Mock 的 API 验收阶段，提供设计文档列出的七个 `/v1` run/session 接口。临时内存服务不连接数据库、真实模型或 Agent loop；自动化 HTTP/SSE 覆盖情况和待完成项见 [AI Chat API 验收记录](docs/AI-CHAT-API-VALIDATION.md)。接入真实应用层后需复验接口契约，并删除或替换临时 Mock。
+AI Chat HTTP 接口当前进入仅 Mock 的 API 验收阶段，提供设计文档列出的七个 `/v1` run/session 接口。临时内存服务不连接数据库、真实模型或 Agent loop；自动化 HTTP/SSE 回归位于 `internal/api/test`。接入真实应用层后需复验接口契约，并删除或替换临时 Mock。
 
 创建请求示例：
 

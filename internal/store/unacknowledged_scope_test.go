@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
+	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
 )
 
 // TestUnacknowledgedScopes 用真实 SQLite 验证范围先于分页、端点及确认事实。
@@ -16,7 +17,7 @@ func TestUnacknowledgedScopes(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2030, 10, 8, 12, 0, 0, 0, model.BeijingLocation())
 	midnight := time.Date(2030, 10, 8, 0, 0, 0, 0, model.BeijingLocation())
-	app := &service.App{Schedule: schedules, Notify: notifications}
+	app := &application.App{Schedule: schedules, Notify: notifications}
 	add := func(at time.Time, status string, deleted, acknowledged bool) int {
 		t.Helper()
 		result, err := db.db.Exec(`INSERT INTO schedules(name,type,single_notify_time,created_at,updated_at,revision) VALUES ('范围夹具','single',?,?,?,1)`, at.UnixNano(), now.AddDate(0, 0, -3).UnixNano(), now.AddDate(0, 0, -3).UnixNano())
@@ -88,13 +89,13 @@ func TestUnacknowledgedScopes(t *testing.T) {
 			if other == scope {
 				continue
 			}
-			if _, err := app.QueryUnacknowledgedScope(ctx, scope, cursor, now); !errors.Is(err, service.ErrInvalidQuery) {
+			if _, err := app.QueryUnacknowledgedScope(ctx, scope, cursor, now); !errors.Is(err, schedule.ErrInvalidQuery) {
 				t.Fatalf("接受混用游标 %q/%q: %v", scope, other, err)
 			}
 		}
 	}
 	for _, scope := range []string{"today", "history"} {
-		if _, err := app.QueryUnacknowledgedScope(ctx, scope, cursors[scope], midnight.AddDate(0, 0, 1)); !errors.Is(err, service.ErrInvalidQuery) {
+		if _, err := app.QueryUnacknowledgedScope(ctx, scope, cursors[scope], midnight.AddDate(0, 0, 1)); !errors.Is(err, schedule.ErrInvalidQuery) {
 			t.Fatalf("接受跨日游标: %v", err)
 		}
 		page, err := app.QueryUnacknowledgedScope(ctx, scope, cursors[scope], now.Add(time.Minute))
@@ -139,7 +140,7 @@ func TestScopedAcknowledgementKeepsRecurringToday(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := &service.App{Schedule: schedules, Notify: notifications}
+	app := &application.App{Schedule: schedules, Notify: notifications}
 	values := []*model.Notification{}
 	for _, day := range []int{7, 8, 9} {
 		value, err := notifications.CreateNotification(ctx, rule.ID, time.Date(2030, 10, day, 9, 0, 0, 0, model.BeijingLocation()))

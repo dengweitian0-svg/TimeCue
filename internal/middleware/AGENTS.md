@@ -20,4 +20,4 @@
 - 日志不记录请求/响应体、查询字符串或日程说明；使用全局 logger 的测试不并行运行。
 - 投递 claim 成功使用 Debug，start/results 使用 Info；事件覆盖包含分组前缀的完整路由模板，运行身份、数量、次数及结果来自 handler 的 LogFields，不记录展示文案。
 
-查询失败测试替身同时实现范围读取端口，保留原始数据库错误供 HTTP 日志断言。
+`logger_test.go` 的测试装配仅依赖 App 门面与 schedule/notification Repo；生产中间件不导入这些业务模块。查询失败测试替身同时实现范围读取端口，保留原始数据库错误供 HTTP 日志断言。

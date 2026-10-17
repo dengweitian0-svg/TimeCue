@@ -16,8 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
 )
 
 const maxControlLine = 1024
@@ -81,10 +81,10 @@ func parseStartup(args []string) (startupOptions, error) {
 	return startupOptions{dataDir: abs, instanceID: *instanceID, managed: managed}, nil
 }
 
-func writeReady(output io.Writer, info service.RuntimeInfo) error {
+func writeReady(output io.Writer, info app.RuntimeInfo) error {
 	return json.NewEncoder(output).Encode(struct {
 		Event string `json:"event"`
-		service.RuntimeInfo
+		app.RuntimeInfo
 		Address string `json:"address"`
 	}{Event: "ready", RuntimeInfo: info, Address: "http://127.0.0.1:10086"})
 }

@@ -10,26 +10,28 @@ import (
 	"testing"
 	"time"
 
+	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/recovery"
 )
 
-func enableRecovery(t *testing.T, app *service.App, notify *NotificationStore, clock *schedulerClock) {
+func enableRecovery(t *testing.T, app *application.App, notify *NotificationStore, clock *schedulerClock) {
 	t.Helper()
 	var err error
-	app.Recovery, err = service.NewRecoveryService(notify, service.SchedulerOptions{Now: clock.now})
+	app.Recovery, err = recovery.NewService(notify, notification.SchedulerOptions{Now: clock.now})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if app.Delivery == nil {
-		app.Delivery, err = service.NewDeliveryService(notify, clock.now)
+		app.Delivery, err = notification.NewDeliveryService(notify, clock.now)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 }
 
-func completeRecovery(t *testing.T, app *service.App, clock *schedulerClock) *service.RecoveryView {
+func completeRecovery(t *testing.T, app *application.App, clock *schedulerClock) *model.RecoveryView {
 	t.Helper()
 	for i := 0; i < 200; i++ {
 		if _, err := app.RecoverStep(context.Background()); err != nil {
@@ -74,7 +76,7 @@ func TestRecoveryLargeHistoryAndPagination(t *testing.T) {
 	if view == nil || view.MissedTotal == nil || *view.MissedTotal != 502 || view.MaterializedCount != 502 {
 		t.Fatalf("完整总数不准确: %#v", view)
 	}
-	if _, err := app.QueryDeliveryMembers(ctx, view.DeliveryTaskID, "", oldCursor, clock.now()); !errors.Is(err, service.ErrMembersChanged) {
+	if _, err := app.QueryDeliveryMembers(ctx, view.DeliveryTaskID, "", oldCursor, clock.now()); !errors.Is(err, notification.ErrMembersChanged) {
 		t.Fatal("成员增加未拒绝旧游标", err)
 	}
 	seen := make(map[int]bool)
@@ -103,7 +105,7 @@ func TestRecoveryLargeHistoryAndPagination(t *testing.T) {
 	if claim.TaskType != "recovery" {
 		t.Fatal("未创建汇总任务", claim)
 	}
-	if _, err := app.QueryDeliveryMembers(ctx, claim.DeliveryTaskID, claim.AttemptID, "", clock.now()); !errors.Is(err, service.ErrDeliveryConflict) {
+	if _, err := app.QueryDeliveryMembers(ctx, claim.DeliveryTaskID, claim.AttemptID, "", clock.now()); !errors.Is(err, notification.ErrDeliveryConflict) {
 		t.Fatal("未开始允许查询冻结成员", err)
 	}
 	if _, err := app.AcknowledgeNotifications(ctx, []int{r.Notification.ID}, clock.now()); err != nil {
@@ -124,7 +126,7 @@ func TestRecoveryLargeHistoryAndPagination(t *testing.T) {
 	if again, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifySent); err != nil || again != result {
 		t.Fatal("重复结果不幂等", again, err)
 	}
-	if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifyFailed); !errors.Is(err, service.ErrDeliveryConflict) {
+	if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifyFailed); !errors.Is(err, notification.ErrDeliveryConflict) {
 		t.Fatal("成功结果被降级", err)
 	}
 	if claims, err := app.ClaimDelivery(ctx, 20); err != nil || len(claims) != 0 {
@@ -204,7 +206,7 @@ func TestRecoveryPreservesStartedBudgetAndRevokesClaim(t *testing.T) {
 			enableRecovery(t, app, notify, clock)
 			clock.set(clock.now().Add(time.Minute))
 			if !started {
-				if _, err := app.StartDelivery(ctx, claim.AttemptID); !errors.Is(err, service.ErrAttemptNotFound) {
+				if _, err := app.StartDelivery(ctx, claim.AttemptID); !errors.Is(err, notification.ErrAttemptNotFound) {
 					t.Fatal("恢复前旧 claim 抢先展示", err)
 				}
 			}
@@ -261,16 +263,16 @@ func TestRecoveryBatchRollbackAndRestart(t *testing.T) {
 	if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifyFailed); err != nil {
 		t.Fatal(err)
 	}
-	restarted := &service.App{Schedule: app.Schedule, Notify: notify}
+	restarted := &application.App{Schedule: app.Schedule, Notify: notify}
 	enableRecovery(t, restarted, notify, clock)
 	newView := completeRecovery(t, restarted, clock)
 	if newView.MaterializedCount != view.MaterializedCount || newView.DeliveryTaskID == view.DeliveryTaskID {
 		t.Fatal("重启身份或去重错误", newView)
 	}
-	if _, err := restarted.QueryDeliveryMembers(ctx, view.DeliveryTaskID, "", "", clock.now()); !errors.Is(err, service.ErrTaskNotFound) {
+	if _, err := restarted.QueryDeliveryMembers(ctx, view.DeliveryTaskID, "", "", clock.now()); !errors.Is(err, notification.ErrTaskNotFound) {
 		t.Fatal("重启保留旧任务", err)
 	}
-	if _, err := restarted.StartDelivery(ctx, claim.AttemptID); !errors.Is(err, service.ErrAttemptNotFound) {
+	if _, err := restarted.StartDelivery(ctx, claim.AttemptID); !errors.Is(err, notification.ErrAttemptNotFound) {
 		t.Fatal("重启保留旧尝试", err)
 	}
 	newClaim := claimOne(t, restarted)
@@ -281,7 +283,7 @@ func TestRecoveryBatchRollbackAndRestart(t *testing.T) {
 	if _, err := restarted.CompleteDelivery(ctx, newClaim.AttemptID, model.NotifySent); err != nil {
 		t.Fatal(err)
 	}
-	third := &service.App{Schedule: app.Schedule, Notify: notify}
+	third := &application.App{Schedule: app.Schedule, Notify: notify}
 	enableRecovery(t, third, notify, clock)
 	thirdView := completeRecovery(t, third, clock)
 	if thirdView.MissedTotal == nil || *thirdView.MissedTotal != 0 {
@@ -331,7 +333,7 @@ func TestRecoveryConcurrentStopAndLateResults(t *testing.T) {
 			clock.set(clock.now().Add(time.Minute))
 			completeRecovery(t, app, clock)
 			claim := claimOne(t, app)
-			var start service.DeliveryStart
+			var start notification.DeliveryStart
 			var startErr, stopErr error
 			var wg sync.WaitGroup
 			wg.Add(2)
@@ -416,7 +418,7 @@ func TestRecoveryRepeatedGapKeepsHistoricalCounts(t *testing.T) {
 	}
 	// 重新构建分钟组模拟回拨后对同一触发的重扫；同运行仍由原汇总拥有成员。
 	clock.set(clock.now().Add(-time.Minute))
-	app.Scheduler, _ = service.NewScheduler(notify, service.SchedulerOptions{Now: clock.now})
+	app.Scheduler, _ = notification.NewScheduler(notify, notification.SchedulerOptions{Now: clock.now})
 	if err := app.Scheduler.Step(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +431,7 @@ func TestRecoveryRepeatedGapKeepsHistoricalCounts(t *testing.T) {
 	if claim.DeliveryTaskID != second.DeliveryTaskID {
 		t.Fatal("未合并旧未开始汇总", claim)
 	}
-	if _, err := app.QueryDeliveryMembers(ctx, first.DeliveryTaskID, "", "", clock.now()); !errors.Is(err, service.ErrTaskNotFound) {
+	if _, err := app.QueryDeliveryMembers(ctx, first.DeliveryTaskID, "", "", clock.now()); !errors.Is(err, notification.ErrTaskNotFound) {
 		t.Fatal("合并后旧未开始身份仍有效", err)
 	}
 }
@@ -451,10 +453,10 @@ func TestRecoveryCoalescesUnstartedSummaries(t *testing.T) {
 	if second.MissedTotal == nil || *second.MissedTotal != 2 || second.DisplayableCount != 2 {
 		t.Fatal("连续遗漏统计不完整", second)
 	}
-	if _, err := app.StartDelivery(ctx, oldClaim.AttemptID); !errors.Is(err, service.ErrAttemptNotFound) {
+	if _, err := app.StartDelivery(ctx, oldClaim.AttemptID); !errors.Is(err, notification.ErrAttemptNotFound) {
 		t.Fatal("旧汇总 claim 未撤销", err)
 	}
-	if _, err := app.QueryDeliveryMembers(ctx, first.DeliveryTaskID, "", "", clock.now()); !errors.Is(err, service.ErrTaskNotFound) {
+	if _, err := app.QueryDeliveryMembers(ctx, first.DeliveryTaskID, "", "", clock.now()); !errors.Is(err, notification.ErrTaskNotFound) {
 		t.Fatal("旧汇总未退役", err)
 	}
 	claim := claimOne(t, app)

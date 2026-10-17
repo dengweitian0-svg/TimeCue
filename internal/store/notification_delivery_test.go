@@ -9,14 +9,15 @@ import (
 	"testing"
 	"time"
 
+	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
 )
 
-func deliveryFixture(t *testing.T, count int) (*Sqlite, *NotificationStore, *service.App, *schedulerClock, []*model.ScheduleWrite) {
+func deliveryFixture(t *testing.T, count int) (*Sqlite, *NotificationStore, *application.App, *schedulerClock, []*model.ScheduleWrite) {
 	t.Helper()
 	db, _, notify, app, clock := schedulerFixture(t)
-	d, err := service.NewDeliveryService(notify, clock.now)
+	d, err := notification.NewDeliveryService(notify, clock.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func deliveryFixture(t *testing.T, count int) (*Sqlite, *NotificationStore, *ser
 	return db, notify, app, clock, writes
 }
 
-func claimOne(t *testing.T, app *service.App) service.DeliveryClaim {
+func claimOne(t *testing.T, app *application.App) notification.DeliveryClaim {
 	t.Helper()
 	claims, err := app.ClaimDelivery(context.Background(), 20)
 	if err != nil || len(claims) != 1 {
@@ -49,7 +50,7 @@ func TestDeliveryFreezeReplayAndStop(t *testing.T) {
 	if again := claimOne(t, app); again != claim {
 		t.Fatal("重复领取改变身份")
 	}
-	if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifySent); !errors.Is(err, service.ErrDeliveryConflict) {
+	if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifySent); !errors.Is(err, notification.ErrDeliveryConflict) {
 		t.Fatal("未开始允许回填", err)
 	}
 	if _, err := app.AcknowledgeNotifications(ctx, []int{writes[0].Notification.ID}, clock.now()); err != nil {
@@ -77,7 +78,7 @@ func TestDeliveryFreezeReplayAndStop(t *testing.T) {
 	if err != nil || duplicate != result {
 		t.Fatal("回填重传不幂等", err)
 	}
-	if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifyFailed); !errors.Is(err, service.ErrDeliveryConflict) {
+	if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifyFailed); !errors.Is(err, notification.ErrDeliveryConflict) {
 		t.Fatal("矛盾结果未拒绝", err)
 	}
 	for i, w := range writes {
@@ -148,12 +149,12 @@ func TestDeliveryEmptyAndRestart(t *testing.T) {
 	_, notify, app, clock, writes := deliveryFixture(t, 1)
 	ctx := context.Background()
 	old := claimOne(t, app)
-	d, err := service.NewDeliveryService(notify, clock.now)
+	d, err := notification.NewDeliveryService(notify, clock.now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	app.Delivery = d
-	if _, err := app.StartDelivery(ctx, old.AttemptID); !errors.Is(err, service.ErrAttemptNotFound) {
+	if _, err := app.StartDelivery(ctx, old.AttemptID); !errors.Is(err, notification.ErrAttemptNotFound) {
 		t.Fatal("旧 attempt 仍有效", err)
 	}
 	claim := claimOne(t, app)
@@ -167,7 +168,7 @@ func TestDeliveryEmptyAndRestart(t *testing.T) {
 	if err != nil || start.ShouldDisplay || start.AttemptNumber != 0 || start.MemberCount != 0 {
 		t.Fatal("空任务消费预算", start, err)
 	}
-	if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifyFailed); !errors.Is(err, service.ErrDeliveryConflict) {
+	if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifyFailed); !errors.Is(err, notification.ErrDeliveryConflict) {
 		t.Fatal("空组伪造失败", err)
 	}
 }
@@ -248,7 +249,7 @@ func TestDeliveryConcurrentStartAndConfirmation(t *testing.T) {
 		t.Fatal("开始竞争破坏快照", start, err)
 	}
 	app.StopDelivery()
-	if _, err := app.ClaimDelivery(ctx, 20); !errors.Is(err, service.ErrDeliveryStopping) {
+	if _, err := app.ClaimDelivery(ctx, 20); !errors.Is(err, notification.ErrDeliveryStopping) {
 		t.Fatal("退出后仍领取", err)
 	}
 	if _, err := app.CompleteDelivery(ctx, claim.AttemptID, model.NotifySent); err != nil {
@@ -347,7 +348,7 @@ func TestDeliveryRestartCurrentFailed(t *testing.T) {
 	if _, err := app.CompleteDelivery(ctx, old.AttemptID, model.NotifyFailed); err != nil {
 		t.Fatal(err)
 	}
-	scheduler, err := service.NewScheduler(notify, service.SchedulerOptions{Now: clock.now})
+	scheduler, err := notification.NewScheduler(notify, notification.SchedulerOptions{Now: clock.now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,17 +359,17 @@ func TestDeliveryRestartCurrentFailed(t *testing.T) {
 	if n.Status != model.NotifyFailed {
 		t.Fatal("D1 自行许可失败重试")
 	}
-	d, err := service.NewDeliveryService(notify, clock.now)
+	d, err := notification.NewDeliveryService(notify, clock.now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted := &service.App{Scheduler: scheduler, Notify: notify, Delivery: d}
+	restarted := &application.App{Scheduler: scheduler, Notify: notify, Delivery: d}
 	claim := claimOne(t, restarted)
 	start, err := restarted.StartDelivery(ctx, claim.AttemptID)
 	if err != nil || start.AttemptNumber != 1 || !start.ShouldDisplay {
 		t.Fatal("重启当前分钟失败提醒丢失", start, err)
 	}
-	if _, err := restarted.StartDelivery(ctx, old.AttemptID); !errors.Is(err, service.ErrAttemptNotFound) {
+	if _, err := restarted.StartDelivery(ctx, old.AttemptID); !errors.Is(err, notification.ErrAttemptNotFound) {
 		t.Fatal("旧回执身份仍生效")
 	}
 	ids, err := restarted.DeliveryAttemptMembers(claim.AttemptID)

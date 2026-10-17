@@ -2,7 +2,7 @@
 
 启动供 Flutter 调用的本机 HTTP 服务。
 
-- `main.go`：校验启动参数，创建配置/SQLite/仓储适配器与不可变运行信息，装配业务 App（含聊天服务端口）与 HTTP 路由，将信号和父端控制合入原 context 调用 service.App.Run。
+- `main.go`：校验启动参数，创建配置/SQLite/仓储适配器与不可变运行信息，装配 `internal/app.App`（含聊天服务端口）与 HTTP 路由，将信号和父端控制合入原 context 调用 `App.Run`。
 - `managed.go`：`--data-dir` / `--instance-id` 校验、可执行文件目录默认值、stdout 单行 ready 编码、有界 stdin shutdown/EOF 控制及读取工作收尾。
 - `control_windows.go`：Windows 可关闭控制 Reader，只在专用匿名管道已有字节时读取，避免同步读取阻塞退出。
 - `managed_test.go` / `process_test.go`：参数和控制协议、真实匿名管道收尾、编译后二进制握手/健康/退出、启动失败及重启旧身份失效测试。
