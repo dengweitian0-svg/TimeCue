@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../contracts/notebook_repository.dart';
+import '../chat/chat_view_model.dart';
 import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
 import '../notebook/notebook_overlay.dart';
@@ -23,11 +24,13 @@ class RoomScreen extends StatefulWidget {
     this.onRecovery,
     this.historyRequests,
     this.configFiles,
+    this.chat,
   });
   final NotebookRepository repository;
   final VoidCallback? onRecovery;
   final ValueListenable<int>? historyRequests;
   final ConfigFileStore? configFiles;
+  final ChatViewModel? chat;
   @override
   State<RoomScreen> createState() => _RoomScreenState();
 }
@@ -286,6 +289,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                     ? geometry.visibleNotebookBounds.center
                     : fixedOrigin,
                 historyRequest: _historyRequest,
+                chat: widget.chat,
                 onClosed: () {
                   notebook.close();
                   setState(() => bookVisible = false);

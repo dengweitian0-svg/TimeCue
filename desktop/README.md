@@ -102,7 +102,11 @@ TimeCueApp                              MaterialApp、主题、构造注入
             │     ├─ DateListPage       日期清单 → TriggerRow
             │     ├─ LoadingDatePage / ErrorDatePage  真实查询加载与重试
             │     └─ EditingPage        ScheduleEditor（完整规则及 revision）
-            └─ ChatSpread               第四标签，双页/单栏欢迎与本地草稿框架
+            └─ ChatSpread               第四标签，双页/单栏单会话对话
+               ├─ ChatMessageList      用户文本、过程状态、累计 Markdown 与回到最新
+               │  ├─ ChatToolCallList  按调用 ID 保留完整工具名称，不推断执行结果
+               │  └─ ChatMarkdownBody gpt_markdown、代码/表格横向访问、选择与复制
+               └─ ChatComposer         草稿、输入法、发送及停止
 
 RoomScreen → showDialog
 ├─ SettingsDialog                       日志级别/日志目录/数据库目录原生选择、保存与恢复默认
@@ -142,7 +146,8 @@ flowchart LR
 | --- | --- | --- |
 | Go 业务快照、确认结果 / 内存示例 | HTTP / 示例仓储 | 只读 DTO；确认必须调用正式用例，规则变更必须调用正式事务 |
 | 标签、月份、互斥右页、两范围分页及跨页勾选 | NotebookViewModel | 跨页监听状态，只发送界面操作 |
-| AI 本地空草稿和单栏导航 | NotebookViewModel | 切标签与合本后保留；不发送网络请求 |
+| AI 会话、独立草稿、run、累计文本、工具身份、游标及并发占用 | ChatViewModel | 通过 ChatGateway 操作；页面不拥有连接，确认终态前保留名额 |
+| AI 演示草稿和历史框架导航 | NotebookViewModel | 未注入聊天模型时保留只读欢迎框架，不发送真实聊天请求 |
 | 开合阶段、动画进度、编辑会话 | NotebookOverlay | 内容到位后才可操作；导航时守卫草稿 |
 | 字段、草稿、保存错误 | ScheduleEditorViewModel | 创建弹层、独立修改弹窗与右页编辑复用表单，版本冲突保留草稿 |
 | 真实环境时间 | RoomClockController | 每秒重读 UTC+8，恢复前台立即同步 |
@@ -227,14 +232,18 @@ flutter build windows --release --target=lib/main.dart
 
 Python 脚本自行建立并手动迁移新的测试数据库，不接收业务数据库路径。Release 宿主 smoke 运行时需空闲的 10086 端口；不结束端口占用者。父测试通过隔离文件握手取得自有 Go 观察句柄，再允许宿主完成退出，避免快速退出产生缺失证据。原生驱动路径按实际 CMake build 目录调整。
 
-## AI 对话：基础与页面框架
+## AI 对话：传输与单会话
 
 房间设置、日程本、管理和添加入口共用米白底、暖棕文字及 44 高点击目标。原图猫咪增加透明入口，悬停或键盘聚焦显示“和我聊聊”；点击进入同一本子的 AI 标签。热区随三时段背景一起投影和裁切，猫咪不可见时仍可从固定日程本入口访问第四标签。合本后焦点返回实际入口，原入口不可见时返回固定本子按钮。
 
-当前完成范围为设计阶段 0、1：聊天 DTO、事件及错误映射、HTTP/SSE 夹具、固定 `gpt_markdown 1.3.4` 渲染依赖，以及 AI 双页/单栏框架、本地输入草稿和导航。发送、停止、服务端历史读取、搜索、删除、多会话运行及后台生成将在后续阶段接入；页面不展示虚构会话或回复。Go 聊天服务为内存 Mock，不保证真实模型、真实工具执行、持久化或跨后端重启恢复。
+当前实现覆盖设计阶段 0–3：聊天契约、七操作 HTTP/SSE、独立运行状态、固定 `gpt_markdown 1.3.4` 渲染，以及 AI 双页/单栏下的单会话输入、生成和停止。服务端历史读取、搜索、删除及完整多会话管理由阶段 4 接入，宿主异常恢复的完整验收由阶段 5 接入。Go 聊天仍为内存 Mock，不保证真实模型、真实工具执行、持久化或跨后端重启恢复；显式演示模式保留无网络的欢迎框架。
+
+`HttpChatGateway` 与日程仓储独立，共用构建模式端口来源。它提供七操作的严格 DTO 解码、UTF-8/SSE 分片处理、单 run 单连接、Last-Event-ID、204 转查询信号和可取消连接；不会自行重试创建。`ChatViewModel` 拥有会话草稿、运行及有序工具调用，只依赖 `ChatGateway`，创建结果不明时固定原请求和幂等键，断线、取消受理及终态查询失败均保留已知名额。五类事件共用游标，按事件 ID 去重；工具按各 run 的调用 ID 去重，相同名称的不同调用分别保留。只有服务端确认的终态释放名额，最终正文使用 GET 结果收敛。
+
+输入支持 Enter 发送、Shift+Enter 换行及输入法组合保护，运行期间可以编辑下一条草稿。助手正文使用累计原始文本渲染，支持选择、代码复制、代码/表格局部横向访问及链接操作；过程状态不混入正文，不展示思考原文和工具参数，不推断工具调用的并行关系或执行成功。向上阅读时显示“回到最新”，单双栏切换保留当前内容与工具列表。会话页头使用服务端 `session_name` 映射的 `name`，空名称显示占位，读取失败保留错误而不从用户消息生成名称。
 
 `ChatGateway` 与日程仓储独立，声明七操作契约；session 详情的 `session_name` 映射为 `name`，保留中文与空字符串，不以用户首句替代。列表响应仍是 ID 数组。工具名取 `function.name`，SSE 事件 ID 与工具调用 ID 分离；现有工具事件不包含执行关系或单工具结果。取消受理、断线和 SSE 204 都不由页面推断为生成完成。当前 Go Mock 允许终态快照的 output 或 error 为 null，DTO 保留可空值，运行结果始终由服务端 status 表达，不以是否有正文推断终态。
 
-`test/fixtures/chat_fixtures.dart` 固定正常、Thinking、多工具、同名多次调用、交错、失败、取消、重复与重连数据，供后续传输和运行模型复用。`chat_contracts_test.dart` 校验 DTO 与错误边界；`chat_markdown_compatibility_test.dart` 使用 `gpt_markdown` 验证累计文本、未闭合语法、代码与表格；`chat_spread_test.dart`、`cat_chat_hotspot_test.dart` 覆盖本阶段布局、入口与焦点。可选截图属于 Widget 绘制证据，不能代替 Windows DPI、输入法和真实鼠标键盘验收。
+`test/fixtures/chat_fixtures.dart` 固定正常、Thinking、多工具、同名多次调用、交错、失败、取消、重复与重连数据。`chat_contracts_test.dart` 校验 DTO 与错误边界；`http_chat_gateway_test.dart` 使用可控 HTTP 和原始 socket 验证传输及释放；`chat_view_model_test.dart` 验证幂等、并发、恢复、工具身份、终态及迟到代次；`chat_conversation_test.dart` 验证单会话交互；`chat_markdown_compatibility_test.dart` 验证累计文本、未闭合语法、代码与表格；`chat_spread_test.dart`、`cat_chat_hotspot_test.dart` 保留布局、入口与焦点回归。自动检查和 Widget 绘制证据不代替 Windows DPI、真实输入法、剪贴板、浏览器及系统交互验收。
 
 Windows 渲染依赖兼容性可单独使用 `flutter build windows --release --target=tool/chat_markdown_smoke.dart`，该入口实际引用 gpt_markdown 并显示固定 Markdown，不连接后端。正式应用构建继续使用默认 `lib/main.dart` 入口。

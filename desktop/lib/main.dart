@@ -5,7 +5,9 @@ import 'app/managed_backend.dart';
 import 'app/timecue_app.dart';
 import 'app/windows_notification_bridge.dart';
 import 'data/demo_notebook_repository.dart';
+import 'data/http_chat_gateway.dart';
 import 'data/http_notebook_repository.dart';
+import 'features/chat/chat_view_model.dart';
 import 'features/notebook/notification_view_model.dart';
 
 Future<void> main() async {
@@ -39,7 +41,11 @@ Future<void> main() async {
     ),
   );
   ManagedBackend? backend;
+  late final HttpChatGateway chatGateway;
+  late final ChatViewModel chat;
   var businessOpened = false;
+  var chatRuntimeLost = false;
+  String? chatRuntimeInstance;
   if (configuration.managed) {
     backend = ManagedBackend(
       platform: WindowsOwnedProcessPlatform(),
@@ -50,13 +56,6 @@ Future<void> main() async {
     );
     repository.onManagedRuntimeLost = () =>
         backend!.invalidateRuntime('端口上的服务身份与自有 Go 不一致。');
-    backend.onInvalidated = () {
-      repository.invalidateManagedRuntime();
-      if (businessOpened) {
-        notifications.invalidateRuntime();
-        views.observeRuntime(null);
-      }
-    };
     backend.addListener(() {
       if (backend!.ready) {
         businessOpened = true;
@@ -64,12 +63,48 @@ Future<void> main() async {
       }
     });
   }
+  chatGateway = HttpChatGateway(
+    beforeRequest: () async {
+      if (chatRuntimeLost) throw StateError('聊天所属本地服务运行已失效。');
+      if (configuration.managed && !(backend?.ready ?? false)) {
+        throw StateError('自有本地服务尚未就绪。');
+      }
+      final runtime = await repository.deliveryRuntime();
+      if (configuration.managed && !(backend?.ready ?? false)) {
+        throw StateError('自有本地服务已失效。');
+      }
+      final expected = chatRuntimeInstance;
+      if (expected == null) {
+        chatRuntimeInstance = runtime.instanceId;
+      } else if (expected != runtime.instanceId) {
+        chatRuntimeLost = true;
+        chat.invalidateRuntime();
+        chatGateway.invalidateRuntime();
+        throw StateError('聊天所属本地服务身份已变化，旧操作不会提交到新运行。');
+      }
+    },
+  );
+  chat = ChatViewModel(gateway: chatGateway);
+  if (backend != null) {
+    backend.onInvalidated = () {
+      repository.invalidateManagedRuntime();
+      if (businessOpened) {
+        chatRuntimeLost = true;
+        notifications.invalidateRuntime();
+        views.observeRuntime(null);
+        chat.invalidateRuntime();
+        chatGateway.invalidateRuntime();
+      }
+    };
+  }
   desktop.onActivate = views.activate;
   runApp(
     TimeCueApp(
       repository: repository,
       desktop: desktop,
       notificationViews: views,
+      chat: chat,
+      releaseChatTransport: chatGateway.dispose,
       notifications: notifications,
       backend: backend,
       configFiles: configFiles,

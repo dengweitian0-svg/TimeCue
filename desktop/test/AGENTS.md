@@ -43,6 +43,10 @@
 - 旧目录配置回归覆盖读取不误取父目录、启动前原子修正、相对目录、并发保存、注释及已有数据库保留、幂等及特殊数据源不变；托管启动准备失败可见并可重试，准备期间取消或截止后零进程创建。
 
 - `chat_contracts_test.dart` 与 `fixtures/chat_fixtures.dart`：聊天七操作响应、session_name 原样映射及缺失/类型错误、运行状态、HTTP 错误、五类 SSE 数据及独立事件/工具调用身份；固定正常、Thinking、多工具、同名、交错、失败、取消、重复与重连数据。夹具不代表真实模型或工具执行。
+- `chat_host_test.dart`：验证宿主持有的聊天模型向页面发送操作、标签/本子切换保留草稿和单条 SSE 连接，以及宿主释放后不再补交操作。
+- `http_chat_gateway_test.dart`：可控 HTTP/SSE 与原始 socket 验证七操作、UTF-8 跨字节解码、游标、204、错误映射、真实取消断连及单连接身份隔离。
+- `chat_view_model_test.dart`：验证不明创建的幂等重试、同会话和全局占用、事件与工具身份、缺口恢复、终态 checkpoint、身份错误、运行失效及迟到取消/快照的终态单调约束。
+- `chat_conversation_test.dart`：验证单会话发送、独立下一条草稿、多工具名称、停止与最终正文、单双栏阅读位置、Enter/Shift+Enter/输入法组合保护及代码复制；广播流取消涉及真实异步 Future，测试显式推进真实与假时钟。
 - `chat_markdown_compatibility_test.dart`：固定 gpt_markdown 在累计完整文本、未闭合语法、代码、宽表格及文字缩放下的渲染兼容性，不实现运行连接或逐增量 Markdown 解析。
 - `chat_spread_test.dart`：AI 第四标签的双页/单栏、历史导航、本地草稿保留与清空前确认；既有 Widget 回归继续检查日程编辑草稿守卫。验证 640×480、1280×800、1440×900 与文字缩放布局。
 - `cat_chat_hotspot_test.dart`：三时段资源与 cover 几何、透明猫咪热区、裁切、鼠标/键盘入口、关闭焦点返回及米白暖棕入口样式。可选 `TIMECUE_CAPTURE_CHAT=true` 输出本地 Widget PNG；截图与替身键盘操作不替代 Windows 真机、DPI、输入法及跨显示器验收。
