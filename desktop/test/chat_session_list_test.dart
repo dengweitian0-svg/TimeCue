@@ -11,6 +11,85 @@ import 'package:timecue_desktop/features/notebook/notebook_view_model.dart';
 import 'package:timecue_desktop/theme/notebook_theme.dart';
 
 void main() {
+  testWidgets('搜索使用展示名称和摘要并保留规范化及清除行为', (tester) async {
+    final gateway = _HistoryGateway(
+      sessionIds: const ['unnamed', 'named', 'summary-only'],
+      names: const {'named': '中文计划 Task Alpha', 'summary-only': '摘要测试会话'},
+      runIds: const {
+        'summary-only': ['summary-run'],
+      },
+      runs: {
+        'summary-run': ChatRun(
+          runId: 'summary-run',
+          sessionId: 'summary-only',
+          model: 'test-model',
+          input: '旧输入',
+          status: ChatRunStatus.succeeded,
+          output: '摘要独有词用于搜索',
+          error: null,
+          createdAt: DateTime.utc(2026, 10, 18),
+          finishedAt: DateTime.utc(2026, 10, 18, 0, 1),
+        ),
+      },
+    );
+    final chat = ChatViewModel(gateway: gateway);
+    addTearDown(() {
+      chat.dispose();
+      gateway.dispose();
+    });
+    await chat.loadHistory();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NotebookTheme.data,
+        home: Scaffold(
+          body: SizedBox(
+            width: 380,
+            height: 600,
+            child: ChatSessionList(
+              chat: chat,
+              selectedSessionId: null,
+              onSelect: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      chat.historyConversations
+          .firstWhere((c) => c.sessionId == 'unnamed')
+          .name,
+      '',
+    );
+    await tester.enterText(find.byType(TextField).first, '未');
+    await tester.pumpAndSettle();
+    expect(find.text('未命名会话'), findsOneWidget);
+    expect(find.text('中文计划 Task Alpha'), findsNothing);
+
+    await tester.enterText(find.byType(TextField).first, '计划');
+    await tester.pumpAndSettle();
+    expect(find.text('中文计划 Task Alpha'), findsOneWidget);
+    expect(find.text('未命名会话'), findsNothing);
+
+    await tester.enterText(find.byType(TextField).first, '摘要独有词');
+    await tester.pumpAndSettle();
+    expect(find.text('摘要独有词用于搜索'), findsOneWidget);
+    expect(find.text('中文计划 Task Alpha'), findsNothing);
+
+    await tester.enterText(find.byType(TextField).first, '  tAsK  ');
+    await tester.pumpAndSettle();
+    expect(find.text('中文计划 Task Alpha'), findsOneWidget);
+    expect(find.text('摘要独有词用于搜索'), findsNothing);
+
+    await tester.tap(find.byTooltip('清空搜索'));
+    await tester.pumpAndSettle();
+    expect(find.text('未命名会话'), findsOneWidget);
+    expect(find.text('中文计划 Task Alpha'), findsOneWidget);
+    expect(find.text('摘要独有词用于搜索'), findsOneWidget);
+  });
+
   testWidgets('历史列表搜索名称、保留完整标题并在删除确认后移除', (tester) async {
     final gateway = _HistoryGateway(
       sessionIds: const ['session-one', 'session-two'],
@@ -309,11 +388,15 @@ class _HistoryGateway implements ChatGateway {
   _HistoryGateway({
     this.sessionIds = const [],
     this.names = const {},
+    this.runIds = const {},
+    this.runs = const {},
     this.failList = false,
   });
 
   final List<String> sessionIds;
   final Map<String, String> names;
+  final Map<String, List<String>> runIds;
+  final Map<String, ChatRun> runs;
   final bool failList;
   bool failDelete = false;
   int listCalls = 0;
@@ -336,7 +419,7 @@ class _HistoryGateway implements ChatGateway {
       : createCompleter!.future;
 
   @override
-  Future<ChatRun> getRun(String runId) async => throw StateError('no runs');
+  Future<ChatRun> getRun(String runId) async => runs[runId]!;
 
   @override
   Stream<ChatRunEventSignal> runEvents(String runId, {int? lastEventId}) =>
@@ -352,7 +435,7 @@ class _HistoryGateway implements ChatGateway {
   Future<ChatSession> getSession(String sessionId) async => ChatSession(
     sessionId: sessionId,
     name: names[sessionId] ?? '',
-    runIds: const [],
+    runIds: runIds[sessionId] ?? const [],
   );
 
   @override

@@ -61,9 +61,11 @@ type Mock struct {
 	options    MockOptions
 }
 
-// NewMock 创建会自动输出固定事件序列的临时 Mock。
+// NewMock 创建带命名历史示例且会自动输出固定事件序列的临时 Mock。
 func NewMock() *Mock {
-	return NewMockWithOptions(MockOptions{AutoRun: true, StepDelay: 80 * time.Millisecond})
+	mock := NewMockWithOptions(MockOptions{AutoRun: true, StepDelay: 80 * time.Millisecond})
+	mock.seedSessions()
+	return mock
 }
 
 // NewMockWithOptions 创建可控的临时 Mock；AutoRun=false 时由测试或调用方发布事件。

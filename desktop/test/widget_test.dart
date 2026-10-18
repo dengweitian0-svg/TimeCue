@@ -162,7 +162,11 @@ void main() {
     final disabledStyle = tester.widget<FilledButton>(addButton).style!;
     expect(
       disabledStyle.backgroundColor?.resolve({WidgetState.disabled}),
-      const Color.fromARGB(255, 238, 222, 190),
+      const Color.fromARGB(225, 238, 222, 190),
+    );
+    expect(
+      disabledStyle.foregroundColor?.resolve({WidgetState.disabled}),
+      const Color.fromARGB(255, 93, 66, 43),
     );
 
     repo.setState(loading: false, error: '连接失败');
@@ -176,7 +180,7 @@ void main() {
     expect(enabledButton.onPressed, isNotNull);
     expect(
       enabledButton.style!.backgroundColor?.resolve({}),
-      NotebookTheme.paper,
+      const Color.fromARGB(128, 73, 61, 48),
     );
     await tester.tap(addButton);
     await tester.pumpAndSettle();

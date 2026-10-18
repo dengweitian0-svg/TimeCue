@@ -184,26 +184,17 @@ void main() {
     repository.dispose();
   });
 
-  testWidgets('统一入口样式保持文字对比度、禁用创建门禁和管理入口', (tester) async {
+  testWidgets('房间四个固定入口使用原半透明胶囊样式并保留创建门禁', (tester) async {
     final style = NotebookTheme.roomActionStyle();
-    final foreground = style.foregroundColor!.resolve({})!;
-    final background = style.backgroundColor!.resolve({})!;
-    final lighter =
-        foreground.computeLuminance() > background.computeLuminance()
-        ? foreground.computeLuminance()
-        : background.computeLuminance();
-    final darker = foreground.computeLuminance() > background.computeLuminance()
-        ? background.computeLuminance()
-        : foreground.computeLuminance();
-    expect((lighter + .05) / (darker + .05), greaterThanOrEqualTo(4.5));
+    const background = Color.fromARGB(128, 73, 61, 48);
+    const foreground = Color.fromARGB(159, 255, 249, 237);
+    expect(style.backgroundColor!.resolve({}), background);
+    expect(style.foregroundColor!.resolve({}), foreground);
     expect(style.minimumSize!.resolve({})!.height, 44);
+    expect(style.side!.resolve({}), BorderSide.none);
     expect(
       style.shape!.resolve({}),
-      isA<RoundedRectangleBorder>().having(
-        (shape) => shape.borderRadius,
-        '圆角',
-        BorderRadius.circular(12),
-      ),
+      const StadiumBorder(side: BorderSide.none),
     );
 
     tester.view.physicalSize = const Size(1280, 720);
@@ -217,16 +208,46 @@ void main() {
         home: Scaffold(body: RoomScreen(repository: repository)),
       ),
     );
+    final fixedEntryFinders = [
+      find.widgetWithText(FilledButton, '设置'),
+      find.descendant(
+        of: find.byType(RoomActions),
+        matching: find.byType(FilledButton),
+      ),
+      find.widgetWithText(FilledButton, '管理日程'),
+    ];
+    for (final finder in fixedEntryFinders) {
+      // 确保三个固定入口都由房间真实界面渲染。
+      expect(finder, findsOneWidget);
+      final button = tester.widget<FilledButton>(finder);
+      expect(button.style!.backgroundColor!.resolve({}), background);
+      expect(button.style!.foregroundColor!.resolve({}), foreground);
+      expect(
+        button.style!.shape!.resolve({}),
+        const StadiumBorder(side: BorderSide.none),
+      );
+      expect(button.style!.minimumSize!.resolve({})!.height, 44);
+    }
     final create = find.widgetWithText(FilledButton, '添加日程');
     final manage = find.widgetWithText(FilledButton, '管理日程');
+    final createButton = tester.widget<FilledButton>(create);
     expect(tester.widget<FilledButton>(create).onPressed, isNull);
     expect(find.byTooltip('提醒服务暂不可用，恢复连接后即可添加日程'), findsOneWidget);
     expect(tester.widget<FilledButton>(manage).onPressed, isNotNull);
+    expect(createButton.style!.backgroundColor!.resolve({}), background);
+    expect(createButton.style!.foregroundColor!.resolve({}), foreground);
     expect(
-      tester.widget<FilledButton>(create).style!.backgroundColor!.resolve({
-        WidgetState.disabled,
-      }),
-      isNot(style.backgroundColor!.resolve({})),
+      createButton.style!.shape!.resolve({}),
+      const StadiumBorder(side: BorderSide.none),
+    );
+    expect(createButton.style!.minimumSize!.resolve({})!.height, 44);
+    expect(
+      createButton.style!.backgroundColor!.resolve({WidgetState.disabled}),
+      const Color.fromARGB(225, 238, 222, 190),
+    );
+    expect(
+      createButton.style!.foregroundColor!.resolve({WidgetState.disabled}),
+      const Color.fromARGB(255, 93, 66, 43),
     );
     await tester.pumpWidget(const SizedBox());
     repository.dispose();

@@ -86,7 +86,7 @@ class _ChatSessionListState extends State<ChatSessionList> {
         : all
               .where(
                 (conversation) =>
-                    conversation.name.toLowerCase().contains(query) ||
+                    conversation.displayName.toLowerCase().contains(query) ||
                     conversation.summary.toLowerCase().contains(query),
               )
               .toList();

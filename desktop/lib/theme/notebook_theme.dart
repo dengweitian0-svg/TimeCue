@@ -17,20 +17,21 @@ abstract final class NotebookTheme {
   /// 封面纸色标签上的文字颜色。
   static const coverLabelForeground = ink;
 
-  /// 房间固定入口共用米白底、暖棕文字和易识别的禁用状态。
+  /// 房间固定入口共用半透明暖棕胶囊样式，并保留添加入口的禁用状态。
   static ButtonStyle roomActionStyle({bool disabledCreate = false}) =>
       FilledButton.styleFrom(
-        backgroundColor: paper,
-        foregroundColor: ink,
+        backgroundColor: const Color.fromARGB(128, 73, 61, 48),
+        foregroundColor: const Color.fromARGB(159, 255, 249, 237),
+        side: BorderSide.none,
         disabledBackgroundColor: disabledCreate
-            ? const Color.fromARGB(255, 238, 222, 190)
+            ? const Color.fromARGB(225, 238, 222, 190)
             : const Color.fromARGB(255, 242, 235, 218),
-        disabledForegroundColor: ink,
+        disabledForegroundColor: disabledCreate
+            ? const Color.fromARGB(255, 93, 66, 43)
+            : ink,
         minimumSize: const Size(0, 44),
         padding: const EdgeInsets.symmetric(horizontal: 14),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(12)),
-        ),
+        shape: const StadiumBorder(side: BorderSide.none),
         textStyle: const TextStyle(fontSize: 12),
       );
 
