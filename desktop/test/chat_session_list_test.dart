@@ -233,6 +233,93 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('创建结果待确认时保留本地入口并用原幂等请求重试', (tester) async {
+    final gateway = _HistoryGateway()
+      ..createCompleter = Completer<ChatCreateRunResult>();
+    var sessionIndex = 0;
+    final chat = ChatViewModel(
+      gateway: gateway,
+      createSessionId: () => 'local-${++sessionIndex}',
+      createIdempotencyKey: () => 'same-key',
+    );
+    addTearDown(() {
+      chat.dispose();
+      gateway.dispose();
+    });
+    await chat.loadHistory();
+    final original = chat.createLocalSession();
+    chat.updateDraft(original.sessionId, '需要安全重试的原始输入');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NotebookTheme.data,
+        home: Scaffold(
+          body: SizedBox(
+            width: 380,
+            height: 600,
+            child: ChatSessionList(
+              chat: chat,
+              selectedSessionId: chat.selectedSessionId,
+              onSelect: chat.selectSession,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final firstSend = chat.send(original.sessionId, model: 'deepseek-flash');
+    await tester.pumpAndSettle();
+    expect(find.text('创建请求处理中'), findsOneWidget);
+    expect(find.text('需要安全重试的原始输入'), findsOneWidget);
+    expect(original.draft, isEmpty);
+    expect(chat.activeRunCount, 1);
+
+    final second = chat.createLocalSession();
+    chat.updateDraft(original.sessionId, '这条下一条消息仍是未发送草稿');
+    await tester.pumpAndSettle();
+    expect(chat.selectedSessionId, second.sessionId);
+    expect(find.text('新会话草稿'), findsNothing);
+    expect(find.textContaining('未发送草稿：这条下一条消息仍是未发送草稿'), findsOneWidget);
+    await tester.tap(find.text('创建请求处理中'));
+    await tester.pumpAndSettle();
+    expect(chat.selectedSessionId, original.sessionId);
+
+    gateway.createCompleter!.completeError(
+      const ChatHttpError(
+        statusCode: 500,
+        code: 'temporary_failure',
+        message: '服务端结果未知',
+      ),
+    );
+    await firstSend;
+    await tester.pumpAndSettle();
+    expect(find.text('创建结果待确认'), findsOneWidget);
+    expect(chat.activeRunCount, 1);
+    expect(gateway.createRequests, hasLength(1));
+
+    gateway.createCompleter = null;
+    await chat.retryCreate(original.sessionId);
+    await tester.pumpAndSettle();
+    expect(gateway.createRequests, hasLength(2));
+    expect(gateway.createRequests[1], gateway.createRequests[0]);
+    expect(gateway.createRequests.last.sessionId, original.sessionId);
+    expect(gateway.createRequests.last.input, '需要安全重试的原始输入');
+    expect(gateway.createRequests.last.model, 'deepseek-flash');
+    expect(gateway.createRequests.last.idempotencyKey, 'same-key');
+    expect(chat.activeRunCount, 1);
+    expect(original.isLocal, isFalse);
+    expect(
+      chat.historyConversations.where(
+        (conversation) => conversation.sessionId == original.sessionId,
+      ),
+      hasLength(1),
+    );
+    expect(find.text('创建结果待确认'), findsNothing);
+    expect(find.text('未命名会话'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('历史读取失败保留重试错误，不显示无会话空状态', (tester) async {
     final gateway = _HistoryGateway(failList: true);
     final chat = ChatViewModel(gateway: gateway);
@@ -400,6 +487,10 @@ class _HistoryGateway implements ChatGateway {
   final bool failList;
   bool failDelete = false;
   int listCalls = 0;
+  final List<
+    ({String sessionId, String input, String model, String idempotencyKey})
+  >
+  createRequests = [];
   Completer<List<String>>? sessionIdsCompleter;
   Completer<ChatCreateRunResult>? createCompleter;
   int cancelCalls = 0;
@@ -414,9 +505,17 @@ class _HistoryGateway implements ChatGateway {
     required String input,
     required String model,
     required String idempotencyKey,
-  }) async => createCompleter == null
-      ? const ChatCreateRunResult('run-created')
-      : createCompleter!.future;
+  }) async {
+    createRequests.add((
+      sessionId: sessionId,
+      input: input,
+      model: model,
+      idempotencyKey: idempotencyKey,
+    ));
+    return createCompleter == null
+        ? const ChatCreateRunResult('run-created')
+        : createCompleter!.future;
+  }
 
   @override
   Future<ChatRun> getRun(String runId) async => runs[runId]!;

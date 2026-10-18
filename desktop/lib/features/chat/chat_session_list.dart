@@ -59,9 +59,16 @@ class _ChatSessionListState extends State<ChatSessionList> {
     widget.chat.historyHasFailures,
     widget.chat.selectedSessionId,
     for (final conversation in widget.chat.conversations.where(
-      (item) => item.isLocal && item.draft.trim().isNotEmpty,
+      (item) =>
+          item.isLocal &&
+          (item.draft.trim().isNotEmpty || item.runs.isNotEmpty),
     ))
       '${conversation.sessionId}:${conversation.draft}',
+    for (final conversation in widget.chat.conversations.where(
+      (item) => item.isLocal,
+    ))
+      for (final run in conversation.runs)
+        '${conversation.sessionId}:${run.messageId}:${run.input}:${run.phase}:${run.runId}:${run.error}:${run.occupiesSlot}',
     for (final conversation in widget.chat.historyConversations)
       '${conversation.sessionId}:${conversation.displayName}:${conversation.summary}:${conversation.latestCreatedAt.microsecondsSinceEpoch}:${conversation.historyLoaded}:${conversation.isDeleting}:${conversation.error}:${conversation.activeRun != null}:${_latestRun(conversation)?.phase}',
   ].join('|');
@@ -77,8 +84,18 @@ class _ChatSessionListState extends State<ChatSessionList> {
   Widget build(BuildContext context) {
     final chat = widget.chat;
     final all = chat.historyConversations;
-    final localDrafts = chat.conversations
-        .where((item) => item.isLocal && item.draft.trim().isNotEmpty)
+    final localConversations = chat.conversations
+        .where(
+          (item) =>
+              item.isLocal &&
+              (item.draft.trim().isNotEmpty || item.runs.isNotEmpty),
+        )
+        .toList();
+    final localDrafts = localConversations
+        .where((item) => item.runs.isEmpty && item.draft.trim().isNotEmpty)
+        .toList();
+    final localCreations = localConversations
+        .where((item) => item.runs.isNotEmpty)
         .toList();
     final query = _query.trim().toLowerCase();
     final visible = query.isEmpty
@@ -170,11 +187,12 @@ class _ChatSessionListState extends State<ChatSessionList> {
         ),
       const SizedBox(height: 8),
     ];
-    final contents = all.isEmpty && localDrafts.isEmpty && chat.historyLoading
+    final contents =
+        all.isEmpty && localConversations.isEmpty && chat.historyLoading
         ? const Center(child: CircularProgressIndicator())
-        : all.isEmpty && localDrafts.isEmpty && chat.historyError != null
+        : all.isEmpty && localConversations.isEmpty && chat.historyError != null
         ? const Center(child: Text('历史暂时无法读取，请重试。'))
-        : all.isEmpty && localDrafts.isEmpty && chat.historyLoaded
+        : all.isEmpty && localConversations.isEmpty && chat.historyLoaded
         ? Center(
             child: Text(
               query.isNotEmpty && searchComplete
@@ -205,6 +223,28 @@ class _ChatSessionListState extends State<ChatSessionList> {
                     onSelect: () => widget.onSelect(draft.sessionId),
                     title: '新会话草稿',
                     subtitle: draft.draft,
+                  ),
+              ],
+              if (localCreations.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(4, 12, 4, 5),
+                  child: Text(
+                    '本地会话',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: NotebookTheme.ink,
+                    ),
+                  ),
+                ),
+                for (final conversation in localCreations)
+                  _HistoryTile(
+                    conversation: conversation,
+                    selected: conversation.sessionId == chat.selectedSessionId,
+                    onSelect: () => widget.onSelect(conversation.sessionId),
+                    title: _localCreationTitle(conversation),
+                    subtitle: conversation.draft.trim().isEmpty
+                        ? conversation.runs.last.input
+                        : '${conversation.runs.last.input}\n未发送草稿：${conversation.draft}',
                   ),
               ],
               for (final entry in groups.entries) ...[
@@ -328,6 +368,12 @@ class _ChatSessionListState extends State<ChatSessionList> {
       context,
     ).showSnackBar(const SnackBar(content: Text('删除失败，会话仍保留在历史列表中。')));
   }
+}
+
+String _localCreationTitle(ChatConversation conversation) {
+  final run = conversation.runs.last;
+  if (run.isTerminal) return '创建失败';
+  return run.error == null ? '创建请求处理中' : '创建结果待确认';
 }
 
 class _HistoryTile extends StatelessWidget {
