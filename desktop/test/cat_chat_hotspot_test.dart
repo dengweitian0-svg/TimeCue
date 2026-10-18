@@ -255,7 +255,16 @@ void main() {
     final manage = find.widgetWithText(FilledButton, '管理日程');
     final createButton = tester.widget<FilledButton>(create);
     expect(tester.widget<FilledButton>(create).onPressed, isNull);
-    expect(find.byTooltip('提醒服务暂不可用，恢复连接后即可添加日程'), findsOneWidget);
+    final createSemantics = find.ancestor(
+      of: create,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.hint != null,
+      ),
+    );
+    expect(
+      tester.widget<Semantics>(createSemantics).properties.hint,
+      '提醒服务暂不可用，恢复连接后即可添加日程',
+    );
     expect(tester.widget<FilledButton>(manage).onPressed, isNotNull);
     expect(createButton.style!.backgroundColor!.resolve({}), background);
     expect(createButton.style!.foregroundColor!.resolve({}), foreground);

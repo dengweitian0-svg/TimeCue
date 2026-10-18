@@ -166,6 +166,69 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('删除当前会话后直接进入新会话输入页面', (tester) async {
+    final repository = DemoNotebookRepository();
+    final notebook = NotebookViewModel(repository);
+    final gateway = _HistoryGateway(
+      sessionIds: const ['remote-session'],
+      names: const {'remote-session': '即将删除的会话'},
+    );
+    final chat = ChatViewModel(gateway: gateway);
+    addTearDown(() {
+      chat.dispose();
+      notebook.dispose();
+      repository.dispose();
+      gateway.dispose();
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    tester.view.physicalSize = const Size(640, 480);
+    tester.view.devicePixelRatio = 1;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NotebookTheme.data,
+        home: Scaffold(
+          body: SizedBox(
+            width: 576,
+            height: 372,
+            child: ListenableBuilder(
+              listenable: notebook,
+              builder: (context, _) => ChatSpread(model: notebook, chat: chat),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chat-draft-input')), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, '历史会话'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('即将删除的会话'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('会话操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除会话'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('当前没有可显示的会话。'), findsNothing);
+    expect(find.text('新会话'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-draft-input')), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('chat-draft-input')))
+          .decoration!
+          .hintText,
+      '写下你的想法…',
+    );
+    expect(gateway.createRequests, isEmpty);
+    expect(gateway.deleteCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('新建会话保留上一会话草稿并可从本地草稿列表恢复', (tester) async {
     final repository = DemoNotebookRepository();
     final notebook = NotebookViewModel(repository);
@@ -494,6 +557,7 @@ class _HistoryGateway implements ChatGateway {
   Completer<List<String>>? sessionIdsCompleter;
   Completer<ChatCreateRunResult>? createCompleter;
   int cancelCalls = 0;
+  int deleteCalls = 0;
   final StreamController<ChatRunEventSignal> events =
       StreamController<ChatRunEventSignal>.broadcast();
 
@@ -539,6 +603,7 @@ class _HistoryGateway implements ChatGateway {
 
   @override
   Future<ChatDeleteSessionResult> deleteSession(String sessionId) async {
+    deleteCalls++;
     if (failDelete) throw StateError('fixture deletion failure');
     return ChatDeleteSessionResult(sessionId: sessionId, status: 'deleted');
   }

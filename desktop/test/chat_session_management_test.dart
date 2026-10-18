@@ -218,6 +218,146 @@ void main() {
       expect(model.historyConversations, isEmpty);
     });
 
+    test('删除响应丢失后仅由确认的 session_not_found 清理会话并解除发送门禁', () async {
+      final gateway = _HistoryGateway(
+        sessionIds: ['delete-uncertain', 'other'],
+        sessions: {
+          'delete-uncertain': const ChatSession(
+            sessionId: 'delete-uncertain',
+            name: '删除响应丢失',
+            runIds: [],
+          ),
+          'other': const ChatSession(
+            sessionId: 'other',
+            name: '保留会话',
+            runIds: [],
+          ),
+        },
+      );
+      final model = _model(gateway);
+      addTearDown(model.dispose);
+      await model.loadHistory();
+      final conversation = model.historyConversations.firstWhere(
+        (item) => item.sessionId == 'delete-uncertain',
+      );
+      final other = model.historyConversations.firstWhere(
+        (item) => item.sessionId == 'other',
+      );
+      model.selectSession(conversation.sessionId);
+      gateway.deleteError = StateError('DELETE response lost');
+
+      expect(await model.deleteSession(conversation.sessionId), isFalse);
+      expect(model.historyConversations, contains(same(conversation)));
+      expect(conversation.error, 'DELETE response lost');
+      expect(model.selectedSessionId, conversation.sessionId);
+      expect(model.historyHasFailures, isTrue);
+
+      gateway.sessionFailures.add(
+        const ChatHttpError(
+          statusCode: 503,
+          code: 'temporary_failure',
+          message: '暂时不可用',
+        ),
+      );
+      await model.refreshSession(conversation.sessionId);
+      expect(model.historyConversations, contains(same(conversation)));
+      expect(conversation.error, '暂时不可用');
+      expect(model.selectedSessionId, conversation.sessionId);
+
+      gateway.sessionFailures.add(
+        const ChatHttpError(
+          statusCode: 404,
+          code: 'session_not_found',
+          message: '会话不存在',
+        ),
+      );
+      await model.refreshSession(conversation.sessionId);
+      expect(
+        model.historyConversations.any(
+          (item) => item.sessionId == conversation.sessionId,
+        ),
+        isFalse,
+      );
+      expect(model.selectedConversation, isNotNull);
+      expect(model.selectedConversation!.isLocal, isTrue);
+      expect(model.selectedConversation!.draft, isEmpty);
+      expect(model.historyHasFailures, isFalse);
+
+      final local = model.createLocalSession();
+      model.updateDraft(local.sessionId, '未发送草稿不受影响');
+      expect(model.canSend(local.sessionId), isTrue);
+      await model.loadHistory(refresh: true);
+      expect(model.historyConversations.map((item) => item.sessionId), [
+        'other',
+      ]);
+      expect(model.conversations, contains(same(local)));
+      expect(local.draft, '未发送草稿不受影响');
+      expect(model.canSend(local.sessionId), isTrue);
+      expect(model.historyHasFailures, isFalse);
+      expect(other.name, '保留会话');
+    });
+
+    test('删除非当前会话不抢选中会话，也保留其草稿和运行', () async {
+      final gateway = _HistoryGateway(
+        sessionIds: ['delete-target'],
+        sessions: {
+          'delete-target': const ChatSession(
+            sessionId: 'delete-target',
+            name: '待删除',
+            runIds: [],
+          ),
+        },
+      );
+      gateway.createResponses.add(
+        Future.value(const ChatCreateRunResult('current-live-run')),
+      );
+      final model = _model(gateway);
+      addTearDown(model.dispose);
+      await model.loadHistory();
+      final current = model.createLocalSession();
+      model.updateDraft(current.sessionId, '运行中的下一条草稿');
+      await model.send(current.sessionId, model: 'model');
+      model.updateDraft(current.sessionId, '运行期间保留的草稿');
+      expect(current.activeRun, isNotNull);
+      expect(model.selectedSessionId, current.sessionId);
+
+      expect(await model.deleteSession('delete-target'), isTrue);
+
+      expect(model.selectedConversation, same(current));
+      expect(current.draft, '运行期间保留的草稿');
+      expect(current.activeRun, isNotNull);
+      expect(model.activeRunCount, 1);
+    });
+
+    test('session_not_found 不会清理创建结果不明的本地会话或运行名额', () async {
+      final gateway = _HistoryGateway();
+      gateway.createResponses.add(
+        Future.error(StateError('create response lost')),
+      );
+      final model = _model(gateway);
+      addTearDown(model.dispose);
+      final local = model.createLocalSession();
+      model.updateDraft(local.sessionId, '原始输入');
+      await model.send(local.sessionId, model: 'model');
+      final run = local.runs.single;
+      expect(run.runId, isNull);
+      expect(model.activeRunCount, 1);
+
+      gateway.sessionFailures.add(
+        const ChatHttpError(
+          statusCode: 404,
+          code: 'session_not_found',
+          message: '会话不存在',
+        ),
+      );
+      await model.refreshSession(local.sessionId);
+
+      expect(model.conversations, contains(same(local)));
+      expect(local.isLocal, isTrue);
+      expect(local.runs, [same(run)]);
+      expect(model.activeRunCount, 1);
+    });
+
     test('历史索引不确定时暂停新发送，运行中的会话不能删除', () async {
       final gateway = _HistoryGateway(sessionIds: ['occupied'])
         ..sessions['occupied'] = const ChatSession(

@@ -206,13 +206,20 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           Positioned(
             top: 24,
             left: 24,
-            child: Tooltip(
-              message: widget.configFiles == null ? '演示模式不修改本地配置' : '应用设置',
-              child: FilledButton.icon(
-                onPressed: widget.configFiles == null ? null : settings,
-                style: NotebookTheme.roomActionStyle(),
-                icon: const Icon(Icons.settings_outlined, size: 17),
-                label: const Text('设置'),
+            child: Semantics(
+              container: true,
+              button: true,
+              enabled: widget.configFiles != null,
+              label: '设置',
+              hint: widget.configFiles == null ? '演示模式不修改本地配置' : '打开应用设置',
+              onTap: widget.configFiles == null ? null : settings,
+              child: ExcludeSemantics(
+                child: FilledButton.icon(
+                  onPressed: widget.configFiles == null ? null : settings,
+                  style: NotebookTheme.roomActionStyle(),
+                  icon: const Icon(Icons.settings_outlined, size: 17),
+                  label: const Text('设置'),
+                ),
               ),
             ),
           ),
@@ -242,22 +249,29 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                     icon: const Icon(Icons.list_alt, size: 17),
                     label: const Text('管理日程'),
                   ),
-                  Tooltip(
-                    message: widget.repository.canWrite
-                        ? '添加日程'
+                  Semantics(
+                    container: true,
+                    button: true,
+                    enabled: widget.repository.canWrite,
+                    label: '添加日程',
+                    hint: widget.repository.canWrite
+                        ? '打开添加日程'
                         : widget.repository.loading &&
                               !widget.repository.hasSnapshot
                         ? '正在连接本地服务，暂时不能添加日程'
                         : widget.repository.refreshError != null
                         ? '本地服务连接失败，请重试后添加日程'
                         : '提醒服务暂不可用，恢复连接后即可添加日程',
-                    child: FilledButton.icon(
-                      onPressed: widget.repository.canWrite ? create : null,
-                      style: NotebookTheme.roomActionStyle(
-                        disabledCreate: true,
+                    onTap: widget.repository.canWrite ? create : null,
+                    child: ExcludeSemantics(
+                      child: FilledButton.icon(
+                        onPressed: widget.repository.canWrite ? create : null,
+                        style: NotebookTheme.roomActionStyle(
+                          disabledCreate: true,
+                        ),
+                        icon: const Icon(Icons.add, size: 17),
+                        label: const Text('添加日程'),
                       ),
-                      icon: const Icon(Icons.add, size: 17),
-                      label: const Text('添加日程'),
                     ),
                   ),
                 ],

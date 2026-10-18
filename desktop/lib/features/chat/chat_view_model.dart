@@ -209,6 +209,7 @@ class ChatViewModel extends ChangeNotifier {
       // 创建结果不明时，run_ids 可能已包含同一幂等请求创建的 run。
       // 契约没有幂等键可用于匹配，因此保留原占位，等待用户显式重试确认。
       if (_hasUnconfirmedCreation(existing)) return;
+      existing._deleteNeedsVerification = false;
       existing._name = session.name;
       existing._error = null;
       _scheduleNotify();
@@ -273,6 +274,13 @@ class ChatViewModel extends ChangeNotifier {
       }
     } catch (error) {
       if (!_isSessionCurrent(generation, sessionId, sessionGeneration)) return;
+      if (_isMissingSession(error) &&
+          existing._deleteNeedsVerification &&
+          !existing.isLocal &&
+          existing.activeRun == null) {
+        _removeDeletedConversation(sessionId, existing);
+        return;
+      }
       existing._error = _errorMessage(error);
     }
     _scheduleNotify();
@@ -335,28 +343,36 @@ class ChatViewModel extends ChangeNotifier {
       if (result.sessionId != sessionId) {
         throw StateError('删除响应的 session ID 与当前会话不匹配');
       }
-      _deletedSessionIds.add(sessionId);
-      _historySessionIds.remove(sessionId);
-      _conversations.remove(sessionId);
-      _conversationOrder.remove(sessionId);
-      for (final runId in conversation._runs.map((run) => run.runId)) {
-        if (runId != null) _runsById.remove(runId);
-      }
-      _sessionGenerations[sessionId] =
-          (_sessionGenerations[sessionId] ?? 0) + 1;
-      if (_selectedSessionId == sessionId) _selectedSessionId = null;
-      _scheduleNotify();
-      _scheduleHistoryNotify();
+      _removeDeletedConversation(sessionId, conversation);
       return true;
     } catch (error) {
       if (_isRuntimeCurrent(generation)) {
         conversation._isDeleting = false;
+        conversation._deleteNeedsVerification = true;
         conversation._error = _errorMessage(error);
         _scheduleNotify();
         _scheduleHistoryNotify();
       }
       return false;
     }
+  }
+
+  void _removeDeletedConversation(
+    String sessionId,
+    ChatConversation conversation,
+  ) {
+    final wasSelected = _selectedSessionId == sessionId;
+    _deletedSessionIds.add(sessionId);
+    _historySessionIds.remove(sessionId);
+    _conversations.remove(sessionId);
+    _conversationOrder.remove(sessionId);
+    for (final runId in conversation._runs.map((run) => run.runId)) {
+      if (runId != null) _runsById.remove(runId);
+    }
+    _sessionGenerations[sessionId] = (_sessionGenerations[sessionId] ?? 0) + 1;
+    if (wasSelected) createLocalSession();
+    _scheduleNotify();
+    _scheduleHistoryNotify();
   }
 
   /// 更新会话独立阅读位置及是否跟随最新消息。
@@ -928,6 +944,11 @@ class ChatViewModel extends ChangeNotifier {
       _conversations[sessionId]?.isDeleting != true &&
       _sessionGenerations[sessionId] == sessionGeneration;
 
+  bool _isMissingSession(Object error) =>
+      error is ChatHttpError &&
+      error.statusCode == 404 &&
+      error.code == 'session_not_found';
+
   bool _hasUnconfirmedCreation(ChatConversation conversation) =>
       conversation._runs.any((run) => !run.isTerminal && run.runId == null);
 
@@ -1015,6 +1036,7 @@ class ChatConversation {
 
   /// 服务端删除请求是否正在进行。
   bool get isDeleting => _isDeleting;
+  bool _deleteNeedsVerification = false;
   double _readingOffset = 0;
 
   /// 会话独立保存的消息阅读位置。
