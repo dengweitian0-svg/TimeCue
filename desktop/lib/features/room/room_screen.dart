@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../contracts/notebook_repository.dart';
 import '../chat/chat_view_model.dart';
 import '../../app/operation_toast.dart';
@@ -61,6 +63,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool bookVisible = false;
   bool fromDesk = false;
   bool fromCat = false;
+  bool _keyboardNavigation = false;
   @override
   void initState() {
     super.initState();
@@ -149,6 +152,19 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     );
   }
 
+  void _recordPointerInteraction(PointerEvent event) {
+    if (event.kind == PointerDeviceKind.mouse && _keyboardNavigation) {
+      setState(() => _keyboardNavigation = false);
+    }
+  }
+
+  KeyEventResult _recordKeyboardInteraction(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent && !_keyboardNavigation) {
+      setState(() => _keyboardNavigation = true);
+    }
+    return KeyEventResult.ignored;
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -168,7 +184,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     builder: (context, constraints) {
       final geometry = RoomGeometry(constraints.biggest);
       final fixedOrigin = Offset(constraints.maxWidth - 100, 48);
-      return Stack(
+      final room = Stack(
         fit: StackFit.expand,
         children: [
           // 秒级更新只驱动时钟；背景只有跨时段时才切换图片。
@@ -200,6 +216,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 visibleBounds: geometry.visibleCatBounds,
                 viewport: constraints.biggest,
                 focusNode: catFocus,
+                keyboardNavigation: _keyboardNavigation,
                 onOpen: () => open(false, cat: true),
               ),
             ),
@@ -360,6 +377,16 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
               ),
             ),
         ],
+      );
+      return Listener(
+        onPointerDown: _recordPointerInteraction,
+        onPointerHover: _recordPointerInteraction,
+        child: Focus(
+          canRequestFocus: false,
+          skipTraversal: true,
+          onKeyEvent: _recordKeyboardInteraction,
+          child: room,
+        ),
       );
     },
   );

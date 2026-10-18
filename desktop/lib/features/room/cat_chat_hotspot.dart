@@ -11,12 +11,16 @@ class CatChatHotspot extends StatefulWidget {
     required this.viewport,
     required this.focusNode,
     required this.onOpen,
+    this.keyboardNavigation = true,
   });
 
   final Rect visibleBounds;
   final Size viewport;
   final FocusNode focusNode;
   final VoidCallback onOpen;
+
+  /// 仅控制键盘焦点的可视反馈，不影响实际焦点与鼠标悬停提示。
+  final bool keyboardNavigation;
 
   @override
   State<CatChatHotspot> createState() => _CatChatHotspotState();
@@ -26,7 +30,7 @@ class _CatChatHotspotState extends State<CatChatHotspot> {
   bool _hovered = false;
   bool _focused = false;
 
-  bool get _showHint => _hovered || _focused;
+  bool get _showHint => _hovered || (_focused && widget.keyboardNavigation);
 
   @override
   void initState() {
@@ -84,7 +88,9 @@ class _CatChatHotspotState extends State<CatChatHotspot> {
                     shape: const RoundedRectangleBorder(),
                   ).copyWith(
                     side: WidgetStateProperty.resolveWith(
-                      (states) => states.contains(WidgetState.focused)
+                      (states) =>
+                          widget.keyboardNavigation &&
+                              states.contains(WidgetState.focused)
                           ? const BorderSide(
                               color: Color.fromARGB(235, 255, 249, 237),
                               width: 2,

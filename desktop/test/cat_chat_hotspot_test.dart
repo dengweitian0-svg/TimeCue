@@ -207,6 +207,96 @@ void main() {
     repository.dispose();
   });
 
+  testWidgets('鼠标关闭日程本后焦点反馈不粘住，键盘仍可遍历和激活猫咪入口', (tester) async {
+    tester.view.physicalSize = const Size(1280, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = DemoNotebookRepository();
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(disableAnimations: true),
+        child: MaterialApp(
+          theme: NotebookTheme.data,
+          home: Scaffold(body: RoomScreen(repository: repository)),
+        ),
+      ),
+    );
+    final geometry = RoomGeometry(const Size(1280, 720));
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(geometry.visibleCatBounds.center);
+    await tester.pump();
+    expect(find.text('和我聊聊'), findsOneWidget);
+    await mouse.down(geometry.visibleCatBounds.center);
+    await mouse.up();
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatSpread), findsOneWidget);
+    final close = find.byTooltip('合上日程本');
+    await mouse.moveTo(tester.getCenter(close));
+    await mouse.down(tester.getCenter(close));
+    await mouse.up();
+    await tester.pumpAndSettle();
+    await mouse.moveTo(const Offset(30, 300));
+    await tester.pump();
+    expect(find.text('和我聊聊'), findsNothing);
+    final catButton = tester.widget<TextButton>(
+      find.byKey(const ValueKey('cat-chat-hotspot-button')),
+    );
+    expect(
+      catButton.style!.side!.resolve({WidgetState.focused}),
+      BorderSide.none,
+    );
+    await mouse.moveTo(geometry.visibleCatBounds.center);
+    await tester.pump();
+    expect(find.text('和我聊聊'), findsOneWidget);
+    await mouse.moveTo(const Offset(30, 300));
+    await tester.pump();
+    expect(find.text('和我聊聊'), findsNothing);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    var focusedCat = tester.widget<TextButton>(
+      find.byKey(const ValueKey('cat-chat-hotspot-button')),
+    );
+    for (var i = 0; i < 20 && !focusedCat.focusNode!.hasFocus; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      focusedCat = tester.widget<TextButton>(
+        find.byKey(const ValueKey('cat-chat-hotspot-button')),
+      );
+    }
+    expect(focusedCat.focusNode!.hasFocus, isTrue);
+    expect(
+      focusedCat.style!.side!.resolve({WidgetState.focused})!.color,
+      const Color.fromARGB(235, 255, 249, 237),
+    );
+    expect(find.text('和我聊聊'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatSpread), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    final returnedCat = tester.widget<TextButton>(
+      find.byKey(const ValueKey('cat-chat-hotspot-button')),
+    );
+    expect(returnedCat.focusNode!.hasFocus, isTrue);
+    expect(find.text('和我聊聊'), findsOneWidget);
+    expect(
+      returnedCat.style!.side!.resolve({WidgetState.focused})!.color,
+      const Color.fromARGB(235, 255, 249, 237),
+    );
+    await mouse.moveTo(const Offset(30, 300));
+    await tester.pump();
+    expect(find.text('和我聊聊'), findsNothing);
+    expect(
+      returnedCat.style!.side!.resolve({WidgetState.focused}),
+      BorderSide.none,
+    );
+    await tester.pumpWidget(const SizedBox());
+    repository.dispose();
+  });
+
   testWidgets('房间四个固定入口使用原半透明胶囊样式并保留创建门禁', (tester) async {
     final style = NotebookTheme.roomActionStyle();
     const background = Color.fromARGB(128, 73, 61, 48);
