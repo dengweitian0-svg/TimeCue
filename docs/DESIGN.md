@@ -30,9 +30,11 @@
 | `muted` | `#8B7964` | 说明、日期、时间、辅助标签、普通输入框描边 |
 | `sage` | `#647750` | 已完成日程、完成图标、全部确认后的提示 |
 | `line` | `#DED4BC` | 分隔线、容器配色、时间输入激活底色 |
-| `cover` | `#91744F` | 封面、主操作、选中日期、输入焦点和光标 |
+| `cover` | `#91744F` | 封面、选中日期、输入焦点和光标；保留封面与插画原色 |
+| `action` | `#604428` | 纸面主操作及 ColorScheme primary/secondary，前景使用 paper |
+| `coverLabelBackground` / `coverLabelForeground` | `paper` / `ink` | 书封管理、恢复入口和页码的小字标签底色 / 文字 |
 
-`ColorScheme` 以 `cover` 为种子；primary、secondary 均显式使用暖棕，两个 container 均使用 `line`。其余未覆盖的角色色由 Material 3 生成，错误色读取 `colorScheme.error`，未单独固定色值。
+`ColorScheme` 仍以 `cover` 为种子；primary、secondary 显式使用更深的 `action`，onPrimary、onSecondary 使用 `paper`。两个 container 均使用 `line`。其余未覆盖的角色色由 Material 3 生成，错误色读取 `colorScheme.error`，未单独固定色值。
 
 | 辅助颜色 | 当前用途 |
 | --- | --- |
@@ -45,7 +47,7 @@
 | `#FFF9ED`，不透明 | 房间时钟文字 |
 | `#EEDEBE` / `ink` | 房间「添加日程」禁用背景 / 前景 |
 
-使用规则：暖棕表示操作与选择，鼠尾草绿表示完成事实；错误使用主题错误色，并附文字。背景插画中的蓝、绿等色彩属于场景资源，不作为新增业务控件的强调色。建议后续将辅助色集中到主题，避免同类反馈继续出现不同色值。
+使用规则：深棕 `action` 表示纸面主操作，原 `cover` 用于封面与局部选择，鼠尾草绿表示完成事实；错误使用主题错误色，并附文字。封面小字放在 paper 标签上并使用 ink，不将原封面色改成操作色。背景插画中的蓝、绿等色彩属于场景资源，不作为新增业务控件的强调色。
 
 ### 2.2 字体与字号
 
@@ -107,12 +109,12 @@
 
 | 组件 | 当前样式与使用规则 |
 | --- | --- |
-| 主 Button | `FilledButton`：暖棕底、米色前景；用于保存、确定、确认选中 |
-| 次 Button | `OutlinedButton`：暖棕前景、`muted` 描边；用于单条确认、时间添加等辅助操作 |
-| 文字 Button | `TextButton`：暖棕前景；用于返回、取消、清空、重试、导航 |
+| 主 Button | `FilledButton`：`action` 底、`paper` 前景；用于保存、确定、确认选中 |
+| 次 Button | `OutlinedButton`：`ink` 前景、`muted` 描边；用于单条确认、时间添加等辅助操作 |
+| 文字 Button | `TextButton`：`ink` 前景；用于返回、取消、清空、重试、导航 |
 | 房间 Button | 图标加文字，17 号图标、米白底与暖棕字、圆角 12、最小高度 44；设置、日程本、管理和添加共享主题样式 |
 | IconButton | 常见图标为 16–20；关闭、分页、月份切换等提供 Tooltip；时间添加入口显式最小 44×44 |
-| Input | Material 描边输入框；普通边框 `muted`，焦点边框 `cover`、宽 2；标签由 muted 切换为暖棕 |
+| Input | Material 描边输入框；普通边框 `muted`，焦点边框 `cover`、宽 2；标签和浮动标签使用 `ink` |
 | 文本选择 | 暖棕光标和选择柄；选区为暖棕 alpha 64/255 |
 | Dropdown | 与输入框共享 `InputDecorationTheme`；日程类型、日志级别保持相同表单语言 |
 | 时间 Chip | 暖棕描边和文字、最小高度 44；Hover/Focus 显示删除按钮，同时保留其 40×40 位置 |
@@ -186,15 +188,15 @@
 - 已有支持：背景 `ExcludeSemantics`；本子 `FocusScope`/`BlockSemantics`；日历、时间盘提供 selected 与标签语义；复选框命名；图标操作提供 Tooltip；Toast 使用 liveRegion；详情支持选择复制。
 - 时间选择支持直接输入、盘面点击/拖动、滚轮逐格调整与方向键；小时输入可转到分钟，时间标签支持 Delete 删除，关键关闭路径支持 Esc。
 - 当前点击目标并未全部统一：添加入口 44×44，日期和盘面数字 40×40，Toast 关闭按钮最小 36×36；封面底部部分文字操作使用 shrinkWrap，场景本子热区随图片裁切。
-- 以不透明纯色计算，ink/paper 对比度约 **8.19:1**，muted/paper **3.87:1**，sage/paper **4.52:1**，cover/paper **4.04:1**。暖棕按钮的米色文字同样约 4.04:1；实际渐变与半透明场景仍需单独检查。
-- 建议将普通文字对比度至少 4.5:1 作为后续验收目标，优先改善既有小字号 muted 文本与暖棕按钮文字；通用操作目标尽量达到 44×44，保留键盘和语义替代路径。
+- 以不透明纯色计算，ink/paper 对比度约 **8.19:1**，muted/paper **3.87:1**，sage/paper **4.52:1**，cover/paper **4.04:1**，action/paper **8.25:1**。主按钮已使用 action/paper；封面小字使用 paper/ink，约 **8.19:1**。这些配色变更不代表全站普通文字均已达到 4.5:1：仍有小号 muted 文本，且日历选中日期与时间盘等局部控件保留 cover 背景和 paper 前景，约 4.04:1。
+- 普通文字对比度目标为至少 4.5:1。`chat_contrast_test.dart` 检查正文、主题按钮、输入标签和书封标签的实际主题配对；该测试及未覆盖的局部配色仍需结合综合验收结果评估，不能据此宣称全站达标。通用操作目标尽量达到 44×44，保留键盘和语义替代路径。
 - 当前没有独立高对比度主题、完整屏幕阅读器验收或跨 DPI 实测结论。系统字体回退和截图中的缺字风险需在正式 Windows 环境检查；已有截图不代替这类验证。
 
 ## 7. 复用入口与待完善项
 
 设计实现优先查阅：[`notebook_theme.dart`](../desktop/lib/theme/notebook_theme.dart)、[`room_screen.dart`](../desktop/lib/features/room/room_screen.dart)、[`room_backdrop.dart`](../desktop/lib/features/room/room_backdrop.dart)、[`notebook_overlay.dart`](../desktop/lib/features/notebook/notebook_overlay.dart)、[`notebook_spreads.dart`](../desktop/lib/features/notebook/notebook_spreads.dart)、[`schedule_editor.dart`](../desktop/lib/features/schedule_editor/schedule_editor.dart)、[`notebook_time_picker.dart`](../desktop/lib/features/schedule_editor/notebook_time_picker.dart)、[`operation_toast.dart`](../desktop/lib/app/operation_toast.dart)。
 
-当前应优先收敛的部分：小字号与主按钮对比度；完整文字角色和行高；辅助颜色与反馈颜色；同类组件的尺寸/圆角/状态定义；极窄窗口下的标签与固定入口；键盘、屏幕阅读器与跨显示器 DPI 验收。后续按实际组件需要逐步集中参数，保持房间氛围、纸面阅读和业务状态表达一致。
+当前应优先收敛的部分：剩余小字号 muted 与局部 cover/paper 前景配对；完整文字角色和行高；辅助颜色与反馈颜色；同类组件的尺寸/圆角/状态定义；极窄窗口下的标签与固定入口；键盘、屏幕阅读器与跨显示器 DPI 验收。主 FilledButton 已切换为 action/paper。后续按实际组件需要逐步集中参数，保持房间氛围、纸面阅读和业务状态表达一致。
 
 已有 [`capture_visuals_test.dart`](../desktop/tool/capture_visuals_test.dart) 可生成房间、本子、编辑、日期/时间和舍弃确认等 Widget 截图；已有 Widget 测试覆盖小窗口、大字与减少动效的部分路径。这些工具用于复查，Widget 截图与自动化测试、Windows 原生交互验收分别记录，不相互替代。
 
@@ -204,6 +206,6 @@ AI 对话通过独立聊天模型接入现有 Go 内存 Mock 的多会话发送�
 
 每个会话独立保留输入与阅读位置；切换、单双栏布局变化、合本和隐藏后恢复阅读上下文。页面关闭不停止后台生成，重新打开复用连接。后端运行失效时保留已知内容并持续说明操作不可用，不自动补交；聊天异常与日程、通知反馈保持独立。
 
-助手正文统一由 `ChatMarkdownBody` 使用固定版本 gpt_markdown 渲染截至当前的完整原文，不补写 Markdown 符号，不开启逐字动画；代码与表格在块内横向访问，用户和助手文本支持选择，代码及链接提供复制入口。用户消息右对齐使用浅麦色气泡。消息身份在创建到终态之间保持稳定，向上阅读不抢滚动并提供“回到最新”；单双栏切换保留已收到的内容和工具记录。
+助手正文统一由 `ChatMarkdownBody` 使用固定版本 gpt_markdown 渲染截至当前的完整原文，不补写 Markdown 符号，不开启逐字动画；代码与表格在块内横向访问，用户和助手文本支持选择，代码及链接提供复制入口。生成中的代码块使用库自身代码组件显示原文，保留语言、复制、滚动和文字缩放，终态确认后再应用语法高亮，避免在后续增量中反复高亮已闭合的长代码块。用户消息右对齐使用浅麦色气泡。消息身份在创建到终态之间保持稳定，向上阅读不抢滚动并提供“回到最新”；单双栏切换保留已收到的内容和工具记录。
 
 输入区支持 Enter 发送、Shift+Enter 换行，输入法组合期间 Enter 不提交。生成期间可编辑下一条草稿，发送受同会话单运行与全局三个名额限制；创建结果不明保留原输入和幂等键重试。停止先显示“正在停止”，收到服务端终态后以最终正文或 checkpoint 收敛；断线只进入恢复过程。输入框高度受限，发送和停止操作保持可达。新增聊天组件沿用 paper、ink、line、cover 等主题角色；平台输入法、浏览器、DPI 与性能验收仍需独立记录。

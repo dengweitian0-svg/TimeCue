@@ -8,6 +8,15 @@ abstract final class NotebookTheme {
   static const line = Color.fromARGB(255, 222, 212, 188);
   static const cover = Color.fromARGB(255, 145, 116, 79);
 
+  /// 供纸面主操作使用的深棕色，确保小号按钮文字达到可读对比度。
+  static const action = Color.fromARGB(255, 96, 68, 40);
+
+  /// 封面上的小号文字使用纸色标签承载，避免改变封面底色。
+  static const coverLabelBackground = paper;
+
+  /// 封面纸色标签上的文字颜色。
+  static const coverLabelForeground = ink;
+
   /// 房间固定入口共用米白底、暖棕文字和易识别的禁用状态。
   static ButtonStyle roomActionStyle({bool disabledCreate = false}) =>
       FilledButton.styleFrom(
@@ -31,11 +40,11 @@ abstract final class NotebookTheme {
     fontFamilyFallback: const ['Segoe UI', 'SimSun'],
     colorScheme: ColorScheme.fromSeed(
       seedColor: cover,
-      primary: cover,
+      primary: action,
       onPrimary: paper,
       primaryContainer: line,
       onPrimaryContainer: ink,
-      secondary: cover,
+      secondary: action,
       onSecondary: paper,
       secondaryContainer: line,
       onSecondaryContainer: ink,
@@ -74,16 +83,16 @@ abstract final class NotebookTheme {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: cover,
+        backgroundColor: action,
         foregroundColor: paper,
       ),
     ),
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(foregroundColor: cover),
+      style: TextButton.styleFrom(foregroundColor: ink),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: cover,
+        foregroundColor: ink,
         side: const BorderSide(color: muted),
       ),
     ),
@@ -97,8 +106,8 @@ abstract final class NotebookTheme {
       focusedBorder: OutlineInputBorder(
         borderSide: BorderSide(color: cover, width: 2),
       ),
-      labelStyle: TextStyle(color: muted),
-      floatingLabelStyle: TextStyle(color: cover),
+      labelStyle: TextStyle(color: ink),
+      floatingLabelStyle: TextStyle(color: ink),
       contentPadding: EdgeInsets.all(12),
     ),
     dividerColor: line,

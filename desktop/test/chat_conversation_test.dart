@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gpt_markdown/custom_widgets/code_field.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:timecue_desktop/contracts/chat_contracts.dart';
 import 'package:timecue_desktop/data/demo_notebook_repository.dart';
 import 'package:timecue_desktop/features/chat/chat_view_model.dart';
@@ -218,6 +220,115 @@ void main() {
       expect(find.byKey(const ValueKey('chat-draft-input')), findsOneWidget);
       expect(tester.takeException(), isNull);
     }
+  });
+
+  testWidgets('流式正文将原文状态传给 Markdown 并在终态同文收敛', (tester) async {
+    final repository = DemoNotebookRepository();
+    final notebook = NotebookViewModel(repository)..changeTab(NotebookTab.ai);
+    final gateway = _ControllableChatGateway();
+    final chat = ChatViewModel(
+      gateway: gateway,
+      createSessionId: () => 'session-ui',
+      retryDelay: (_) => const Duration(days: 1),
+    );
+    addTearDown(() {
+      chat.dispose();
+      notebook.dispose();
+      repository.dispose();
+      gateway.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NotebookTheme.data,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 576,
+              height: 372,
+              child: ListenableBuilder(
+                listenable: notebook,
+                builder: (context, _) =>
+                    ChatSpread(model: notebook, chat: chat),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const ValueKey('chat-draft-input')),
+      '请渲染代码回复',
+    );
+    final sessionId = chat.selectedSessionId!;
+    await chat.send(sessionId, model: 'deepseek-flash');
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    const streamedBody = '```dart\nfinal answer = 42;\n```';
+    gateway.events.add(
+      _frameSignal(
+        1,
+        ChatEventType.text,
+        const ChatContentEventData(content: streamedBody, error: null),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    final streamedCode = tester.widget<CodeField>(find.byType(CodeField));
+    final streamedMarkdown = tester.widget<GptMarkdown>(
+      find.byType(GptMarkdown),
+    );
+    expect(streamedMarkdown.data, streamedBody);
+    expect(streamedCode.codes, 'final answer = 42;');
+    expect(streamedCode.highlightCode, isFalse);
+    expect(streamedCode.scalesItsOwnText, isTrue);
+    expect(streamedCode.onCopy, isNotNull);
+    expect(chat.selectedConversation!.runs.single.rawText, streamedBody);
+
+    gateway.snapshot = _terminalRun(
+      status: ChatRunStatus.succeeded,
+      output: streamedBody,
+    );
+    gateway.events.add(
+      _frameSignal(
+        2,
+        ChatEventType.end,
+        const ChatEndEventData(stopReason: 'stop', error: null),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    await tester.runAsync(() async {
+      await Future<void>.delayed(Duration.zero);
+    });
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final terminalCode = tester.widget<CodeField>(find.byType(CodeField));
+    final terminalMarkdown = tester.widget<GptMarkdown>(
+      find.byType(GptMarkdown),
+    );
+    expect(chat.selectedConversation!.activeRun, isNull);
+    expect(chat.selectedConversation!.runs.single.rawText, streamedBody);
+    expect(terminalMarkdown.data, streamedBody);
+    expect(terminalCode.codes, 'final answer = 42;');
+    expect(terminalCode.highlightCode, isTrue);
+    expect(terminalCode.scalesItsOwnText, isTrue);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 20));
   });
 
   testWidgets('Enter 发送且 composing 状态下 Enter 不提交', (tester) async {

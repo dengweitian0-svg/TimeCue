@@ -2,16 +2,57 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:gpt_markdown/custom_widgets/code_field.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 
 import '../../theme/notebook_theme.dart';
 
+const _codeBlockStyle = CodeBlockStyle(
+  backgroundColor: Color.fromARGB(255, 242, 235, 218),
+  borderColor: NotebookTheme.line,
+  textColor: NotebookTheme.ink,
+  showLanguageLabel: true,
+  languageStyle: TextStyle(color: NotebookTheme.ink, fontSize: 11),
+  showCopyButton: true,
+  highlightWhileStreaming: false,
+);
+
+const _markdownStyleSheet = GptMarkdownStyleSheet(
+  blockQuote: BlockQuoteStyle(
+    barColor: NotebookTheme.cover,
+    backgroundColor: Color.fromARGB(255, 242, 235, 218),
+    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+  ),
+  heading: HeadingStyle(
+    textStyle: TextStyle(color: NotebookTheme.ink),
+    dividerColor: NotebookTheme.line,
+  ),
+  codeBlock: _codeBlockStyle,
+  table: TableStyle(
+    borderColor: NotebookTheme.line,
+    headerBackground: Color.fromARGB(255, 242, 235, 218),
+    overflow: TableOverflow.scroll,
+  ),
+  inlineCode: InlineCodeStyle(
+    backgroundColor: Color.fromARGB(255, 242, 235, 218),
+    color: NotebookTheme.ink,
+  ),
+  blockSpacing: 10,
+);
+
 /// 使用 gpt_markdown 渲染累计的助手正文，并提供代码及链接操作。
 class ChatMarkdownBody extends StatefulWidget {
-  const ChatMarkdownBody({super.key, required this.data});
+  const ChatMarkdownBody({
+    super.key,
+    required this.data,
+    this.isStreaming = false,
+  });
 
   /// 截至当前收到的完整助手正文。
   final String data;
+
+  /// 当前正文是否仍会接收流式增量。
+  final bool isStreaming;
 
   @override
   State<ChatMarkdownBody> createState() => _ChatMarkdownBodyState();
@@ -19,6 +60,7 @@ class ChatMarkdownBody extends StatefulWidget {
 
 class _ChatMarkdownBodyState extends State<ChatMarkdownBody> {
   String? _renderedData;
+  bool? _renderedIsStreaming;
   TextScaler? _renderedScaler;
   GptMarkdownThemeData? _sourceTheme;
   GptMarkdownThemeData? _renderedTheme;
@@ -30,9 +72,11 @@ class _ChatMarkdownBodyState extends State<ChatMarkdownBody> {
     final scaler = MediaQuery.textScalerOf(context);
     if (_markdown == null ||
         _renderedData != widget.data ||
+        _renderedIsStreaming != widget.isStreaming ||
         _renderedScaler != scaler ||
         !(_sourceTheme?.isSame(markdownTheme) ?? false)) {
       _renderedData = widget.data;
+      _renderedIsStreaming = widget.isStreaming;
       _renderedScaler = scaler;
       _sourceTheme = markdownTheme;
       _renderedTheme = markdownTheme.copyWith(
@@ -67,43 +111,23 @@ class _ChatMarkdownBodyState extends State<ChatMarkdownBody> {
         widget.data,
         animation: GptMarkdownAnimation.none,
         blockAnimation: GptMarkdownBlockAnimation.none,
-        isStreaming: false,
         style: const TextStyle(
           color: NotebookTheme.ink,
           fontSize: 14,
           height: 1.6,
         ),
         textScaler: scaler,
-        styleSheet: const GptMarkdownStyleSheet(
-          blockQuote: BlockQuoteStyle(
-            barColor: NotebookTheme.cover,
-            backgroundColor: Color.fromARGB(255, 242, 235, 218),
-            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          ),
-          heading: HeadingStyle(
-            textStyle: TextStyle(color: NotebookTheme.ink),
-            dividerColor: NotebookTheme.line,
-          ),
-          codeBlock: CodeBlockStyle(
-            backgroundColor: Color.fromARGB(255, 242, 235, 218),
-            borderColor: NotebookTheme.line,
-            textColor: NotebookTheme.ink,
-            showLanguageLabel: true,
-            languageStyle: TextStyle(color: NotebookTheme.ink, fontSize: 11),
-            showCopyButton: true,
-            highlightWhileStreaming: false,
-          ),
-          table: TableStyle(
-            borderColor: NotebookTheme.line,
-            headerBackground: Color.fromARGB(255, 242, 235, 218),
-            overflow: TableOverflow.scroll,
-          ),
-          inlineCode: InlineCodeStyle(
-            backgroundColor: Color.fromARGB(255, 242, 235, 218),
-            color: NotebookTheme.ink,
-          ),
-          blockSpacing: 10,
-        ),
+        styleSheet: _markdownStyleSheet,
+        codeBuilder: widget.isStreaming
+            ? (context, name, code, _) => CodeField(
+                name: name,
+                codes: code,
+                style: _codeBlockStyle.resolve(Theme.of(context).colorScheme),
+                onCopy: (value) => _copy(context, value, '代码已复制'),
+                highlightCode: false,
+                scalesItsOwnText: true,
+              )
+            : null,
         onCodeCopy: (code) => _copy(context, code, '代码已复制'),
         onLinkTap: (url, _) => _showLinkActions(context, url),
       );

@@ -281,127 +281,162 @@ class _ChatSpreadState extends State<ChatSpread> {
           ? '正在读取会话，请稍后发送'
           : '当前不能开始新一轮对话';
       final displayName = conversation.displayName;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (showHistoryButton)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: widget.model.showChatHistory,
-                icon: const Icon(Icons.history),
-                label: const Text('历史会话'),
-              ),
+      final header = <Widget>[
+        if (showHistoryButton)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: widget.model.showChatHistory,
+              icon: const Icon(Icons.history),
+              label: const Text('历史会话'),
             ),
-          Row(
-            children: [
-              Expanded(
-                child: Tooltip(
-                  message: displayName,
-                  child: Semantics(
-                    header: true,
-                    child: Text(
-                      displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
+          ),
+        Row(
+          children: [
+            Expanded(
+              child: Tooltip(
+                message: displayName,
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
               ),
-              if (!conversation.isLocal)
-                PopupMenuButton<String>(
-                  tooltip: '会话操作',
-                  onSelected: (value) {
-                    if (value == 'refresh') {
-                      unawaited(chat.refreshSession(sessionId));
-                    } else if (value == 'delete') {
-                      unawaited(_confirmDeleteCurrent(conversation));
-                    }
-                  },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(value: 'refresh', child: Text('刷新会话')),
-                    PopupMenuItem(value: 'delete', child: Text('删除会话')),
-                  ],
-                ),
-            ],
-          ),
-          Text(
-            _conversationStatus(conversation),
-            style: const TextStyle(fontSize: 12, color: NotebookTheme.ink),
-          ),
-          if (conversation.error != null)
-            _InlineError(
-              message: '会话信息读取失败：${conversation.error}',
-              onRetry: () => chat.refreshSession(sessionId),
             ),
-          if (chat.runtimeError != null)
-            _InlineError(
-              message: '聊天服务不可用：${chat.runtimeError}',
+            if (!conversation.isLocal)
+              PopupMenuButton<String>(
+                tooltip: '会话操作',
+                onSelected: (value) {
+                  if (value == 'refresh') {
+                    unawaited(chat.refreshSession(sessionId));
+                  } else if (value == 'delete') {
+                    unawaited(_confirmDeleteCurrent(conversation));
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'refresh', child: Text('刷新会话')),
+                  PopupMenuItem(value: 'delete', child: Text('删除会话')),
+                ],
+              ),
+          ],
+        ),
+        Text(
+          _conversationStatus(conversation),
+          style: const TextStyle(fontSize: 12, color: NotebookTheme.ink),
+        ),
+        if (conversation.error != null)
+          _InlineError(
+            message: '会话信息读取失败：${conversation.error}',
+            onRetry: () => chat.refreshSession(sessionId),
+          ),
+        if (chat.runtimeError != null)
+          _InlineError(
+            message: '聊天服务不可用：${chat.runtimeError}',
+            onRetry: () => chat.refreshSession(sessionId),
+          ),
+      ];
+      final messages =
+          !conversation.isLocal &&
+              conversation.runs.isEmpty &&
+              conversation.error != null
+          ? _InlineError(
+              message: '读取会话失败：${conversation.error}',
               onRetry: () => chat.refreshSession(sessionId),
-            ),
-          const Divider(),
-          Expanded(
-            child:
-                !conversation.isLocal &&
-                    conversation.runs.isEmpty &&
-                    conversation.error != null
-                ? _InlineError(
-                    message: '读取会话失败：${conversation.error}',
-                    onRetry: () => chat.refreshSession(sessionId),
-                  )
-                : !conversation.isLocal &&
-                      conversation.runs.isEmpty &&
-                      !conversation.historyLoaded
-                ? const Center(child: CircularProgressIndicator())
-                : ChatMessageList(
-                    key: ValueKey('chat-message-list-$sessionId'),
-                    sessionId: sessionId,
-                    runs: _oldestFirst(conversation.runs),
-                    initialOffset: conversation.readingOffset,
-                    initiallyFollowLatest: conversation.followLatest,
-                    onReadingPosition: (offset, followLatest) {
-                      if (chat.conversations.any(
-                        (item) => item.sessionId == sessionId,
-                      )) {
-                        chat.updateReadingPosition(
-                          sessionId,
-                          offset: offset,
-                          followLatest: followLatest,
-                        );
-                      }
-                    },
-                    onRetryCreate: (id) => chat.retryCreate(id),
-                    onRetryConnection: (id) => chat.retryConnection(id),
-                  ),
-          ),
-          const Divider(),
-          ChatComposer(
-            controller: _draftController,
-            onChanged: (text) => chat.updateDraft(sessionId, text),
-            onSend: () {
-              final text = _draftController.text;
-              if (text.trim().isEmpty || !chat.canSend(sessionId)) return;
-              chat.updateDraft(sessionId, text);
-              _draftController.clear();
-              unawaited(chat.send(sessionId, model: 'deepseek-flash'));
-            },
-            onStop: () => chat.cancel(sessionId),
-            sending: activeRun != null,
-            stopping: activeRun?.phase == ChatRunPhase.stopping,
-            stoppable: activeRun?.runId != null,
-            canSend: canSend,
-            disabledReason: canSend ? null : disabledReason,
-          ),
-          if (!canSend && activeRun == null)
-            Padding(
+            )
+          : !conversation.isLocal &&
+                conversation.runs.isEmpty &&
+                !conversation.historyLoaded
+          ? const Center(child: CircularProgressIndicator())
+          : ChatMessageList(
+              key: ValueKey('chat-message-list-$sessionId'),
+              sessionId: sessionId,
+              runs: _oldestFirst(conversation.runs),
+              initialOffset: conversation.readingOffset,
+              initiallyFollowLatest: conversation.followLatest,
+              onReadingPosition: (offset, followLatest) {
+                if (chat.conversations.any(
+                  (item) => item.sessionId == sessionId,
+                )) {
+                  chat.updateReadingPosition(
+                    sessionId,
+                    offset: offset,
+                    followLatest: followLatest,
+                  );
+                }
+              },
+              onRetryCreate: (id) => chat.retryCreate(id),
+              onRetryConnection: (id) => chat.retryConnection(id),
+            );
+      final composer = ChatComposer(
+        controller: _draftController,
+        onChanged: (text) => chat.updateDraft(sessionId, text),
+        onSend: () {
+          final text = _draftController.text;
+          if (text.trim().isEmpty || !chat.canSend(sessionId)) return;
+          chat.updateDraft(sessionId, text);
+          _draftController.clear();
+          unawaited(chat.send(sessionId, model: 'deepseek-flash'));
+        },
+        onStop: () => chat.cancel(sessionId),
+        sending: activeRun != null,
+        stopping: activeRun?.phase == ChatRunPhase.stopping,
+        stoppable: activeRun?.runId != null,
+        canSend: canSend,
+        disabledReason: canSend ? null : disabledReason,
+      );
+      final disabledHint = !canSend && activeRun == null
+          ? Padding(
               padding: const EdgeInsets.only(top: 3),
               child: Text(
                 disabledReason,
                 style: const TextStyle(fontSize: 11, color: NotebookTheme.ink),
               ),
-            ),
-        ],
+            )
+          : null;
+
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final compactHeader =
+              constraints.maxHeight < 420 ||
+              MediaQuery.textScalerOf(context).scale(14) > 20;
+          if (compactHeader) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: (constraints.maxHeight * .4).clamp(0.0, 240.0),
+                  ),
+                  child: SingleChildScrollView(
+                    primary: false,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [...header, ?disabledHint, const Divider()],
+                    ),
+                  ),
+                ),
+                Expanded(child: messages),
+                const Divider(),
+                composer,
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ...header,
+              const Divider(),
+              Expanded(child: messages),
+              const Divider(),
+              composer,
+              ?disabledHint,
+            ],
+          );
+        },
       );
     },
   );

@@ -250,6 +250,7 @@ class _ChatTurn extends StatelessWidget {
                         child: ChatMarkdownBody(
                           key: ValueKey('chat-assistant-${run.messageId}'),
                           data: run.rawText,
+                          isStreaming: !run.isTerminal,
                         ),
                       )
                     else if (run.phase == ChatRunPhase.creating ||

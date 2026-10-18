@@ -237,7 +237,24 @@ Python 脚本自行建立并手动迁移新的测试数据库，不接收业务�
 
 房间设置、日程本、管理和添加入口共用米白底、暖棕文字及 44 高点击目标。原图猫咪增加透明入口，悬停或键盘聚焦显示“和我聊聊”；点击进入同一本子的 AI 标签。热区随三时段背景一起投影和裁切，猫咪不可见时仍可从固定日程本入口访问第四标签。合本后焦点返回实际入口，原入口不可见时返回固定本子按钮。
 
-当前实现覆盖设计阶段 0–5：聊天契约、七操作 HTTP/SSE、独立运行状态、固定 `gpt_markdown 1.3.4` 渲染，以及 AI 双页/单栏下的多会话输入、生成、停止、历史搜索和删除。应用级模型保留后台运行和各会话阅读状态，宿主通过身份守卫隔离失效及退出期间的旧操作。Go 聊天仍为内存 Mock，不保证真实模型、真实工具执行、持久化或跨后端重启恢复；显式演示模式保留无网络的欢迎框架。阶段 6 的真机与性能矩阵仍需独立验收。
+当前实现已接通设计阶段 0–5，并提供阶段 6 的综合自动测试、截图和 Windows profile 工具：聊天契约、七操作 HTTP/SSE、独立运行状态、固定 `gpt_markdown 1.3.4` 渲染，以及 AI 双页/单栏下的多会话输入、生成、停止、历史搜索和删除。应用级模型保留后台运行和各会话阅读状态，宿主通过身份守卫隔离失效及退出期间的旧操作。Go 聊天仍为内存 Mock，不保证真实模型、真实工具执行、持久化或跨后端重启恢复；显式演示模式保留无网络的欢迎框架。真实输入法、OS DPI、跨显示器及系统交互等人工平台矩阵仍需独立验收。
+
+阶段 6 的综合自动验收工具可在 `desktop` 目录执行：
+
+```powershell
+flutter test test/chat_acceptance_test.dart test/chat_contrast_test.dart
+flutter test tool/capture_chat_visuals_test.dart
+$env:TIMECUE_CAPTURE_CHAT='true'; flutter test test/cat_chat_hotspot_test.dart
+flutter build windows --profile --target=tool/chat_profile_smoke.dart
+python tool/run_chat_profile.py
+flutter build windows --release --target=lib/main.dart
+```
+
+Widget 截图写入 `build/visuals/`，profile 报告写入 `build/chat-profile/profile.json`；构建产物、PNG 与报告仅供本地检查，不纳入提交。Profile 自动检查使用 Flutter 框架指针事件和文本控制器，不覆盖 Windows 原生 IME、系统键鼠、OS DPI 与跨显示器验收。退出码表示功能、采样完整性及操作响应检查，60 FPS 帧耗时追踪目标单独查看 `performance.frame_target_met` 与诊断；退出成功不表示所有帧目标已达到。自动验收以实际测试输出和报告为准；命令列表不代表这些检查已经执行或通过。
+
+小高度或大字模式下，对话与历史页头采用有界滚动，历史搜索和状态可滚动访问，消息列表及固定输入、停止操作保留可用空间。
+
+生成期间的代码块继续显示原文、语言与复制入口，使用渲染库自身的代码组件暂缓语法高亮；服务端终态确认后再应用高亮。Markdown 解析仍由 `gpt_markdown` 负责，渲染状态变化不会修改累计原文。
 
 `HttpChatGateway` 与日程仓储独立，共用构建模式端口来源。它提供七操作的严格 DTO 解码、UTF-8/SSE 分片处理、单 run 单连接、Last-Event-ID、204 转查询信号和可取消连接；不会自行重试创建。`ChatViewModel` 拥有会话草稿、运行及有序工具调用，只依赖 `ChatGateway`，创建结果不明时固定原请求和幂等键，断线、取消受理及终态查询失败均保留已知名额。五类事件共用游标，按事件 ID 去重；工具按各 run 的调用 ID 去重，相同名称的不同调用分别保留。只有服务端确认的终态释放名额，最终正文使用 GET 结果收敛。
 

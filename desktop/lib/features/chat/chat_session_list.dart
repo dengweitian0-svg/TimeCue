@@ -96,163 +96,190 @@ class _ChatSessionListState extends State<ChatSessionList> {
         chat.historyError == null &&
         !chat.historyHasFailures;
     final groups = _groupByBeijingDay(visible);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            const Expanded(
-              child: _PageTitle(title: '历史会话', subtitle: '按最近对话整理，可搜索名称和摘要。'),
-            ),
-            IconButton(
-              onPressed: chat.acceptingOperations && !chat.historyLoading
-                  ? () => chat.loadHistory(refresh: true)
-                  : null,
-              tooltip: '刷新历史',
-              icon: const Icon(Icons.refresh),
-            ),
-            IconButton.filledTonal(
-              onPressed: _startNewSession,
-              tooltip: '新会话',
-              icon: const Icon(Icons.add),
-            ),
-          ],
-        ),
-        TextField(
-          controller: _searchController,
-          onChanged: (value) => setState(() => _query = value),
-          textInputAction: TextInputAction.search,
-          decoration: InputDecoration(
-            prefixIcon: const Icon(Icons.search),
-            hintText: '搜索名称或摘要',
-            isDense: true,
-            suffixIcon: _query.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: '清空搜索',
-                    onPressed: () {
-                      _searchController.clear();
-                      setState(() => _query = '');
-                    },
-                    icon: const Icon(Icons.clear),
-                  ),
+    final header = <Widget>[
+      Row(
+        children: [
+          const Expanded(
+            child: _PageTitle(title: '历史会话', subtitle: '按最近对话整理，可搜索名称和摘要。'),
           ),
-        ),
-        if (chat.historyLoading) ...[
-          const SizedBox(height: 10),
-          LinearProgressIndicator(
-            value: chat.historyTotalCount == 0
-                ? null
-                : chat.historyCompletedCount / chat.historyTotalCount,
-            minHeight: 3,
+          IconButton(
+            onPressed: chat.acceptingOperations && !chat.historyLoading
+                ? () => chat.loadHistory(refresh: true)
+                : null,
+            tooltip: '刷新历史',
+            icon: const Icon(Icons.refresh),
           ),
-          const SizedBox(height: 5),
-          Text(
-            '正在整理历史 ${chat.historyCompletedCount}/${chat.historyTotalCount}',
-            style: const TextStyle(fontSize: 12, color: NotebookTheme.ink),
+          IconButton.filledTonal(
+            onPressed: _startNewSession,
+            tooltip: '新会话',
+            icon: const Icon(Icons.add),
           ),
         ],
-        if (chat.historyError != null)
-          _InlineHistoryNotice(
-            message: '历史读取失败：${chat.historyError}',
-            actionLabel: '重试',
-            onPressed: () => chat.loadHistory(refresh: true),
-          ),
-        if (chat.historyHasFailures)
-          _InlineHistoryNotice(
-            message: '部分会话读取失败。',
-            actionLabel: '重试失败项',
-            onPressed: () => chat.loadHistory(refresh: true),
-          ),
-        if (chat.runtimeError != null)
-          _InlineHistoryNotice(
-            message: '聊天服务不可用：${chat.runtimeError}',
-            actionLabel: '重试',
-            onPressed: () => chat.loadHistory(refresh: true),
-          ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: all.isEmpty && localDrafts.isEmpty && chat.historyLoading
-              ? const Center(child: CircularProgressIndicator())
-              : all.isEmpty && localDrafts.isEmpty && chat.historyError != null
-              ? const Center(child: Text('历史暂时无法读取，请重试。'))
-              : all.isEmpty && localDrafts.isEmpty && chat.historyLoaded
-              ? Center(
-                  child: Text(
-                    query.isNotEmpty && searchComplete
-                        ? '没有找到相关会话。'
-                        : query.isNotEmpty
-                        ? '历史整理完成后再判断搜索结果。'
-                        : '还没有历史会话。',
-                  ),
-                )
-              : ListView(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  children: [
-                    if (localDrafts.isNotEmpty) ...[
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(4, 12, 4, 5),
-                        child: Text(
-                          '未发送草稿',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: NotebookTheme.ink,
-                          ),
-                        ),
-                      ),
-                      for (final draft in localDrafts)
-                        _HistoryTile(
-                          conversation: draft,
-                          selected: draft.sessionId == chat.selectedSessionId,
-                          onSelect: () => widget.onSelect(draft.sessionId),
-                          title: '新会话草稿',
-                          subtitle: draft.draft,
-                        ),
-                    ],
-                    for (final entry in groups.entries) ...[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(4, 12, 4, 5),
-                        child: Text(
-                          entry.key,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: NotebookTheme.ink,
-                          ),
-                        ),
-                      ),
-                      for (final conversation in entry.value)
-                        _HistoryTile(
-                          conversation: conversation,
-                          selected:
-                              conversation.sessionId == chat.selectedSessionId,
-                          onSelect: () =>
-                              widget.onSelect(conversation.sessionId),
-                          onDelete: () => _confirmDelete(conversation),
-                        ),
-                    ],
-                    if (all.isNotEmpty && visible.isEmpty && searchComplete)
-                      const Padding(
-                        padding: EdgeInsets.all(18),
-                        child: Center(child: Text('没有找到相关会话。')),
-                      ),
-                    if (all.isNotEmpty && visible.isEmpty && !searchComplete)
-                      const Padding(
-                        padding: EdgeInsets.all(18),
-                        child: Center(child: Text('历史整理完成后再判断搜索结果。')),
-                      ),
-                    if (!chat.historyLoaded && !chat.historyLoading)
-                      Align(
-                        alignment: Alignment.center,
-                        child: TextButton.icon(
-                          onPressed: () => chat.loadHistory(),
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('继续整理历史'),
-                        ),
-                      ),
-                  ],
+      ),
+      TextField(
+        controller: _searchController,
+        onChanged: (value) => setState(() => _query = value),
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          prefixIcon: const Icon(Icons.search),
+          hintText: '搜索名称或摘要',
+          isDense: true,
+          suffixIcon: _query.isEmpty
+              ? null
+              : IconButton(
+                  tooltip: '清空搜索',
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() => _query = '');
+                  },
+                  icon: const Icon(Icons.clear),
                 ),
         ),
+      ),
+      if (chat.historyLoading) ...[
+        const SizedBox(height: 10),
+        LinearProgressIndicator(
+          value: chat.historyTotalCount == 0
+              ? null
+              : chat.historyCompletedCount / chat.historyTotalCount,
+          minHeight: 3,
+        ),
+        const SizedBox(height: 5),
+        Text(
+          '正在整理历史 ${chat.historyCompletedCount}/${chat.historyTotalCount}',
+          style: const TextStyle(fontSize: 12, color: NotebookTheme.ink),
+        ),
       ],
+      if (chat.historyError != null)
+        _InlineHistoryNotice(
+          message: '历史读取失败：${chat.historyError}',
+          actionLabel: '重试',
+          onPressed: () => chat.loadHistory(refresh: true),
+        ),
+      if (chat.historyHasFailures)
+        _InlineHistoryNotice(
+          message: '部分会话读取失败。',
+          actionLabel: '重试失败项',
+          onPressed: () => chat.loadHistory(refresh: true),
+        ),
+      if (chat.runtimeError != null)
+        _InlineHistoryNotice(
+          message: '聊天服务不可用：${chat.runtimeError}',
+          actionLabel: '重试',
+          onPressed: () => chat.loadHistory(refresh: true),
+        ),
+      const SizedBox(height: 8),
+    ];
+    final contents = all.isEmpty && localDrafts.isEmpty && chat.historyLoading
+        ? const Center(child: CircularProgressIndicator())
+        : all.isEmpty && localDrafts.isEmpty && chat.historyError != null
+        ? const Center(child: Text('历史暂时无法读取，请重试。'))
+        : all.isEmpty && localDrafts.isEmpty && chat.historyLoaded
+        ? Center(
+            child: Text(
+              query.isNotEmpty && searchComplete
+                  ? '没有找到相关会话。'
+                  : query.isNotEmpty
+                  ? '历史整理完成后再判断搜索结果。'
+                  : '还没有历史会话。',
+            ),
+          )
+        : ListView(
+            padding: const EdgeInsets.only(bottom: 12),
+            children: [
+              if (localDrafts.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(4, 12, 4, 5),
+                  child: Text(
+                    '未发送草稿',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: NotebookTheme.ink,
+                    ),
+                  ),
+                ),
+                for (final draft in localDrafts)
+                  _HistoryTile(
+                    conversation: draft,
+                    selected: draft.sessionId == chat.selectedSessionId,
+                    onSelect: () => widget.onSelect(draft.sessionId),
+                    title: '新会话草稿',
+                    subtitle: draft.draft,
+                  ),
+              ],
+              for (final entry in groups.entries) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 12, 4, 5),
+                  child: Text(
+                    entry.key,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: NotebookTheme.ink,
+                    ),
+                  ),
+                ),
+                for (final conversation in entry.value)
+                  _HistoryTile(
+                    conversation: conversation,
+                    selected: conversation.sessionId == chat.selectedSessionId,
+                    onSelect: () => widget.onSelect(conversation.sessionId),
+                    onDelete: () => _confirmDelete(conversation),
+                  ),
+              ],
+              if (all.isNotEmpty && visible.isEmpty && searchComplete)
+                const Padding(
+                  padding: EdgeInsets.all(18),
+                  child: Center(child: Text('没有找到相关会话。')),
+                ),
+              if (all.isNotEmpty && visible.isEmpty && !searchComplete)
+                const Padding(
+                  padding: EdgeInsets.all(18),
+                  child: Center(child: Text('历史整理完成后再判断搜索结果。')),
+                ),
+              if (!chat.historyLoaded && !chat.historyLoading)
+                Align(
+                  alignment: Alignment.center,
+                  child: TextButton.icon(
+                    onPressed: () => chat.loadHistory(),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('继续整理历史'),
+                  ),
+                ),
+            ],
+          );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compactHeader =
+            constraints.maxHeight < 420 ||
+            MediaQuery.textScalerOf(context).scale(14) > 20;
+        if (compactHeader) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: (constraints.maxHeight * .48).clamp(0.0, 220.0),
+                ),
+                child: SingleChildScrollView(
+                  primary: false,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: header,
+                  ),
+                ),
+              ),
+              Expanded(child: contents),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ...header,
+            Expanded(child: contents),
+          ],
+        );
+      },
     );
   }
 

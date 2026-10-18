@@ -729,9 +729,10 @@ class NotebookFrame extends StatelessWidget {
               TextButton.icon(
                 onPressed: onManage,
                 style: TextButton.styleFrom(
-                  foregroundColor: NotebookTheme.paper,
+                  foregroundColor: NotebookTheme.coverLabelForeground,
+                  backgroundColor: NotebookTheme.coverLabelBackground,
                   textStyle: const TextStyle(fontSize: 11),
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 7),
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
@@ -743,8 +744,10 @@ class NotebookFrame extends StatelessWidget {
                   child: TextButton(
                     onPressed: model.onRecovery,
                     style: TextButton.styleFrom(
-                      foregroundColor: NotebookTheme.paper,
+                      foregroundColor: NotebookTheme.coverLabelForeground,
+                      backgroundColor: NotebookTheme.coverLabelBackground,
                       textStyle: const TextStyle(fontSize: 11),
+                      padding: const EdgeInsets.symmetric(horizontal: 7),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
@@ -755,38 +758,32 @@ class NotebookFrame extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (model.tab == NotebookTab.ai)
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: NotebookTheme.paper,
-                    borderRadius: BorderRadius.circular(4),
+              DecoratedBox(
+                key: const ValueKey('cover-page-number'),
+                decoration: BoxDecoration(
+                  color: NotebookTheme.coverLabelBackground,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
                   ),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    child: Text(
-                      '07 — 08',
-                      style: TextStyle(
-                        fontSize: 10,
-                        letterSpacing: 2,
-                        color: NotebookTheme.ink,
-                      ),
+                  child: Text(
+                    switch (model.tab) {
+                      NotebookTab.today => '01 — 02',
+                      NotebookTab.history => '03 — 04',
+                      NotebookTab.calendar => '05 — 06',
+                      NotebookTab.ai => '07 — 08',
+                    },
+                    style: const TextStyle(
+                      fontSize: 10,
+                      letterSpacing: 2,
+                      color: NotebookTheme.coverLabelForeground,
                     ),
                   ),
-                )
-              else
-                Text(
-                  switch (model.tab) {
-                    NotebookTab.today => '01 — 02',
-                    NotebookTab.history => '03 — 04',
-                    NotebookTab.calendar => '05 — 06',
-                    NotebookTab.ai => '07 — 08',
-                  },
-                  style: const TextStyle(
-                    fontSize: 10,
-                    letterSpacing: 2,
-                    color: NotebookTheme.paper,
-                  ),
                 ),
+              ),
             ],
           ),
         ),

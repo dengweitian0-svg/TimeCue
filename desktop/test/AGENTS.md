@@ -50,7 +50,11 @@
 - `chat_session_list_test.dart`：验证多会话列表和页头名称、名称摘要搜索、草稿切换、索引未完成及失败提示、删除确认、窄窗口大字布局和阅读恢复。
 - `http_chat_gateway_test.dart`：可控 HTTP/SSE 与原始 socket 验证七操作、UTF-8 跨字节解码、游标、204、错误映射、真实取消断连及单连接身份隔离。
 - `chat_view_model_test.dart`：验证不明创建的幂等重试、同会话和全局占用、事件与工具身份、缺口恢复、终态 checkpoint、身份错误、运行失效及迟到取消/快照的终态单调约束。
-- `chat_conversation_test.dart`：验证单会话发送、独立下一条草稿、多工具名称、停止与最终正文、单双栏阅读位置、Enter/Shift+Enter/输入法组合保护及代码复制；广播流取消涉及真实异步 Future，测试显式推进真实与假时钟。
+- `chat_conversation_test.dart`：验证单会话发送、独立下一条草稿、多工具名称、停止与最终正文、单双栏阅读位置、Enter/Shift+Enter/输入法组合保护及代码复制；闭合代码块在流式期间暂缓高亮，终态恢复高亮并保留原文和文字缩放。广播流取消涉及真实异步 Future，测试显式推进真实与假时钟。
 - `chat_markdown_compatibility_test.dart`：固定 gpt_markdown 在累计完整文本、未闭合语法、代码、宽表格及文字缩放下的渲染兼容性，不实现运行连接或逐增量 Markdown 解析。
 - `chat_spread_test.dart`：AI 第四标签的双页/单栏、历史导航、本地草稿保留与清空前确认；既有 Widget 回归继续检查日程编辑草稿守卫。验证 640×480、1280×800、1440×900 与文字缩放布局。
+- `chat_acceptance_test.dart`：复用纯 Dart `tool/chat_acceptance_fixture.dart`，对 ChatSpread/NotebookFrame 执行 1280×800、1440×900、640×480 与 DPR 1/1.25/1.5/2、文字缩放 1/1.6/2 矩阵；复跑长历史、Thinking 隐私、多工具同名调用及累计 Markdown 原文收敛。
+- `tool/capture_chat_visuals_test.dart`：复用同一网关夹具生成欢迎、历史搜索、单双栏、Thinking、多工具、代码表格、停止、重连和失败状态截图到 `build/visuals/chat-phase6/`；截图为本地验收产物，不作为真机平台证据。
+- `chat_contrast_test.dart`：验证纸面正文、主要操作、输入控件、书封入口、恢复入口和页码小字的前景与背景对比度。
+- `chat_message_scroll_test.dart`：验证多轮回复与工具到达时跟随最新、用户上读后保留阅读位置，以及回到最新入口恢复跟随。
 - `cat_chat_hotspot_test.dart`：三时段资源与 cover 几何、透明猫咪热区、裁切、鼠标/键盘入口、关闭焦点返回及米白暖棕入口样式。可选 `TIMECUE_CAPTURE_CHAT=true` 输出本地 Widget PNG；截图与替身键盘操作不替代 Windows 真机、DPI、输入法及跨显示器验收。
