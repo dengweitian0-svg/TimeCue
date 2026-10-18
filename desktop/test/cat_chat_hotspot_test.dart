@@ -92,6 +92,29 @@ void main() {
     await tester.pump();
     expect(find.text('和我聊聊'), findsOneWidget);
     expect(find.text('点击猫咪，打开 AI 对话'), findsOneWidget);
+    final roomStyle = NotebookTheme.roomActionStyle();
+    final roomBackground = roomStyle.backgroundColor!.resolve({})!;
+    final roomForeground = roomStyle.foregroundColor!.resolve({})!;
+    final hintMaterial = tester.widget<Material>(
+      find
+          .ancestor(of: find.text('和我聊聊'), matching: find.byType(Material))
+          .first,
+    );
+    expect(hintMaterial.color, roomBackground);
+    expect(hintMaterial.surfaceTintColor, Colors.transparent);
+    expect(
+      hintMaterial.shape,
+      isA<RoundedRectangleBorder>().having(
+        (shape) => shape.side,
+        '边框',
+        BorderSide.none,
+      ),
+    );
+    expect(tester.widget<Text>(find.text('和我聊聊')).style!.color, roomForeground);
+    expect(
+      tester.widget<Text>(find.text('点击猫咪，打开 AI 对话')).style!.color,
+      roomForeground,
+    );
     final hint = tester.getRect(find.text('和我聊聊'));
     expect(hint.overlaps(tester.getRect(button)), isFalse);
 

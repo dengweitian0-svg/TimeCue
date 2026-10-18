@@ -11,6 +11,12 @@ abstract final class NotebookTheme {
   /// 供纸面主操作使用的深棕色，确保小号按钮文字达到可读对比度。
   static const action = Color.fromARGB(255, 96, 68, 40);
 
+  /// 房间入口与猫咪提示共用的半透明暖棕背景。
+  static const roomActionBackground = Color.fromARGB(128, 73, 61, 48);
+
+  /// 房间入口与猫咪提示共用的半透明米白前景。
+  static const roomActionForeground = Color.fromARGB(159, 255, 249, 237);
+
   /// 封面上的小号文字使用纸色标签承载，避免改变封面底色。
   static const coverLabelBackground = paper;
 
@@ -20,8 +26,8 @@ abstract final class NotebookTheme {
   /// 房间固定入口共用半透明暖棕胶囊样式，并保留添加入口的禁用状态。
   static ButtonStyle roomActionStyle({bool disabledCreate = false}) =>
       FilledButton.styleFrom(
-        backgroundColor: const Color.fromARGB(128, 73, 61, 48),
-        foregroundColor: const Color.fromARGB(159, 255, 249, 237),
+        backgroundColor: roomActionBackground,
+        foregroundColor: roomActionForeground,
         side: BorderSide.none,
         disabledBackgroundColor: disabledCreate
             ? const Color.fromARGB(225, 238, 222, 190)

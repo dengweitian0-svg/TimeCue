@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:timecue_desktop/theme/notebook_theme.dart';
 
 /// 在背景猫咪上提供透明、可聚焦的 AI 对话入口和窗口内提示气泡。
 class CatChatHotspot extends StatefulWidget {
@@ -101,14 +102,13 @@ class _CatChatHotspotState extends State<CatChatHotspot> {
           rect: _hintBounds,
           child: IgnorePointer(
             child: Material(
-              color: const Color.fromARGB(255, 251, 246, 231),
+              color: NotebookTheme.roomActionBackground,
+              surfaceTintColor: Colors.transparent,
               elevation: 4,
               shadowColor: const Color.fromARGB(72, 61, 45, 30),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(
-                  color: Color.fromARGB(255, 222, 212, 188),
-                ),
+                side: BorderSide.none,
               ),
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(
@@ -122,7 +122,7 @@ class _CatChatHotspotState extends State<CatChatHotspot> {
                     Text(
                       '和我聊聊',
                       style: TextStyle(
-                        color: Color.fromARGB(255, 89, 71, 51),
+                        color: NotebookTheme.roomActionForeground,
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                       ),
@@ -131,7 +131,7 @@ class _CatChatHotspotState extends State<CatChatHotspot> {
                     Text(
                       '点击猫咪，打开 AI 对话',
                       style: TextStyle(
-                        color: Color.fromARGB(255, 89, 71, 51),
+                        color: NotebookTheme.roomActionForeground,
                         fontSize: 12,
                       ),
                     ),

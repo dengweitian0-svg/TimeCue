@@ -57,4 +57,4 @@
 - `tool/capture_chat_visuals_test.dart`：复用同一网关夹具生成欢迎、历史搜索、单双栏、Thinking、多工具、代码表格、停止、重连和失败状态截图到 `build/visuals/chat-phase6/`；截图为本地验收产物，不作为真机平台证据。
 - `chat_contrast_test.dart`：验证纸面正文、主要操作、输入控件、书封入口、恢复入口和页码小字的前景与背景对比度。
 - `chat_message_scroll_test.dart`：验证多轮回复与工具到达时跟随最新、用户上读后保留阅读位置，以及回到最新入口恢复跟随。
-- `cat_chat_hotspot_test.dart`：三时段资源与 cover 几何、透明猫咪热区、裁切、鼠标/键盘入口、关闭焦点返回，以及房间四入口的半透明颜色、胶囊形状和添加入口禁用状态。可选 `TIMECUE_CAPTURE_CHAT=true` 输出本地 Widget PNG；截图与替身键盘操作不替代 Windows 真机、DPI、输入法及跨显示器验收。
+- `cat_chat_hotspot_test.dart`：三时段资源与 cover 几何、透明猫咪热区、裁切、鼠标/键盘入口、关闭焦点返回，猫咪悬停提示与房间入口共用的颜色，以及房间四入口的半透明颜色、胶囊形状和添加入口禁用状态。可选 `TIMECUE_CAPTURE_CHAT=true` 输出本地 Widget PNG；截图与替身键盘操作不替代 Windows 真机、DPI、输入法及跨显示器验收。
