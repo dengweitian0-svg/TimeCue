@@ -12,12 +12,12 @@
 #include <window_manager/window_manager_plugin.h>
 
 void RegisterPlugins(flutter::PluginRegistry* registry) {
-  FileSelectorWindowsRegisterWithRegistrar(
-      registry->GetRegistrarForPlugin("FileSelectorWindows"));
-  ScreenRetrieverWindowsPluginCApiRegisterWithRegistrar(
-      registry->GetRegistrarForPlugin("ScreenRetrieverWindowsPluginCApi"));
-  TrayManagerPluginRegisterWithRegistrar(
-      registry->GetRegistrarForPlugin("TrayManagerPlugin"));
-  WindowManagerPluginRegisterWithRegistrar(
-      registry->GetRegistrarForPlugin("WindowManagerPlugin"));
+    FileSelectorWindowsRegisterWithRegistrar(
+        registry->GetRegistrarForPlugin("FileSelectorWindows"));
+    ScreenRetrieverWindowsPluginCApiRegisterWithRegistrar(
+        registry->GetRegistrarForPlugin("ScreenRetrieverWindowsPluginCApi"));
+    TrayManagerPluginRegisterWithRegistrar(
+        registry->GetRegistrarForPlugin("TrayManagerPlugin"));
+    WindowManagerPluginRegisterWithRegistrar(
+        registry->GetRegistrarForPlugin("WindowManagerPlugin"));
 }
