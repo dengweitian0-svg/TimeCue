@@ -297,6 +297,94 @@ void main() {
       expect(other.name, '保留会话');
     });
 
+    test('历史刷新会核验列表外的待确认删除，暂时失败保留，明确缺失后恢复发送', () async {
+      final gateway = _HistoryGateway(
+        sessionIds: ['delete-uncertain', 'other'],
+        sessions: {
+          'delete-uncertain': const ChatSession(
+            sessionId: 'delete-uncertain',
+            name: '删除响应丢失',
+            runIds: [],
+          ),
+          'other': const ChatSession(
+            sessionId: 'other',
+            name: '保留会话',
+            runIds: [],
+          ),
+        },
+      );
+      final model = _model(gateway);
+      addTearDown(model.dispose);
+      await model.loadHistory();
+      final local = model.createLocalSession();
+      model.updateDraft(local.sessionId, '保留本地草稿');
+      model.selectSession('delete-uncertain');
+      gateway.deleteError = StateError('DELETE response lost');
+      expect(await model.deleteSession('delete-uncertain'), isFalse);
+      gateway.sessionIds.remove('delete-uncertain');
+      gateway.sessionErrors['delete-uncertain'] = const ChatHttpError(
+        statusCode: 503,
+        code: 'temporary_failure',
+        message: '暂时不可用',
+      );
+
+      await model.loadHistory(refresh: true);
+
+      expect(model.selectedConversation!.error, '暂时不可用');
+      expect(model.historyConversations, hasLength(2));
+      expect(model.historyTotalCount, 2);
+      expect(model.historyCompletedCount, 2);
+      expect(model.canSend('other'), isFalse);
+      gateway.sessionErrors['delete-uncertain'] = const ChatHttpError(
+        statusCode: 404,
+        code: 'session_not_found',
+        message: '会话不存在',
+      );
+      final requestsBeforeRetry = gateway.getSessionCalls;
+
+      await model.loadHistory(refresh: true);
+
+      expect(gateway.getSessionCalls - requestsBeforeRetry, 2);
+      expect(model.historyConversations.map((item) => item.sessionId), [
+        'other',
+      ]);
+      expect(model.historyHasFailures, isFalse);
+      expect(model.historyTotalCount, 2);
+      expect(model.historyCompletedCount, 2);
+      expect(model.selectedConversation!.isLocal, isTrue);
+      expect(model.canSend('other'), isTrue);
+      expect(model.canSend(local.sessionId), isTrue);
+      expect(local.draft, '保留本地草稿');
+
+      await model.loadHistory(refresh: true);
+
+      expect(model.historyTotalCount, 1);
+      expect(model.historyCompletedCount, 1);
+      expect(model.historyConversations.map((item) => item.sessionId), [
+        'other',
+      ]);
+    });
+
+    test('历史刷新对仍在列表中的待确认删除只核验一次并恢复现存会话', () async {
+      final gateway = _HistoryGateway(sessionIds: ['target']);
+      final model = _model(gateway);
+      addTearDown(model.dispose);
+      await model.loadHistory();
+      gateway.deleteError = StateError('DELETE response lost');
+      expect(await model.deleteSession('target'), isFalse);
+      gateway.sessionIds.add('target');
+      final requestsBeforeRefresh = gateway.getSessionCalls;
+
+      await model.loadHistory(refresh: true);
+
+      expect(gateway.getSessionCalls - requestsBeforeRefresh, 1);
+      expect(model.historyTotalCount, 1);
+      expect(model.historyCompletedCount, 1);
+      expect(model.historyConversations.single.sessionId, 'target');
+      expect(model.historyHasFailures, isFalse);
+      expect(model.canSend('target'), isTrue);
+    });
+
     test('删除非当前会话不抢选中会话，也保留其草稿和运行', () async {
       final gateway = _HistoryGateway(
         sessionIds: ['delete-target'],
@@ -540,6 +628,7 @@ class _HistoryGateway implements ChatGateway {
   final Map<String, ChatRun> runs;
   final List<Future<ChatSession>> sessionOverrides = [];
   final List<Object> sessionFailures = [];
+  final Map<String, Object> sessionErrors = {};
   final List<Future<ChatCreateRunResult>> createResponses = [];
   final List<String> createCalls = [];
   final List<String> createKeys = [];
@@ -590,6 +679,7 @@ class _HistoryGateway implements ChatGateway {
     getSessionCalls++;
     if (sessionOverrides.isNotEmpty) return sessionOverrides.removeAt(0);
     if (sessionFailures.isNotEmpty) throw sessionFailures.removeAt(0);
+    if (sessionErrors[sessionId] case final error?) throw error;
     return sessions[sessionId] ??
         ChatSession(sessionId: sessionId, name: '名称 $sessionId', runIds: []);
   }

@@ -144,10 +144,12 @@ class ChatViewModel extends ChangeNotifier {
     try {
       final ids = await _gateway.listSessions();
       if (!_isRuntimeCurrent(generation)) return;
-      final uniqueIds = ids
-          .toSet()
-          .where((id) => !_deletedSessionIds.contains(id))
-          .toList();
+      // 删除响应不明的会话可能已从服务端列表消失，仍需读取详情确认。
+      final uniqueIds = {
+        ...ids,
+        for (final conversation in _conversations.values)
+          if (conversation._deleteNeedsVerification) conversation.sessionId,
+      }.where((id) => !_deletedSessionIds.contains(id)).toList();
       _historyTotalCount = uniqueIds.length;
       for (final sessionId in uniqueIds) {
         _registerHistoryPlaceholder(sessionId);
