@@ -1,13 +1,17 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'app/desktop_lifecycle.dart';
+import 'app/chat_runtime_guard.dart';
 import 'app/managed_backend.dart';
 import 'app/timecue_app.dart';
 import 'app/windows_notification_bridge.dart';
 import 'data/demo_notebook_repository.dart';
+import 'data/http_chat_gateway.dart';
 import 'data/http_notebook_repository.dart';
+import 'features/chat/chat_view_model.dart';
 import 'features/notebook/notification_view_model.dart';
 
+/// 创建桌面宿主及其应用级日程、通知和聊天运行。
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final desktop = DesktopLifecycle(WindowsDesktopPlatform());
@@ -39,7 +43,10 @@ Future<void> main() async {
     ),
   );
   ManagedBackend? backend;
+  late final HttpChatGateway chatGateway;
+  late final ChatViewModel chat;
   var businessOpened = false;
+  late final ChatRuntimeGuard chatGuard;
   if (configuration.managed) {
     backend = ManagedBackend(
       platform: WindowsOwnedProcessPlatform(),
@@ -50,19 +57,34 @@ Future<void> main() async {
     );
     repository.onManagedRuntimeLost = () =>
         backend!.invalidateRuntime('端口上的服务身份与自有 Go 不一致。');
+    backend.addListener(() {
+      if (backend!.ready) {
+        businessOpened = true;
+        repository.enableManagedRuntime(backend.instanceId!, pid: backend.pid);
+        chatGuard.markBusinessOpened();
+      }
+    });
+  }
+  chatGateway = HttpChatGateway(beforeRequest: () => chatGuard.beforeRequest());
+  chat = ChatViewModel(gateway: chatGateway);
+  chatGuard = ChatRuntimeGuard(
+    managed: configuration.managed,
+    health: repository.deliveryRuntime,
+    managedReady: () => backend?.ready ?? true,
+    onInvalidated: () {
+      chat.invalidateRuntime();
+      chatGateway.invalidateRuntime();
+    },
+  );
+  if (backend != null) {
     backend.onInvalidated = () {
       repository.invalidateManagedRuntime();
       if (businessOpened) {
         notifications.invalidateRuntime();
         views.observeRuntime(null);
+        chatGuard.invalidateRuntime();
       }
     };
-    backend.addListener(() {
-      if (backend!.ready) {
-        businessOpened = true;
-        repository.enableManagedRuntime(backend.instanceId!, pid: backend.pid);
-      }
-    });
   }
   desktop.onActivate = views.activate;
   runApp(
@@ -70,6 +92,9 @@ Future<void> main() async {
       repository: repository,
       desktop: desktop,
       notificationViews: views,
+      chat: chat,
+      closeChatRuntime: chatGuard.close,
+      releaseChatTransport: chatGateway.dispose,
       notifications: notifications,
       backend: backend,
       configFiles: configFiles,

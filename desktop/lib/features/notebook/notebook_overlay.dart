@@ -5,6 +5,8 @@ import '../../theme/notebook_theme.dart';
 import '../schedule_editor/schedule_editor.dart';
 import 'notebook_view_model.dart';
 import 'notebook_spreads.dart';
+import 'chat_spread.dart';
+import '../chat/chat_view_model.dart';
 import 'schedule_management_dialog.dart';
 
 enum NotebookPhase { closed, opening, open, closing }
@@ -16,11 +18,13 @@ class NotebookOverlay extends StatefulWidget {
     required this.origin,
     required this.onClosed,
     this.historyRequest = 0,
+    this.chat,
   });
   final NotebookViewModel model;
   final Offset origin;
   final VoidCallback onClosed;
   final int historyRequest;
+  final ChatViewModel? chat;
   @override
   State<NotebookOverlay> createState() => _NotebookOverlayState();
 }
@@ -231,6 +235,10 @@ class _NotebookOverlayState extends State<NotebookOverlay>
                                                 onManage: manage,
                                                 editor: buildEditor(),
                                               ),
+                                            NotebookTab.ai => ChatSpread(
+                                              model: widget.model,
+                                              chat: widget.chat,
+                                            ),
                                           },
                                         ),
                                       ),

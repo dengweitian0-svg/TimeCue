@@ -6,6 +6,7 @@ import '../contracts/notebook_repository.dart';
 import '../data/config_file_store.dart';
 import '../features/room/room_screen.dart';
 import '../features/notebook/notification_view_model.dart';
+import '../features/chat/chat_view_model.dart';
 import '../features/notebook/notification_reader_dialog.dart';
 import '../theme/notebook_theme.dart';
 import 'windows_notification_bridge.dart';
@@ -21,6 +22,9 @@ class TimeCueApp extends StatelessWidget {
     this.backend,
     this.desktop,
     this.notificationViews,
+    this.chat,
+    this.closeChatRuntime,
+    this.releaseChatTransport,
     this.configFiles,
     this.ownsRepository = false,
   });
@@ -29,6 +33,9 @@ class TimeCueApp extends StatelessWidget {
   final ManagedBackend? backend;
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
+  final ChatViewModel? chat;
+  final VoidCallback? closeChatRuntime;
+  final VoidCallback? releaseChatTransport;
   final ConfigFileStore? configFiles;
   final bool ownsRepository;
   @override
@@ -49,13 +56,16 @@ class TimeCueApp extends StatelessWidget {
       backend: backend,
       desktop: desktop,
       notificationViews: notificationViews,
+      chat: chat,
+      closeChatRuntime: closeChatRuntime,
+      releaseChatTransport: releaseChatTransport,
       configFiles: configFiles,
       ownsRepository: ownsRepository,
     ),
   );
 }
 
-/// 通知执行独立于房间焦点和本子开合，宿主负责停止后再释放共享仓储。
+/// 通知与聊天运行独立于房间焦点和本子开合，宿主负责统一停止和释放。
 class DesktopShell extends StatefulWidget {
   const DesktopShell({
     super.key,
@@ -64,6 +74,9 @@ class DesktopShell extends StatefulWidget {
     this.backend,
     this.desktop,
     this.notificationViews,
+    this.chat,
+    this.closeChatRuntime,
+    this.releaseChatTransport,
     this.configFiles,
     this.ownsRepository = false,
   });
@@ -72,6 +85,9 @@ class DesktopShell extends StatefulWidget {
   final ManagedBackend? backend;
   final DesktopLifecycle? desktop;
   final NotificationViewModel? notificationViews;
+  final ChatViewModel? chat;
+  final VoidCallback? closeChatRuntime;
+  final VoidCallback? releaseChatTransport;
   final ConfigFileStore? configFiles;
   final bool ownsRepository;
   @override
@@ -85,6 +101,9 @@ class _DesktopShellState extends State<DesktopShell> {
   bool _businessOpened = false;
   String? _pendingPayload;
   bool _runtimeReleased = false;
+  bool _chatTransportReleased = false;
+  bool _appPresentationHidden = false;
+  bool _lifecycleReleased = false;
   String? _notificationError;
 
   Future<void> _activate(String payload) async {
@@ -128,6 +147,31 @@ class _DesktopShellState extends State<DesktopShell> {
     if (instance != null) widget.notificationViews?.observeRuntime(instance);
   }
 
+  void _appLifecycleChanged(AppLifecycleState state) {
+    _appPresentationHidden = switch (state) {
+      AppLifecycleState.hidden ||
+      AppLifecycleState.paused ||
+      AppLifecycleState.detached => true,
+      _ => false,
+    };
+    _syncChatPresentationVisibility();
+  }
+
+  void _syncChatPresentationVisibility() {
+    if (_runtimeReleased) return;
+    final desktopHidden = widget.desktop?.state == DesktopState.hidden;
+    widget.chat?.setPresentationVisible(
+      !_appPresentationHidden && !desktopHidden,
+    );
+  }
+
+  void _releaseLifecycleListener() {
+    if (_lifecycleReleased) return;
+    _lifecycleReleased = true;
+    widget.desktop?.removeListener(_syncChatPresentationVisibility);
+    _lifecycle.dispose();
+  }
+
   void _showReader() {
     if (!mounted || _readerOpen || widget.notificationViews?.active != true) {
       return;
@@ -161,6 +205,33 @@ class _DesktopShellState extends State<DesktopShell> {
     }
   }
 
+  void _stopNewWork() {
+    widget.backend?.cancelStart();
+    widget.notifications?.stopClaiming();
+    _closeChatRuntime();
+    widget.chat?.stopNewWork();
+    widget.chat?.invalidateRuntime();
+    _releaseChatTransport();
+  }
+
+  void _closeChatRuntime() {
+    try {
+      widget.closeChatRuntime?.call();
+    } catch (_) {
+      // 守卫关闭失败不能阻断模型和其他运行资源的释放。
+    }
+  }
+
+  void _releaseChatTransport() {
+    if (_chatTransportReleased) return;
+    _chatTransportReleased = true;
+    try {
+      widget.releaseChatTransport?.call();
+    } catch (_) {
+      // 聊天传输释放失败不能阻断通知、仓储及窗口退出清理。
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -174,11 +245,9 @@ class _DesktopShellState extends State<DesktopShell> {
     }
     final desktop = widget.desktop;
     if (desktop != null) {
+      desktop.addListener(_syncChatPresentationVisibility);
       desktop.onActivate = _activate;
-      desktop.stopNewWork = () {
-        widget.backend?.cancelStart();
-        widget.notifications?.stopClaiming();
-      };
+      desktop.stopNewWork = _stopNewWork;
       desktop.stopOwnedProcess = widget.backend?.stopOwned;
       desktop.finalizeOwnedProcess = widget.backend?.releaseOwned;
       desktop.drain = widget.notifications == null
@@ -190,41 +259,48 @@ class _DesktopShellState extends State<DesktopShell> {
       desktop.releaseResources = _releaseRuntime;
       unawaited(desktop.initialize());
     }
-    widget.backend?.addListener(_backendChanged);
-    unawaited(widget.backend?.start());
     _lifecycle = AppLifecycleListener(
+      onStateChange: _appLifecycleChanged,
       onExitRequested: () async {
         if (widget.desktop case final desktop?) {
           await desktop.requestExit();
           return AppExitResponse.cancel;
         }
-        widget.backend?.cancelStart();
+        _stopNewWork();
         widget.notificationViews?.close();
         await widget.notifications?.stopAndDrain(
           const Duration(seconds: 5),
           reportExecutorExit: widget.backend == null,
         );
         await widget.backend?.releaseOwned();
+        _releaseRuntime();
         return AppExitResponse.exit;
       },
     );
+    _syncChatPresentationVisibility();
+    widget.backend?.addListener(_backendChanged);
+    unawaited(widget.backend?.start());
   }
 
   void _releaseRuntime() {
     if (_runtimeReleased) return;
     _runtimeReleased = true;
+    _releaseLifecycleListener();
+    _closeChatRuntime();
     widget.backend?.removeListener(_backendChanged);
     widget.backend?.dispose();
     widget.notificationViews?.removeListener(_showReader);
     widget.notifications?.removeListener(_runtimeChanged);
     widget.notificationViews?.dispose();
+    widget.chat?.dispose();
+    _releaseChatTransport();
     widget.notifications?.dispose();
     if (widget.ownsRepository) widget.repository.dispose();
   }
 
   @override
   void dispose() {
-    _lifecycle.dispose();
+    _releaseLifecycleListener();
     widget.desktop?.dispose();
     _releaseRuntime();
     _historyRequests.dispose();
@@ -259,6 +335,7 @@ class _DesktopShellState extends State<DesktopShell> {
             absorbing: widget.backend != null && !widget.backend!.ready,
             child: RoomScreen(
               repository: widget.repository,
+              chat: widget.chat,
               configFiles: widget.configFiles,
               onRecovery: widget.notificationViews == null
                   ? null

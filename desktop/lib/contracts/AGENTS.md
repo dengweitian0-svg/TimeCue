@@ -7,6 +7,8 @@
 - `notification_query.dart`：NotificationQueryGateway 仅定义运行身份、持久提醒详情及任务/attempt 成员分页；NotificationTarget 校验四字段激活 payload，NotificationMemberPage 携带真实总数、不透明游标和可选恢复摘要。查询不包含业务写入或平台操作。
 - `notebook_repository.dart` 的 RecoveryProgress 保存组合快照恢复摘要，区分 running/completed/failed、已整理/完整遗漏/未确认/可投递数量和未知总数；unacknowledgedCount 可选，旧服务缺失或确认后等待刷新时保持未知，不将历史或可投递数作为替代；NotebookRepository 默认无恢复，示例仓储不承担真实激活。
 
+- `chat_contracts.dart`：定义聊天七操作窄契约、严格 JSON DTO、SSE 事件及 HTTP 错误分类；session 详情将必需的 `session_name` 原样映射为 `name`。run 快照按状态校验不矛盾的字段，但遵循后端允许的可空终态 output/error，不自行推断失败或成功。只描述协议，不实现 HTTP、SSE 传输或运行状态。
+
 `openScheduleCountOn` 返回该日期完整的启用日程总数；未知快照返回 null。确认状态不影响数量，同一规则多次触发只计一条日程；HTTP 实现读取 Go 的聚合值。
 
 PendingScope 表达今日和历史两个读取范围，pendingFor/pendingTotalFor/pendingPageIndexFor/pendingLoadingFor/pendingErrorFor 分别返回页面状态；pendingTotal 保留房间完整待确认数。pendingCurrent 表示范围快照仍属于当前北京日期；确认始终提交明确 ID。

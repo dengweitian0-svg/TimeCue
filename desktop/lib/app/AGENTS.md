@@ -3,6 +3,7 @@
 - 通知与桌面生命周期错误栏按错误状态动态放入 Scaffold 底部栏，内容高度计入房间视口，保留各自的重试及退出入口，不覆盖房间操作按钮。
 
 - `timecue_app.dart`：`TimeCueApp` 创建 MaterialApp 并应用主题、仓储及可选配置文件存储注入；`DesktopShell` 将 main.dart 从启动配置取得的同目录 ConfigFileStore 传入房间设置入口，装配房间、通知/桌面错误及重试入口，初始化应用级通知桥与桌面生命周期，按入口声明释放自有仓储。宿主呈现唯一只读通知弹窗，接纳就绪前目标、新目标复用窗口；桥识别新运行后使旧目标失效，释放展示模型及监听。明确退出与 Widget 释放共用一次运行资源清理；普通窗口关闭不释放应用。外连退出将 500ms 保留给执行者退出回报，与已知结果 drain 共用宿主 5 秒预算；托管退出只 drain 后停止自有 Go。
+- 同一宿主持有可选应用级 ChatViewModel，并将其注入房间和本子；本子合上或切换标签不释放模型及 SSE 连接。明确退出先停止聊天新操作并关闭聊天连接，运行时释放仅执行一次模型及传输清理。
 - `desktop_lifecycle.dart`：宿主状态只读，初始化、窗口显隐、托盘恢复、激活及明确退出只经正式操作推进；窗口操作串行并按最新意图收敛，托盘必须经原生实际存在核验才允许隐藏。Windows 适配封装 window_manager/tray_manager 与 `timecue/desktop` 就绪/参数通道；窗口显示在原生线程同步完成并核验，避免 ShowWindowAsync 排队回执被误判为显示失败。窗口错误提供重试窗口，成功后只清除对应旧错误；独立托盘故障保留。启动缓冲只保留最新通知目标与普通打开意图；传输 ID 去重有界，D6 继续负责业务目标及健康身份校验。退出先停止新工作、尽力回填，再释放监听/仓储/托盘和销毁窗口；可注入 D8 自有进程停止，与回填共享总计 5 秒预算。
 - `windows_notification_bridge.dart`：WindowsNotificationPlatform 封装插件初始化和即时展示；WindowsNotificationBridge 经投递窄契约推进单个不重叠循环，保存本运行的 attempt 去重、整数平台 ID、结果重传和 Go 身份代次；stopAndDrain 接受宿主剩余停止预算，并在外连退出时只回报本桥仍未完成的 attempt。
 
@@ -10,6 +11,10 @@
 
 - `managed_backend.dart`：BackendConfiguration 读取 runner 的固定绝对路径快照并为配置存储提供同一目录；WindowsOwnedProcessPlatform 封装进程窄接口与代次事件。ManagedBackend 使用安全新身份、16 KiB 单行 ready、完整 health/PID/能力及存活核验，共享 10 秒启动截止；运行中退出使旧资格失效，不自动重启，零预算释放仍回收自有 Job。
 - `timecue_app.dart` 的托管启动门禁只在双重核验后挂载 RoomScreen 和初始化通知桥；失败诊断可滚动并恢复可见窗口，激活仅缓冲最新目标。DesktopLifecycle 的 finalizeOwnedProcess 在所有优雅等待后无条件执行，再释放共享资源并销毁窗口。
+
+- `chat_runtime_guard.dart`：每次聊天请求检查服务健康和托管就绪；健康响应回来后复核退出/失效代次及身份，首次健康身份锚定只允许一次。启动门禁前的托管未就绪可重试，业务开放后的失效终止聊天运行；明确退出先关闭聊天守卫，再停止模型和释放传输。聊天传输释放异常由宿主隔离，不阻断通知、仓储和窗口清理。
+
+- `timecue_app.dart`：宿主监听 Flutter 生命周期和 DesktopLifecycle 显隐，只在 hidden、paused、detached 或窗口隐藏时暂停聊天 UI 通知；inactive 失焦及页面导航不暂停。后台仍消费聊天事件，恢复时发布累计状态；应用释放时移除生命周期监听。
 
 - ManagedBackend 在创建每个异步启动操作前检查取消和截止，启动状态监听重入请求退出时不创建 Go；健康错配通过正式 invalidateRuntime 操作撤销整个托管运行。
 - ManagedBackend 失败诊断保留有界 stderr；退出后同代次到达的输出仍补充可见错误，重试清空旧诊断。

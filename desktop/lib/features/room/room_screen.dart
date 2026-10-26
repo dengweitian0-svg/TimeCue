@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../contracts/notebook_repository.dart';
+import '../chat/chat_view_model.dart';
 import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
 import '../notebook/notebook_overlay.dart';
@@ -9,6 +12,8 @@ import '../notebook/notebook_view_model.dart';
 import '../notebook/schedule_management_dialog.dart';
 import '../schedule_editor/schedule_editor.dart';
 import '../settings/settings_dialog.dart';
+import '../../theme/notebook_theme.dart';
+import 'cat_chat_hotspot.dart';
 import 'desk_notebook_hotspot.dart';
 import 'room_backdrop.dart';
 import 'room_clock.dart';
@@ -21,11 +26,13 @@ class RoomScreen extends StatefulWidget {
     this.onRecovery,
     this.historyRequests,
     this.configFiles,
+    this.chat,
   });
   final NotebookRepository repository;
   final VoidCallback? onRecovery;
   final ValueListenable<int>? historyRequests;
   final ConfigFileStore? configFiles;
+  final ChatViewModel? chat;
   @override
   State<RoomScreen> createState() => _RoomScreenState();
 }
@@ -52,8 +59,11 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   late final clock = RoomClockController();
   final deskFocus = FocusNode(debugLabel: '桌面本子入口');
   final actionFocus = FocusNode(debugLabel: '固定本子入口');
+  final catFocus = FocusNode(debugLabel: '猫咪 AI 对话入口');
   bool bookVisible = false;
   bool fromDesk = false;
+  bool fromCat = false;
+  bool _keyboardNavigation = false;
   @override
   void initState() {
     super.initState();
@@ -105,13 +115,15 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _coordinateRecoveryPolling();
   }
 
-  void open(bool desk) {
+  void open(bool desk, {bool cat = false}) {
     if (bookVisible) return;
     notebook.open();
     setState(() {
       fromDesk = desk;
+      fromCat = cat;
       bookVisible = true;
     });
+    if (cat) notebook.changeTab(NotebookTab.ai);
     _coordinateRecoveryPolling();
   }
 
@@ -140,6 +152,19 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     );
   }
 
+  void _recordPointerInteraction(PointerEvent event) {
+    if (event.kind == PointerDeviceKind.mouse && _keyboardNavigation) {
+      setState(() => _keyboardNavigation = false);
+    }
+  }
+
+  KeyEventResult _recordKeyboardInteraction(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent && !_keyboardNavigation) {
+      setState(() => _keyboardNavigation = true);
+    }
+    return KeyEventResult.ignored;
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -150,6 +175,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     clock.dispose();
     deskFocus.dispose();
     actionFocus.dispose();
+    catFocus.dispose();
     super.dispose();
   }
 
@@ -158,7 +184,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     builder: (context, constraints) {
       final geometry = RoomGeometry(constraints.biggest);
       final fixedOrigin = Offset(constraints.maxWidth - 100, 48);
-      return Stack(
+      final room = Stack(
         fit: StackFit.expand,
         children: [
           // 秒级更新只驱动时钟；背景只有跨时段时才切换图片。
@@ -184,16 +210,33 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
+          if (!bookVisible && geometry.catVisible)
+            Positioned.fill(
+              child: CatChatHotspot(
+                visibleBounds: geometry.visibleCatBounds,
+                viewport: constraints.biggest,
+                focusNode: catFocus,
+                keyboardNavigation: _keyboardNavigation,
+                onOpen: () => open(false, cat: true),
+              ),
+            ),
           Positioned(
             top: 24,
             left: 24,
-            child: Tooltip(
-              message: widget.configFiles == null ? '演示模式不修改本地配置' : '应用设置',
-              child: FilledButton.icon(
-                onPressed: widget.configFiles == null ? null : settings,
-                style: _roomActionStyle,
-                icon: const Icon(Icons.settings_outlined, size: 17),
-                label: const Text('设置'),
+            child: Semantics(
+              container: true,
+              button: true,
+              enabled: widget.configFiles != null,
+              label: '设置',
+              hint: widget.configFiles == null ? '演示模式不修改本地配置' : '打开应用设置',
+              onTap: widget.configFiles == null ? null : settings,
+              child: ExcludeSemantics(
+                child: FilledButton.icon(
+                  onPressed: widget.configFiles == null ? null : settings,
+                  style: NotebookTheme.roomActionStyle(),
+                  icon: const Icon(Icons.settings_outlined, size: 17),
+                  label: const Text('设置'),
+                ),
               ),
             ),
           ),
@@ -219,24 +262,33 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 children: [
                   FilledButton.icon(
                     onPressed: manage,
-                    style: _roomActionStyle,
+                    style: NotebookTheme.roomActionStyle(),
                     icon: const Icon(Icons.list_alt, size: 17),
                     label: const Text('管理日程'),
                   ),
-                  Tooltip(
-                    message: widget.repository.canWrite
-                        ? '添加日程'
+                  Semantics(
+                    container: true,
+                    button: true,
+                    enabled: widget.repository.canWrite,
+                    label: '添加日程',
+                    hint: widget.repository.canWrite
+                        ? '打开添加日程'
                         : widget.repository.loading &&
                               !widget.repository.hasSnapshot
                         ? '正在连接本地服务，暂时不能添加日程'
                         : widget.repository.refreshError != null
                         ? '本地服务连接失败，请重试后添加日程'
                         : '提醒服务暂不可用，恢复连接后即可添加日程',
-                    child: FilledButton.icon(
-                      onPressed: widget.repository.canWrite ? create : null,
-                      style: _createScheduleActionStyle,
-                      icon: const Icon(Icons.add, size: 17),
-                      label: const Text('添加日程'),
+                    onTap: widget.repository.canWrite ? create : null,
+                    child: ExcludeSemantics(
+                      child: FilledButton.icon(
+                        onPressed: widget.repository.canWrite ? create : null,
+                        style: NotebookTheme.roomActionStyle(
+                          disabledCreate: true,
+                        ),
+                        icon: const Icon(Icons.add, size: 17),
+                        label: const Text('添加日程'),
+                      ),
                     ),
                   ),
                 ],
@@ -251,7 +303,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
               builder: (context, _) => widget.repository.refreshError != null
                   ? TextButton.icon(
                       onPressed: notebook.refresh,
-                      style: _roomActionStyle,
+                      style: NotebookTheme.roomActionStyle(),
                       icon: const Icon(Icons.refresh, size: 16),
                       label: Text(widget.repository.refreshError!),
                     )
@@ -268,14 +320,20 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                     ? geometry.visibleNotebookBounds.center
                     : fixedOrigin,
                 historyRequest: _historyRequest,
+                chat: widget.chat,
                 onClosed: () {
                   notebook.close();
                   setState(() => bookVisible = false);
                   _coordinateRecoveryPolling();
-                  (fromDesk && geometry.notebookVisible
-                          ? deskFocus
-                          : actionFocus)
-                      .requestFocus();
+                  final returnFocus = fromCat && geometry.catVisible
+                      ? catFocus
+                      : fromDesk && geometry.notebookVisible
+                      ? deskFocus
+                      : actionFocus;
+                  // 猫热区可能随本子一起卸载，等入口重新挂载后再恢复焦点。
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) returnFocus.requestFocus();
+                  });
                 },
               ),
             ),
@@ -320,26 +378,19 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             ),
         ],
       );
+      return Listener(
+        onPointerDown: _recordPointerInteraction,
+        onPointerHover: _recordPointerInteraction,
+        child: Focus(
+          canRequestFocus: false,
+          skipTraversal: true,
+          onKeyEvent: _recordKeyboardInteraction,
+          child: room,
+        ),
+      );
     },
   );
 }
-
-// 房间的固定入口共用无边框半透明底色，文字和图标保持相同透明度。
-// 使用 getter，避免热重载后顶层 final 仍保留修改前的描边和透明度。
-ButtonStyle get _roomActionStyle => FilledButton.styleFrom(
-  backgroundColor: const Color.fromARGB(128, 73, 61, 48),
-  foregroundColor: const Color.fromARGB(159, 255, 249, 237),
-  side: BorderSide.none,
-  shape: const StadiumBorder(side: BorderSide.none),
-  textStyle: const TextStyle(fontSize: 12),
-);
-
-ButtonStyle get _createScheduleActionStyle => FilledButton.styleFrom(
-  backgroundColor: const Color.fromARGB(128, 73, 61, 48),
-  foregroundColor: const Color.fromARGB(159, 255, 249, 237),
-  disabledBackgroundColor: const Color.fromARGB(225, 238, 222, 190),
-  disabledForegroundColor: const Color.fromARGB(255, 93, 66, 43),
-).merge(_roomActionStyle);
 
 class RoomActions extends StatelessWidget {
   const RoomActions({
@@ -355,7 +406,7 @@ class RoomActions extends StatelessWidget {
   Widget build(BuildContext context) => FilledButton.icon(
     focusNode: focusNode,
     onPressed: onOpen,
-    style: _roomActionStyle,
+    style: NotebookTheme.roomActionStyle(),
     icon: const Icon(Icons.menu_book_outlined, size: 17),
     label: Text('日程本${pendingCount > 0 ? '  $pendingCount' : ''}'),
   );

@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -94,12 +95,50 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final repo = DemoNotebookRepository();
     await tester.pumpWidget(TimeCueApp(repository: repo));
+    final notebookTooltip = tester.widget<Tooltip>(find.byTooltip('打开日程本'));
+    expect(notebookTooltip.excludeFromSemantics, isTrue);
+    expect(notebookTooltip.message, '打开日程本');
+    expect(
+      notebookTooltip.padding,
+      const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+    );
+    expect(
+      notebookTooltip.textStyle,
+      const TextStyle(
+        color: Color.fromARGB(159, 255, 249, 237),
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+    final notebookTooltipDecoration =
+        notebookTooltip.decoration! as BoxDecoration;
+    expect(
+      notebookTooltipDecoration.color,
+      const Color.fromARGB(128, 73, 61, 48),
+    );
+    expect(notebookTooltipDecoration.border, isNull);
+    expect(notebookTooltipDecoration.borderRadius, BorderRadius.circular(12));
+    expect(notebookTooltipDecoration.boxShadow, hasLength(1));
+    expect(
+      notebookTooltipDecoration.boxShadow!.single.color,
+      const Color.fromARGB(72, 61, 45, 30),
+    );
     for (final width in [1280.0, 1100.0, 960.0]) {
       tester.view.physicalSize = Size(width, 800);
       await tester.pumpAndSettle();
       final geometry = RoomGeometry(Size(width, 800));
       final point = geometry.project(const Offset(275 / 1672, 542 / 941));
       expect(find.byType(DeskNotebookHotspot), findsOneWidget);
+      if (width == 1280) {
+        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        await mouse.addPointer(location: Offset.zero);
+        await mouse.moveTo(point);
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(find.text('打开日程本'), findsOneWidget);
+        await mouse.moveTo(Offset.zero);
+        await tester.pumpAndSettle();
+      }
       await tester.tapAt(point);
       await tester.pumpAndSettle();
       expect(find.text('今日安排'), findsOneWidget);
@@ -147,28 +186,59 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     repo.dispose();
   });
-  testWidgets('连接未就绪时添加入口清晰可见并说明原因，恢复后打开创建弹窗', (tester) async {
+  testWidgets('连接状态通过语义说明且入口悬停不弹框，恢复后打开创建弹窗', (tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final repo = _WriteGateRepository()..setState(loading: true);
     await tester.pumpWidget(TimeCueApp(repository: repo));
-
     final addButton = find.widgetWithText(FilledButton, '添加日程');
+    final settingsButton = find.widgetWithText(FilledButton, '设置');
+    String semanticsHintForButton(Finder button) {
+      final semanticsNode = find
+          .ancestor(
+            of: button,
+            matching: find.byWidgetPredicate(
+              (widget) => widget is Semantics && widget.properties.hint != null,
+            ),
+          )
+          .first;
+      return tester.widget<Semantics>(semanticsNode).properties.hint!;
+    }
+
     expect(addButton, findsOneWidget);
+    expect(settingsButton, findsOneWidget);
     expect(tester.widget<FilledButton>(addButton).onPressed, isNull);
-    expect(find.byTooltip('正在连接本地服务，暂时不能添加日程'), findsOneWidget);
+    expect(semanticsHintForButton(addButton), '正在连接本地服务，暂时不能添加日程');
+    expect(semanticsHintForButton(settingsButton), '演示模式不修改本地配置');
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(settingsButton));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('演示模式不修改本地配置'), findsNothing);
+    await mouse.moveTo(tester.getCenter(addButton));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('正在连接本地服务，暂时不能添加日程'), findsNothing);
     final disabledStyle = tester.widget<FilledButton>(addButton).style!;
     expect(
       disabledStyle.backgroundColor?.resolve({WidgetState.disabled}),
       const Color.fromARGB(225, 238, 222, 190),
     );
+    expect(
+      disabledStyle.foregroundColor?.resolve({WidgetState.disabled}),
+      const Color.fromARGB(255, 93, 66, 43),
+    );
 
     repo.setState(loading: false, error: '连接失败');
     await tester.pump();
     expect(tester.widget<FilledButton>(addButton).onPressed, isNull);
-    expect(find.byTooltip('本地服务连接失败，请重试后添加日程'), findsOneWidget);
+    expect(semanticsHintForButton(addButton), '本地服务连接失败，请重试后添加日程');
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('本地服务连接失败，请重试后添加日程'), findsNothing);
 
     repo.setState(loading: false, hasSnapshot: true, error: null);
     await tester.pump();
@@ -178,6 +248,8 @@ void main() {
       enabledButton.style!.backgroundColor?.resolve({}),
       const Color.fromARGB(128, 73, 61, 48),
     );
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('打开添加日程'), findsNothing);
     await tester.tap(addButton);
     await tester.pumpAndSettle();
     expect(find.byType(ScheduleCreateDialog), findsOneWidget);
@@ -266,10 +338,15 @@ void main() {
     await tester.pump();
     expect(find.text('今日安排'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    final horizontal = find.byWidgetPredicate(
-      (w) => w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
+    final twoPageContentScroll = find.byWidgetPredicate(
+      (widget) =>
+          widget is SingleChildScrollView &&
+          widget.scrollDirection == Axis.horizontal &&
+          widget.child is SizedBox &&
+          (widget.child! as SizedBox).width == 840.0,
     );
-    await tester.drag(horizontal, const Offset(-600, 0));
+    expect(twoPageContentScroll, findsOneWidget);
+    await tester.drag(twoPageContentScroll, const Offset(-600, 0));
     await tester.pumpAndSettle();
     expect(find.text('待确认'), findsOneWidget);
     expect(tester.takeException(), isNull);
