@@ -1,0 +1,371 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "TimeCue CI 流水线",
+    "locale": "zh-CN",
+    "output": ".archify/workflow-ci-pipeline-20261026-191848/ci-pipeline.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "96c508f25dff6436fd05b826d20a595a48b67b46"
+    }
+  },
+  "lanes": [
+    {
+      "id": "trigger",
+      "label": "触发 · ci.yml"
+    },
+    {
+      "id": "classify",
+      "label": "变更分类 · ubuntu-latest"
+    },
+    {
+      "id": "checks",
+      "label": "Windows 检查 · windows-latest"
+    },
+    {
+      "id": "exception",
+      "label": "跳过",
+      "variant": "exception"
+    },
+    {
+      "id": "devflow",
+      "label": "dev 推送 · dev-integration.yml"
+    },
+    {
+      "id": "releaseflow",
+      "label": "手动发布 · release-package.yml"
+    }
+  ],
+  "mainPath": [
+    "pr_open",
+    "list_files",
+    "classify",
+    "flutter_checks",
+    "main_release"
+  ],
+  "nodes": [
+    {
+      "id": "pr_open",
+      "lane": "trigger",
+      "col": 0,
+      "type": "external",
+      "icon": "start",
+      "label": "PR 提交",
+      "sublabel": "dev / main · 打开/同步",
+      "tag": "ci.yml",
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "line": 3,
+          "end_line": 13
+        }
+      ]
+    },
+    {
+      "id": "list_files",
+      "lane": "classify",
+      "col": 1,
+      "type": "backend",
+      "label": "读取变更文件",
+      "sublabel": "REST 分页 · 含改名前路径",
+      "tag": "changes · 5 min",
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "line": 37,
+          "end_line": 45
+        }
+      ]
+    },
+    {
+      "id": "classify",
+      "lane": "classify",
+      "col": 2,
+      "type": "backend",
+      "label": "按路径分类",
+      "sublabel": "docs/go/flutter/py",
+      "tag": "三条输出",
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "line": 47,
+          "end_line": 92
+        }
+      ]
+    },
+    {
+      "id": "go_checks",
+      "lane": "checks",
+      "col": 3,
+      "type": "security",
+      "yOffset": -72,
+      "label": "Go Windows Checks",
+      "sublabel": "gofmt · vet · 串行测试",
+      "tag": "20 min",
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "line": 94,
+          "end_line": 107
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "line": 129,
+          "end_line": 167
+        }
+      ]
+    },
+    {
+      "id": "flutter_checks",
+      "lane": "checks",
+      "col": 3,
+      "type": "security",
+      "yOffset": 72,
+      "label": "Flutter Windows Checks",
+      "sublabel": "Py 单测 · 分析 · 测试",
+      "tag": "20 / 60 min",
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "line": 169,
+          "end_line": 182
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "line": 198,
+          "end_line": 220
+        }
+      ]
+    },
+    {
+      "id": "main_release",
+      "lane": "checks",
+      "col": 4,
+      "type": "cloud",
+      "yOffset": 72,
+      "label": "Release 构建",
+      "sublabel": "Windows 包 · 原生 CTest · 打包",
+      "tag": "仅 main",
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "line": 222,
+          "end_line": 255
+        }
+      ]
+    },
+    {
+      "id": "docs_only",
+      "lane": "exception",
+      "col": 2,
+      "type": "external",
+      "icon": "stop",
+      "label": "跳过全部检查",
+      "sublabel": "仅分类 job 运行",
+      "tag": "dev 纯文档 PR",
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "line": 53,
+          "end_line": 59
+        }
+      ]
+    },
+    {
+      "id": "dev_push",
+      "lane": "devflow",
+      "col": 0,
+      "type": "external",
+      "icon": "start",
+      "label": "push 到 dev",
+      "sublabel": "非纯文档路径",
+      "tag": "dev-integration.yml",
+      "sources": [
+        {
+          "path": ".github/workflows/dev-integration.yml",
+          "line": 3,
+          "end_line": 13
+        }
+      ]
+    },
+    {
+      "id": "dev_build",
+      "lane": "devflow",
+      "col": 1,
+      "type": "cloud",
+      "label": "完整发行构建",
+      "sublabel": "build-release.ps1",
+      "tag": "45 min",
+      "sources": [
+        {
+          "path": ".github/workflows/dev-integration.yml",
+          "line": 50,
+          "end_line": 52
+        }
+      ]
+    },
+    {
+      "id": "dev_ctest",
+      "lane": "devflow",
+      "col": 2,
+      "type": "security",
+      "label": "原生生命周期 CTest",
+      "sublabel": "单实例 · 参数 · Job 清理",
+      "sources": [
+        {
+          "path": ".github/workflows/dev-integration.yml",
+          "line": 54,
+          "end_line": 66
+        }
+      ]
+    },
+    {
+      "id": "manual_rel",
+      "lane": "releaseflow",
+      "col": 3,
+      "type": "external",
+      "icon": "start",
+      "label": "手动触发",
+      "sublabel": "workflow_dispatch",
+      "tag": "release-package.yml",
+      "sources": [
+        {
+          "path": ".github/workflows/release-package.yml",
+          "line": 3,
+          "end_line": 4
+        }
+      ]
+    },
+    {
+      "id": "rel_build",
+      "lane": "releaseflow",
+      "col": 4,
+      "type": "cloud",
+      "label": "完整发行构建",
+      "sublabel": "build-release.ps1 + CTest",
+      "tag": "60 min",
+      "sources": [
+        {
+          "path": ".github/workflows/release-package.yml",
+          "line": 41,
+          "end_line": 43
+        },
+        {
+          "path": ".github/workflows/release-package.yml",
+          "line": 45,
+          "end_line": 55
+        }
+      ]
+    },
+    {
+      "id": "rel_artifact",
+      "lane": "releaseflow",
+      "col": 5,
+      "type": "cloud",
+      "label": "上传发行产物",
+      "sublabel": "ZIP + 校验值 · artifact",
+      "sources": [
+        {
+          "path": ".github/workflows/release-package.yml",
+          "line": 57,
+          "end_line": 62
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "pr_open",
+      "to": "list_files",
+      "label": "PR 事件",
+      "route": "drop",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "list_files",
+      "to": "classify",
+      "label": "分页读取"
+    },
+    {
+      "from": "classify",
+      "to": "go_checks",
+      "label": "go · main"
+    },
+    {
+      "from": "classify",
+      "to": "flutter_checks",
+      "label": "flutter/py · main"
+    },
+    {
+      "from": "classify",
+      "to": "docs_only",
+      "label": "纯文档 dev",
+      "variant": "dashed",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "flutter_checks",
+      "to": "main_release",
+      "label": "通过 · 仅 main",
+      "variant": "emphasis"
+    },
+    {
+      "from": "dev_push",
+      "to": "dev_build",
+      "label": "推送即构建"
+    },
+    {
+      "from": "dev_build",
+      "to": "dev_ctest",
+      "label": "构建产物"
+    },
+    {
+      "from": "manual_rel",
+      "to": "rel_build",
+      "label": "手动发起"
+    },
+    {
+      "from": "rel_build",
+      "to": "rel_artifact",
+      "label": "校验通过"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "触发与并发",
+      "items": [
+        "ci.yml 监听 dev/main 的 opened、reopened、synchronize、ready_for_review、edited",
+        "同一 PR 再次触发会取消旧运行；三个工作流权限都只有 contents: read",
+        "dev push（非纯文档）和手动触发分别启动 dev-integration.yml、release-package.yml"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "变更如何分类",
+      "items": [
+        "docs/、.codex/、*.md/mdx/rst 记为文档，不选中任何检查",
+        "go：*.go、go.mod/sum/work、cmd/、internal/、migrations/；flutter：desktop/；python：scripts/*.py",
+        "未知非文档路径或 PR 文件达到 3000 条时，三类检查全部运行",
+        "分类 job 失败时，Go 与 Flutter job 先执行 exit 1 直接失败"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "dev 与 main 的差别",
+      "items": [
+        "dev PR 只运行命中路径的检查，Go/Flutter 各 20 分钟上限",
+        "main PR 两类检查无条件全量，Flutter job 延长到 60 分钟并追加 Release 构建、原生 CTest 与完整打包",
+        "检查名固定为 Go Windows Checks / Flutter Windows Checks，用作必需检查",
+        "main 发布 PR 还要求来源为 dev 分支、作者为 dengweitian0-svg（protect-main.yml）"
+      ]
+    }
+  ]
+}
