@@ -4,7 +4,7 @@
   "meta": {
     "title": "TimeCue CI 流水线",
     "locale": "zh-CN",
-    "output": ".archify/workflow-ci-pipeline-20261026-191848/ci-pipeline.html",
+    "output": "docs/archify/workflow-ci-pipeline-20261026-191848/ci-pipeline.html",
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/dengweitian0-svg/TimeCue.git",
