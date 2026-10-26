@@ -14,44 +14,44 @@ type createRunRequest struct {
 	SessionID *string `json:"session_id"`
 	Input     *string `json:"input"`
 	Model     *string `json:"model"`
+	Provider  *string `json:"provider"`
 }
 
 // CreateRunResponse 是创建 run 的直接响应 DTO。
-type CreateRunResponse struct {
-	RunID string `json:"run_id"`
-}
+type CreateRunResponse = chat.Receipt
 
 // CreateRunHandler 校验新一轮输入并请求应用层创建 run。
-func CreateRunHandler(service chat.Service) middleware.HTTPHandler {
+func CreateRunHandler(service chat.RunService) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		var request createRunRequest
-		if failure := utils.ReadJSON(c, &request, "session_id", "input", "model"); failure != nil {
+		if failure := utils.ReadJSON(c, &request, "session_id", "input", "provider", "model"); failure != nil {
 			return *failure
 		}
-		if request.SessionID == nil || request.Input == nil || request.Model == nil ||
+		if request.SessionID == nil || request.Input == nil || request.Model == nil || request.Provider == nil || strings.TrimSpace(*request.Provider) == "" ||
 			strings.TrimSpace(*request.SessionID) == "" || strings.TrimSpace(*request.Input) == "" || strings.TrimSpace(*request.Model) == "" {
-			return utils.ChatInvalidRequest("session_id, input and model are required non-empty strings")
+			return utils.ChatInvalidRequest("session_id, input, provider and model are required non-empty strings")
 		}
 		sessionID, ok := utils.ParseChatUUID(*request.SessionID)
 		if !ok {
 			return utils.ChatInvalidRequest("session_id must be a canonical UUID v4")
 		}
-		if *request.Model != chatModel {
-			return utils.ChatInvalidRequest("model must be deepseek-flash")
-		}
 		key := c.GetHeader("Idempotency-Key")
 		if !validIdempotencyKey(key) {
 			return utils.ChatInvalidRequest("Idempotency-Key must use create_session:<uuid>")
 		}
-		runID, err := service.CreateRun(c.Request.Context(), chat.CreateRunInput{
-			SessionID: sessionID, Input: *request.Input, Model: *request.Model, IdempotencyKey: key,
+		receipt, err := service.CreateRun(c.Request.Context(), chat.CreateRunInput{
+			SessionID: sessionID, Input: *request.Input, Provider: *request.Provider, Model: *request.Model, IdempotencyKey: key,
 		})
 		if err != nil {
 			return utils.ChatError(err)
 		}
-		if _, valid := utils.ParseChatUUID(runID); !valid {
+		if _, valid := utils.ParseChatUUID(receipt.RunID); !valid {
 			return utils.InternalErrorResult(errInvalidRunID)
 		}
-		return middleware.JSONResult(http.StatusAccepted, CreateRunResponse{RunID: runID})
+		status := http.StatusOK
+		if receipt.Status == chat.StatusRunning {
+			status = http.StatusAccepted
+		}
+		return middleware.JSONResult(status, receipt)
 	}
 }

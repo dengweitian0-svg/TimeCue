@@ -16,8 +16,10 @@
 - `HTTPResult.SuccessMessage` 仅覆盖正常完成时的成功消息，幂等重放使用 `schedule write replayed`；内部错误、panic 和 4xx 始终优先使用失败消息及对应级别。内部素材仅用于日志，不进入响应 JSON。
 - `HTTPLogger` 在 Host 校验和异常恢复前注册，每请求最多一条 `[http]` 日志。查询/健康检查成功为 Debug，创建/更新/删除/确认为 Info，4xx 为 Warn，内部错误/panic 为 Error。
 - `WriteHTTPResult` 管理 Stream 的写入和关闭；SSE 事件逐条刷新，流式请求清除服务器写超时。流式响应错误仍由统一 HTTP 日志记录；成功响应可用 `LogLevel` 覆盖默认级别。
-- SSE 事件仅允许 `start`、`thinking`、`text`、`tool`、`end`，外层 ID 由调用方提供，data 必须 JSON 编码。
+- SSE 事件允许 `start`、`thinking`、`text`、`error`、`end` 及后续 `tool_start`、`tool_result`、`compact`；不再接受旧 `tool`，外层 ID 由调用方提供，data 必须 JSON 编码。
 - 日志不记录请求/响应体、查询字符串或日程说明；使用全局 logger 的测试不并行运行。
 - 投递 claim 成功使用 Debug，start/results 使用 Info；事件覆盖包含分组前缀的完整路由模板，运行身份、数量、次数及结果来自 handler 的 LogFields，不记录展示文案。
 
 `logger_test.go` 的测试装配仅依赖 App 门面与 schedule/notification Repo；生产中间件不导入这些业务模块。查询失败测试替身同时实现范围读取端口，保留原始数据库错误供 HTTP 日志断言。
+
+- /v1/model 与 /v1/run/:run_id/events 查询成功使用 Debug 事件；日志不记录模型正文或密钥。测试夹具使用当前版本 3 的完整迁移。

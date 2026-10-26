@@ -36,6 +36,7 @@ class _ChatSpreadState extends State<ChatSpread> {
       _chatSessionId = conversation.sessionId;
       _draftController = TextEditingController(text: conversation.draft);
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(chat.loadModels());
         if (mounted && !chat.historyLoaded) unawaited(chat.loadHistory());
       });
     }
@@ -268,7 +269,7 @@ class _ChatSpreadState extends State<ChatSpread> {
       }
       final sessionId = conversation.sessionId;
       final activeRun = conversation.activeRun;
-      final canSend = chat.canSend(sessionId);
+      final canSend = chat.canSend(sessionId) && chat.selectedModel != null;
       final disabledReason = chat.activeRunCount >= 3
           ? '已有 3 轮回复正在运行，请等待完成后发送'
           : !chat.acceptingOperations
@@ -279,6 +280,10 @@ class _ChatSpreadState extends State<ChatSpread> {
           ? '正在整理历史，请稍后发送'
           : !conversation.isLocal && !conversation.historyLoaded
           ? '正在读取会话，请稍后发送'
+          : chat.modelsError != null
+          ? '模型列表读取失败，请刷新重试'
+          : chat.selectedModel == null
+          ? '暂无可用模型，请配置密钥后刷新'
           : '当前不能开始新一轮对话';
       final displayName = conversation.displayName;
       final header = <Widget>[
@@ -322,6 +327,41 @@ class _ChatSpreadState extends State<ChatSpread> {
                   PopupMenuItem(value: 'delete', child: Text('删除会话')),
                 ],
               ),
+          ],
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButton<String>(
+                key: const ValueKey('chat-model-selector'),
+                value: chat.selectedModel?.identity,
+                isExpanded: true,
+                isDense: true,
+                hint: Text(chat.modelsLoading ? '正在加载模型…' : '选择模型'),
+                items: chat.models
+                    .map(
+                      (option) => DropdownMenuItem(
+                        value: option.identity,
+                        enabled: option.available,
+                        child: Text(
+                          '${option.provider} / ${option.model}${option.available ? '' : '（不可用）'}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: chat.modelsLoading
+                    ? null
+                    : (value) {
+                        if (value != null) chat.selectModel(value);
+                      },
+              ),
+            ),
+            IconButton(
+              tooltip: '刷新模型',
+              onPressed: chat.modelsLoading ? null : chat.loadModels,
+              icon: const Icon(Icons.refresh, size: 18),
+            ),
           ],
         ),
         Text(
@@ -376,10 +416,13 @@ class _ChatSpreadState extends State<ChatSpread> {
         onChanged: (text) => chat.updateDraft(sessionId, text),
         onSend: () {
           final text = _draftController.text;
-          if (text.trim().isEmpty || !chat.canSend(sessionId)) return;
+          final model = chat.selectedModel;
+          if (text.trim().isEmpty || !canSend || model == null) return;
           chat.updateDraft(sessionId, text);
           _draftController.clear();
-          unawaited(chat.send(sessionId, model: 'deepseek-flash'));
+          unawaited(
+            chat.send(sessionId, provider: model.provider, model: model.model),
+          );
         },
         onStop: () => chat.cancel(sessionId),
         sending: activeRun != null,

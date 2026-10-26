@@ -18,7 +18,7 @@ type CancelRunResponse struct {
 }
 
 // CancelRunHandler 请求取消运行中的 run，不等待应用层确认终态。
-func CancelRunHandler(service chat.Service) middleware.HTTPHandler {
+func CancelRunHandler(service chat.RunService) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		runID, failure := parseRunID(c)
 		if failure != nil {

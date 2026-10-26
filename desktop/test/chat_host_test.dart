@@ -193,7 +193,16 @@ class _HostDesktopPlatform implements DesktopPlatform {
   void detach() {}
 }
 
-class _HostChatGateway implements ChatGateway {
+class _HostChatGateway implements ChatGateway, ChatModelGateway {
+  @override
+  Future<List<ChatModelOption>> getModels() async => const [
+    ChatModelOption(
+      provider: 'deepseek',
+      model: 'deepseek-flash',
+      available: true,
+    ),
+  ];
+
   final List<String> createdInputs = [];
   int eventConnections = 0, cancelledConnections = 0;
   int _eventId = 0;
@@ -205,6 +214,7 @@ class _HostChatGateway implements ChatGateway {
     required String sessionId,
     required String input,
     required String model,
+    String provider = 'deepseek',
     required String idempotencyKey,
   }) async {
     createdInputs.add(input);
@@ -243,7 +253,7 @@ class _HostChatGateway implements ChatGateway {
         // SSE 身份按事件递增；后台增量应继续驱动模型游标。
         eventId: ++_eventId,
         type: ChatEventType.text,
-        data: ChatContentEventData(content: text, error: null),
+        data: ChatContentEventData(content: text),
       ),
     ),
   );

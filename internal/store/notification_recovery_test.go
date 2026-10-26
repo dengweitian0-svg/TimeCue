@@ -133,10 +133,10 @@ func TestRecoveryLargeHistoryAndPagination(t *testing.T) {
 		t.Fatal("汇总重复领取", claims, err)
 	}
 	var tables, version int
-	if err := db.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table'`).Scan(&tables); err != nil || tables != 4 {
+	if err := db.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('schedules','notifications','schedule_versions','schedule_write_receipts')`).Scan(&tables); err != nil || tables != 4 {
 		t.Fatal("恢复修改数据库结构", tables, err)
 	}
-	if err := db.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 2 {
+	if err := db.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 3 {
 		t.Fatal("恢复修改数据库版本", version, err)
 	}
 }

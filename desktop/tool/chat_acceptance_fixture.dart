@@ -5,7 +5,16 @@ import 'package:timecue_desktop/contracts/chat_contracts.dart';
 /// 阶段 6 复跑验收使用的纯 Dart 聊天服务替身。
 ///
 /// 不依赖 Flutter 测试框架，可由 Widget 测试和 Windows profile 入口共用。
-class ChatAcceptanceGateway implements ChatGateway {
+class ChatAcceptanceGateway implements ChatGateway, ChatModelGateway {
+  @override
+  Future<List<ChatModelOption>> getModels() async => const [
+    ChatModelOption(
+      provider: 'deepseek',
+      model: 'deepseek-flash',
+      available: true,
+    ),
+  ];
+
   ChatAcceptanceGateway({int historySessionCount = 12, DateTime? now})
     : _now = (now ?? DateTime.now()).toUtc() {
     _seedHistory(historySessionCount);
@@ -96,7 +105,7 @@ class ChatAcceptanceGateway implements ChatGateway {
     ChatSseEvent(
       eventId: eventId,
       type: ChatEventType.thinking,
-      data: ChatContentEventData(content: raw, error: null),
+      data: ChatContentEventData(content: raw),
     ),
   );
 
@@ -106,7 +115,7 @@ class ChatAcceptanceGateway implements ChatGateway {
     ChatSseEvent(
       eventId: eventId,
       type: ChatEventType.text,
-      data: ChatContentEventData(content: text, error: null),
+      data: ChatContentEventData(content: text),
     ),
   );
 
@@ -121,7 +130,7 @@ class ChatAcceptanceGateway implements ChatGateway {
     runId,
     ChatSseEvent(
       eventId: eventId,
-      type: ChatEventType.tool,
+      type: ChatEventType.toolStart,
       data: ChatToolEventData(
         id: toolCallId,
         function: ChatToolFunction(
@@ -161,18 +170,12 @@ class ChatAcceptanceGateway implements ChatGateway {
       createdAt: run.createdAt,
       finishedAt: finishedAt,
     );
-    final stopReason = switch (status) {
-      ChatRunStatus.succeeded => 'stop',
-      ChatRunStatus.cancelled => 'cancelled',
-      ChatRunStatus.failed => 'aborted',
-      ChatRunStatus.running => throw ArgumentError('running 不能作为终态'),
-    };
     _emit(
       runId,
       ChatSseEvent(
         eventId: (_lastEventIds[runId] ?? 0) + 1,
         type: ChatEventType.end,
-        data: ChatEndEventData(stopReason: stopReason, error: error),
+        data: ChatEndEventData(status: status),
       ),
     );
   }
@@ -205,6 +208,7 @@ class ChatAcceptanceGateway implements ChatGateway {
     required String sessionId,
     required String input,
     required String model,
+    String provider = 'deepseek',
     required String idempotencyKey,
   }) async {
     if (failNextCreate) {

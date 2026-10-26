@@ -53,8 +53,8 @@ func NewRouterWithPort(app *application.App, healthCheck utils.HealthCheck, port
 	notify.POST("/notifications/executor-exit", middleware.WrapHTTPHandler(schedule.DeliveryExecutorExitHandler(app, runtimeInfo), nil))
 	notify.POST("/notifications/delivery-attempts/:id/start", middleware.WrapHTTPHandler(schedule.StartDeliveryHandler(app), nil))
 	notify.POST("/notifications/delivery-attempts/:id/results", middleware.WrapHTTPHandler(schedule.DeliveryResultsHandler(app), nil))
-	if app != nil && app.ChatService != nil {
-		registerChatRoutes(router, app.ChatService)
+	if app != nil && app.ChatServices.Run != nil && app.ChatServices.Model != nil && app.ChatServices.Session != nil {
+		registerChatRoutes(router, app.ChatServices)
 	}
 	return router
 }

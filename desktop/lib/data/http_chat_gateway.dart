@@ -6,7 +6,7 @@ import '../contracts/chat_contracts.dart';
 import 'http_notebook_repository.dart' show defaultNotebookApiBase;
 
 /// 将聊天七接口映射到本机 HTTP 与 SSE。
-class HttpChatGateway implements ChatGateway {
+class HttpChatGateway implements ChatGateway, ChatModelGateway {
   HttpChatGateway({
     Uri? baseUri,
     HttpClient? client,
@@ -161,16 +161,34 @@ class HttpChatGateway implements ChatGateway {
     required String sessionId,
     required String input,
     required String model,
+    String provider = 'deepseek',
     required String idempotencyKey,
   }) async => ChatCreateRunResult.fromJson(
     await _jsonRequest(
       'POST',
       '/v1/run',
-      body: {'session_id': sessionId, 'input': input, 'model': model},
+      body: {
+        'session_id': sessionId,
+        'input': input,
+        'provider': provider,
+        'model': model,
+      },
       idempotencyKey: idempotencyKey,
-      accepted: const {202},
+      accepted: const {200, 202},
     ),
   );
+
+  @override
+  Future<List<ChatModelOption>> getModels() async {
+    final json = await _jsonRequest('GET', '/v1/model');
+    final models = json['models'];
+    if (models is! List) {
+      throw const ChatContractFormatException('models must be an array');
+    }
+    return models
+        .map((item) => ChatModelOption.fromJson(_object(item, 'model')))
+        .toList();
+  }
 
   @override
   Future<ChatRun> getRun(String runId) async => ChatRun.fromJson(

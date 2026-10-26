@@ -534,7 +534,16 @@ void main() {
   });
 }
 
-class _HistoryGateway implements ChatGateway {
+class _HistoryGateway implements ChatGateway, ChatModelGateway {
+  @override
+  Future<List<ChatModelOption>> getModels() async => const [
+    ChatModelOption(
+      provider: 'deepseek',
+      model: 'deepseek-flash',
+      available: true,
+    ),
+  ];
+
   _HistoryGateway({
     this.sessionIds = const [],
     this.names = const {},
@@ -568,6 +577,7 @@ class _HistoryGateway implements ChatGateway {
     required String sessionId,
     required String input,
     required String model,
+    String provider = 'deepseek',
     required String idempotencyKey,
   }) async {
     createRequests.add((

@@ -120,7 +120,7 @@ func newRecoveryAPIDatabase(t *testing.T) (*store.Sqlite, *sql.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	for _, name := range []string{"001_initial.up.sql", "002_schedule_changes.up.sql"} {
+	for _, name := range []string{"001_initial.up.sql", "002_schedule_changes.up.sql", "003_ai_chat.up.sql"} {
 		body, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", name))
 		if err != nil {
 			t.Fatal(err)

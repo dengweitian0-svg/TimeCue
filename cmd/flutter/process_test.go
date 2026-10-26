@@ -33,7 +33,10 @@ func processFixture(t *testing.T, root, kind string) string {
 			t.Fatal(err)
 		}
 		defer db.Close()
-		for _, name := range []string{"001_initial.up.sql", "002_schedule_changes.up.sql"} {
+		for _, name := range []string{"001_initial.up.sql", "002_schedule_changes.up.sql", "003_ai_chat.up.sql"} {
+			if kind == "old" && name == "003_ai_chat.up.sql" {
+				continue
+			}
 			data, err := os.ReadFile(filepath.Join(root, "migrations", name))
 			if err != nil {
 				t.Fatal(err)

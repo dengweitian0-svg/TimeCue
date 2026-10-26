@@ -15,7 +15,7 @@ type SessionsResponse struct {
 }
 
 // ListSessionsHandler 返回未删除的 session ID。
-func ListSessionsHandler(service chat.Service) middleware.HTTPHandler {
+func ListSessionsHandler(service chat.SessionService) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		sessions, err := service.ListSessions(c.Request.Context())
 		if err != nil {

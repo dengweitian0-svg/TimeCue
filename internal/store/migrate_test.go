@@ -63,7 +63,7 @@ func TestPrepareSchema(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := 0
-			if fixture == "v1" || fixture == "v2-legacy" {
+			if fixture != "empty" {
 				want = 1
 			}
 			if len(backups) != want {

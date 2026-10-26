@@ -73,6 +73,22 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 	if ctx.Err() != nil {
 		return nil
 	}
+	// 先独占本机监听端口，再允许聊天恢复产生模型请求或持久化副作用。
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", address, err)
+	}
+	defer listener.Close()
+	if lifecycle := a.ChatRuntime; lifecycle != nil {
+		if err = lifecycle.Start(ctx); err != nil {
+			return fmt.Errorf("start chat service: %w", err)
+		}
+		defer lifecycle.Stop()
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
 	if a.Scheduler == nil {
 		repo, ok := a.Notify.(notification.NotificationSchedulerRepo)
 		if !ok {
@@ -83,20 +99,13 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 			return err
 		}
 	}
-	address := fmt.Sprintf("127.0.0.1:%d", port)
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", address, err)
-	}
 	if a.Recovery == nil {
 		repo, ok := a.Notify.(recovery.Repo)
 		if !ok {
-			_ = listener.Close()
 			return fmt.Errorf("[app] notification repo does not support recovery")
 		}
 		a.Recovery, err = recovery.NewService(repo, notification.SchedulerOptions{OnError: func(err error) { log.Error("[recovery] background operation failed", "error", err) }})
 		if err != nil {
-			_ = listener.Close()
 			return err
 		}
 	}
@@ -114,6 +123,9 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 	}
 	defer func() {
 		stop()
+		if lifecycle := a.ChatRuntime; lifecycle != nil {
+			lifecycle.Stop()
+		}
 		a.StopDelivery()
 		requests.stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

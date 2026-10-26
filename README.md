@@ -33,7 +33,7 @@ Go 代码按业务职责组织：`internal/api/handler` 分为 session、agent�
 
 核心业务持久化使用 `schedules` 和 `notifications`，阶段 C 的 `schedule_versions` 与 `schedule_write_receipts` 保存规则区间和幂等回执；Go 查询与确认归入原有日程和提醒模块。Flutter 的日程本是展示方式，没有独立数据库、表或后端业务模型。
 
-阶段 D 的[运行状态方案](docs/design/phase-d0-runtime-state.md)规定：任务分组、展示次数、尝试成员和恢复位置只放内存；预加载状态复用 `notifications.status=loaded`，不增加表、字段、迁移、RuntimeStore、runtime_json、租约或心跳。D1 直接修改原 001 的 status CHECK，仍使用 001 + 002、版本 2；D3 已接入全期间恢复，D5 通过原投递协议执行 Windows 通知。
+阶段 D 的[运行状态方案](docs/design/phase-d0-runtime-state.md)规定：任务分组、展示次数、尝试成员和恢复位置只放内存；预加载状态复用 `notifications.status=loaded`，不增加表、字段、迁移、RuntimeStore、runtime_json、租约或心跳。D1 直接修改原 001 的 status CHECK，日程业务保留 001 + 002，AI 003 迁移后当前数据库版本为 3；D3 已接入全期间恢复，D5 通过原投递协议执行 Windows 通知。
 
 重要状态只能经明确的业务操作改变。已发生的提醒应保留可查询的记录；周期表达式只决定未来触发时间，不代替提醒历史或确认状态。
 
@@ -45,7 +45,7 @@ D5 的 [Windows 通知桥](docs/design/phase-d5-windows-notification-bridge.md)�
 
 D6 已接入[通知点击与恢复展示](docs/design/phase-d6-click-recovery-display.md)：通知通过运行身份及原 task/attempt 查询本次冻结成员，单条 minute 打开详情，多条及恢复通知分页查看；房间和本子读取同一恢复摘要，完整历史与本次展示分开查询。详情独立显示真实投递/确认状态，点击不确认，原草稿与选择保留。自动回归和原生结果回流、视觉边界见[D6 验收记录](docs/design/phase-d6-validation.md)；系统横幅实际点击仍待真机确认，窗口唤回及冷启动转交归 D7/D8。
 
-D2 已实现三接口协议、开始资格及成员冻结、原子结果回填和运行内有限重试，核心实现见[投递服务](internal/service/notification/notification_delivery.go)。任务及尝试不持久化，数据库继续使用原四张表和版本 2；Apifox 验收报告保留在本地 `.apifox/d2/reports/`。
+D2 已实现三接口协议、开始资格及成员冻结、原子结果回填和运行内有限重试，核心实现见[投递服务](internal/service/notification/notification_delivery.go)。任务及尝试不持久化，日程与提醒保留原四张业务表，AI 003 独立新增六张表，当前数据库版本为 3；Apifox 验收报告保留在本地 `.apifox/d2/reports/`。
 
 D3 已接入启动和运行间隙的全期间恢复：每事务最多补齐 500 条可证明的历史触发，排除暂停区间并保留旧文本和永久停止。整理完成后只开放一个 recovery 汇总；未开始旧分钟及连续遗漏的旧汇总合入新汇总，已开始任务保留身份和本运行预算。任务及 attempt 成员每页 50 条，组合快照区分恢复进度和投递结果；完整遗漏总数未确定时返回 null。设计和任务见[D3 契约](docs/design/phase-d3-recovery-query.md)，Go/race 和 Apifox 结果见[验收记录](docs/design/phase-d3-validation.md)。
 
@@ -82,7 +82,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 
 ## 本地 HTTP API
 
-首次使用空数据库时，可按下文开发命令启动，入口建立版本 2 数据库。可识别的 Flutter 版本 1 或缺少 loaded 约束的版本 2 旧库先备份再事务升级，未知和 Wails 旧库保留并拒绝，见[迁移说明](migrations/README.md)。Release 服务监听 `http://127.0.0.1:10086`；Flutter Debug/Profile 默认使用 `http://127.0.0.1:1145`。两者仅接受对应 Host，不启用浏览器 CORS 或应用令牌。启动前和 `GET /health` 检查版本、结构及 loaded 约束。
+首次使用空数据库时，可按下文开发命令启动，入口建立版本 3 数据库。可识别的 Flutter 版本 1 或版本 2 旧库先备份再事务升级，未知和 Wails 旧库保留并拒绝，见[迁移说明](migrations/README.md)。Release 服务监听 `http://127.0.0.1:10086`；Flutter Debug/Profile 默认使用 `http://127.0.0.1:1145`。两者仅接受对应 Host，不启用浏览器 CORS 或应用令牌。启动前和 `GET /health` 检查版本、结构及 loaded 约束。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
@@ -105,7 +105,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 | POST | `/api/v1/notifications/delivery-attempts/:id/results` | 回填整次平台请求的 sent/failed，原子更新实际成员；重复结果不再次执行 |
 | POST | `/api/v1/notifications/executor-exit` | 当前 instanceId 和执行者持有的 attemptIds；只整理精确匹配的活动尝试，保留展示预算及迟到真实结果 |
 
-AI Chat HTTP 接口当前进入仅 Mock 的 API 验收阶段，提供设计文档列出的七个 `/v1` run/session 接口，session 查询返回名称和按创建时间排序的 run ID。临时内存服务不连接数据库、真实模型或 Agent loop；自动化 HTTP/SSE 回归位于 `internal/api/test`。接入真实应用层后需复验接口契约，并删除或替换临时 Mock。
+AI 对话已接通官方 openai-go/v3 Chat Completions、SQLite 和流式事件，支持提供方/模型选择、原始多轮历史、完成会话重启查询、模型取消和会话软删除。缺少 Key 时正常启动并保留本地查询，新库没有演示会话。配置、九个 HTTP 操作和当前切片边界见 [真实文字对话](docs/CHAT.md)。
 
 创建请求示例：
 

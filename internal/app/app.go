@@ -23,7 +23,8 @@ type App struct {
 	Scheduler           *notification.Scheduler
 	Delivery            *notification.DeliveryService
 	Recovery            *recovery.Service
-	ChatService         chat.Service
+	ChatServices        chat.Services
+	ChatRuntime         chat.Lifecycle
 	operations          sync.Mutex
 	serviceMu           sync.Mutex
 }

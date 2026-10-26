@@ -23,6 +23,54 @@ import (
 
 const testRuntimePort = 1145
 
+type failingChatStartup struct{}
+
+// Start 在聊天启动故障边界返回明确错误，验证端口冲突优先阻止恢复。
+func (*failingChatStartup) Start(context.Context) error {
+	return errors.New("injected chat startup failure")
+}
+
+// Stop 满足生命周期故障注入契约，不持有实际资源。
+func (*failingChatStartup) Stop() {}
+
+// TestRuntimeReservesPortBeforeChatStartup 验证端口冲突时不会先进入聊天恢复。
+func TestRuntimeReservesPortBeforeChatStartup(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	application, _ := runtimeTestApp(t)
+	application.ChatRuntime = &failingChatStartup{}
+	db := &startupRuntimeDB{drainRuntimeDB: drainRuntimeDB{closed: make(chan struct{})}}
+	err = application.Run(context.Background(), RuntimeOptions{Database: db, Handler: http.NotFoundHandler(), Port: listener.Addr().(*net.TCPAddr).Port})
+	if err == nil || !strings.Contains(err.Error(), "listen on") {
+		t.Fatalf("端口冲突之前进入了聊天启动: %v", err)
+	}
+}
+
+// TestRuntimeReleasesPortAfterChatStartupFailure 验证取得端口后聊天启动失败仍释放监听资源。
+func TestRuntimeReleasesPortAfterChatStartupFailure(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	_ = probe.Close()
+	application, _ := runtimeTestApp(t)
+	application.ChatRuntime = &failingChatStartup{}
+	db := &startupRuntimeDB{drainRuntimeDB: drainRuntimeDB{closed: make(chan struct{})}}
+	err = application.Run(context.Background(), RuntimeOptions{Database: db, Handler: http.NotFoundHandler(), Port: port})
+	if err == nil || !strings.Contains(err.Error(), "injected chat startup failure") {
+		t.Fatalf("错误不符: %v", err)
+	}
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("聊天启动失败后端口仍被占用: %v", err)
+	}
+	_ = listener.Close()
+}
+
 // TestRequestTrackerWaitsAndRejectsNewRequests 验证退出先等待已接收请求。
 func TestRequestTrackerWaitsAndRejectsNewRequests(t *testing.T) {
 	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})

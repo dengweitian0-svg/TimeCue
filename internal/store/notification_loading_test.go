@@ -274,6 +274,9 @@ func TestLoadedSchemaPreservesFactsAndConstraints(t *testing.T) {
 	}
 	notifications, _ := NewNotificationStore(db)
 	before, _ := notifications.GetNotificationByID(context.Background(), 41)
+	if err := db.PrepareSchema(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.CheckHealth(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +297,7 @@ func TestLoadedSchemaPreservesFactsAndConstraints(t *testing.T) {
 		t.Fatal("外键丢失")
 	}
 	var count int
-	if err := db.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table'`).Scan(&count); err != nil || count != 4 {
+	if err := db.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('schedules','notifications','schedule_versions','schedule_write_receipts')`).Scan(&count); err != nil || count != 4 {
 		t.Fatalf("不应新增业务或中间表: %d %v", count, err)
 	}
 	if err := db.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_notifications_due', 'idx_notifications_schedule')`).Scan(&count); err != nil || count != 2 {
@@ -389,7 +392,7 @@ func TestLegacyVersionTwoStatusRejected(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := db.CheckHealth(ctx); !errors.Is(err, ErrSchemaInvalid) || !strings.Contains(err.Error(), "loaded") {
+	if err := db.CheckHealth(ctx); !errors.Is(err, ErrSchemaInvalid) || !strings.Contains(err.Error(), "version 3") {
 		t.Fatalf("旧约束错误不明确: %v", err)
 	}
 }

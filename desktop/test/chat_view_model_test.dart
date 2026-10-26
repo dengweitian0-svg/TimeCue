@@ -5,6 +5,36 @@ import 'package:timecue_desktop/contracts/chat_contracts.dart';
 import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 
 void main() {
+  test('终态创建重放直接恢复四字段回执，不再建立 SSE', () async {
+    final gateway = _FakeChatGateway();
+    gateway.createResponses.add(
+      Future.value(
+        const ChatCreateRunResult(
+          'run-1',
+          status: ChatRunStatus.failed,
+          output: '部分正文',
+          error: ChatProtocolError(
+            code: 'model_network_error',
+            message: '网络中断',
+          ),
+        ),
+      ),
+    );
+    final model = _model(gateway);
+    addTearDown(model.dispose);
+    final conversation = model.createLocalSession();
+    model.updateDraft(conversation.sessionId, 'input');
+    await model.send(
+      conversation.sessionId,
+      model: 'model-a',
+      provider: 'provider-a',
+    );
+    expect(conversation.runs.single.phase, ChatRunPhase.failed);
+    expect(conversation.runs.single.rawText, '部分正文');
+    expect(conversation.runs.single.error, '网络中断');
+    expect(gateway.cursors, isEmpty);
+    expect(model.activeRunCount, 0);
+  });
   group('ChatViewModel', () {
     test('结果不明的创建复用原幂等请求并持续占用名额', () async {
       final gateway = _FakeChatGateway();
@@ -92,7 +122,7 @@ void main() {
         _frame(
           1,
           ChatEventType.end,
-          const ChatEndEventData(stopReason: 'stop', error: null),
+          const ChatEndEventData(status: ChatRunStatus.succeeded),
         ),
       );
       await _pumpEvents(run);
@@ -144,7 +174,7 @@ void main() {
         _frame(
           1,
           ChatEventType.end,
-          const ChatEndEventData(stopReason: 'cancelled', error: null),
+          const ChatEndEventData(status: ChatRunStatus.cancelled),
         ),
       );
       await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -214,7 +244,7 @@ void main() {
         _frame(
           1,
           ChatEventType.text,
-          const ChatContentEventData(content: '片段', error: null),
+          const ChatContentEventData(content: '片段'),
         ),
       );
       first.add(_toolFrame(2, 'call-a', 'search_schedules'));
@@ -224,7 +254,7 @@ void main() {
         _frame(
           4,
           ChatEventType.text,
-          const ChatContentEventData(content: '重复传输', error: null),
+          const ChatContentEventData(content: '重复传输'),
         ),
       );
       await _pumpEvents(conversation.activeRun!);
@@ -244,7 +274,7 @@ void main() {
         _frame(
           5,
           ChatEventType.end,
-          const ChatEndEventData(stopReason: 'stop', error: null),
+          const ChatEndEventData(status: ChatRunStatus.succeeded),
         ),
       );
       await _pumpEvents(conversation.runs.single);
@@ -268,17 +298,13 @@ void main() {
 
       final first = gateway.controllers.single;
       first.add(
-        _frame(
-          1,
-          ChatEventType.text,
-          const ChatContentEventData(content: 'A', error: null),
-        ),
+        _frame(1, ChatEventType.text, const ChatContentEventData(content: 'A')),
       );
       first.add(
         _frame(
           3,
           ChatEventType.text,
-          const ChatContentEventData(content: '丢失', error: null),
+          const ChatContentEventData(content: '丢失'),
         ),
       );
       await _pumpEvents(conversation.runs.single);
@@ -288,18 +314,10 @@ void main() {
       expect(gateway.cursors, [null, 1]);
 
       gateway.controllers.last.add(
-        _frame(
-          2,
-          ChatEventType.text,
-          const ChatContentEventData(content: 'B', error: null),
-        ),
+        _frame(2, ChatEventType.text, const ChatContentEventData(content: 'B')),
       );
       gateway.controllers.last.add(
-        _frame(
-          3,
-          ChatEventType.text,
-          const ChatContentEventData(content: 'C', error: null),
-        ),
+        _frame(3, ChatEventType.text, const ChatContentEventData(content: 'C')),
       );
       await _pumpEvents(conversation.runs.single);
       expect(conversation.runs.single.rawText, 'ABC');
@@ -342,7 +360,7 @@ void main() {
         _frame(
           1,
           ChatEventType.text,
-          const ChatContentEventData(content: '迟到', error: null),
+          const ChatContentEventData(content: '迟到'),
         ),
       );
       await _pumpEvents(run);
@@ -354,7 +372,7 @@ void main() {
         _frame(
           2,
           ChatEventType.text,
-          const ChatContentEventData(content: '更迟', error: null),
+          const ChatContentEventData(content: '更迟'),
         ),
       );
       await Future<void>.delayed(Duration.zero);
@@ -419,14 +437,14 @@ void main() {
         _frame(
           1,
           ChatEventType.text,
-          const ChatContentEventData(content: '本地已收到', error: null),
+          const ChatContentEventData(content: '本地已收到'),
         ),
       );
       gateway.controllers.single.add(
         _frame(
           2,
           ChatEventType.end,
-          const ChatEndEventData(stopReason: 'stop', error: null),
+          const ChatEndEventData(status: ChatRunStatus.succeeded),
         ),
       );
       await _pumpEvents(run);
@@ -490,7 +508,7 @@ ChatRunEventFrame _frame(int id, ChatEventType type, Object data) =>
 
 ChatRunEventFrame _toolFrame(int id, String callId, String name) => _frame(
   id,
-  ChatEventType.tool,
+  ChatEventType.toolStart,
   ChatToolEventData(
     id: callId,
     function: ChatToolFunction(
@@ -535,7 +553,16 @@ class _CreateCall {
   int get hashCode => Object.hash(sessionId, input, model, key);
 }
 
-class _FakeChatGateway implements ChatGateway {
+class _FakeChatGateway implements ChatGateway, ChatModelGateway {
+  @override
+  Future<List<ChatModelOption>> getModels() async => const [
+    ChatModelOption(
+      provider: 'deepseek',
+      model: 'deepseek-flash',
+      available: true,
+    ),
+  ];
+
   final List<Future<ChatCreateRunResult>> createResponses = [];
   final List<_CreateCall> createCalls = [];
   final List<StreamController<ChatRunEventSignal>> controllers = [];
@@ -552,6 +579,7 @@ class _FakeChatGateway implements ChatGateway {
     required String sessionId,
     required String input,
     required String model,
+    String provider = 'deepseek',
     required String idempotencyKey,
   }) {
     createCalls.add(_CreateCall(sessionId, input, model, idempotencyKey));

@@ -118,7 +118,15 @@ void main() {
     );
 
     test('response DTOs reject missing fields and invalid enums', () {
-      expect(ChatCreateRunResult.fromJson({'run_id': 'r-1'}).runId, 'r-1');
+      expect(
+        ChatCreateRunResult.fromJson({
+          'run_id': 'r-1',
+          'status': 'running',
+          'output': null,
+          'error': null,
+        }).runId,
+        'r-1',
+      );
       expect(
         () => ChatCreateRunResult.fromJson({}),
         throwsA(isA<ChatContractFormatException>()),
@@ -161,12 +169,12 @@ void main() {
           event: fields.event,
           data: fields.data,
         );
-        final tool = event.data! as ChatToolEventData;
+        final tool = (event.data! as List<ChatToolEventData>).single;
         expect(event.eventId, 4);
         expect(tool.id, 'call-a');
         expect(tool.id, isNot('${event.eventId}'));
         expect(tool.function.name, 'search_schedules');
-        expect(tool.function.args.name, 'spoofed');
+        expect(tool.function.args.name, '');
         expect(tool.function.args.value, {'q': '日期'});
       },
     );
@@ -196,8 +204,8 @@ void main() {
           9,
         ]);
         final calls = events
-            .where((event) => event.type == ChatEventType.tool)
-            .map((event) => event.data! as ChatToolEventData)
+            .where((event) => event.type == ChatEventType.toolStart)
+            .map((event) => (event.data! as List<ChatToolEventData>).single)
             .toList();
         expect(calls.map((call) => call.id), ['call-a', 'call-b', 'call-c']);
         expect(calls.map((call) => call.function.name), [
@@ -207,7 +215,10 @@ void main() {
         ]);
         expect(events[1].data, isA<ChatContentEventData>());
         expect(events.last.data, isA<ChatEndEventData>());
-        expect((events.last.data! as ChatEndEventData).stopReason, 'aborted');
+        expect(
+          (events.last.data! as ChatEndEventData).status,
+          ChatRunStatus.failed,
+        );
 
         final replay = ChatFixtures.decodeFrameForContractTest(
           ChatFixtures.reconnectReplayFrames.first,
@@ -218,7 +229,10 @@ void main() {
           data: replay.data,
         );
         expect(duplicate.eventId, 7);
-        expect((duplicate.data! as ChatToolEventData).id, 'call-c');
+        expect(
+          ((duplicate.data! as List<ChatToolEventData>).single).id,
+          'call-c',
+        );
 
         final normal = ChatFixtures.normalSuccessFrames
             .map(ChatFixtures.decodeFrameForContractTest)
@@ -231,7 +245,10 @@ void main() {
             )
             .toList();
         expect(normal.last.type, ChatEventType.end);
-        expect((normal.last.data! as ChatEndEventData).stopReason, 'stop');
+        expect(
+          (normal.last.data! as ChatEndEventData).status,
+          ChatRunStatus.succeeded,
+        );
 
         final multipleTools = ChatFixtures.multipleToolFrames
             .map(ChatFixtures.decodeFrameForContractTest)
@@ -244,7 +261,7 @@ void main() {
             )
             .toList();
         final toolCalls = multipleTools
-            .map((event) => event.data! as ChatToolEventData)
+            .map((event) => (event.data! as List<ChatToolEventData>).single)
             .toList();
         expect(toolCalls.map((call) => call.id), [
           'call-one',
@@ -263,7 +280,10 @@ void main() {
           data: repeatedFrame.data,
         );
         expect(repeated.eventId, 10);
-        expect((repeated.data! as ChatToolEventData).id, 'call-one');
+        expect(
+          ((repeated.data! as List<ChatToolEventData>).single).id,
+          'call-one',
+        );
 
         final cancelled = ChatFixtures.decodeFrameForContractTest(
           ChatFixtures.cancelledEndFrame,
@@ -275,8 +295,8 @@ void main() {
                     data: cancelled.data,
                   ).data!
                   as ChatEndEventData)
-              .stopReason,
-          'cancelled',
+              .status,
+          ChatRunStatus.cancelled,
         );
       },
     );

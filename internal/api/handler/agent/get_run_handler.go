@@ -9,11 +9,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RunResponse 是查询 run 的稳定九字段视图。
+// RunResponse 是查询 run 的固定十字段视图。
 type RunResponse struct {
 	RunID      string         `json:"run_id"`
 	SessionID  string         `json:"session_id"`
 	Model      string         `json:"model"`
+	Provider   string         `json:"provider"`
 	Input      string         `json:"input"`
 	Status     chat.Status    `json:"status"`
 	Output     *string        `json:"output"`
@@ -23,7 +24,7 @@ type RunResponse struct {
 }
 
 // GetRunHandler 返回应用层提供的 run 公开视图。
-func GetRunHandler(service chat.Service) middleware.HTTPHandler {
+func GetRunHandler(service chat.RunService) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		runID, failure := parseRunID(c)
 		if failure != nil {
@@ -37,7 +38,7 @@ func GetRunHandler(service chat.Service) middleware.HTTPHandler {
 			return utils.InternalErrorResult(err)
 		}
 		response := RunResponse{
-			RunID: run.RunID, SessionID: run.SessionID, Model: run.Model, Input: run.Input,
+			RunID: run.RunID, SessionID: run.SessionID, Provider: run.Provider, Model: run.Model, Input: run.Input,
 			Status: run.Status, CreatedAt: utils.ChatTime(run.CreatedAt),
 		}
 		switch run.Status {
@@ -47,6 +48,7 @@ func GetRunHandler(service chat.Service) middleware.HTTPHandler {
 			response.Output = run.Output
 		case chat.StatusFailed:
 			response.Error = run.Error
+			response.Output = run.Output
 		}
 		if run.Status != chat.StatusRunning && run.FinishedAt != nil {
 			finished := utils.ChatTime(*run.FinishedAt)

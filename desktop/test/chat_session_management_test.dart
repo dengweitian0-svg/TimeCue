@@ -527,7 +527,7 @@ void main() {
           ChatSseEvent(
             eventId: 1,
             type: ChatEventType.text,
-            data: ChatContentEventData(content: '增量', error: null),
+            data: ChatContentEventData(content: '增量'),
           ),
         ),
       );
@@ -541,7 +541,7 @@ void main() {
           ChatSseEvent(
             eventId: 2,
             type: ChatEventType.text,
-            data: ChatContentEventData(content: '后续片段', error: null),
+            data: ChatContentEventData(content: '后续片段'),
           ),
         ),
       );
@@ -574,7 +574,7 @@ void main() {
           ChatSseEvent(
             eventId: 1,
             type: ChatEventType.text,
-            data: ChatContentEventData(content: '隐藏期间收到', error: null),
+            data: ChatContentEventData(content: '隐藏期间收到'),
           ),
         ),
       );
@@ -614,7 +614,16 @@ ChatViewModel _model(_HistoryGateway gateway) {
   );
 }
 
-class _HistoryGateway implements ChatGateway {
+class _HistoryGateway implements ChatGateway, ChatModelGateway {
+  @override
+  Future<List<ChatModelOption>> getModels() async => const [
+    ChatModelOption(
+      provider: 'deepseek',
+      model: 'deepseek-flash',
+      available: true,
+    ),
+  ];
+
   _HistoryGateway({
     List<String> sessionIds = const [],
     Map<String, ChatSession> sessions = const {},
@@ -646,6 +655,7 @@ class _HistoryGateway implements ChatGateway {
     required String sessionId,
     required String input,
     required String model,
+    String provider = 'deepseek',
     required String idempotencyKey,
   }) {
     createCalls.add(sessionId);

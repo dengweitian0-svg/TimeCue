@@ -61,6 +61,9 @@ func newMigratedStore(t *testing.T) (*Sqlite, *ScheduleStore, *NotificationStore
 	if _, err := db.db.Exec(string(script2)); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.PrepareSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
 	schedules, err := NewScheduleStore(db)
 	if err != nil {
 		t.Fatalf("创建日程存储: %v", err)
@@ -626,9 +629,9 @@ func TestScheduleQueriesHistoryMidnightProjectionAndPagination(t *testing.T) {
 	if _, err = app.AcknowledgeNotifications(ctx, []int{ids[1]}, now); err != nil {
 		t.Fatal(err)
 	}
-	// 保留原有日程、提醒、规则版本及写入回执四张表，运行状态不扩展数据库。
+	// AI 表独立于原有日程、提醒、规则版本及写入回执四张业务表。
 	var tableCount int
-	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&tableCount); err != nil || tableCount != 4 {
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('schedules','notifications','schedule_versions','schedule_write_receipts')`).Scan(&tableCount); err != nil || tableCount != 4 {
 		t.Fatalf("业务表结构数量不符，表数量=%d，错误=%v", tableCount, err)
 	}
 }

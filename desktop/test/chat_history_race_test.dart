@@ -239,7 +239,16 @@ Future<void> _until(bool Function() condition) async {
   fail('在限定微任务轮询内未达到预期状态');
 }
 
-class _RaceGateway implements ChatGateway {
+class _RaceGateway implements ChatGateway, ChatModelGateway {
+  @override
+  Future<List<ChatModelOption>> getModels() async => const [
+    ChatModelOption(
+      provider: 'deepseek',
+      model: 'deepseek-flash',
+      available: true,
+    ),
+  ];
+
   _RaceGateway({this.sessionIds = const []});
 
   final List<String> sessionIds;
@@ -303,6 +312,7 @@ class _RaceGateway implements ChatGateway {
     required String sessionId,
     required String input,
     required String model,
+    String provider = 'deepseek',
     required String idempotencyKey,
   }) async {
     createCalls.add(sessionId);

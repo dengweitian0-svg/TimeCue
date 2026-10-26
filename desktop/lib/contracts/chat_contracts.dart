@@ -55,6 +55,7 @@ class ChatRun {
     required this.runId,
     required this.sessionId,
     required this.model,
+    this.provider = 'deepseek',
     required this.input,
     required this.status,
     required this.output,
@@ -66,6 +67,7 @@ class ChatRun {
   final String runId;
   final String sessionId;
   final String model;
+  final String provider;
   final String input;
   final ChatRunStatus status;
   final String? output;
@@ -98,15 +100,15 @@ class ChatRun {
       );
     }
     if ((status == ChatRunStatus.succeeded ||
-                status == ChatRunStatus.cancelled) &&
-            errorJson != null ||
-        status == ChatRunStatus.failed && output != null) {
+            status == ChatRunStatus.cancelled) &&
+        errorJson != null) {
       throw const ChatContractFormatException('run fields do not match status');
     }
     return ChatRun(
       runId: _requiredString(json, 'run_id'),
       sessionId: _requiredString(json, 'session_id'),
       model: _requiredString(json, 'model'),
+      provider: _requiredString(json, 'provider'),
       input: _requiredString(json, 'input'),
       status: status,
       output: output,
@@ -121,13 +123,28 @@ class ChatRun {
 
 /// 创建 run 成功响应。
 class ChatCreateRunResult {
-  const ChatCreateRunResult(this.runId);
-
+  const ChatCreateRunResult(
+    this.runId, {
+    this.status = ChatRunStatus.running,
+    this.output,
+    this.error,
+  });
   final String runId;
+  final ChatRunStatus status;
+  final String? output;
+  final ChatProtocolError? error;
 
-  /// 从接口 JSON 严格解码创建结果。
-  factory ChatCreateRunResult.fromJson(Map<String, Object?> json) =>
-      ChatCreateRunResult(_requiredString(json, 'run_id'));
+  /// 从固定四字段回执恢复原运行结果。
+  factory ChatCreateRunResult.fromJson(Map<String, Object?> json) {
+    final status = _runStatus(_requiredString(json, 'status'));
+    final error = _nullableObject(json, 'error');
+    return ChatCreateRunResult(
+      _requiredString(json, 'run_id'),
+      status: status,
+      output: _nullableString(json, 'output'),
+      error: error == null ? null : ChatProtocolError.fromJson(error),
+    );
+  }
 }
 
 /// 取消 run 响应。
@@ -178,19 +195,12 @@ class ChatDeleteSessionResult {
 
 /// SSE 文本或 thinking 事件数据。
 class ChatContentEventData {
-  const ChatContentEventData({required this.content, required this.error});
-
+  const ChatContentEventData({required this.content});
   final String content;
-  final ChatProtocolError? error;
 
-  /// 从接口 JSON 严格解码文本事件。
-  factory ChatContentEventData.fromJson(Map<String, Object?> json) {
-    final error = _nullableObject(json, 'error');
-    return ChatContentEventData(
-      content: _requiredString(json, 'content'),
-      error: error == null ? null : ChatProtocolError.fromJson(error),
-    );
-  }
+  /// 正文和思考事件只读取 content。
+  factory ChatContentEventData.fromJson(Map<String, Object?> json) =>
+      ChatContentEventData(content: _requiredString(json, 'content'));
 }
 
 /// 工具参数的协议字段；本阶段仅保留原始值，不解释其含义。
@@ -234,39 +244,31 @@ class ChatToolEventData {
   factory ChatToolEventData.fromJson(Map<String, Object?> json) =>
       ChatToolEventData(
         id: _requiredString(json, 'id'),
-        function: ChatToolFunction.fromJson(_requiredObject(json, 'function')),
+        function: ChatToolFunction(
+          name: _requiredString(json, 'name'),
+          args: ChatToolArgument(name: '', value: _required(json, 'argument')),
+        ),
       );
 }
 
 /// end 事件数据，不推断工具执行结果。
 class ChatEndEventData {
-  const ChatEndEventData({required this.stopReason, required this.error});
+  const ChatEndEventData({required this.status});
+  final ChatRunStatus status;
 
-  final String stopReason;
-  final ChatProtocolError? error;
-
-  /// 从接口 JSON 严格解码 end 事件。
-  factory ChatEndEventData.fromJson(Map<String, Object?> json) {
-    const reasons = {
-      'stop',
-      'insufficient_system_resource',
-      'aborted',
-      'cancelled',
-    };
-    final reason = _requiredString(json, 'stop_reason');
-    if (!reasons.contains(reason)) {
-      throw ChatContractFormatException('stop_reason has unsupported value');
-    }
-    final error = _nullableObject(json, 'error');
-    return ChatEndEventData(
-      stopReason: reason,
-      error: error == null ? null : ChatProtocolError.fromJson(error),
-    );
-  }
+  /// end 只表达状态，具体错误由独立 error 事件提供。
+  factory ChatEndEventData.fromJson(Map<String, Object?> json) =>
+      ChatEndEventData(status: _runStatus(_requiredString(json, 'status')));
 }
 
+ChatRunStatus _runStatus(String value) => ChatRunStatus.values.firstWhere(
+  (s) => s.name == value,
+  orElse: () =>
+      throw ChatContractFormatException('status has unsupported value'),
+);
+
 /// 聊天 SSE 的五种事件类型。
-enum ChatEventType { start, thinking, text, tool, end }
+enum ChatEventType { start, thinking, text, error, end, toolStart, toolResult }
 
 /// 解码后的单条 SSE 事件；`eventId` 与工具调用 `toolCallId` 独立。
 class ChatSseEvent {
@@ -291,7 +293,15 @@ class ChatSseEvent {
       throw ChatContractFormatException('SSE id must be a positive integer');
     }
     final type = ChatEventType.values
-        .where((value) => value.name == event)
+        .where(
+          (value) =>
+              value.name ==
+              switch (event) {
+                'tool_start' => 'toolStart',
+                'tool_result' => 'toolResult',
+                _ => event,
+              },
+        )
         .firstOrNull;
     if (type == null) {
       throw ChatContractFormatException('event has unsupported value');
@@ -305,8 +315,22 @@ class ChatSseEvent {
       case ChatEventType.thinking:
       case ChatEventType.text:
         decoded = ChatContentEventData.fromJson(data);
-      case ChatEventType.tool:
-        decoded = ChatToolEventData.fromJson(data);
+      case ChatEventType.error:
+        decoded = ChatProtocolError.fromJson(data);
+      case ChatEventType.toolStart:
+        final functions = _required(data, 'function');
+        if (functions is! List) {
+          throw const ChatContractFormatException('function must be an array');
+        }
+        decoded = functions
+            .map(
+              (item) => ChatToolEventData.fromJson(
+                Map<String, Object?>.from(item as Map),
+              ),
+            )
+            .toList();
+      case ChatEventType.toolResult:
+        decoded = data;
       case ChatEventType.end:
         decoded = ChatEndEventData.fromJson(data);
     }
@@ -391,6 +415,38 @@ class ChatContractFormatException implements Exception {
   String toString() => 'ChatContractFormatException: $message';
 }
 
+/// 本地配置中可选择的提供方与模型身份。
+class ChatModelOption {
+  const ChatModelOption({
+    required this.provider,
+    required this.model,
+    required this.available,
+  });
+  final String provider;
+  final String model;
+  final bool available;
+  String get identity => '$provider/$model';
+
+  /// 读取服务端声明的本地可用性。
+  factory ChatModelOption.fromJson(Map<String, Object?> json) {
+    final available = _required(json, 'available');
+    if (available is! bool) {
+      throw const ChatContractFormatException('available must be boolean');
+    }
+    return ChatModelOption(
+      provider: _requiredString(json, 'provider'),
+      model: _requiredString(json, 'model'),
+      available: available,
+    );
+  }
+}
+
+/// 模型配置列表读取端口。
+abstract interface class ChatModelGateway {
+  /// 查询全部模型及本地可用性。
+  Future<List<ChatModelOption>> getModels();
+}
+
 /// 七个聊天 HTTP 操作的窄契约，不规定传输实现。
 abstract interface class ChatGateway {
   /// 创建一次 run，重试时由调用方复用原幂等键。
@@ -398,6 +454,7 @@ abstract interface class ChatGateway {
     required String sessionId,
     required String input,
     required String model,
+    String provider = 'deepseek',
     required String idempotencyKey,
   });
 

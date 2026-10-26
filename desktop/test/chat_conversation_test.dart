@@ -65,7 +65,9 @@ void main() {
       await tester.pump();
     }
 
+    await chat.loadModels();
     await mount(1280, 800, 1);
+    expect(find.byKey(const ValueKey('chat-model-selector')), findsOneWidget);
     await tester.enterText(
       find.byKey(const ValueKey('chat-draft-input')),
       '请查一下',
@@ -108,7 +110,7 @@ void main() {
       _frameSignal(
         1,
         ChatEventType.thinking,
-        const ChatContentEventData(content: 'private reasoning', error: null),
+        const ChatContentEventData(content: 'private reasoning'),
       ),
     );
     gateway.events.add(_toolFrame(2, 'call-one', 'search_schedules'));
@@ -121,7 +123,6 @@ void main() {
         const ChatContentEventData(
           content:
               '**你好**，请稍等。\n\n$_longReply\n\n```dart\nfinal answer = 42;\n```',
-          error: null,
         ),
       ),
     );
@@ -150,7 +151,7 @@ void main() {
       _frameSignal(
         6,
         ChatEventType.text,
-        const ChatContentEventData(content: '\n新到的段落。', error: null),
+        const ChatContentEventData(content: '\n新到的段落。'),
       ),
     );
     await tester.pump();
@@ -185,7 +186,7 @@ void main() {
       _frameSignal(
         7,
         ChatEventType.end,
-        const ChatEndEventData(stopReason: 'cancelled', error: null),
+        const ChatEndEventData(status: ChatRunStatus.cancelled),
       ),
     );
     await tester.pump();
@@ -278,7 +279,7 @@ void main() {
       _frameSignal(
         1,
         ChatEventType.text,
-        const ChatContentEventData(content: streamedBody, error: null),
+        const ChatContentEventData(content: streamedBody),
       ),
     );
     await tester.pump();
@@ -304,7 +305,7 @@ void main() {
       _frameSignal(
         2,
         ChatEventType.end,
-        const ChatEndEventData(stopReason: 'stop', error: null),
+        const ChatEndEventData(status: ChatRunStatus.succeeded),
       ),
     );
     await tester.pump();
@@ -671,7 +672,7 @@ ChatSseEvent _frame(int id, ChatEventType type, Object data) =>
 ChatRunEventFrame _toolFrame(int eventId, String callId, String name) =>
     _frameSignal(
       eventId,
-      ChatEventType.tool,
+      ChatEventType.toolStart,
       ChatToolEventData(
         id: callId,
         function: ChatToolFunction(
@@ -726,7 +727,16 @@ class _CreateCall {
   final String key;
 }
 
-class _ControllableChatGateway implements ChatGateway {
+class _ControllableChatGateway implements ChatGateway, ChatModelGateway {
+  @override
+  Future<List<ChatModelOption>> getModels() async => const [
+    ChatModelOption(
+      provider: 'deepseek',
+      model: 'deepseek-flash',
+      available: true,
+    ),
+  ];
+
   final events = StreamController<ChatRunEventSignal>.broadcast();
   final createCalls = <_CreateCall>[];
   int getRunCalls = 0;
@@ -749,6 +759,7 @@ class _ControllableChatGateway implements ChatGateway {
     required String sessionId,
     required String input,
     required String model,
+    String provider = 'deepseek',
     required String idempotencyKey,
   }) async {
     createCalls.add(_CreateCall(sessionId, input, model, idempotencyKey));

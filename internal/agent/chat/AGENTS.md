@@ -1,8 +1,18 @@
 # Chat 模块
 
-- `contracts.go`：聊天 run、session 受控视图、事件、终态和应用服务接口。
-- `mock.go`：API 验收期间使用的临时内存服务，提供固定流式演示、事件回放、取消和 session 删除模拟。
-- `mock_seed.go`：默认 Mock 的命名完成会话示例数据。
-- `mock_test.go`：验证 Mock 的事件顺序、终态、session 查询、可见性和默认种子。
+- `contracts.go`：固定四字段回执、十字段概况、模型选项、分页事件、内外状态以及模型端口、运行、会话、模型执行持久化和事件查询四个独立存储接口。
+- `service.go`：真实运行协调器；持久化幂等优先于配置门禁，同会话互斥、全局最多三会话并发；读取本地模型选项、处理无在途工具的取消、会话隐藏和单连接替换。
+- `service_regression_test.go`：预算拒绝后的连续对话、无输出恢复失败/再次退出的部分回复保留及非法 SSE 游标不替换原订阅的真实存储回归。
+- `service_test.go`：通过公共 RunService/SessionService/ModelService、真实临时 SQLite 和可控上游 HTTP 验证流式持久化、重启、预算、取消及幂等。
 
-约束：Mock 不访问数据库、模型或真实 Agent loop；默认 `NewMock` 每次启动重置为三条带名称的完成示例会话，新建 session 名称仍为空字符串；`NewMockWithOptions` 不播种会话，用于隔离接口测试。Mock 回复固定且数据仅存内存，不能作为真实业务能力的验收依据。HTTP 层只依赖 `Service` 契约，事件 ID 与事件数据由应用服务提供。请求格式校验由 API 层负责。
+请求实际 input、running 和 checkpoint 提交后才发送上游请求；结果与原始 usage、进度、终态原子提交。SSE 和分页读取相同持久化序号，断开只影响订阅。正常退出保存部分 output，保留 running 与原 checkpoint；启动先重建占用，再沿同一逻辑调用和原 input 后台重发。
+
+缺少配置或 Key 不阻断启动与本地查询；拒绝真正新建，不回退固定回复。运行资源不依赖 HTTP 请求生命周期。内部 wait_for_cancel 与对外 cancelled 分开建模；T01 只验收模型取消。工具执行、网络退避重试、自动续写和摘要由后续切片扩展；max_retry 首版登记而不执行网络重试。
+
+- 用例按 ModelService、RunService、SessionService 分别注入；HTTP Handler 只使用相应窄接口，App 通过独立 Lifecycle 管理启动与停止。
+
+- 终态保存失败后保留占用，按五秒间隔最多重试三次，仅重试持久化、不重发模型；耗尽释放资源但不伪造已落库终态。
+
+启动恢复只推进同一会话最新的未完成运行；已有后续运行的旧任务只失败收尾。恢复所选模型配置或密钥缺失时，先以 model_config_unavailable 收尾并保留已有部分正文，不将缺配置误记为预算错误。
+
+- SSE 游标只能为 0 或已持久化事件序号；在替换原订阅前完成校验。恢复重发失败或再次退出且没有新正文或思考时，保留旧调用的完整响应快照；完整成功响应即使为空也保存本次 output、响应 ID 和 usage。收到新有效输出后使用新响应，不拼接两次尝试。
