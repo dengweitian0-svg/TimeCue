@@ -162,6 +162,14 @@ func TestRealChatSSEPreservesPartialOutputAndError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	invalid := httptest.NewRequest(http.MethodGet, "/v1/run/"+receipt.RunID+"/event", nil)
+	invalid.Host = "127.0.0.1:10086"
+	invalid.Header.Set("Last-Event-ID", "999999")
+	rejected := httptest.NewRecorder()
+	router.ServeHTTP(rejected, invalid)
+	if rejected.Code != http.StatusBadRequest || !strings.Contains(rejected.Body.String(), "invalid_request") {
+		t.Fatalf("超前 SSE 游标未返回 400 invalid_request: %d %s", rejected.Code, rejected.Body)
+	}
 	server := httptest.NewServer(router)
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

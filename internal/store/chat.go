@@ -251,7 +251,7 @@ func (s *chatStore) History(ctx context.Context, session string) ([]chat.Message
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT r.input,r.status,m.output FROM ai_runs r LEFT JOIN ai_model_calls m ON m.run_id=r.run_id WHERE r.session_id=? AND r.status NOT IN ('running','wait_for_cancel') ORDER BY r.id,m.id`, session)
+	rows, err := db.QueryContext(ctx, `SELECT r.input,r.status,m.output FROM ai_runs r JOIN ai_model_calls m ON m.run_id=r.run_id WHERE r.session_id=? AND r.status NOT IN ('running','wait_for_cancel') ORDER BY r.id,m.id`, session)
 	if err != nil {
 		return nil, err
 	}

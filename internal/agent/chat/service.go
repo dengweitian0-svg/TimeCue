@@ -242,10 +242,15 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 			data, _ := json.Marshal(TextData{Content: content})
 			return s.execution.SaveDelta(context.Background(), call, Event{Type: kind, Data: data})
 		})
-		call.Output = &output
+		// 失败或退出且没有新有效输出时保留旧快照；完整成功响应即使为空也采用本次实际结果。
+		if failure == nil || call.Output == nil || output.Message.Content != "" || output.Message.ReasoningContent != "" {
+			call.Output = &output
+		}
 		r.Error = failure
-		if output.Message.Content != "" {
-			r.Output = &output.Message.Content
+		r.Output = nil
+		if call.Output != nil && call.Output.Message.Content != "" {
+			content := call.Output.Message.Content
+			r.Output = &content
 		}
 	}
 	s.mu.Lock()
@@ -366,11 +371,24 @@ func (s *Runtime) DeleteSession(ctx context.Context, id string) error {
 
 // Subscribe 从持久化游标接续，替换旧连接；断开不取消运行。
 func (s *Runtime) Subscribe(ctx context.Context, id string, after int64) (*Subscription, error) {
+	if after < 0 {
+		return nil, ErrInvalidRequest
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, err := s.runs.ReadRun(ctx, id, true)
 	if err != nil {
 		return nil, err
+	}
+	if after > 0 {
+		// run 内序号连续；游标必须指向已经持久化的事件，校验通过后才替换旧订阅。
+		page, err := s.events.Events(ctx, id, after-1, 1)
+		if err != nil {
+			return nil, err
+		}
+		if len(page.Events) == 0 || page.Events[0].ID != after {
+			return nil, ErrInvalidRequest
+		}
 	}
 	if r.State.Terminal() {
 		return nil, ErrRunTerminal
