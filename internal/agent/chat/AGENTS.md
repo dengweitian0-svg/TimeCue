@@ -11,3 +11,5 @@
 - 用例按 ModelService、RunService、SessionService 分别注入；HTTP Handler 只使用相应窄接口，App 通过独立 Lifecycle 管理启动与停止。
 
 - 终态保存失败后保留占用，按五秒间隔最多重试三次，仅重试持久化、不重发模型；耗尽释放资源但不伪造已落库终态。
+
+启动恢复只推进同一会话最新的未完成运行；已有后续运行的旧任务只失败收尾。恢复所选模型配置或密钥缺失时，先以 model_config_unavailable 收尾并保留已有部分正文，不将缺配置误记为预算错误。

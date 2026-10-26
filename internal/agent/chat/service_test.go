@@ -305,14 +305,26 @@ func TestNormalStopResumesSameRunAfterRestart(t *testing.T) {
 
 type failFirstFinish struct {
 	chat.ExecutionRepository
-	failed   chan struct{}
-	attempts atomic.Int32
+	failed    chan struct{}
+	attempts  atomic.Int32
+	failures  int32
+	exhausted chan struct{}
 }
 
 // Finish 在存储故障边界注入一次提交失败，不替代真实存储。
 func (s *failFirstFinish) Finish(ctx context.Context, call chat.ModelCall, run chat.Record) error {
-	if s.attempts.Add(1) == 1 {
-		close(s.failed)
+	limit := s.failures
+	if limit == 0 {
+		limit = 1
+	}
+	attempt := s.attempts.Add(1)
+	if attempt <= limit {
+		if attempt == 1 {
+			close(s.failed)
+		}
+		if attempt == limit && s.exhausted != nil {
+			close(s.exhausted)
+		}
 		return errors.New("injected commit failure")
 	}
 	return s.ExecutionRepository.Finish(ctx, call, run)
@@ -407,5 +419,159 @@ func TestMultiRoundRequestKeepsDeepSeekReasoning(t *testing.T) {
 	second := <-requests
 	if !second.Stream || len(second.Messages) != 3 || second.Messages[0].Content != " 第一轮 " || second.Messages[1].Role != "assistant" || second.Messages[1].ReasoningContent != "真实思考" || second.Messages[2].Content != "第二轮" {
 		t.Fatalf("actual upstream messages=%+v", second.Messages)
+	}
+}
+
+func TestRestartDoesNotReplaySupersededRun(t *testing.T) {
+	var requests atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"保留正文\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+	db := store.NewSqlite()
+	ctx := context.Background()
+	if err := db.Connect(ctx, filepath.Join(t.TempDir(), "chat.db")); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.PrepareSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ports := store.NewChatStorage(db)
+	normal := ports
+	fault := &failFirstFinish{ExecutionRepository: ports.Execution, failed: make(chan struct{}), failures: 4, exhausted: make(chan struct{})}
+	ports.Execution = fault
+	settings := func() ([]chat.ModelConfig, error) {
+		return []chat.ModelConfig{{Provider: "test", Model: "model", Key: "secret", BaseURL: upstream.URL, ContextWindow: 32768, MaxOutputTokens: 8192}}, nil
+	}
+	service := chat.NewService(ports, completion.NewClient(nil), settings)
+	if err := service.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	input := chat.CreateRunInput{SessionID: "s", Input: "old", Provider: "test", Model: "model", IdempotencyKey: "first"}
+	old, err := service.CreateRun(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-fault.exhausted:
+	case <-time.After(20 * time.Second):
+		t.Fatal("finish retries did not exhaust")
+	}
+	input.Input = "new"
+	input.IdempotencyKey = "second"
+	var latest chat.Receipt
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		latest, err = service.CreateRun(ctx, input)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, chat.ErrSessionBusy) || time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	awaitRun(t, service, latest.RunID)
+	service.Stop()
+	restarted := chat.NewService(normal, completion.NewClient(nil), settings)
+	if err = restarted.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Stop()
+	run := awaitRun(t, restarted, old.RunID)
+	if run.Status != chat.StatusFailed || requests.Load() != 2 || run.Output == nil || *run.Output != "保留正文" {
+		t.Fatalf("superseded status=%s output=%v requests=%d", run.Status, run.Output, requests.Load())
+	}
+}
+
+type stopBeforeCall struct {
+	chat.ExecutionRepository
+	entered chan struct{}
+}
+
+// BeginCall 在原子调用登记前模拟宿主退出，不创建 checkpoint。
+func (s *stopBeforeCall) BeginCall(ctx context.Context, call chat.ModelCall) (int64, error) {
+	close(s.entered)
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
+
+func TestRestartWithoutConfigUsesModelUnavailable(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprint(partial), func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, "data: {\"id\":\"partial\",\"choices\":[{\"delta\":{\"content\":\"已有正文\"}}]}\n\n")
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+			}))
+			defer upstream.Close()
+			db := store.NewSqlite()
+			ctx := context.Background()
+			if err := db.Connect(ctx, filepath.Join(t.TempDir(), "chat.db")); err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if err := db.PrepareSchema(ctx); err != nil {
+				t.Fatal(err)
+			}
+			ports := store.NewChatStorage(db)
+			normal := ports
+			fault := &stopBeforeCall{ExecutionRepository: ports.Execution, entered: make(chan struct{})}
+			if !partial {
+				ports.Execution = fault
+			}
+			configs := []chat.ModelConfig{{Provider: "test", Model: "model", Key: "secret", BaseURL: upstream.URL, ContextWindow: 32768, MaxOutputTokens: 8192}}
+			settings := func() ([]chat.ModelConfig, error) { return configs, nil }
+			service := chat.NewService(ports, completion.NewClient(nil), settings)
+			if err := service.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer service.Stop()
+			receipt, err := service.CreateRun(ctx, chat.CreateRunInput{SessionID: "s", Input: "input", Provider: "test", Model: "model", IdempotencyKey: "key"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(3 * time.Second)
+			if !partial {
+				select {
+				case <-fault.entered:
+				case <-time.After(3 * time.Second):
+					t.Fatal("call not reached")
+				}
+			} else {
+				for {
+					page, e := service.GetRunEvents(ctx, receipt.RunID, 0, 10)
+					if e != nil {
+						t.Fatal(e)
+					}
+					if len(page.Events) >= 2 {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("partial missing")
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}
+			service.Stop()
+			configs = nil
+			restarted := chat.NewService(normal, completion.NewClient(nil), settings)
+			if err = restarted.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer restarted.Stop()
+			run := awaitRun(t, restarted, receipt.RunID)
+			if run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "model_config_unavailable" {
+				t.Fatalf("recovery status=%s error=%v", run.Status, run.Error)
+			}
+			if partial && (run.Output == nil || *run.Output != "已有正文") {
+				t.Fatalf("saved partial output lost: %v", run.Output)
+			}
+		})
 	}
 }

@@ -55,12 +55,21 @@ func (s *Runtime) Start(ctx context.Context) error {
 		return err
 	}
 	previousCalls := make(map[string]*ModelCall, len(records))
-	for _, r := range records {
+	hidden := make(map[string]bool)
+	for i, r := range records {
 		call, e := s.execution.ReadCall(ctx, r.RunID)
 		if e != nil {
 			return e
 		}
 		previousCalls[r.RunID] = call
+		session, e := s.sessions.Session(ctx, r.SessionID)
+		if errors.Is(e, ErrSessionNotFound) {
+			hidden[r.RunID] = true
+		} else if e != nil {
+			return e
+		} else if len(session.RunIDs) > 0 && session.RunIDs[len(session.RunIDs)-1] != r.RunID {
+			records[i].Error = &RunError{Code: "run_superseded", Message: "同一会话已有后续运行，旧运行仅做失败收尾"}
+		}
 	}
 	for _, r := range records {
 		previous := previousCalls[r.RunID]
@@ -74,7 +83,7 @@ func (s *Runtime) Start(ctx context.Context) error {
 		}
 		runCtx, cancel := context.WithCancel(context.Background())
 		run := &execution{cancel: cancel, done: make(chan struct{}), session: r.SessionID}
-		if _, e := s.runs.ReadRun(ctx, r.RunID, true); errors.Is(e, ErrRunNotFound) {
+		if hidden[r.RunID] || r.State == StateWaitForCancel {
 			run.requested = true
 			cancel()
 		}
@@ -194,7 +203,15 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 		call = *previous
 		call.State = StateRunning
 		call.Error = nil
-	} else {
+		if call.Output != nil && call.Output.Message.Content != "" {
+			content := call.Output.Message.Content
+			r.Output = &content
+		}
+	}
+	if r.Error == nil && !available(cfg) {
+		r.Error = &RunError{Code: "model_config_unavailable", Message: "原运行的模型配置或密钥不可用"}
+	}
+	if previous == nil && r.Error == nil {
 		history, historyErr := s.execution.History(ctx, r.SessionID)
 		err = historyErr
 		if err == nil {
@@ -213,9 +230,7 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 	}
 	if err != nil {
 		r.Error = &RunError{Code: "persistence_failed", Message: "保存模型请求失败"}
-	} else if !available(cfg) {
-		r.Error = &RunError{Code: "model_config_unavailable", Message: "原运行的模型配置或密钥不可用"}
-	} else {
+	} else if r.Error == nil {
 		partial := ModelOutput{Message: Message{Role: "assistant"}}
 		output, failure := s.model.Complete(ctx, cfg, call.Input, func(kind EventType, content string) error {
 			if kind == EventText {
