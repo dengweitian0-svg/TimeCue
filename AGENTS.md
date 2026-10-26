@@ -8,7 +8,7 @@ Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务
 - [cmd/flutter](cmd/flutter/AGENTS.md)：Go 本机 HTTP 服务启动、组件装配与退出清理。
 - [internal/api](internal/api/AGENTS.md)：HTTP 路由、日程与提醒接口。
 - [internal/app](internal/app/AGENTS.md)：服务装配、跨模块用例、正式操作边界与运行生命周期。
-- [internal/agent](internal/agent/AGENTS.md)：Agent 聊天服务契约与内存 Mock。
+- [internal/agent](internal/agent/AGENTS.md)：真实聊天服务、模型适配器与持久化契约。
 - [internal/middleware](internal/middleware/AGENTS.md)：请求日志、Host 校验、异常恢复与响应适配。
 - [internal/service](internal/service/AGENTS.md)：schedule 管理日程规则与查询，notification 管理提醒、调度和投递，recovery 管理历史恢复与进度。
 - [internal/model](internal/model/AGENTS.md)：日程、提醒、查询条件及共享业务类型。
@@ -29,3 +29,5 @@ Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务
 - 需要根据功能创建新分支来开发，而不是在 dev 分支中开发
 - Flutter 已接入显式 managed/external 模式、隐藏自有 Go、ready/health 身份门禁和共享退出回填；Job Object 在进程创建时关联，最终回收及宿主崩溃只清理自有进程。开发外连不停止手动 Go，启动失败可重试、运行中异常退出不自动重启
 - CI 按 PR 路径选择 Go、Flutter 或 Windows Python 更新脚本检查，纯文档 dev PR 只运行轻量分类；dev 非文档 push 后执行完整 Windows 集成验证；所有 main PR 通过 Go Windows Checks 和 Flutter Windows Checks 执行完整发布构建与原生验证；手动运行发行工作流时上传发行产物。
+
+- T01 文字对话使用真实 Chat Completions 与 SQLite 版本 3 的六张 AI 表；缺少 Key 仍正常启动，配置与当前切片边界见 [docs/CHAT.md](docs/CHAT.md)。

@@ -67,6 +67,8 @@ type httpEvent struct {
 
 // 路由事件只描述 HTTP 语义，不依赖 handler、服务层或响应体。
 var httpEvents = map[httpEventKey]httpEvent{
+	{http.MethodGet, "/v1/model"}:                                            {slog.LevelDebug, "models listed", "failed to list models"},
+	{http.MethodGet, "/v1/run/:run_id/events"}:                               {slog.LevelDebug, "run events listed", "failed to list run events"},
 	{http.MethodPost, "/v1/run"}:                                             {slog.LevelInfo, "run created", "failed to create run"},
 	{http.MethodGet, "/v1/run/:run_id"}:                                      {slog.LevelDebug, "run retrieved", "failed to get run"},
 	{http.MethodGet, "/v1/run/:run_id/event"}:                                {slog.LevelInfo, "run events streamed", "failed to stream run events"},

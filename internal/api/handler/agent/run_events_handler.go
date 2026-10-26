@@ -16,7 +16,7 @@ import (
 )
 
 // RunEventsHandler 建立带回放游标的 SSE 订阅。
-func RunEventsHandler(service chat.Service) middleware.HTTPHandler {
+func RunEventsHandler(service chat.RunService) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		runID, failure := parseRunID(c)
 		if failure != nil {

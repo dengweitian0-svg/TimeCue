@@ -16,7 +16,8 @@ type Stream interface {
 }
 
 var allowedSSEEvents = map[string]struct{}{
-	"start": {}, "thinking": {}, "text": {}, "tool": {}, "end": {},
+	"start": {}, "thinking": {}, "text": {}, "error": {}, "end": {},
+	"tool_start": {}, "tool_result": {}, "compact": {},
 }
 
 // EncodeSSE 编码一条 SSE 帧。事件 ID 由调用方提供，内容始终通过 JSON 编码。

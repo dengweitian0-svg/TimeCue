@@ -11,15 +11,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func registerChatRoutes(router *gin.Engine, service chat.Service) {
+func registerChatRoutes(router *gin.Engine, services chat.Services) {
 	v1 := router.Group("/v1")
-	v1.POST("/run", middleware.WrapHTTPHandler(agent.CreateRunHandler(service), createRunFields))
-	v1.GET("/run/:run_id", middleware.WrapHTTPHandler(agent.GetRunHandler(service), getRunFields))
-	v1.GET("/run/:run_id/event", middleware.WrapHTTPHandler(agent.RunEventsHandler(service), runEventsFields))
-	v1.POST("/run/:run_id/cancel", middleware.WrapHTTPHandler(agent.CancelRunHandler(service), cancelRunFields))
-	v1.GET("/session/:session_id", middleware.WrapHTTPHandler(session.GetSessionHandler(service), getSessionFields))
-	v1.GET("/session", middleware.WrapHTTPHandler(session.ListSessionsHandler(service), listSessionsFields))
-	v1.DELETE("/session/:session_id", middleware.WrapHTTPHandler(session.DeleteSessionHandler(service), deleteSessionFields))
+	v1.GET("/model", middleware.WrapHTTPHandler(agent.GetModelsHandler(services.Model), nil))
+	v1.GET("/run/:run_id/events", middleware.WrapHTTPHandler(agent.GetRunEventsHandler(services.Run), nil))
+	v1.POST("/run", middleware.WrapHTTPHandler(agent.CreateRunHandler(services.Run), createRunFields))
+	v1.GET("/run/:run_id", middleware.WrapHTTPHandler(agent.GetRunHandler(services.Run), getRunFields))
+	v1.GET("/run/:run_id/event", middleware.WrapHTTPHandler(agent.RunEventsHandler(services.Run), runEventsFields))
+	v1.POST("/run/:run_id/cancel", middleware.WrapHTTPHandler(agent.CancelRunHandler(services.Run), cancelRunFields))
+	v1.GET("/session/:session_id", middleware.WrapHTTPHandler(session.GetSessionHandler(services.Session), getSessionFields))
+	v1.GET("/session", middleware.WrapHTTPHandler(session.ListSessionsHandler(services.Session), listSessionsFields))
+	v1.DELETE("/session/:session_id", middleware.WrapHTTPHandler(session.DeleteSessionHandler(services.Session), deleteSessionFields))
 }
 
 func createRunFields(_ *gin.Context, result middleware.HTTPResult) []slog.Attr {

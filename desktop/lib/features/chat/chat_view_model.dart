@@ -18,6 +18,60 @@ class ChatViewModel extends ChangeNotifier {
        _createIdempotencyKey = createIdempotencyKey ?? _defaultIdempotencyKey,
        _retryDelay = retryDelay ?? _defaultRetryDelay;
 
+  List<ChatModelOption> _models = const [];
+  ChatModelOption? _selectedModel;
+  String? _modelsError;
+  bool _modelsLoading = false;
+
+  /// 当前配置模型列表及可用性。
+  List<ChatModelOption> get models => List.unmodifiable(_models);
+
+  /// 当前明确选择的提供方和模型。
+  ChatModelOption? get selectedModel => _selectedModel;
+
+  /// 模型列表加载错误。
+  String? get modelsError => _modelsError;
+
+  /// 是否正在刷新模型配置。
+  bool get modelsLoading => _modelsLoading;
+
+  /// 刷新本地模型配置，不影响已经提交的运行身份。
+  Future<void> loadModels() async {
+    if (!_acceptingOperations || _modelsLoading) return;
+    final gateway = _gateway;
+    if (gateway is! ChatModelGateway) return;
+    _modelsLoading = true;
+    final generation = _runtimeGeneration;
+    try {
+      final values = await (gateway as ChatModelGateway).getModels();
+      if (_disposed || generation != _runtimeGeneration) return;
+      _models = values;
+      final previous = _selectedModel?.identity;
+      _selectedModel =
+          values
+              .where((m) => m.available && m.identity == previous)
+              .firstOrNull ??
+          values.where((m) => m.available).firstOrNull;
+      _modelsError = null;
+    } catch (error) {
+      if (_disposed || generation != _runtimeGeneration) return;
+      _models = const [];
+      _selectedModel = null;
+      _modelsError = _errorMessage(error);
+    } finally {
+      _modelsLoading = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  /// 只选择本地可用的模型。
+  void selectModel(String identity) {
+    _selectedModel = _models
+        .where((m) => m.identity == identity && m.available)
+        .firstOrNull;
+    _scheduleNotify();
+  }
+
   final ChatGateway _gateway;
   final String Function() _createSessionId;
   final String Function() _createIdempotencyKey;
@@ -426,7 +480,11 @@ class ChatViewModel extends ChangeNotifier {
   }
 
   /// 使用草稿开始一轮；创建中的内容和幂等键会被固定以供明确重试。
-  Future<void> send(String sessionId, {required String model}) async {
+  Future<void> send(
+    String sessionId, {
+    required String model,
+    String provider = 'deepseek',
+  }) async {
     _ensureUsable();
     final conversation = _requireConversation(sessionId);
     final input = conversation._draft;
@@ -439,6 +497,7 @@ class ChatViewModel extends ChangeNotifier {
       sessionId: conversation.sessionId,
       input: input,
       model: model,
+      provider: provider,
       createdAt: DateTime.now(),
       phase: ChatRunPhase.creating,
       connectionState: ChatConnectionState.idle,
@@ -569,6 +628,7 @@ class ChatViewModel extends ChangeNotifier {
         sessionId: conversation.sessionId,
         input: run.input,
         model: run.model,
+        provider: run.provider,
         idempotencyKey: run.idempotencyKey,
       );
       if (!_isCurrent(generation, run)) return;
@@ -581,6 +641,22 @@ class ChatViewModel extends ChangeNotifier {
       _historySessionIds.add(conversation.sessionId);
       run._createdAt = DateTime.now();
       _runsById[result.runId] = run;
+      if (result.status != ChatRunStatus.running) {
+        run._status = result.status;
+        run._rawText = result.output ?? '';
+        run._error = result.error?.message;
+        run._phase = switch (result.status) {
+          ChatRunStatus.succeeded => ChatRunPhase.succeeded,
+          ChatRunStatus.failed => ChatRunPhase.failed,
+          ChatRunStatus.cancelled => ChatRunPhase.cancelled,
+          ChatRunStatus.running => ChatRunPhase.running,
+        };
+        run._connectionState = ChatConnectionState.idle;
+        _scheduleNotify();
+        _scheduleHistoryNotify();
+        unawaited(_refreshSessionName(conversation, generation));
+        return;
+      }
       _scheduleNotify();
       _scheduleHistoryNotify();
       if (!_acceptingOperations) return;
@@ -740,21 +816,27 @@ class ChatViewModel extends ChangeNotifier {
       case ChatEventType.start:
         if (!run._cancelPending) run._phase = ChatRunPhase.running;
       case ChatEventType.thinking:
-        final data = event.data as ChatContentEventData;
-        if (data.error != null) run._error = data.error!.message;
         if (!run._cancelPending) run._phase = ChatRunPhase.thinking;
       case ChatEventType.text:
         final data = event.data as ChatContentEventData;
-        if (data.error != null) run._error = data.error!.message;
         if (!run._cancelPending) run._phase = ChatRunPhase.replying;
         run._rawText += data.content;
-      case ChatEventType.tool:
-        final tool = event.data as ChatToolEventData;
-        if (!run._toolIds.contains(tool.id)) {
-          run._toolIds.add(tool.id);
-          run._toolCalls.add(
-            ChatToolCall(id: tool.id, name: tool.function.name),
-          );
+      case ChatEventType.error:
+        run._error = (event.data as ChatProtocolError).message;
+      case ChatEventType.toolResult:
+        // 工具结果不作为模型错误，也不据此确认运行终态。
+        break;
+      case ChatEventType.toolStart:
+        final tools = event.data is List<ChatToolEventData>
+            ? event.data as List<ChatToolEventData>
+            : [event.data as ChatToolEventData];
+        for (final tool in tools) {
+          if (!run._toolIds.contains(tool.id)) {
+            run._toolIds.add(tool.id);
+            run._toolCalls.add(
+              ChatToolCall(id: tool.id, name: tool.function.name),
+            );
+          }
         }
         if (!run._cancelPending) run._phase = ChatRunPhase.toolCalling;
       case ChatEventType.end:
@@ -1088,6 +1170,7 @@ class ChatRunState {
     required this.sessionId,
     required this.input,
     required this.model,
+    required this.provider,
     required DateTime createdAt,
     required ChatRunPhase phase,
     required ChatConnectionState connectionState,
@@ -1103,6 +1186,7 @@ class ChatRunState {
       sessionId: snapshot.sessionId,
       input: snapshot.input,
       model: snapshot.model,
+      provider: snapshot.provider,
       createdAt: snapshot.createdAt,
       phase: switch (snapshot.status) {
         ChatRunStatus.running => ChatRunPhase.running,
@@ -1144,6 +1228,9 @@ class ChatRunState {
 
   /// 本轮请求使用的模型标识。
   final String model;
+
+  /// 本轮请求固定的模型提供方。
+  final String provider;
   String _rawText = '';
 
   /// 当前已累计的原始助手正文；事件重放只拼接尚未处理的部分。

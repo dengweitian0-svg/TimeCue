@@ -10,8 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const chatModel = "deepseek-flash"
-
 var errInvalidRunID = errors.New("chat service returned invalid run id")
 
 func parseRunID(c *gin.Context) (string, *middleware.HTTPResult) {

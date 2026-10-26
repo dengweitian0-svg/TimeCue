@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
 	"github.com/dengweitian0-svg/TimeCue/internal/api"
 	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
@@ -77,8 +78,9 @@ func runApp(ctx context.Context, options startupOptions, log *logger.Logger) err
 	if err != nil {
 		return err
 	}
-	// TODO: 接入真实聊天应用服务后，替换临时 Mock。
-	application.ChatService = chat.NewMock()
+	chatRuntime := chat.NewService(store.NewChatStorage(db), completion.NewClient(nil), manager.ChatModels)
+	application.ChatServices = chat.Services{Model: chatRuntime, Run: chatRuntime, Session: chatRuntime}
+	application.ChatRuntime = chatRuntime
 	info := app.NewRuntimeInfo(options.instanceID)
 	runtime := app.RuntimeOptions{Database: db, PrepareDatabase: db.PrepareSchema, Handler: api.NewRouterWithPort(application, db.CheckHealth, options.port, info), Log: log, Port: options.port}
 	if options.managed {

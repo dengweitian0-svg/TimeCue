@@ -70,6 +70,12 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 	if err = options.Database.CheckHealth(ctx); err != nil {
 		return fmt.Errorf("check database schema: %w", err)
 	}
+	if lifecycle := a.ChatRuntime; lifecycle != nil {
+		if err = lifecycle.Start(ctx); err != nil {
+			return fmt.Errorf("start chat service: %w", err)
+		}
+		defer lifecycle.Stop()
+	}
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -114,6 +120,9 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 	}
 	defer func() {
 		stop()
+		if lifecycle := a.ChatRuntime; lifecycle != nil {
+			lifecycle.Stop()
+		}
 		a.StopDelivery()
 		requests.stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

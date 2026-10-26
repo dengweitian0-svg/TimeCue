@@ -72,3 +72,5 @@
 - `AI-BACKEND.md` 的含续写摘要按相关 event 顺序拼接首次摘要与续写的正文，作为上述单条 user 消息的 content，不包含 thinking、后端“继续”指令或摘要专用 system prompt；各次模型调用的实际输入输出和原事件仍分别保存。摘要 user 投影进入普通调用 input 后，重启沿 checkpoint 直接读取该 input.messages，未完成续写按原流程处理，不要求回放整个摘要调用链以恢复基础消息。
 - `AI-BACKEND.md` 的 length 正常结束响应按工具逐条处理：完整且校验通过的调用正常执行，仅截断调用要求重新生成；已接纳工具先完成并回填，再继续请求模型，不适用于网络异常中断。
 - `AI-BACKEND.md` 中实际纳入模型请求的 assistant.tool_calls 必须紧随同批调用的 role=tool 结果，每个 tool_call_id 都有对应结果，补齐前不插入 user/assistant 消息。截断解析错误使用原 ID 返回实际错误 tool output；完整调用校验失败仍保存 failed 的 tool_call 及错误 tool message。取消跳过的调用保留在上下文并以原 ID 配对 content="aborted" 的 tool 消息，不覆盖已经保存的实际结果；取消收尾只保存消息，不因此继续请求模型。消息配对约束不限制模型下一次只能输出工具调用。
+
+当前 T01 文字链路与配置以 [CHAT.md](CHAT.md) 为准；本索引其余完整 Agent 行为仍属后续切片目标。

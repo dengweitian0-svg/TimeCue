@@ -9,7 +9,7 @@
 - 同一 HttpNotebookRepository 实现 NotificationDeliveryGateway，复用原请求封装调用领取、开始、结果和执行者退出 POST 及根 /health；退出 POST 使用宿主传入的剩余 deadline。投递操作不改变本子 loading 和快照，不自报成员，回填校验 attempt/outcome 一致。健康 503 读取 data.error，业务错误继续读取顶层 error；请求失败不改写投递结果。
 - 同一仓储实现 NotificationQueryGateway，读取持久提醒详情、task 历史及 attempt 冻结成员；只返回分页 DTO，不覆盖今日/历史缓存或 loading。任务请求不附 state/scope，详情核对返回 notificationId，复用原客户端和错误类型。组合刷新相容发布 recovery 摘要，失败保留原快照及错误标记。确认成功后先作废旧恢复未确认数，正式刷新再发布真实剩余数；不能按本次确认总数估减本轮计数，后续读取失败不继续展示已过期的提示数量。
 - `demo_notebook_repository.dart`：提供内存示例日程与提醒、预设规则投影、创建/编辑/删除和确认交互。
-- `http_chat_gateway.dart`：通过本机 HTTP/SSE 实现七个聊天接口，映射严格聊天 DTO 和 `ChatHttpError`，支持启动门禁、运行失效及传输释放；SSE 游标使用 `Last-Event-ID`。
+- `http_chat_gateway.dart`：通过本机 HTTP/SSE 实现聊天与模型列表接口，映射严格聊天 DTO 和 `ChatHttpError`，支持启动门禁、运行失效及传输释放；SSE 游标使用 `Last-Event-ID`。
 
 工程约束：HTTP 模式使用 Go 的快照、总数、游标和 occurrenceKey，RFC3339 转换为 UTC+8 展示；请求失败不回退示例数据。日程路径为 `/api/v1/scheduler/schedules`，提醒路径为 `/api/v1/notifications`；确认统一使用 `notificationIds` 数组。
 
@@ -30,3 +30,5 @@ HTTP 仓储使用 scope=today/history 的独立首分页、游标链、位置、
 - 默认本地 HTTP 客户端对 loopback 地址直连，不经系统 HTTP 代理；调用方注入的客户端保留其代理行为。空正文、非法 JSON 和非对象响应提供含状态及端点的有限诊断，不暴露响应正文；204 仍作为无正文成功处理。
 
 - 托管健康读取同时绑定 PID；运行身份/PID 错配立即封锁仓储并通过 onManagedRuntimeLost 回流到 ManagedBackend，进入全应用失效状态，不能仅停止通知桥后仍允许页面继续操作。
+
+- 创建请求包含 provider，接受 202 新建/running 重放和 200 终态回执；GET /v1/model 只读取可用性，不传输 Key。

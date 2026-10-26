@@ -7,7 +7,12 @@ class ChatFixtures {
   static const _runId = 'd9428888-122b-4f6f-9b47-5ea7b2915210';
 
   /// 创建 run 的成功响应。
-  static Map<String, Object?> createRunResponse() => {'run_id': _runId};
+  static Map<String, Object?> createRunResponse() => {
+    'run_id': _runId,
+    'status': 'running',
+    'output': null,
+    'error': null,
+  };
 
   /// running run 的 GET 响应。
   static Map<String, Object?> runningRun() => {
@@ -58,6 +63,7 @@ class ChatFixtures {
     'run_id': _runId,
     'session_id': _sessionId,
     'model': 'deepseek-flash',
+    'provider': 'deepseek',
     'input': '用户原始输入',
     'status': 'succeeded',
     'output': output,
@@ -81,49 +87,48 @@ class ChatFixtures {
     required String callId,
     required String name,
   }) => {
-    'id': callId,
-    'function': {
-      'name': name,
-      'args': {
-        'name': '参数里的伪工具名',
-        'val': {'query': '中文参数'},
+    'function': [
+      {
+        'id': callId,
+        'name': name,
+        'argument': {'query': '中文参数'},
       },
-    },
+    ],
   };
 
   /// 固定且有序的 SSE 帧，含思考、正文、重复投递、多工具交错和失败结束。
   static List<String> get interleavedFailureFrames => [
     'id: 1\nevent: start\ndata: {}\n\n',
-    'id: 2\nevent: thinking\ndata: {"content":"hidden reasoning","error":null}\n\n',
-    'id: 3\nevent: text\ndata: {"content":"你好，","error":null}\n\n',
-    'id: 4\nevent: tool\ndata: {"id":"call-a","function":{"name":"search_schedules","args":{"name":"spoofed","val":{"q":"日期"}}}}\n\n',
-    'id: 5\nevent: tool\ndata: {"id":"call-b","function":{"name":"get_calendar","args":{"name":"spoofed","val":{}}}}\n\n',
-    'id: 6\nevent: thinking\ndata: {"content":"more hidden reasoning","error":null}\n\n',
-    'id: 7\nevent: tool\ndata: {"id":"call-c","function":{"name":"search_schedules","args":{"name":"spoofed","val":{"q":"明天"}}}}\n\n',
-    'id: 8\nevent: text\ndata: {"content":"世界。","error":null}\n\n',
-    'id: 9\nevent: end\ndata: {"stop_reason":"aborted","error":{"code":"aborted","message":"生成被中断"}}\n\n',
+    'id: 2\nevent: thinking\ndata: {"content":"hidden reasoning"}\n\n',
+    'id: 3\nevent: text\ndata: {"content":"你好，"}\n\n',
+    'id: 4\nevent: tool_start\ndata: {"function":[{"id":"call-a","name":"search_schedules","argument":{"q":"日期"}}]}\n\n',
+    'id: 5\nevent: tool_start\ndata: {"function":[{"id":"call-b","name":"get_calendar","argument":{}}]}\n\n',
+    'id: 6\nevent: thinking\ndata: {"content":"more hidden reasoning"}\n\n',
+    'id: 7\nevent: tool_start\ndata: {"function":[{"id":"call-c","name":"search_schedules","argument":{"q":"明天"}}]}\n\n',
+    'id: 8\nevent: text\ndata: {"content":"世界。"}\n\n',
+    'id: 9\nevent: end\ndata: {"status":"failed"}\n\n',
   ];
 
   /// 断线后从游标之后重放的相同事件 ID；重复片段不代表新工具调用。
   static List<String> get reconnectReplayFrames => [
-    'id: 7\nevent: tool\ndata: {"id":"call-c","function":{"name":"search_schedules","args":{"name":"spoofed","val":{"q":"明天"}}}}\n\n',
-    'id: 8\nevent: text\ndata: {"content":"世界。","error":null}\n\n',
-    'id: 9\nevent: end\ndata: {"stop_reason":"aborted","error":{"code":"aborted","message":"生成被中断"}}\n\n',
+    'id: 7\nevent: tool_start\ndata: {"function":[{"id":"call-c","name":"search_schedules","argument":{"q":"明天"}}]}\n\n',
+    'id: 8\nevent: text\ndata: {"content":"世界。"}\n\n',
+    'id: 9\nevent: end\ndata: {"status":"failed"}\n\n',
   ];
 
   /// 正常的 start、thinking、增量文本和成功 end 序列。
   static List<String> get normalSuccessFrames => [
     'id: 1\nevent: start\ndata: {}\n\n',
-    'id: 2\nevent: thinking\ndata: {"content":"思考片段","error":null}\n\n',
-    'id: 3\nevent: text\ndata: {"content":"完整回复。","error":null}\n\n',
-    'id: 4\nevent: end\ndata: {"stop_reason":"stop","error":null}\n\n',
+    'id: 2\nevent: thinking\ndata: {"content":"思考片段"}\n\n',
+    'id: 3\nevent: text\ndata: {"content":"完整回复。"}\n\n',
+    'id: 4\nevent: end\ndata: {"status":"succeeded"}\n\n',
   ];
 
   /// 多工具来源的线缆序列，不声明工具间的并行或先后执行关系。
   static List<String> get multipleToolFrames => [
-    'id: 10\nevent: tool\ndata: {"id":"call-one","function":{"name":"search_schedules","args":{"name":"other","val":{}}}}\n\n',
-    'id: 11\nevent: tool\ndata: {"id":"call-two","function":{"name":"get_calendar","args":{"name":"other","val":{}}}}\n\n',
-    'id: 12\nevent: tool\ndata: {"id":"call-three","function":{"name":"search_schedules","args":{"name":"other","val":{}}}}\n\n',
+    'id: 10\nevent: tool_start\ndata: {"function":[{"id":"call-one","name":"search_schedules","argument":{}}]}\n\n',
+    'id: 11\nevent: tool_start\ndata: {"function":[{"id":"call-two","name":"get_calendar","argument":{}}]}\n\n',
+    'id: 12\nevent: tool_start\ndata: {"function":[{"id":"call-three","name":"search_schedules","argument":{}}]}\n\n',
   ];
 
   /// 同一 SSE 帧重复投递，事件 ID 和工具调用 ID 均保持原值。
@@ -131,7 +136,7 @@ class ChatFixtures {
 
   /// 已成功取消的结束帧，取消结果不等于工具执行结果。
   static String get cancelledEndFrame =>
-      'id: 12\nevent: end\ndata: {"stop_reason":"cancelled","error":null}\n\n';
+      'id: 12\nevent: end\ndata: {"status":"cancelled"}\n\n';
 
   /// 将固定 SSE 帧编码为 UTF-8 字节，供分片传输测试使用。
   static Uint8List utf8Bytes(String frame) =>

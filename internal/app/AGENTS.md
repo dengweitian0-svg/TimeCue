@@ -13,3 +13,7 @@
 - HTTP 服务只监听 loopback；RuntimeOptions.Port 为 0 时使用默认端口 10086。
 - 退出先停止新领取和开始、取消后台工作；HTTP 有 5 秒优雅窗口，超时关闭连接后仍等待活跃业务及后台结束，再关闭数据库、配置监听与日志。
 - 入口注入具体存储、HTTP Handler 和聊天端口；App 不导入 API 或具体 store。平台投递结果须通过正式回填操作进入业务状态。
+
+- 聊天生命周期在数据库迁移及健康检查后、监听前调用 Start 重建占用；退出先 Stop 取消模型请求并保存实际部分进度，再排空 HTTP，聊天完成后才关闭 SQLite。
+
+- 用例按 ModelService、RunService、SessionService 分别注入；HTTP Handler 只使用相应窄接口，App 通过独立 Lifecycle 管理启动与停止。

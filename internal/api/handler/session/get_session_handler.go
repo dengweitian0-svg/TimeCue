@@ -18,7 +18,7 @@ type SessionResponse struct {
 }
 
 // GetSessionHandler 返回 session 名称及其 run 列表。
-func GetSessionHandler(service chat.Service) middleware.HTTPHandler {
+func GetSessionHandler(service chat.SessionService) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		sessionID, failure := parseSessionID(c)
 		if failure != nil {

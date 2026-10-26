@@ -16,7 +16,7 @@ type DeleteSessionResponse struct {
 }
 
 // DeleteSessionHandler 同步隐藏 session，并由应用层异步清理其 run。
-func DeleteSessionHandler(service chat.Service) middleware.HTTPHandler {
+func DeleteSessionHandler(service chat.SessionService) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		sessionID, failure := parseSessionID(c)
 		if failure != nil {

@@ -27,7 +27,14 @@ void main() {
         case '/v1/run':
           await request.drain<void>();
           response.statusCode = HttpStatus.accepted;
-          response.write(jsonEncode({'run_id': 'run-1'}));
+          response.write(
+            jsonEncode({
+              'run_id': 'run-1',
+              'status': 'running',
+              'output': null,
+              'error': null,
+            }),
+          );
           break;
         case '/v1/run/run-1':
           response.write(jsonEncode(_runningRun));
@@ -69,9 +76,7 @@ void main() {
             await response.flush();
           }
           // EOF 前未以空行结束的帧不得被派发。
-          response.write(
-            'id: 3\nevent: end\ndata: {"stop_reason":"stop","error":null}',
-          );
+          response.write('id: 3\nevent: end\ndata: {"status":"succeeded"}');
           break;
         case '/v1/run/slow/event':
           response.headers.contentType = ContentType('text', 'event-stream');
@@ -304,6 +309,7 @@ final Map<String, Object?> _runningRun = {
   'run_id': 'run-1',
   'session_id': 'session-1',
   'model': 'deepseek-flash',
+  'provider': 'deepseek',
   'input': '原始输入',
   'status': 'running',
   'output': null,

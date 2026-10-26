@@ -121,6 +121,9 @@ func resourceLogRouter(t *testing.T) (*gin.Engine, *app.App) {
 	if _, err := conn.Exec(string(script2)); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.PrepareSchema(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.CheckHealth(context.Background()); err != nil {
 		t.Fatal(err)
 	}

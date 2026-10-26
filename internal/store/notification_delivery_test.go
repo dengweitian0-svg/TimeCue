@@ -293,7 +293,7 @@ func TestDeliveryLargeGroupAtomicResult(t *testing.T) {
 
 func deliverySchema(t *testing.T, db *Sqlite) []string {
 	t.Helper()
-	rows, err := db.db.Query(`SELECT name || ':' || sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	rows, err := db.db.Query(`SELECT name || ':' || sql FROM sqlite_master WHERE type='table' AND name IN ('schedules','notifications','schedule_versions','schedule_write_receipts') ORDER BY name`)
 	if err != nil {
 		t.Fatal(err)
 	}

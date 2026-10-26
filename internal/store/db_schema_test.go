@@ -66,6 +66,9 @@ func TestCheckHealthAcceptsNonPartialUniqueIndex(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `CREATE UNIQUE INDEX uq_notifications_schedule_time ON notifications(schedule_id, notify_time)`); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.PrepareSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.CheckHealth(ctx); err != nil {
 		t.Fatalf("显式完整唯一索引应满足健康检查: %v", err)
 	}

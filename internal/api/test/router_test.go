@@ -49,6 +49,9 @@ func testRouter(t *testing.T) (*gin.Engine, *store.Sqlite) {
 		t.Fatal(err)
 	}
 	_ = conn.Close()
+	if err := db.PrepareSchema(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.CheckHealth(context.Background()); err != nil {
 		t.Fatal(err)
 	}

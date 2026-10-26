@@ -105,7 +105,7 @@ HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查
 | POST | `/api/v1/notifications/delivery-attempts/:id/results` | 回填整次平台请求的 sent/failed，原子更新实际成员；重复结果不再次执行 |
 | POST | `/api/v1/notifications/executor-exit` | 当前 instanceId 和执行者持有的 attemptIds；只整理精确匹配的活动尝试，保留展示预算及迟到真实结果 |
 
-AI Chat HTTP 接口当前进入仅 Mock 的 API 验收阶段，提供设计文档列出的七个 `/v1` run/session 接口，session 查询返回名称和按创建时间排序的 run ID。临时内存服务不连接数据库、真实模型或 Agent loop；自动化 HTTP/SSE 回归位于 `internal/api/test`。接入真实应用层后需复验接口契约，并删除或替换临时 Mock。
+AI 对话已接通官方 openai-go/v3 Chat Completions、SQLite 和流式事件，支持提供方/模型选择、原始多轮历史、完成会话重启查询、模型取消和会话软删除。缺少 Key 时正常启动并保留本地查询，新库没有演示会话。配置、九个 HTTP 操作和当前切片边界见 [真实文字对话](docs/CHAT.md)。
 
 创建请求示例：
 

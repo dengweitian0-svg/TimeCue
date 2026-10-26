@@ -46,10 +46,10 @@ func ChatError(err error) middleware.HTTPResult {
 		return middleware.ErrorResult(http.StatusConflict, NewAPIError("idempotency_key_conflict", "idempotency key was used with different input"), nil)
 	case errors.Is(err, chat.ErrRunTerminal):
 		return middleware.ErrorResult(http.StatusConflict, NewAPIError("run_terminal", "run is already terminal"), nil)
-	case errors.Is(err, chat.ErrSSEConnectionExists):
-		return middleware.ErrorResult(http.StatusConflict, NewAPIError("sse_connection_exists", "run already has an SSE connection"), nil)
-	case errors.Is(err, chat.ErrEventBufferFull):
-		return middleware.ErrorResult(http.StatusServiceUnavailable, NewAPIError("event_buffer_full", "event subscriber buffer is full"), nil)
+	case errors.Is(err, chat.ErrModelUnavailable):
+		return middleware.ErrorResult(http.StatusServiceUnavailable, NewAPIError("model_config_unavailable", "selected model configuration or key unavailable"), nil)
+	case errors.Is(err, chat.ErrStopping):
+		return middleware.ErrorResult(http.StatusServiceUnavailable, NewAPIError("service_stopping", "chat service stopping"), nil)
 	default:
 		return InternalErrorResult(err)
 	}

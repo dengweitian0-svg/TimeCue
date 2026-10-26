@@ -27,6 +27,9 @@ func (s *Sqlite) PrepareSchema(ctx context.Context) error {
 		return fmt.Errorf("%w: empty database has version %d", ErrSchemaInvalid, version)
 	}
 	if count != 0 {
+		if version == 3 {
+			return s.CheckHealth(ctx)
+		}
 		if version != 1 && version != 2 {
 			return fmt.Errorf("%w: unsupported database; Wails databases require an explicit data conversion", ErrSchemaInvalid)
 		}
@@ -77,9 +80,6 @@ func (s *Sqlite) PrepareSchema(ctx context.Context) error {
 		if version == 2 {
 			if err = checkSchema(ctx, db, true); err != nil {
 				return err
-			}
-			if s.CheckHealth(ctx) == nil {
-				return nil
 			}
 		}
 		// SQLite 自身生成一致性备份；失败即停止升级，原库保持不变。
@@ -168,7 +168,13 @@ func (s *Sqlite) PrepareSchema(ctx context.Context) error {
 			}
 		}
 	}
+	if _, err = tx.ExecContext(ctx, migrationBody(migrations.AIChat)); err != nil {
+		return err
+	}
 	if err = checkSchema(ctx, tx, false); err != nil {
+		return err
+	}
+	if err = checkAIChatSchema(ctx, tx); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {

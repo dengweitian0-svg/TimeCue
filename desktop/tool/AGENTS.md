@@ -23,3 +23,5 @@
 - `d8_host_smoke.dart`：显式隔离数据目录中的 Windows release 联调入口，复用实际进程通道、托管协调、通知平台和宿主；父测试取得真实 Go 观察句柄后继续，核验 sent/未确认事实并请求共享明确退出。该入口不用于用户业务目录，正常发行构建仍使用 lib/main.dart。
 
 - `d8_host_smoke.py` 配合测试 Dart 入口运行 managed/external 两种真实宿主闭环，保存新隔离目录、PID、sent/未确认及退出证据；`d8_native_go_smoke.py` 用 --go/--driver 的明确路径验证生产原生监管的真实 Go，覆盖优雅停止、EOF 和宿主崩溃。两者仅结束自身创建并持有句柄的测试进程。
+
+- 仅本地 UI/Profile 夹具使用 ChatAcceptanceGateway；夹具采用 provider 与新 error/end 协议，不注入生产、开发或发行聊天入口。
