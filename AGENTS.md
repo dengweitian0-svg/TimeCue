@@ -24,7 +24,7 @@ Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务
 - 在新增，删除，更新 HTTP 接口后，必须要先在 Apifox 创建测试并通过后才能继续前端的开发
 - AGENTS.md 文档中，只需要声明当前模块的组成，功能，约束即可，不记录决策
 - 当前项目不需要过多的工程约束，简单够用即可
-- 临时文件、执行报告和验收记录只保留本地，不纳入提交，也不为它们新增 `.gitignore` 规则。
+- 临时文件、执行报告和验收记录只保留本地，不纳入提交，也不为它们新增 `.gitignore` 规则；`docs/archify/` 中随图表交付的执行回执与校验、验收证据作为文档产物一并提交。
 - 需要根据功能创建新分支来开发，而不是在 dev 分支中开发
 - Flutter 已接入显式 managed/external 模式、隐藏自有 Go、ready/health 身份门禁和共享退出回填；Job Object 在进程创建时关联，最终回收及宿主崩溃只清理自有进程。开发外连不停止手动 Go，启动失败可重试、运行中异常退出不自动重启
 - CI 按 PR 路径选择 Go、Flutter 或 Windows Python 更新脚本检查，纯文档 dev PR 只运行轻量分类；dev 非文档 push 后执行完整 Windows 集成验证；所有 main PR 通过 Go Windows Checks 和 Flutter Windows Checks 执行完整发布构建与原生验证；手动运行发行工作流时上传发行产物。

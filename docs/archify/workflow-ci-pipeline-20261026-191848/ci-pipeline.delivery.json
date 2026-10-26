@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "e92b2abc-4216-4786-b343-64bb35d5fa4d",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "D:\\go_project\\src\\TimeCue\\docs\\archify\\workflow-ci-pipeline-20261026-191848\\candidate.json",
+  "output": "D:\\go_project\\src\\TimeCue\\docs\\archify\\workflow-ci-pipeline-20261026-191848\\ci-pipeline.html",
+  "specification": {
+    "sha256": "249728dbdaddffa9b57ac70cf067a3574befe727f6510bd66e61ad0bad390f5d",
+    "bytes": 8887
+  },
+  "artifact": {
+    "sha256": "bcc13a8d5447e03410782d34021e941c5042464358cc2e2b63b1d45b8ebc4b1e",
+    "bytes": 836256
+  }
+}
