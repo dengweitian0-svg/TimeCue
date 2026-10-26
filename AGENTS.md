@@ -4,6 +4,7 @@
 
 Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务，Flutter 提供房间与日程本界面。已接通查询、确认、规则操作、分钟调度、全期间恢复与汇总、任务成员分页及投递领取/开始/回填协议；Go 支持固定数据目录、运行身份、托管 ready 和父端停止控制。Flutter 已实现 Windows 即时通知桥、运行内结果重传、通知点击只读定位与恢复进度/成员展示；已接入托盘、关闭隐藏、原生单实例唤回与激活参数转交；Flutter 已接入自有 Go 的隐藏创建、身份握手、共享退出和 Job 崩溃清理。
 
+- [CONTEXT.md](docs/CONTEXT.md)：领域术语表，只定义业务概念，不记录实现方案。
 - [cmd/flutter](cmd/flutter/AGENTS.md)：Go 本机 HTTP 服务启动、组件装配与退出清理。
 - [internal/api](internal/api/AGENTS.md)：HTTP 路由、日程与提醒接口。
 - [internal/app](internal/app/AGENTS.md)：服务装配、跨模块用例、正式操作边界与运行生命周期。
