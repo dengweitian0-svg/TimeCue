@@ -24,6 +24,7 @@ func (s *Runtime) newRequest(ctx context.Context, r Record, cfg ModelConfig) (Mo
 		Stream:        true,
 		MaxTokens:     cfg.MaxOutputTokens,
 		StreamOptions: map[string]bool{"include_usage": true},
+		Tools:         s.tools.Definitions(),
 	}, nil
 }
 

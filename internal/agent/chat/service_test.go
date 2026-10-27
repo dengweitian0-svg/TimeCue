@@ -44,7 +44,7 @@ func TestRealConversationSurvivesRestart(t *testing.T) {
 			MaxOutputTokens: 8192,
 		}}, nil
 	}
-	service := chat.NewService(repo, completion.NewClient(nil), settings)
+	service := chat.NewService(repo, completion.NewClient(nil), settings, nil)
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestRealConversationSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	service = chat.NewService(repo, completion.NewClient(nil), settings)
+	service = chat.NewService(repo, completion.NewClient(nil), settings, nil)
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func newFixture(t *testing.T, base string) *chat.Runtime {
 			ContextWindow:   32768,
 			MaxOutputTokens: 8192,
 		}}, nil
-	})
+	}, nil)
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestNormalStopResumesSameRunAfterRestart(t *testing.T) {
 			MaxOutputTokens: 8192,
 		}}, nil
 	}
-	service := chat.NewService(repo, completion.NewClient(nil), settings)
+	service := chat.NewService(repo, completion.NewClient(nil), settings, nil)
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestNormalStopResumesSameRunAfterRestart(t *testing.T) {
 	if err != nil || run.Status != chat.StatusRunning {
 		t.Fatalf("normal stop changed state: %s %v", run.Status, err)
 	}
-	service = chat.NewService(repo, completion.NewClient(nil), settings)
+	service = chat.NewService(repo, completion.NewClient(nil), settings, nil)
 	if err = service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestFailedFinalCommitWaitsAndDoesNotRepeatModel(t *testing.T) {
 			ContextWindow:   32768,
 			MaxOutputTokens: 8192,
 		}}, nil
-	})
+	}, nil)
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +540,7 @@ func TestRestartDoesNotReplaySupersededRun(t *testing.T) {
 			MaxOutputTokens: 8192,
 		}}, nil
 	}
-	service := chat.NewService(ports, completion.NewClient(nil), settings)
+	service := chat.NewService(ports, completion.NewClient(nil), settings, nil)
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -577,7 +577,7 @@ func TestRestartDoesNotReplaySupersededRun(t *testing.T) {
 	}
 	awaitRun(t, service, latest.RunID)
 	service.Stop()
-	restarted := chat.NewService(normal, completion.NewClient(nil), settings)
+	restarted := chat.NewService(normal, completion.NewClient(nil), settings, nil)
 	if err = restarted.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +637,7 @@ func TestRestartWithoutConfigUsesModelUnavailable(t *testing.T) {
 				MaxOutputTokens: 8192,
 			}}
 			settings := func() ([]chat.ModelConfig, error) { return configs, nil }
-			service := chat.NewService(ports, completion.NewClient(nil), settings)
+			service := chat.NewService(ports, completion.NewClient(nil), settings, nil)
 			if err := service.Start(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -676,7 +676,7 @@ func TestRestartWithoutConfigUsesModelUnavailable(t *testing.T) {
 			}
 			service.Stop()
 			configs = nil
-			restarted := chat.NewService(normal, completion.NewClient(nil), settings)
+			restarted := chat.NewService(normal, completion.NewClient(nil), settings, nil)
 			if err = restarted.Start(ctx); err != nil {
 				t.Fatal(err)
 			}

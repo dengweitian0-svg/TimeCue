@@ -121,7 +121,7 @@ func TestRecoveredOutputHandlesEmptyReplacementAttempts(t *testing.T) {
 				MaxOutputTokens: 8192,
 			}}
 			settings := func() ([]chat.ModelConfig, error) { return models, nil }
-			service := chat.NewService(ports, completion.NewClient(nil), settings)
+			service := chat.NewService(ports, completion.NewClient(nil), settings, nil)
 			if err := service.Start(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -151,7 +151,7 @@ func TestRecoveredOutputHandlesEmptyReplacementAttempts(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 			service.Stop()
-			resumed := chat.NewService(ports, completion.NewClient(nil), settings)
+			resumed := chat.NewService(ports, completion.NewClient(nil), settings, nil)
 			if err = resumed.Start(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -164,7 +164,7 @@ func TestRecoveredOutputHandlesEmptyReplacementAttempts(t *testing.T) {
 			if mode == "second_shutdown" {
 				resumed.Stop()
 				models = nil
-				again := chat.NewService(ports, completion.NewClient(nil), settings)
+				again := chat.NewService(ports, completion.NewClient(nil), settings, nil)
 				if err = again.Start(ctx); err != nil {
 					t.Fatal(err)
 				}

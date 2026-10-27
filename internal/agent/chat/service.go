@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
+
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
 	"github.com/google/uuid"
 )
@@ -29,6 +31,8 @@ type Runtime struct {
 	execution   ExecutionRepository
 	events      EventRepository
 	model       ModelClient
+	tools       *tools.Registry
+	toolStore   ToolRepository
 	settings    func() ([]ModelConfig, error)
 	mu          sync.Mutex
 	active      map[string]*execution
@@ -40,8 +44,8 @@ type Runtime struct {
 }
 
 // NewService 装配真实聊天用例，不播种任何会话。
-func NewService(storage Storage, model ModelClient, settings func() ([]ModelConfig, error)) *Runtime {
-	return &Runtime{
+func NewService(storage Storage, model ModelClient, settings func() ([]ModelConfig, error), registry *tools.Registry) *Runtime {
+	service := &Runtime{
 		runs:        storage.Runs,
 		sessions:    storage.Sessions,
 		execution:   storage.Execution,
@@ -52,7 +56,10 @@ func NewService(storage Storage, model ModelClient, settings func() ([]ModelConf
 		slots:       make(chan struct{}, 3),
 		subscribers: map[string]*subscriber{},
 		stopSignal:  make(chan struct{}),
+		toolStore:   storage.Tools,
+		tools:       registry,
 	}
+	return service
 }
 
 // Start 在 ready 前恢复活跃占用，后台沿原 input 和同一逻辑调用恢复请求。
@@ -309,69 +316,7 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 			Message: "原运行的模型配置或密钥不可用",
 		}
 	}
-	// 已完成工具阶段的恢复从完整快照登记下一次普通调用，不重发已成功的调用。
-	if previous != nil && previous.State == StateSucceeded && previous.CheckpointStage == "tool_end" {
-		request := previous.Input
-		request.Messages = previous.CheckpointContext
-		request.MaxTokens = cfg.MaxOutputTokens
-		call = ModelCall{
-			RunID:     r.RunID,
-			SessionID: r.SessionID,
-			Input:     request,
-			State:     StateRunning,
-			MaxRetry:  cfg.MaxRetry,
-		}
-	}
-	if call.ID == 0 && r.Error == nil {
-		if call.Input.Model == "" {
-			call.Input, err = s.newRequest(ctx, r, cfg)
-		}
-		if err == nil {
-			if failure := requestBudgetError(call.Input, cfg); failure != nil {
-				r.State = StateFailed
-				r.Error = failure
-				now := time.Now()
-				r.FinishedAt = &now
-				s.finish(call, r)
-				return
-			}
-			count, countErr := s.execution.OrdinaryCallCount(ctx, r.RunID)
-			err = countErr
-			limit := cfg.MaxRounds
-			if limit <= 0 {
-				limit = 20
-			}
-			if err == nil && count >= limit {
-				r.State = StateFailed
-				r.Error = &RunError{
-					Code:    "model_round_limit_exceeded",
-					Message: "已达到普通模型轮数上限，任务仍需继续",
-				}
-				now := time.Now()
-				r.FinishedAt = &now
-				s.finish(call, r)
-				return
-			}
-			if err == nil {
-				call.ID, err = s.execution.BeginCall(ctx, call)
-			}
-		}
-	}
-	if err != nil {
-		if !errors.Is(err, context.Canceled) || ctx.Err() == nil {
-			r.Error = &RunError{
-				Code:    "persistence_failed",
-				Message: "保存模型请求失败",
-			}
-		}
-	} else if r.Error == nil && ctx.Err() == nil {
-		call, r.Error = s.complete(ctx, r, call)
-		r.Output = nil
-		if call.Output != nil && call.Output.Message.Content != "" {
-			content := call.Output.Message.Content
-			r.Output = &content
-		}
-	}
+	call, r.Error = s.advance(ctx, &r, cfg, call)
 	s.mu.Lock()
 	if s.stopping && !run.requested && (r.Error == nil || r.Error.Code != "persistence_failed") {
 		s.mu.Unlock()
@@ -400,8 +345,10 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 		r.State = StateFailed
 	}
 	s.mu.Unlock()
-	call.State = r.State
-	call.Error = r.Error
+	if !call.State.Terminal() {
+		call.State = r.State
+		call.Error = r.Error
+	}
 	call.NextRetryAt = nil
 	now := time.Now()
 	r.FinishedAt = &now

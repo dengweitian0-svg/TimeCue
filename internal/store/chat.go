@@ -18,7 +18,7 @@ import (
 // chatStore 用同一 SQLite 连接实现独立持久化端口，保持跨表事务原子性。
 type chatStore struct{ db *Sqlite }
 
-// NewChatStorage 分别提供运行、会话、模型执行及事件查询端口，不打开或迁移数据库。
+// NewChatStorage 提供运行、会话、模型执行、工具事务及事件查询端口，不打开或迁移数据库。
 func NewChatStorage(db *Sqlite) chat.Storage {
 	adapter := &chatStore{db: db}
 	return chat.Storage{
@@ -26,6 +26,7 @@ func NewChatStorage(db *Sqlite) chat.Storage {
 		Sessions:  adapter,
 		Execution: adapter,
 		Events:    adapter,
+		Tools:     adapter,
 	}
 }
 
@@ -343,7 +344,20 @@ func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall, stage stri
 		Completed: []string{},
 	}
 	if stage == "model_call_end" && call.Output != nil && hasAssistantContent(call.Output.Message) {
-		state.Context = append(append([]chat.Message{}, state.Context...), call.Output.Message)
+		message := call.Output.Message
+		// 未正常接纳的参数片段或无法配对的调用不作为后续有效工具上下文。
+		if call.Error != nil || call.State != chat.StateSucceeded {
+			message.ToolCalls = nil
+		}
+		if hasAssistantContent(message) {
+			state.Context = append(append([]chat.Message{}, state.Context...), message)
+		}
+	}
+	if call.CheckpointStage == "tool_start" || call.CheckpointStage == "tool_end" {
+		stage = call.CheckpointStage
+		state.Context = call.CheckpointContext
+		state.Completed = call.CompletedTools
+		state.Last = call.LastTool
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO ai_checkpoints(run_id,model_call_id,status,state) VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET model_call_id=excluded.model_call_id,status=excluded.status,state=excluded.state`, call.RunID, call.ID, stage, jsonValue(state))
 	return err
@@ -388,12 +402,16 @@ func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, e
 		return nil, err
 	}
 	var state struct {
-		Context []chat.Message `json:"context"`
+		Context   []chat.Message `json:"context"`
+		Completed []string       `json:"completed_tool"`
+		Last      string         `json:"last_tool"`
 	}
 	if err = json.Unmarshal([]byte(progress), &state); err != nil {
 		return nil, err
 	}
 	call.CheckpointContext = state.Context
+	call.CompletedTools = state.Completed
+	call.LastTool = state.Last
 	if err = json.Unmarshal([]byte(retries), &call.RetryHistory); err != nil {
 		return nil, err
 	}
@@ -416,6 +434,9 @@ func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, e
 
 // Pause 保存正常退出时的真实部分响应，不生成终态或推进 checkpoint。
 func (s *chatStore) Pause(ctx context.Context, call chat.ModelCall) error {
+	if call.State.Terminal() {
+		return nil
+	}
 	if call.State != chat.StateRetryWait {
 		call.State = chat.StateRunning
 		call.Error = nil
@@ -490,18 +511,30 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 		if state.Terminal() {
 			return nil
 		}
+		if call.PendingTool != nil {
+			if err := finishTool(ctx, tx, call, *call.PendingTool); err != nil {
+				return err
+			}
+		}
+		var err error
+		call, err = closeToolBatch(ctx, tx, call, r)
+		if err != nil {
+			return err
+		}
 		if err := appendChatEvents(ctx, tx, call); err != nil {
 			return err
 		}
 		if call.ID != 0 {
-			if err := saveCall(ctx, tx, call, true); err != nil {
-				return err
+			if call.CheckpointStage != "tool_start" && call.CheckpointStage != "tool_end" && call.CheckpointStage != "model_call_end" {
+				if err := saveCall(ctx, tx, call, true); err != nil {
+					return err
+				}
 			}
 			if err := checkpoint(ctx, tx, call, "model_call_end"); err != nil {
 				return err
 			}
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE ai_runs SET status=?,output=?,error=?,finished_at=? WHERE run_id=?`, r.State, stringValue(r.Output), jsonValue(r.Error), timeValue(r.FinishedAt), r.RunID)
+		_, err = tx.ExecContext(ctx, `UPDATE ai_runs SET status=?,output=?,error=?,finished_at=? WHERE run_id=?`, r.State, stringValue(r.Output), jsonValue(r.Error), timeValue(r.FinishedAt), r.RunID)
 		if err != nil {
 			return err
 		}

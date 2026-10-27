@@ -164,7 +164,7 @@ func eventFixture(t *testing.T, configure ...func(*chat.Storage)) (*chat.Runtime
 			ContextWindow:   32768,
 			MaxOutputTokens: 8192,
 		}}, nil
-	})
+	}, nil)
 	if err := s.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestCancelAndNormalStopFlushPendingTail(t *testing.T) {
 					ContextWindow:   32768,
 					MaxOutputTokens: 8192,
 				}}, nil
-			})
+			}, nil)
 			if err := restarted.Start(context.Background()); err != nil {
 				t.Fatal(err)
 			}

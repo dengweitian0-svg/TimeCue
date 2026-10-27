@@ -8,3 +8,5 @@
 - `chat_test.go`：真实聊天服务、临时 SQLite 与上游响应替身驱动的 HTTP 契约回归；验证 provider、四/十字段 DTO、幂等重放、模型列表、事件分页、SSE 终态、超前 Last-Event-ID 返回 400 invalid_request 及软删除；不再人工发布事件或确认终态。
 - `chat_test.go` 验证预算拒绝首次创建 202、终态原回执重放 200、固定四字段 JSON、保留真实输入和完成时间，且不请求上游。
 - `chat_admission_test.go`：真实 SQLite、公开 HTTP 和取消终态事务故障边界验证 202 四字段回执、重放先于模型与并发门禁、同键冲突、会话/全局 409、非法请求不登记键、被拒绝键重用，以及取消投影 200、十字段概况与空 finished_at 期间继续占用。
+
+聊天 HTTP 契约隔离测试显式为 NewService 传入 nil Registry；真实注册工具、日程查询及回填由 internal/agent/chat 的公共用例集成测试覆盖。
