@@ -33,6 +33,7 @@ type Runtime struct {
 	settings    func() ([]ModelConfig, error)
 	mu          sync.Mutex
 	active      map[string]*execution
+	slots       chan struct{}
 	subscribers map[string]*subscriber
 	stopping    bool
 	started     bool
@@ -49,6 +50,7 @@ func NewService(storage Storage, model ModelClient, settings func() ([]ModelConf
 		model:       model,
 		settings:    settings,
 		active:      map[string]*execution{},
+		slots:       make(chan struct{}, 3),
 		subscribers: map[string]*subscriber{},
 		stopSignal:  make(chan struct{}),
 	}
@@ -242,6 +244,13 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 
 func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg ModelConfig, previous *ModelCall) {
 	defer func() { s.mu.Lock(); delete(s.active, r.RunID); close(run.done); s.mu.Unlock(); run.cancel() }()
+	// 持久化故障耗尽后可能遗留超过三个未完成会话，恢复推进同样受全局名额约束。
+	select {
+	case s.slots <- struct{}{}:
+		defer func() { <-s.slots }()
+	case <-ctx.Done():
+		// 排队取消或退出只保存已有事实，不等待正在执行的模型释放名额。
+	}
 	call := ModelCall{
 		RunID:     r.RunID,
 		SessionID: r.SessionID,
@@ -311,7 +320,7 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 				Message: "保存模型请求失败",
 			}
 		}
-	} else if r.Error == nil {
+	} else if r.Error == nil && ctx.Err() == nil {
 		modelCtx, cancel := context.WithCancel(ctx)
 		batch := &eventBatch{
 			repository: s.execution,

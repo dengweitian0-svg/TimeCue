@@ -58,13 +58,26 @@ func admissionInput(session, key string) chat.CreateRunInput {
 
 type admissionModel struct {
 	starts  atomic.Int32
+	active  atomic.Int32
+	peak    atomic.Int32
+	started chan struct{}
 	release chan struct{}
 	failure *chat.RunError
 }
 
 // Complete 仅在模型边界控制结束时机，便于并发验证真实服务和 SQLite。
 func (m *admissionModel) Complete(ctx context.Context, _ chat.ModelConfig, _ chat.ModelRequest, _ func(chat.EventType, string) error) (chat.ModelOutput, *chat.RunError) {
+	active := m.active.Add(1)
+	defer m.active.Add(-1)
+	for peak := m.peak.Load(); active > peak; peak = m.peak.Load() {
+		if m.peak.CompareAndSwap(peak, active) {
+			break
+		}
+	}
 	m.starts.Add(1)
+	if m.started != nil {
+		m.started <- struct{}{}
+	}
 	select {
 	case <-m.release:
 		return chat.ModelOutput{
@@ -76,6 +89,63 @@ func (m *admissionModel) Complete(ctx context.Context, _ chat.ModelConfig, _ cha
 		}, m.failure
 	case <-ctx.Done():
 		return chat.ModelOutput{}, nil
+	}
+}
+
+// TestRecoveryQueuesExcessUnfinishedSessions 验证保存耗尽遗留超过三个未完成会话时，恢复仍只并发推进三个。
+func TestRecoveryQueuesExcessUnfinishedSessions(t *testing.T) {
+	_, ports, _ := admissionDatabase(t)
+	ctx := context.Background()
+	for i := 0; i < 4; i++ {
+		if err := ports.Runs.Create(ctx, chat.Record{
+			Run: chat.Run{
+				RunID:     fmt.Sprintf("recover-%d", i),
+				SessionID: fmt.Sprintf("session-%d", i),
+				Provider:  "test",
+				Model:     "model",
+				Input:     "原始输入",
+				CreatedAt: time.Now(),
+			},
+			State:          chat.StateRunning,
+			IdempotencyKey: "key",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := &admissionModel{
+		started: make(chan struct{}, 4),
+		release: make(chan struct{}),
+	}
+	s := startAdmissionService(t, ports, m, admissionSettings)
+	for i := 0; i < 3; i++ {
+		select {
+		case <-m.started:
+		case <-time.After(3 * time.Second):
+			t.Fatal("前三个恢复运行未启动")
+		}
+	}
+	select {
+	case <-m.started:
+		t.Fatal("第四个恢复运行绕过三个并发名额")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := s.CreateRun(ctx, admissionInput("new-session", "key")); !errors.Is(err, chat.ErrSessionConcurrencyLimit) {
+		t.Fatalf("恢复未重建全部占用: %v", err)
+	}
+	// 不依赖恢复的调度顺序，所有原运行都能通过公共用例取消并保存终态。
+	for i := 0; i < 4; i++ {
+		if _, err := s.CancelRun(ctx, fmt.Sprintf("recover-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if m.peak.Load() > 3 {
+		t.Fatalf("恢复执行超过全局上限: %d", m.peak.Load())
+	}
+	for i := 0; i < 4; i++ {
+		run, err := s.GetRun(ctx, fmt.Sprintf("recover-%d", i))
+		if err != nil || run.FinishedAt == nil || run.Status != chat.StatusCancelled {
+			t.Fatalf("排队运行丢失或被伪造终态: %+v %v", run, err)
+		}
 	}
 }
 
