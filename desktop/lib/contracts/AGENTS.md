@@ -16,3 +16,4 @@ PendingScope 表达今日和历史两个读取范围，pendingFor/pendingTotalFo
 - DeliveryRuntime 保留可选 PID、API 版本和不可变能力列表，verifyManaged 严格核验预期实例、所持有进程的 PID 及四项 D4 能力；原外连投递调用保持兼容，不将运行身份当作持久业务键。
 
 - T01 的 run 含 provider、创建回执含 status/output/error；failed 可有部分 output；thinking/text 只含 content，error 独立，end 只含 status。旧 tool/stop_reason 协议已移除，保留后续 tool_start/tool_result 的解析边界。
+- ChatEventHistoryGateway 与 ChatEventPage 定义事件分页；SSE 与分页使用同一事件解码器，保留原始 data 和 compact 控制记录。ChatToolResultData 保留 tool_call_id、任意原始 JSON output 和独立 error；cancelled 概况允许 finished_at=null，不据此确认真正结束。

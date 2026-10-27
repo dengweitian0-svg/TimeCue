@@ -214,6 +214,8 @@ type ModelCall struct {
 	State     RunState
 	Error     *RunError
 	MaxRetry  int
+	// PendingEvents 与调用快照一起提交，序号只在事务成功后对外可见。
+	PendingEvents []Event
 }
 
 // RunRepository 管理运行准入、幂等回读与运行查询。
@@ -248,8 +250,8 @@ type ExecutionRepository interface {
 	ReadCall(context.Context, string) (*ModelCall, error)
 	// Pause 保存正常退出时的部分响应，不推进终态。
 	Pause(context.Context, ModelCall) error
-	// SaveDelta 原子保存部分模型输出与持久化事件。
-	SaveDelta(context.Context, ModelCall, Event) error
+	// SaveEvents 原子保存部分模型输出及待提交的原始事件批次。
+	SaveEvents(context.Context, ModelCall) error
 	// Finish 原子提交模型结果、usage、checkpoint、运行终态及尾部事件。
 	Finish(context.Context, ModelCall, Record) error
 }

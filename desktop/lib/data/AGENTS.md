@@ -32,3 +32,4 @@ HTTP 仓储使用 scope=today/history 的独立首分页、游标链、位置、
 - 托管健康读取同时绑定 PID；运行身份/PID 错配立即封锁仓储并通过 onManagedRuntimeLost 回流到 ManagedBackend，进入全应用失效状态，不能仅停止通知桥后仍允许页面继续操作。
 
 - 创建请求包含 provider，接受 202 新建/running 重放和 200 终态回执；GET /v1/model 只读取可用性，不传输 Key。
+- 聊天网关同时实现 ChatEventHistoryGateway，通过 GET /v1/run/:run_id/events 完整读取 seq/type/data 和 next_after_seq/has_more，不裁剪大事件、不保存消费游标。空页须保留请求游标；SSE 204 只发出恢复信号，不伪造正文或结束事件。

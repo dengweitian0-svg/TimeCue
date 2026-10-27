@@ -410,6 +410,9 @@ class _ChatSpreadState extends State<ChatSpread> {
               },
               onRetryCreate: (id) => chat.retryCreate(id),
               onRetryConnection: (id) => chat.retryConnection(id),
+              onLoadMoreEvents: chat.supportsEventHistory
+                  ? (id) => chat.loadMoreEvents(id)
+                  : null,
             );
       final composer = ChatComposer(
         controller: _draftController,

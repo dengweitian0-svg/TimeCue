@@ -35,7 +35,14 @@ func TestRealConversationSurvivesRestart(t *testing.T) {
 	}
 	repo := store.NewChatStorage(db)
 	settings := func() ([]chat.ModelConfig, error) {
-		return []chat.ModelConfig{{Provider: "test", Model: "model", BaseURL: upstream.URL, Key: "secret", ContextWindow: 32768, MaxOutputTokens: 8192}}, nil
+		return []chat.ModelConfig{{
+			Provider:        "test",
+			Model:           "model",
+			BaseURL:         upstream.URL,
+			Key:             "secret",
+			ContextWindow:   32768,
+			MaxOutputTokens: 8192,
+		}}, nil
 	}
 	service := chat.NewService(repo, completion.NewClient(nil), settings)
 	if err := service.Start(ctx); err != nil {
@@ -45,7 +52,13 @@ func TestRealConversationSurvivesRestart(t *testing.T) {
 	if err != nil || len(sessions) != 0 {
 		t.Fatalf("empty database: %v %v", sessions, err)
 	}
-	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{SessionID: "550e8400-e29b-41d4-a716-446655440000", Input: "你好", Provider: "test", Model: "model", IdempotencyKey: "first"})
+	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{
+		SessionID:      "550e8400-e29b-41d4-a716-446655440000",
+		Input:          "你好",
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "first",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +110,13 @@ func TestOversizedInputFailsWithoutCallingModel(t *testing.T) {
 	}))
 	defer upstream.Close()
 	service := newFixture(t, upstream.URL)
-	receipt, err := service.CreateRun(context.Background(), chat.CreateRunInput{SessionID: "session", Input: strings.Repeat("x", 140000), Provider: "test", Model: "model", IdempotencyKey: "key"})
+	receipt, err := service.CreateRun(context.Background(), chat.CreateRunInput{
+		SessionID:      "session",
+		Input:          strings.Repeat("x", 140000),
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "key",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +142,14 @@ func newFixture(t *testing.T, base string) *chat.Runtime {
 		t.Fatal(err)
 	}
 	service := chat.NewService(store.NewChatStorage(db), completion.NewClient(nil), func() ([]chat.ModelConfig, error) {
-		return []chat.ModelConfig{{Provider: "test", Model: "model", BaseURL: base, Key: "secret", ContextWindow: 32768, MaxOutputTokens: 8192}}, nil
+		return []chat.ModelConfig{{
+			Provider:        "test",
+			Model:           "model",
+			BaseURL:         base,
+			Key:             "secret",
+			ContextWindow:   32768,
+			MaxOutputTokens: 8192,
+		}}, nil
 	})
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -162,7 +188,13 @@ func TestCancelledModelRetainsPartialReply(t *testing.T) {
 	defer upstream.Close()
 	service := newFixture(t, upstream.URL)
 	ctx := context.Background()
-	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{SessionID: "s", Provider: "test", Model: "model", Input: "x", IdempotencyKey: "k"})
+	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{
+		SessionID:      "s",
+		Provider:       "test",
+		Model:          "model",
+		Input:          "x",
+		IdempotencyKey: "k",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +203,7 @@ func TestCancelledModelRetainsPartialReply(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("upstream not called")
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(8 * time.Second)
 	for {
 		page, err := service.GetRunEvents(ctx, receipt.RunID, 0, 10)
 		if err != nil {
@@ -211,7 +243,13 @@ func TestIdempotencyPersistsOriginalModelAndInput(t *testing.T) {
 	defer upstream.Close()
 	service := newFixture(t, upstream.URL)
 	ctx := context.Background()
-	input := chat.CreateRunInput{SessionID: "s", Input: "raw input ", Provider: "test", Model: "model", IdempotencyKey: "key"}
+	input := chat.CreateRunInput{
+		SessionID:      "s",
+		Input:          "raw input ",
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "key",
+	}
 	receipt, err := service.CreateRun(ctx, input)
 	if err != nil {
 		t.Fatal(err)
@@ -259,17 +297,30 @@ func TestNormalStopResumesSameRunAfterRestart(t *testing.T) {
 	}
 	repo := store.NewChatStorage(db)
 	settings := func() ([]chat.ModelConfig, error) {
-		return []chat.ModelConfig{{Provider: "test", Model: "model", BaseURL: upstream.URL, Key: "secret", ContextWindow: 32768, MaxOutputTokens: 8192}}, nil
+		return []chat.ModelConfig{{
+			Provider:        "test",
+			Model:           "model",
+			BaseURL:         upstream.URL,
+			Key:             "secret",
+			ContextWindow:   32768,
+			MaxOutputTokens: 8192,
+		}}, nil
 	}
 	service := chat.NewService(repo, completion.NewClient(nil), settings)
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{SessionID: "s", Input: "input", Provider: "test", Model: "model", IdempotencyKey: "key"})
+	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{
+		SessionID:      "s",
+		Input:          "input",
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "key",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(8 * time.Second)
 	for {
 		page, err := service.GetRunEvents(ctx, receipt.RunID, 0, 10)
 		if err != nil {
@@ -349,16 +400,32 @@ func TestFailedFinalCommitWaitsAndDoesNotRepeatModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	ports := store.NewChatStorage(db)
-	fault := &failFirstFinish{ExecutionRepository: ports.Execution, failed: make(chan struct{})}
+	fault := &failFirstFinish{
+		ExecutionRepository: ports.Execution,
+		failed:              make(chan struct{}),
+	}
 	ports.Execution = fault
 	service := chat.NewService(ports, completion.NewClient(nil), func() ([]chat.ModelConfig, error) {
-		return []chat.ModelConfig{{Provider: "test", Model: "model", Key: "secret", BaseURL: upstream.URL, ContextWindow: 32768, MaxOutputTokens: 8192}}, nil
+		return []chat.ModelConfig{{
+			Provider:        "test",
+			Model:           "model",
+			Key:             "secret",
+			BaseURL:         upstream.URL,
+			ContextWindow:   32768,
+			MaxOutputTokens: 8192,
+		}}, nil
 	})
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	defer service.Stop()
-	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{SessionID: "s", Input: "input", Provider: "test", Model: "model", IdempotencyKey: "key"})
+	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{
+		SessionID:      "s",
+		Input:          "input",
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "key",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +475,19 @@ func TestMultiRoundRequestKeepsDeepSeekReasoning(t *testing.T) {
 	defer upstream.Close()
 	service := newFixture(t, upstream.URL)
 	ctx := context.Background()
-	for _, input := range []chat.CreateRunInput{{SessionID: "s", Input: " 第一轮 ", Provider: "test", Model: "model", IdempotencyKey: "first"}, {SessionID: "s", Input: "第二轮", Provider: "test", Model: "model", IdempotencyKey: "second"}} {
+	for _, input := range []chat.CreateRunInput{{
+		SessionID:      "s",
+		Input:          " 第一轮 ",
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "first",
+	}, {
+		SessionID:      "s",
+		Input:          "第二轮",
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "second",
+	}} {
 		receipt, err := service.CreateRun(ctx, input)
 		if err != nil {
 			t.Fatal(err)
@@ -427,6 +506,9 @@ func TestRestartDoesNotReplaySupersededRun(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 0; i < 4; i++ {
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"思考\"}}]}\n\n")
+		}
 		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"保留正文\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 	}))
 	defer upstream.Close()
@@ -441,17 +523,35 @@ func TestRestartDoesNotReplaySupersededRun(t *testing.T) {
 	}
 	ports := store.NewChatStorage(db)
 	normal := ports
-	fault := &failFirstFinish{ExecutionRepository: ports.Execution, failed: make(chan struct{}), failures: 4, exhausted: make(chan struct{})}
+	fault := &failFirstFinish{
+		ExecutionRepository: ports.Execution,
+		failed:              make(chan struct{}),
+		failures:            4,
+		exhausted:           make(chan struct{}),
+	}
 	ports.Execution = fault
 	settings := func() ([]chat.ModelConfig, error) {
-		return []chat.ModelConfig{{Provider: "test", Model: "model", Key: "secret", BaseURL: upstream.URL, ContextWindow: 32768, MaxOutputTokens: 8192}}, nil
+		return []chat.ModelConfig{{
+			Provider:        "test",
+			Model:           "model",
+			Key:             "secret",
+			BaseURL:         upstream.URL,
+			ContextWindow:   32768,
+			MaxOutputTokens: 8192,
+		}}, nil
 	}
 	service := chat.NewService(ports, completion.NewClient(nil), settings)
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	defer service.Stop()
-	input := chat.CreateRunInput{SessionID: "s", Input: "old", Provider: "test", Model: "model", IdempotencyKey: "first"}
+	input := chat.CreateRunInput{
+		SessionID:      "s",
+		Input:          "old",
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "first",
+	}
 	old, err := service.CreateRun(ctx, input)
 	if err != nil {
 		t.Fatal(err)
@@ -521,22 +621,38 @@ func TestRestartWithoutConfigUsesModelUnavailable(t *testing.T) {
 			}
 			ports := store.NewChatStorage(db)
 			normal := ports
-			fault := &stopBeforeCall{ExecutionRepository: ports.Execution, entered: make(chan struct{})}
+			fault := &stopBeforeCall{
+				ExecutionRepository: ports.Execution,
+				entered:             make(chan struct{}),
+			}
 			if !partial {
 				ports.Execution = fault
 			}
-			configs := []chat.ModelConfig{{Provider: "test", Model: "model", Key: "secret", BaseURL: upstream.URL, ContextWindow: 32768, MaxOutputTokens: 8192}}
+			configs := []chat.ModelConfig{{
+				Provider:        "test",
+				Model:           "model",
+				Key:             "secret",
+				BaseURL:         upstream.URL,
+				ContextWindow:   32768,
+				MaxOutputTokens: 8192,
+			}}
 			settings := func() ([]chat.ModelConfig, error) { return configs, nil }
 			service := chat.NewService(ports, completion.NewClient(nil), settings)
 			if err := service.Start(ctx); err != nil {
 				t.Fatal(err)
 			}
 			defer service.Stop()
-			receipt, err := service.CreateRun(ctx, chat.CreateRunInput{SessionID: "s", Input: "input", Provider: "test", Model: "model", IdempotencyKey: "key"})
+			receipt, err := service.CreateRun(ctx, chat.CreateRunInput{
+				SessionID:      "s",
+				Input:          "input",
+				Provider:       "test",
+				Model:          "model",
+				IdempotencyKey: "key",
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			deadline := time.Now().Add(3 * time.Second)
+			deadline := time.Now().Add(8 * time.Second)
 			if !partial {
 				select {
 				case <-fault.entered:

@@ -60,3 +60,4 @@
 - `cat_chat_hotspot_test.dart`：三时段资源与 cover 几何、透明猫咪热区、裁切、鼠标/键盘入口、关闭焦点返回和鼠标关闭后的提示/焦点框清理，猫咪悬停提示与房间入口共用的颜色，以及房间四入口的半透明颜色、胶囊形状和添加入口禁用状态。可选 `TIMECUE_CAPTURE_CHAT=true` 输出本地 Widget PNG；截图与替身键盘操作不替代 Windows 真机、DPI、输入法及跨显示器验收。
 
 - `chat_t01_contract_test.dart` 与迁移后的聊天测试验证四字段创建回执、provider、独立 error/end、content-only 增量、失败部分回复、模型选择器及终态回执直接恢复；HTTP/SSE 替身只用于前端隔离测试，不作为实际模型验收。
+- `chat_t02_history_test.dart`：本机真实 HttpServer、HttpChatGateway、ViewModel 与 Widget 验证分页/SSE 重叠去重及补缺、原始时间线与最终正文分离、204 恢复、按需翻页、重建后从零消费、取消收尾与取消投影回执，以及工具 ID 复用、原始 JSON 结果及折叠详情。覆盖取消查询先确认终态时补齐多页尾批、补读失败后的分页重试，以及在途旧页与取消补读串行应用；终态正文保持独立投影，已结束运行不因补读失败重新订阅或占用名额。工具事件来自协议夹具，不作为真实业务工具执行或等待工具取消的验收。

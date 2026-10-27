@@ -127,7 +127,7 @@ void main() {
       () => chat.selectedConversation!.activeRun!.toolCalls.length == 18,
     );
     await _scrollToLatest(tester, sessionId);
-    final lastTool = find.byKey(const ValueKey('chat-tool-tool-call-17'));
+    final lastTool = find.byKey(const ValueKey('chat-tool-19:tool-call-17'));
     if (lastTool.evaluate().isEmpty) {
       await tester.tap(find.text('Tool calling · 已发起 18 次调用'));
       await tester.pump(const Duration(milliseconds: 250));

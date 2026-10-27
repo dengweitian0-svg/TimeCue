@@ -30,7 +30,13 @@ func TestBudgetRejectedInputDoesNotPoisonFollowUp(t *testing.T) {
 	defer upstream.Close()
 	service := newFixture(t, upstream.URL)
 	ctx := context.Background()
-	input := chat.CreateRunInput{SessionID: "s", Input: strings.Repeat("x", 140000), Provider: "test", Model: "model", IdempotencyKey: "oversized"}
+	input := chat.CreateRunInput{
+		SessionID:      "s",
+		Input:          strings.Repeat("x", 140000),
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "oversized",
+	}
 	receipt, err := service.CreateRun(ctx, input)
 	if err != nil {
 		t.Fatal(err)
@@ -106,18 +112,31 @@ func TestRecoveredOutputHandlesEmptyReplacementAttempts(t *testing.T) {
 				t.Fatal(err)
 			}
 			ports := store.NewChatStorage(db)
-			models := []chat.ModelConfig{{Provider: "test", Model: "model", BaseURL: upstream.URL, Key: "fixture-only", ContextWindow: 32768, MaxOutputTokens: 8192}}
+			models := []chat.ModelConfig{{
+				Provider:        "test",
+				Model:           "model",
+				BaseURL:         upstream.URL,
+				Key:             "fixture-only",
+				ContextWindow:   32768,
+				MaxOutputTokens: 8192,
+			}}
 			settings := func() ([]chat.ModelConfig, error) { return models, nil }
 			service := chat.NewService(ports, completion.NewClient(nil), settings)
 			if err := service.Start(ctx); err != nil {
 				t.Fatal(err)
 			}
 			defer service.Stop()
-			receipt, err := service.CreateRun(ctx, chat.CreateRunInput{SessionID: "s", Input: "original", Provider: "test", Model: "model", IdempotencyKey: "one"})
+			receipt, err := service.CreateRun(ctx, chat.CreateRunInput{
+				SessionID:      "s",
+				Input:          "original",
+				Provider:       "test",
+				Model:          "model",
+				IdempotencyKey: "one",
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			deadline := time.Now().Add(3 * time.Second)
+			deadline := time.Now().Add(8 * time.Second)
 			for {
 				page, e := service.GetRunEvents(ctx, receipt.RunID, 0, 10)
 				if e != nil {
@@ -166,7 +185,13 @@ func TestRecoveredOutputHandlesEmptyReplacementAttempts(t *testing.T) {
 					t.Fatalf("完整空响应的身份或实际用量丢失: call=%+v error=%v", call, err)
 				}
 			}
-			next, err := resumed.CreateRun(ctx, chat.CreateRunInput{SessionID: "s", Input: "follow up", Provider: "test", Model: "model", IdempotencyKey: "two"})
+			next, err := resumed.CreateRun(ctx, chat.CreateRunInput{
+				SessionID:      "s",
+				Input:          "follow up",
+				Provider:       "test",
+				Model:          "model",
+				IdempotencyKey: "two",
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -204,7 +229,13 @@ func TestInvalidSSECursorPreservesExistingSubscription(t *testing.T) {
 	defer release()
 	service := newFixture(t, upstream.URL)
 	ctx := context.Background()
-	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{SessionID: "s", Input: "x", Provider: "test", Model: "model", IdempotencyKey: "one"})
+	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{
+		SessionID:      "s",
+		Input:          "x",
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "one",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

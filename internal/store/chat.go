@@ -21,7 +21,12 @@ type chatStore struct{ db *Sqlite }
 // NewChatStorage 分别提供运行、会话、模型执行及事件查询端口，不打开或迁移数据库。
 func NewChatStorage(db *Sqlite) chat.Storage {
 	adapter := &chatStore{db: db}
-	return chat.Storage{Runs: adapter, Sessions: adapter, Execution: adapter, Events: adapter}
+	return chat.Storage{
+		Runs:      adapter,
+		Sessions:  adapter,
+		Execution: adapter,
+		Events:    adapter,
+	}
 }
 
 func checkAIChatSchema(ctx context.Context, db schemaReader) error {
@@ -158,7 +163,13 @@ func (s *chatStore) Create(ctx context.Context, r chat.Record) error {
 		if err != nil {
 			return err
 		}
-		return appendChatEvent(ctx, tx, chat.ModelCall{RunID: r.RunID, SessionID: r.SessionID}, chat.Event{Type: chat.EventStart, Data: json.RawMessage(`{}`)})
+		return appendChatEvent(ctx, tx, chat.ModelCall{
+			RunID:     r.RunID,
+			SessionID: r.SessionID,
+		}, chat.Event{
+			Type: chat.EventStart,
+			Data: json.RawMessage(`{}`),
+		})
 	})
 }
 
@@ -177,7 +188,10 @@ func (s *chatStore) ReadRun(ctx context.Context, id string, visible bool) (chat.
 
 // Session 查询可见会话与升序运行 ID。
 func (s *chatStore) Session(ctx context.Context, id string) (chat.Session, error) {
-	result := chat.Session{SessionID: id, RunIDs: []string{}}
+	result := chat.Session{
+		SessionID: id,
+		RunIDs:    []string{},
+	}
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `SELECT session_name FROM ai_sessions WHERE session_id=? AND deleted=0`, id).Scan(&result.SessionName)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -263,7 +277,10 @@ func (s *chatStore) History(ctx context.Context, session string) ([]chat.Message
 		if err = rows.Scan(&input, &status, &output); err != nil {
 			return nil, err
 		}
-		result = append(result, chat.Message{Role: "user", Content: input})
+		result = append(result, chat.Message{
+			Role:    "user",
+			Content: input,
+		})
 		if output.Valid {
 			var value chat.ModelOutput
 			if err = json.Unmarshal([]byte(output.String), &value); err != nil {
@@ -274,7 +291,10 @@ func (s *chatStore) History(ctx context.Context, session string) ([]chat.Message
 			}
 		}
 		if status != "succeeded" {
-			result = append(result, chat.Message{Role: "user", Content: "上一轮回复未完成；其操作表述不代表业务已经生效。"})
+			result = append(result, chat.Message{
+				Role:    "user",
+				Content: "上一轮回复未完成；其操作表述不代表业务已经生效。",
+			})
 		}
 	}
 	return result, rows.Err()
@@ -285,7 +305,10 @@ func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall, stage stri
 		Context   []chat.Message `json:"context"`
 		Completed []string       `json:"completed_tool"`
 		Last      string         `json:"last_tool"`
-	}{Context: call.Input.Messages, Completed: []string{}}
+	}{
+		Context:   call.Input.Messages,
+		Completed: []string{},
+	}
 	if stage == "model_call_end" && call.Output != nil {
 		state.Context = append(append([]chat.Message{}, state.Context...), call.Output.Message)
 	}
@@ -347,7 +370,21 @@ func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, e
 func (s *chatStore) Pause(ctx context.Context, call chat.ModelCall) error {
 	call.State = chat.StateRunning
 	call.Error = nil
-	return s.transaction(ctx, func(tx *sql.Tx) error { return saveCall(ctx, tx, call, false) })
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		if err := saveCall(ctx, tx, call, false); err != nil {
+			return err
+		}
+		return appendChatEvents(ctx, tx, call)
+	})
+}
+
+func appendChatEvents(ctx context.Context, tx *sql.Tx, call chat.ModelCall) error {
+	for _, e := range call.PendingEvents {
+		if err := appendChatEvent(ctx, tx, call, e); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func appendChatEvent(ctx context.Context, tx *sql.Tx, call chat.ModelCall, e chat.Event) error {
@@ -379,13 +416,13 @@ func saveCall(ctx context.Context, tx *sql.Tx, call chat.ModelCall, finished boo
 	return err
 }
 
-// SaveDelta 原子保存已接收的部分响应及可回放事件，提交后才通知订阅。
-func (s *chatStore) SaveDelta(ctx context.Context, call chat.ModelCall, e chat.Event) error {
+// SaveEvents 原子保存部分响应与原始事件批次，订阅只读取已提交数据。
+func (s *chatStore) SaveEvents(ctx context.Context, call chat.ModelCall) error {
 	return s.transaction(ctx, func(tx *sql.Tx) error {
 		if err := saveCall(ctx, tx, call, false); err != nil {
 			return err
 		}
-		return appendChatEvent(ctx, tx, call, e)
+		return appendChatEvents(ctx, tx, call)
 	})
 }
 
@@ -398,6 +435,9 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 		}
 		if state.Terminal() {
 			return nil
+		}
+		if err := appendChatEvents(ctx, tx, call); err != nil {
+			return err
 		}
 		if call.ID != 0 {
 			if err := saveCall(ctx, tx, call, true); err != nil {
@@ -413,18 +453,27 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 		}
 		if r.Error != nil {
 			data, _ := json.Marshal(r.Error)
-			if err = appendChatEvent(ctx, tx, call, chat.Event{Type: chat.EventError, Data: data}); err != nil {
+			if err = appendChatEvent(ctx, tx, call, chat.Event{
+				Type: chat.EventError,
+				Data: data,
+			}); err != nil {
 				return err
 			}
 		}
 		data, _ := json.Marshal(chat.EndData{Status: r.State.Public()})
-		return appendChatEvent(ctx, tx, call, chat.Event{Type: chat.EventEnd, Data: data})
+		return appendChatEvent(ctx, tx, call, chat.Event{
+			Type: chat.EventEnd,
+			Data: data,
+		})
 	})
 }
 
 // Events 按持久化序号完整读取单条事件，多取一条判断是否有下一页。
 func (s *chatStore) Events(ctx context.Context, id string, after int64, limit int) (chat.EventPage, error) {
-	page := chat.EventPage{Events: []chat.Event{}, NextAfterSeq: after}
+	page := chat.EventPage{
+		Events:       []chat.Event{},
+		NextAfterSeq: after,
+	}
 	db, err := s.db.handle()
 	if err != nil {
 		return page, err

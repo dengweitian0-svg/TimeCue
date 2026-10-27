@@ -172,9 +172,9 @@ void main() {
       ),
       hasLength(2),
     );
-    expect(find.byKey(const ValueKey('chat-tool-tool-a')), findsOneWidget);
-    expect(find.byKey(const ValueKey('chat-tool-tool-b')), findsOneWidget);
-    expect(find.byKey(const ValueKey('chat-tool-tool-c')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-tool-2:tool-a')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-tool-3:tool-b')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-tool-4:tool-c')), findsOneWidget);
 
     final source = gateway.longChatMarkdown;
     gateway.emitText(runId, 5, source);
@@ -235,7 +235,7 @@ void main() {
     );
     expect(chat.selectedConversation!.activeRun!.toolCalls, hasLength(24));
 
-    final finalTool = find.byKey(const ValueKey('chat-tool-narrow-tool-23'));
+    final finalTool = find.byKey(const ValueKey('chat-tool-25:narrow-tool-23'));
     await tester.ensureVisible(finalTool);
     await tester.pump();
     expect(finalTool, findsOneWidget);

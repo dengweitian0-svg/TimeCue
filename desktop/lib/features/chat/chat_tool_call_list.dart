@@ -1,24 +1,15 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../../theme/notebook_theme.dart';
+import 'chat_view_model.dart';
 
-/// 展示一个 run 已收到的工具调用名称和稳定调用编号。
-class ChatToolCallList<T> extends StatelessWidget {
-  const ChatToolCallList({
-    super.key,
-    required this.calls,
-    required this.idOf,
-    required this.nameOf,
-  });
+/// 按开始事件的实例身份展示工具请求及其原始结果。
+class ChatToolCallList extends StatelessWidget {
+  const ChatToolCallList({super.key, required this.calls});
 
-  /// 按首次收到顺序排列的工具调用。
-  final List<T> calls;
-
-  /// 返回工具调用身份，不使用名称作为去重键。
-  final String Function(T call) idOf;
-
-  /// 返回协议中的 function.name。
-  final String Function(T call) nameOf;
+  final List<ChatToolCall> calls;
 
   @override
   Widget build(BuildContext context) {
@@ -27,58 +18,68 @@ class ChatToolCallList<T> extends StatelessWidget {
       key: const ValueKey('chat-tool-call-list'),
       initiallyExpanded: true,
       tilePadding: EdgeInsets.zero,
-      childrenPadding: const EdgeInsets.only(bottom: 8),
       title: Text(
         'Tool calling · 已发起 ${calls.length} 次调用',
         style: const TextStyle(color: NotebookTheme.ink, fontSize: 12),
       ),
       children: [
         for (var i = 0; i < calls.length; i++)
-          _ToolCallRow(
-            key: ValueKey('chat-tool-${idOf(calls[i])}'),
-            index: i + 1,
-            name: nameOf(calls[i]),
+          ExpansionTile(
+            key: ValueKey('chat-tool-${calls[i].instanceId}'),
+            tilePadding: EdgeInsets.zero,
+            leading: Text(
+              '#${i + 1}',
+              style: const TextStyle(color: NotebookTheme.ink),
+            ),
+            title: Text(
+              calls[i].name,
+              style: const TextStyle(color: NotebookTheme.ink, fontSize: 13),
+            ),
+            subtitle: Text(
+              !calls[i].hasResult
+                  ? '已发起'
+                  : calls[i].error?.code == 'tool_skipped'
+                  ? '已跳过'
+                  : calls[i].error != null
+                  ? '处理失败'
+                  : '已返回',
+              style: const TextStyle(fontSize: 11),
+            ),
+            childrenPadding: const EdgeInsets.only(left: 8, bottom: 12),
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: SelectableText('工具 ID：${calls[i].id}'),
+              ),
+              _JsonDetail(label: '参数', value: calls[i].argument),
+              if (calls[i].hasResult)
+                _JsonDetail(label: '原始结果', value: calls[i].output),
+              if (calls[i].error case final error?)
+                _JsonDetail(
+                  label: '错误',
+                  value: {'code': error.code, 'message': error.message},
+                ),
+            ],
           ),
       ],
     );
   }
 }
 
-class _ToolCallRow extends StatelessWidget {
-  const _ToolCallRow({super.key, required this.index, required this.name});
-
-  final int index;
-  final String name;
+class _JsonDetail extends StatelessWidget {
+  const _JsonDetail({required this.label, required this.value});
+  final String label;
+  final Object? value;
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 38,
-          child: Text(
-            '#$index',
-            style: const TextStyle(color: NotebookTheme.ink),
-          ),
-        ),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SelectableText(
-                name,
-                style: const TextStyle(color: NotebookTheme.ink),
-              ),
-              const Text(
-                '已发起',
-                style: TextStyle(fontSize: 11, color: NotebookTheme.ink),
-              ),
-            ],
-          ),
-        ),
-      ],
+    padding: const EdgeInsets.only(top: 8),
+    child: Align(
+      alignment: Alignment.centerLeft,
+      child: SelectableText(
+        '$label：\n${const JsonEncoder.withIndent('  ').convert(value)}',
+        style: const TextStyle(fontSize: 12),
+      ),
     ),
   );
 }

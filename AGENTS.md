@@ -21,6 +21,7 @@ Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务
 # 约束
 - 如果项目中存在 `.codex/` 目录，开始任务前先读取其中的 `AGENTS.md`（若存在），并遵循其适用规则。
 - 代码注释使用中文；可导出方法或函数必须添加中文注释；模块变更同步对应 AGENTS.md 和工程说明。Go 管理日程规则与提醒状态，Flutter 通过业务接口操作；平台副作用结果回传 Go。开发分支与检查流程见 [贡献规范](docs/CONTRIBUTING.md)
+- Go 结构体初始化传入两个及以上字段时，字段必须逐行书写，不得挤在同一行；完成后使用 gofmt 格式化。
 - 任何改动数据库表结构的操作必须获取请求
 - 在新增，删除，更新 HTTP 接口后，必须要先在 Apifox 创建测试并通过后才能继续前端的开发
 - AGENTS.md 文档中，只需要声明当前模块的组成，功能，约束即可，不记录决策
@@ -31,3 +32,4 @@ Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务
 - CI 按 PR 路径选择 Go、Flutter 或 Windows Python 更新脚本检查，纯文档 dev PR 只运行轻量分类；dev 非文档 push 后执行完整 Windows 集成验证；所有 main PR 通过 Go Windows Checks 和 Flutter Windows Checks 执行完整发布构建与原生验证；手动运行发行工作流时上传发行产物。
 
 - T01 文字对话使用真实 Chat Completions 与 SQLite 版本 3 的六张 AI 表；缺少 Key 仍正常启动，配置与当前切片边界见 [docs/CHAT.md](docs/CHAT.md)。
+- T02 使用连续 seq 的五条/五秒事件批次、原子尾批和持久化 SSE 接续；Flutter 按需翻阅原始时间线、去重补缺并在 204 后恢复，最终正文独立使用 run.output，取消收尾保留占用，工具详情保留原始 JSON。不增加数据库结构或模型调用分组 DTO。

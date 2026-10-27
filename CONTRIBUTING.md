@@ -79,6 +79,8 @@ git switch -c feat/12-recurring-reminder
 
 ## Commit 规范
 
+Go 结构体初始化传入两个及以上字段时，字段必须逐行书写，不得挤在同一行；完成后使用 `gofmt` 格式化。
+
 推荐使用 Conventional Commits：
 
 - `feat: 添加周期提醒`

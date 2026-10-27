@@ -13,6 +13,17 @@ void main() {
   late final List<String> requests = [];
   late final List<String?> cursors = [];
 
+  test('事件分页保留原始大增量与独立下一页位置', () async {
+    final page = await gateway.getRunEvents('run-1', afterSeq: 4, limit: 2);
+    expect(page.events.map((e) => e.eventId), [5, 6]);
+    expect(
+      (page.events.first.data as ChatContentEventData).content,
+      '完整思考' * 5000,
+    );
+    expect(page.nextAfterSeq, 6);
+    expect(page.hasMore, isTrue);
+  });
+
   setUp(() async {
     requests.clear();
     cursors.clear();
@@ -38,6 +49,27 @@ void main() {
           break;
         case '/v1/run/run-1':
           response.write(jsonEncode(_runningRun));
+          break;
+        case '/v1/run/run-1/events':
+          expect(request.uri.queryParameters, {'after_seq': '4', 'limit': '2'});
+          response.write(
+            jsonEncode({
+              'events': [
+                {
+                  'seq': 5,
+                  'type': 'thinking',
+                  'data': {'content': '完整思考' * 5000},
+                },
+                {
+                  'seq': 6,
+                  'type': 'text',
+                  'data': {'content': '正文'},
+                },
+              ],
+              'next_after_seq': 6,
+              'has_more': true,
+            }),
+          );
           break;
         case '/v1/run/run-1/cancel':
           response.write(jsonEncode({'run_id': 'run-1', 'status': 'running'}));

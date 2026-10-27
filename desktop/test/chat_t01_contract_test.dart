@@ -2,6 +2,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:timecue_desktop/contracts/chat_contracts.dart';
 
 void main() {
+  test('取消投影且 finished_at 为空表示仍在收尾', () {
+    final run = ChatRun.fromJson({
+      'run_id': 'run',
+      'session_id': 'session',
+      'provider': 'test',
+      'model': 'model',
+      'input': '问题',
+      'status': 'cancelled',
+      'output': '部分正文',
+      'error': null,
+      'created_at': '2026-10-27T10:00:00+08:00',
+      'finished_at': null,
+    });
+    expect(run.status, ChatRunStatus.cancelled);
+    expect(run.finishedAt, isNull);
+  });
   test('T01 使用 provider、四字段回执和独立 error/end', () {
     final receipt = ChatCreateRunResult.fromJson({
       'run_id': 'run',
