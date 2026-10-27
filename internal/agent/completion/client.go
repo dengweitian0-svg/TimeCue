@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
@@ -33,8 +35,8 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 	if err != nil {
 		return output, failure("model_invalid_params")
 	}
-	requestCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	requestCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	first, idle := cfg.FirstTimeout, cfg.IdleTimeout
 	if first <= 0 {
 		first = 120 * time.Second
@@ -42,13 +44,39 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 	if idle <= 0 {
 		idle = 60 * time.Second
 	}
-	timer := time.AfterFunc(first, cancel)
-	defer timer.Stop()
+	var timerMu sync.Mutex
+	timerMu.Lock()
+	deadline := time.Now().Add(first)
+	timerStopped := false
+	timeoutMessage := "等待模型首次有效输出超时"
+	var timer *time.Timer
+	timer = time.AfterFunc(first, func() {
+		timerMu.Lock()
+		defer timerMu.Unlock()
+		if timerStopped {
+			return
+		}
+		if remaining := time.Until(deadline); remaining > 0 {
+			timer.Reset(remaining)
+		} else {
+			cancel(errors.New(timeoutMessage))
+		}
+	})
+	timerMu.Unlock()
+	defer func() {
+		timerMu.Lock()
+		defer timerMu.Unlock()
+		timerStopped = true
+		timer.Stop()
+	}()
 	client := openai.NewClient(option.WithAPIKey(cfg.Key), option.WithBaseURL(strings.TrimRight(cfg.BaseURL, "/")+"/"), option.WithHTTPClient(c.http), option.WithMaxRetries(0))
 	stream := client.Chat.Completions.NewStreaming(requestCtx, params)
 	defer stream.Close()
 	finished := false
 	for stream.Next() {
+		if requestCtx.Err() != nil {
+			break
+		}
 		chunk := stream.Current()
 		if chunk.ID != "" {
 			output.ID = chunk.ID
@@ -69,11 +97,28 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 			for _, delta := range []struct {
 				kind    chat.EventType
 				content string
-			}{{chat.EventThinking, thinking}, {chat.EventText, choice.Delta.Content}} {
+			}{
+				{
+					kind:    chat.EventThinking,
+					content: thinking,
+				},
+				{
+					kind:    chat.EventText,
+					content: choice.Delta.Content,
+				},
+			} {
 				if delta.content == "" {
 					continue
 				}
+				timerMu.Lock()
+				if requestCtx.Err() != nil {
+					timerMu.Unlock()
+					break
+				}
+				deadline = time.Now().Add(idle)
+				timeoutMessage = "模型流式输出空闲超时"
 				timer.Reset(idle)
+				timerMu.Unlock()
 				if delta.kind == chat.EventText {
 					output.Message.Content += delta.content
 				} else {
@@ -90,14 +135,24 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 		}
 	}
 	if requestCtx.Err() != nil && ctx.Err() == nil {
-		return output, failure("model_timeout")
+		return output, &chat.RunError{
+			Code:    "model_timeout",
+			Message: context.Cause(requestCtx).Error(),
+		}
 	}
 	if err = stream.Err(); err != nil {
+		var networkError net.Error
+		if errors.As(err, &networkError) && networkError.Timeout() {
+			return output, &chat.RunError{
+				Code:    "model_timeout",
+				Message: "模型网络请求超时",
+			}
+		}
 		var apiError *openai.Error
 		if errors.As(err, &apiError) {
 			code := map[int]string{400: "model_invalid_format", 401: "model_auth_failed", 402: "model_insufficient_balance", 422: "model_invalid_params", 429: "model_rate_limited", 500: "model_server_error", 503: "model_server_busy"}[apiError.StatusCode]
 			if code == "" {
-				code = "model_server_error"
+				code = "model_invalid_format"
 			}
 			return output, failure(code)
 		}
@@ -143,5 +198,22 @@ func requestParams(input chat.ModelRequest) (openai.ChatCompletionNewParams, err
 }
 
 func failure(code string) *chat.RunError {
-	return &chat.RunError{Code: code, Message: fmt.Sprintf("模型请求失败（%s）", code)}
+	message := map[string]string{
+		"model_invalid_format":       "模型请求或响应格式不受支持",
+		"model_auth_failed":          "模型密钥认证失败，请检查实例数据目录的 .env",
+		"model_insufficient_balance": "模型账户余额不足",
+		"model_invalid_params":       "模型请求参数无效",
+		"model_rate_limited":         "模型请求被限流",
+		"model_server_error":         "模型服务内部错误",
+		"model_server_busy":          "模型服务繁忙",
+		"model_network_error":        "模型连接失败或流式响应异常中断",
+		"persistence_failed":         "保存模型输出失败",
+	}[code]
+	if message == "" {
+		message = fmt.Sprintf("模型请求失败（%s）", code)
+	}
+	return &chat.RunError{
+		Code:    code,
+		Message: message,
+	}
 }

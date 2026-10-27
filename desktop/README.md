@@ -1,5 +1,7 @@
 # TimeCue Flutter 桌面端
 
+AI 对话的明确配置拒绝会显示检查模型预算和实例 `.env` 的提示，并释放本地运行占用；补齐密钥后点击“刷新模型”即可开始新一轮。已提交运行的有限重试由 Go 执行，界面保留上游具体语义错误及部分正文。结果不明的创建请求仍复用原幂等键。配置与后端边界见 [真实文字对话](../docs/CHAT.md)。
+
 ```powershell
 cd D:\go_project\src\TimeCue\desktop
 flutter pub get

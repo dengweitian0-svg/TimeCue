@@ -21,7 +21,9 @@ const (
 type RunState string
 
 const (
-	StateRunning       RunState = "running"
+	StateRunning RunState = "running"
+	// StateRetryWait 仅用于逻辑模型调用，运行本身仍保持 running。
+	StateRetryWait     RunState = "retry_wait"
 	StateWaitForCancel RunState = "wait_for_cancel"
 	StateSucceeded     RunState = "succeeded"
 	StateFailed        RunState = "failed"
@@ -206,16 +208,28 @@ type ModelClient interface {
 
 // ModelCall 保存调用开始或结束时需要原子提交的实际事实。
 type ModelCall struct {
-	ID        int64
-	RunID     string
-	SessionID string
-	Input     ModelRequest
-	Output    *ModelOutput
-	State     RunState
-	Error     *RunError
-	MaxRetry  int
+	ID           int64
+	RunID        string
+	SessionID    string
+	Input        ModelRequest
+	Output       *ModelOutput
+	State        RunState
+	Error        *RunError
+	MaxRetry     int
+	RetryCount   int
+	NextRetryAt  *time.Time
+	RetryHistory []ModelRetry
 	// PendingEvents 与调用快照一起提交，序号只在事务成功后对外可见。
 	PendingEvents []Event
+}
+
+// ModelRetry 保存同一逻辑调用内一次已计划重试的时间、结果及故障原因。
+type ModelRetry struct {
+	Retry  int       `json:"retry"`
+	At     time.Time `json:"at"`
+	Result string    `json:"result"`
+	Cause  *RunError `json:"cause"`
+	Error  *RunError `json:"error"`
 }
 
 // RunRepository 管理运行准入、幂等回读与运行查询。

@@ -260,8 +260,6 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 	var err error
 	if previous != nil {
 		call = *previous
-		call.State = StateRunning
-		call.Error = nil
 		if call.Output != nil && call.Output.Message.Content != "" {
 			content := call.Output.Message.Content
 			r.Output = &content
@@ -321,27 +319,7 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 			}
 		}
 	} else if r.Error == nil && ctx.Err() == nil {
-		modelCtx, cancel := context.WithCancel(ctx)
-		batch := &eventBatch{
-			repository: s.execution,
-			call:       call,
-			partial:    ModelOutput{Message: Message{Role: "assistant"}},
-			cancel:     cancel,
-		}
-		output, failure := s.model.Complete(modelCtx, cfg, call.Input, batch.append)
-		call, err = batch.close()
-		cancel()
-		if err != nil {
-			failure = &RunError{
-				Code:    "persistence_failed",
-				Message: "保存模型输出失败",
-			}
-		}
-		// 失败或退出且没有新有效输出时保留旧快照；完整成功响应即使为空也采用本次实际结果。
-		if failure == nil || call.Output == nil || output.Message.Content != "" || output.Message.ReasoningContent != "" {
-			call.Output = &output
-		}
-		r.Error = failure
+		call, r.Error = s.complete(ctx, r, call)
 		r.Output = nil
 		if call.Output != nil && call.Output.Message.Content != "" {
 			content := call.Output.Message.Content
@@ -378,12 +356,21 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 	s.mu.Unlock()
 	call.State = r.State
 	call.Error = r.Error
+	call.NextRetryAt = nil
 	now := time.Now()
 	r.FinishedAt = &now
 	s.finish(call, r)
 }
 
 func (s *Runtime) finish(call ModelCall, r Record) {
+	call.NextRetryAt = nil
+	if len(call.RetryHistory) > 0 {
+		last := &call.RetryHistory[len(call.RetryHistory)-1]
+		if last.Result == "retry_wait" {
+			last.Result = string(r.State)
+			last.Error = r.Error
+		}
+	}
 	// 终态提交失败后只重试收尾，不重新调用模型。
 	var err error
 	for attempt := 0; attempt < 4; attempt++ {

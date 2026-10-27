@@ -1549,6 +1549,7 @@ class ChatToolCall {
 
 bool _isAmbiguousCreationFailure(Object error) {
   if (error is! ChatHttpError) return true;
+  if (error.code == 'model_config_unavailable') return false;
   return error.statusCode >= 500 ||
       error.statusCode == 408 ||
       error.statusCode == 429;

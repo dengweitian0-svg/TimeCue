@@ -33,6 +33,38 @@ type ChatRuntime struct {
 	IdleTimeoutSeconds  int  `mapstructure:"idle_timeout_seconds"`
 }
 
+func chatKeyName(provider, model string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' {
+			return r - 'a' + 'A'
+		}
+		if r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '_'
+	}, provider+"_"+model)
+}
+
+func validateChatConfig(cfg *Config) error {
+	keys := map[string]bool{}
+	for _, provider := range cfg.ChatModel {
+		for _, model := range provider.Models {
+			if strings.TrimSpace(provider.Provider) == "" || strings.TrimSpace(model.Model) == "" {
+				return fmt.Errorf("chat provider and model must not be empty")
+			}
+			key := chatKeyName(provider.Provider, model.Model)
+			if keys[key] {
+				return fmt.Errorf("chat model key normalization conflict")
+			}
+			keys[key] = true
+		}
+	}
+	if cfg.Chat.MaxRetry != nil && *cfg.Chat.MaxRetry < 0 || cfg.Chat.FirstTimeoutSeconds < 0 || cfg.Chat.IdleTimeoutSeconds < 0 {
+		return fmt.Errorf("chat retry and timeouts must not be negative")
+	}
+	return nil
+}
+
 // ChatModels 读取当前配置和同一数据目录的最新密钥，不进行上游探测。
 func (m *Manager) ChatModels() ([]chat.ModelConfig, error) {
 	cfg, err := m.CurrentConfig()
@@ -72,21 +104,23 @@ func (m *Manager) ChatModels() ([]chat.ModelConfig, error) {
 			if cfg.Chat.IdleTimeoutSeconds > 0 {
 				idle = cfg.Chat.IdleTimeoutSeconds
 			}
-			keyName := strings.Map(func(r rune) rune {
-				if r >= 'a' && r <= 'z' {
-					return r - 'a' + 'A'
-				}
-				if r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
-					return r
-				}
-				return '_'
-			}, p.Provider+"_"+model.Model)
+			keyName := chatKeyName(p.Provider, model.Model)
 			key := strings.TrimSpace(keys[keyName])
 			u, e := url.Parse(p.BaseURL)
 			if e != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
 				key = ""
 			}
-			result = append(result, chat.ModelConfig{Provider: p.Provider, Model: model.Model, BaseURL: p.BaseURL, Key: key, ContextWindow: model.ContextWindow, MaxOutputTokens: output, MaxRetry: retries, FirstTimeout: time.Duration(first) * time.Second, IdleTimeout: time.Duration(idle) * time.Second})
+			result = append(result, chat.ModelConfig{
+				Provider:        p.Provider,
+				Model:           model.Model,
+				BaseURL:         p.BaseURL,
+				Key:             key,
+				ContextWindow:   model.ContextWindow,
+				MaxOutputTokens: output,
+				MaxRetry:        retries,
+				FirstTimeout:    time.Duration(first) * time.Second,
+				IdleTimeout:     time.Duration(idle) * time.Second,
+			})
 		}
 	}
 	return result, nil
