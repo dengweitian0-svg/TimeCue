@@ -64,7 +64,9 @@ func ChatTime(value time.Time) string {
 func ValidateChatRun(run chat.Run) error {
 	switch run.Status {
 	case chat.StatusRunning:
-	case chat.StatusSucceeded, chat.StatusFailed, chat.StatusCancelled:
+	case chat.StatusCancelled:
+		// 取消投影允许尚未完成收尾，是否结束由 finished_at 或 end 表达。
+	case chat.StatusSucceeded, chat.StatusFailed:
 		if run.FinishedAt == nil {
 			return fmt.Errorf("chat service returned terminal run without finish time")
 		}

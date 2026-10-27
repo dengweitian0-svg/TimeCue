@@ -25,7 +25,7 @@ import (
 const testSessionID = "550e8400-e29b-41d4-a716-446655440000"
 const testKeyUUID = "c9bf9e57-1685-4c89-bafb-ff5af830be8a"
 
-func chatHTTPFixture(t *testing.T, key string, handler http.HandlerFunc) (http.Handler, *chat.Runtime) {
+func chatHTTPFixture(t *testing.T, key string, handler http.HandlerFunc, configure ...func(*chat.Storage)) (http.Handler, *chat.Runtime) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	upstream := httptest.NewServer(handler)
@@ -38,8 +38,19 @@ func chatHTTPFixture(t *testing.T, key string, handler http.HandlerFunc) (http.H
 	if err := db.PrepareSchema(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	service := chat.NewService(store.NewChatStorage(db), completion.NewClient(nil), func() ([]chat.ModelConfig, error) {
-		return []chat.ModelConfig{{Provider: "test", Model: "configured-model", Key: key, BaseURL: upstream.URL, ContextWindow: 32768, MaxOutputTokens: 8192}}, nil
+	ports := store.NewChatStorage(db)
+	for _, apply := range configure {
+		apply(&ports)
+	}
+	service := chat.NewService(ports, completion.NewClient(nil), func() ([]chat.ModelConfig, error) {
+		return []chat.ModelConfig{{
+			Provider:        "test",
+			Model:           "configured-model",
+			Key:             key,
+			BaseURL:         upstream.URL,
+			ContextWindow:   32768,
+			MaxOutputTokens: 8192,
+		}}, nil
 	})
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)
