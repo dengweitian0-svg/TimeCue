@@ -10,6 +10,91 @@ import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 import 'package:timecue_desktop/features/chat/chat_message_list.dart';
 
 void main() {
+  testWidgets('T06 查询对象与参数错误保持原值，详情默认折叠', (tester) async {
+    final fixture = (await tester.runAsync(_HistoryServer.open))!;
+    addTearDown(fixture.close);
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '已核实真实会议'
+      ..pageSize = 100;
+    // 使用已通过 Apifox 验收的查询对象和解析失败协议形状。
+    fixture.events.addAll([
+      _event(1, 'start', {}),
+      _event(2, 'tool_start', {
+        'function': [
+          {
+            'id': 'lookup',
+            'name': 'get_schedule',
+            'argument': {'id': 1},
+          },
+        ],
+      }),
+      _event(3, 'tool_start', {
+        'function': [
+          {'id': 'bad', 'name': 'get_schedule', 'argument': null},
+        ],
+      }),
+      _event(4, 'tool_result', {
+        'tool_call_id': 'bad',
+        'output': null,
+        'error': {
+          'code': 'tool_argument_parse_error',
+          'message': '工具参数不是完整合法 JSON，未执行，请重新提供完整参数',
+        },
+      }),
+      _event(5, 'tool_result', {
+        'tool_call_id': 'lookup',
+        'output': {'id': 1, 'name': '真实会议', 'revision': 1},
+        'error': null,
+      }),
+      _event(6, 'text', {'content': '已核实真实会议'}),
+      _event(7, 'end', {'status': 'succeeded'}),
+    ]);
+    await tester.runAsync(() async {
+      await fixture.model.loadHistory();
+      await fixture.model.loadMoreEvents('r');
+    });
+    final run = fixture.model.conversations.single.runs.single;
+    expect(run.error, isNull);
+    expect(run.toolCalls.first.output, {
+      'id': 1,
+      'name': '真实会议',
+      'revision': 1,
+    });
+    expect(run.toolCalls.last.argument, isNull);
+    expect(run.toolCalls.last.output, isNull);
+    expect(run.toolCalls.last.error?.code, 'tool_argument_parse_error');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatMessageList(
+            sessionId: 's',
+            runs: [run],
+            initialOffset: 0,
+            initiallyFollowLatest: false,
+            onReadingPosition: (_, _) {},
+            onRetryCreate: (_) {},
+            onRetryConnection: (_) {},
+          ),
+        ),
+      ),
+    );
+    expect(find.textContaining('"revision"'), findsNothing);
+    expect(find.textContaining('tool_argument_parse_error'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chat-tool-2:lookup')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('"revision": 1'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('chat-tool-2:lookup')));
+    await tester.pumpAndSettle();
+    final failedTool = find.byKey(const ValueKey('chat-tool-3:bad'));
+    await tester.ensureVisible(failedTool);
+    await tester.tap(failedTool);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('tool_argument_parse_error'), findsOneWidget);
+    expect(find.textContaining('原始结果：\nnull'), findsOneWidget);
+  });
+
   for (final failRecovery in [false, true]) {
     test(
       failRecovery

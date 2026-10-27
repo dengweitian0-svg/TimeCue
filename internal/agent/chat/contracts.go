@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
 )
 
 // Status 是对外展示的运行状态。
@@ -47,11 +49,13 @@ func (s RunState) Public() Status {
 type EventType string
 
 const (
-	EventStart    EventType = "start"
-	EventThinking EventType = "thinking"
-	EventText     EventType = "text"
-	EventError    EventType = "error"
-	EventEnd      EventType = "end"
+	EventStart      EventType = "start"
+	EventThinking   EventType = "thinking"
+	EventText       EventType = "text"
+	EventError      EventType = "error"
+	EventEnd        EventType = "end"
+	EventToolStart  EventType = "tool_start"
+	EventToolResult EventType = "tool_result"
 )
 
 var (
@@ -192,11 +196,68 @@ type Message struct {
 
 // ModelRequest 是实际提交的 Chat Completions 请求。
 type ModelRequest struct {
-	Model         string          `json:"model"`
-	Messages      []Message       `json:"messages"`
-	Stream        bool            `json:"stream"`
-	MaxTokens     int             `json:"max_tokens"`
-	StreamOptions map[string]bool `json:"stream_options"`
+	Model         string             `json:"model"`
+	Messages      []Message          `json:"messages"`
+	Stream        bool               `json:"stream"`
+	MaxTokens     int                `json:"max_tokens"`
+	StreamOptions map[string]bool    `json:"stream_options"`
+	Tools         []tools.Definition `json:"tools,omitempty"`
+}
+
+// ToolRequest 保存一次模型回复内完整组装的工具请求及参数原文。
+type ToolRequest struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+// ToolFunction 保留模型提供的名称和 arguments 字符串，不改写参数。
+type ToolFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// ToolCall 保存工具执行身份、原始结果及版本 3 已有的重试事实。
+type ToolCall struct {
+	ID          int64
+	ModelCallID int64
+	Request     ToolRequest
+	Output      json.RawMessage
+	Error       *RunError
+	State       string
+	MaxRetry    int
+	RetryCount  int
+}
+
+// ToolStartData 保存公开工具开始事件，一个开始记录包含实际处理的调用。
+type ToolStartData struct {
+	Function []ToolStartFunction `json:"function"`
+}
+
+// ToolStartFunction 保存原调用身份及解析对象投影，不对外暴露非法参数片段。
+type ToolStartFunction struct {
+	ID       string          `json:"id"`
+	Name     string          `json:"name"`
+	Argument json.RawMessage `json:"argument"`
+}
+
+// ToolResultData 保存原调用的原始 JSON 结果和独立工具错误。
+type ToolResultData struct {
+	ToolCallID string          `json:"tool_call_id"`
+	Output     json.RawMessage `json:"output"`
+	Error      *RunError       `json:"error"`
+}
+
+// ToolRepository 将模型接纳、工具开始与逐个结果分别原子提交。
+type ToolRepository interface {
+	// AcceptResponse 保存完整模型结果、尾批及 model_call_end，提交后才启动工具。
+	AcceptResponse(context.Context, ModelCall) error
+	// ReadTools 读取当前模型调用已登记的工具事实，不跨回复复用同值 ID。
+	ReadTools(context.Context, int64) ([]ToolCall, error)
+	// BeginTool 保存 running、原参数、开始事件与 tool_use 进度。
+	BeginTool(context.Context, ModelCall, ToolCall) (int64, error)
+	// FinishTool 同事务保存结果、事件、配对消息及完成进度。
+	FinishTool(context.Context, ModelCall, ToolCall) error
 }
 
 // ModelOutput 保留结构化部分响应、完成原因和原始 usage。
@@ -229,8 +290,12 @@ type ModelCall struct {
 	// CheckpointStage 和 CheckpointContext 回读当前进度，不新增持久化列或运行快照。
 	CheckpointStage   string
 	CheckpointContext []Message
+	CompletedTools    []string
+	LastTool          string
 	// PendingEvents 与调用快照一起提交，序号只在事务成功后对外可见。
 	PendingEvents []Event
+	// PendingTool 仅在结果事务失败时随运行失败事务重试保存，不重新执行业务。
+	PendingTool *ToolCall
 }
 
 // ModelRetry 保存同一逻辑调用内一次已计划重试的时间、结果及故障原因。
@@ -288,12 +353,13 @@ type EventRepository interface {
 	Events(context.Context, string, int64, int) (EventPage, error)
 }
 
-// Storage 分别装配四个职责独立的持久化端口，不要求同一对象实现全部能力。
+// Storage 分别装配运行、会话、模型执行、工具事务及事件查询端口。
 type Storage struct {
 	Runs      RunRepository
 	Sessions  SessionRepository
 	Execution ExecutionRepository
 	Events    EventRepository
+	Tools     ToolRepository
 }
 
 // ModelService 提供本地模型配置选项，不承担运行与会话用例。

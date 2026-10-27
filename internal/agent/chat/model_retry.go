@@ -87,12 +87,14 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 			return call, nil
 		}
 		modelCtx, cancel := context.WithCancel(ctx)
-		previousOutput := call.Output != nil && (call.Output.Message.Content != "" || call.Output.Message.ReasoningContent != "")
+		previousOutput := call.Output != nil && hasModelOutput(*call.Output)
 		batch := &eventBatch{
 			repository: s.execution,
 			call:       call,
-			partial:    ModelOutput{Message: Message{Role: "assistant"}},
-			cancel:     cancel,
+			partial: ModelOutput{
+				Message: Message{Role: "assistant"},
+			},
+			cancel: cancel,
 		}
 		output, failure := s.model.Complete(modelCtx, cfg, call.Input, batch.append)
 		var err error
@@ -101,7 +103,7 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 		if err != nil {
 			failure = persistenceFailure()
 		}
-		hasOutput := output.Message.Content != "" || output.Message.ReasoningContent != ""
+		hasOutput := hasModelOutput(output)
 		// 生命周期恢复没有新输出时保留旧快照；完整空响应仍替换旧回复。
 		if failure == nil && ctx.Err() == nil || !previousOutput || hasOutput {
 			call.Output = &output

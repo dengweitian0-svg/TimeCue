@@ -29,7 +29,9 @@ func NewClient(client *http.Client) *Client {
 
 // Complete 通过 SDK 消费流式响应，保留提供方扩展思考字段和原始 usage。
 func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.ModelRequest, emit func(chat.EventType, string) error) (chat.ModelOutput, *chat.RunError) {
-	output := chat.ModelOutput{Message: chat.Message{Role: "assistant"}}
+	output := chat.ModelOutput{
+		Message: chat.Message{Role: "assistant"},
+	}
 	for _, message := range input.Messages {
 		switch message.Role {
 		case "system", "user", "assistant", "tool":
@@ -80,6 +82,7 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 	stream := client.Chat.Completions.NewStreaming(requestCtx, openai.ChatCompletionNewParams{}, option.WithRequestBody("application/json", encoded))
 	defer stream.Close()
 	finished := false
+	var toolCalls []chat.ToolRequest
 	for stream.Next() {
 		if requestCtx.Err() != nil {
 			break
@@ -133,7 +136,39 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 				}
 			}
 			if len(choice.Delta.ToolCalls) > 0 {
-				return output, failure("model_invalid_format")
+				if len(input.Tools) == 0 {
+					return output, failure("model_invalid_format")
+				}
+				effective := false
+				for _, delta := range choice.Delta.ToolCalls {
+					effective = effective || delta.ID != "" || delta.Type != "" || delta.Function.Name != "" || delta.Function.Arguments != ""
+				}
+				timerMu.Lock()
+				if requestCtx.Err() != nil {
+					timerMu.Unlock()
+					break
+				}
+				if effective {
+					deadline = time.Now().Add(idle)
+					timeoutMessage = "模型流式输出空闲超时"
+					timer.Reset(idle)
+				}
+				timerMu.Unlock()
+				for _, delta := range choice.Delta.ToolCalls {
+					// 数组索引必须连续，拒绝稀疏或负索引，避免不受控分配。
+					if delta.Index < 0 || delta.Index > int64(len(toolCalls)) {
+						return output, failure("model_invalid_format")
+					}
+					if delta.Index == int64(len(toolCalls)) {
+						toolCalls = append(toolCalls, chat.ToolRequest{})
+					}
+					call := &toolCalls[delta.Index]
+					call.ID += delta.ID
+					call.Type += string(delta.Type)
+					call.Function.Name += delta.Function.Name
+					call.Function.Arguments += delta.Function.Arguments
+				}
+				output.Message.ToolCalls, _ = json.Marshal(toolCalls)
 			}
 			if choice.FinishReason != "" {
 				output.FinishReason = choice.FinishReason
@@ -172,8 +207,19 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 	if !finished {
 		return output, failure("model_network_error")
 	}
-	if output.FinishReason != "stop" {
+	// 正常长度截断的工具逐条校验，完整同批请求不能随坏参数一起丢弃；文字自动续写另由续写流程负责。
+	if output.FinishReason != "stop" && output.FinishReason != "tool_calls" && !(output.FinishReason == "length" && len(toolCalls) > 0) {
 		return output, failure("model_invalid_format")
+	}
+	if output.FinishReason == "tool_calls" && len(toolCalls) == 0 {
+		return output, failure("model_invalid_format")
+	}
+	ids := map[string]bool{}
+	for _, call := range toolCalls {
+		if call.ID == "" || ids[call.ID] || call.Type != "function" || call.Function.Name == "" {
+			return output, failure("model_invalid_format")
+		}
+		ids[call.ID] = true
 	}
 	return output, nil
 }

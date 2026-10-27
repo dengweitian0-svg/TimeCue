@@ -1,5 +1,7 @@
 # SQLite 存储
 
+- `chat_tools.go`：版本 3 已有工具表的按模型调用回读、完整模型回复接纳、工具 running/开始事件登记及逐项结果事务；参数以外层 JSON 字符串保存，结果保持原 JSON 类型。tool_start/tool_result 与关联、消息、completed_tool/last_tool 和 checkpoint 原子保存，取消跳过不伪造 running；结果事务失败时可在运行失败收尾事务中保存实际结果。无表、列、索引或迁移变化。
+
 提供日程与提醒的持久化、事务操作和数据库健康检查，满足 `service/schedule` 与 `service/notification` 定义的存储接口。健康检查验证通知 schedule_id/notify_time 完整唯一键；Unix 纳秒时间写入前拒绝超出 int64 范围的日程及提醒时间。
 
 - `db.go`：SQLite 连接与关闭、版本 3 表结构和 loaded 状态约束检查（当前 001 + 002 + 003）。
