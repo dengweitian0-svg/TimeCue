@@ -192,6 +192,9 @@ func (m *Manager) reloadConfig() error {
 	if err := v.Unmarshal(next); err != nil {
 		return fmt.Errorf("unmarshal %s: %w", m.configPath, err)
 	}
+	if err := validateChatConfig(next); err != nil {
+		return err
+	}
 
 	// 先原子读取旧快照，再原子写入新快照；旧快照不会被原地修改。
 	m.currentCfg.Store(next)

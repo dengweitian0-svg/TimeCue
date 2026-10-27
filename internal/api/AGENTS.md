@@ -13,3 +13,4 @@
 - T03 创建重放只比较同会话原始 input，忽略新模型选择；wait_for_cancel 的 cancelled 投影重放为 200，概况保留 finished_at=null，仍占会话及全局名额。缺少键和非法请求在进入创建前拒绝。
 
 - 用例按 ModelService、RunService、SessionService 分别注入；HTTP Handler 只使用相应窄接口，App 通过独立 Lifecycle 管理启动与停止。
+- T04 保持 HTTP 结构与状态码：配置拒绝为 503 model_config_unavailable 并提示检查本地配置；模型重试及上游语义错误通过原 run 概况和事件反馈。

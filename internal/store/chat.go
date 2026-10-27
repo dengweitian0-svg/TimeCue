@@ -341,9 +341,10 @@ func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, e
 		return nil, err
 	}
 	call := &chat.ModelCall{RunID: id}
-	var input string
+	var input, retries string
+	var nextRetry sql.NullInt64
 	var output, failure sql.NullString
-	err = db.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.status,m.error,m.max_retry FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &call.State, &failure, &call.MaxRetry)
+	err = db.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.status,m.error,m.max_retry,m.retry_count,m.next_retry_at,m.retry_history FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &call.State, &failure, &call.MaxRetry, &call.RetryCount, &nextRetry, &retries)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -352,6 +353,13 @@ func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, e
 	}
 	if err = json.Unmarshal([]byte(input), &call.Input); err != nil {
 		return nil, err
+	}
+	if err = json.Unmarshal([]byte(retries), &call.RetryHistory); err != nil {
+		return nil, err
+	}
+	if nextRetry.Valid {
+		at := time.Unix(0, nextRetry.Int64)
+		call.NextRetryAt = &at
 	}
 	if output.Valid {
 		if err = json.Unmarshal([]byte(output.String), &call.Output); err != nil {
@@ -368,8 +376,10 @@ func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, e
 
 // Pause 保存正常退出时的真实部分响应，不生成终态或推进 checkpoint。
 func (s *chatStore) Pause(ctx context.Context, call chat.ModelCall) error {
-	call.State = chat.StateRunning
-	call.Error = nil
+	if call.State != chat.StateRetryWait {
+		call.State = chat.StateRunning
+		call.Error = nil
+	}
 	return s.transaction(ctx, func(tx *sql.Tx) error {
 		if err := saveCall(ctx, tx, call, false); err != nil {
 			return err
@@ -412,7 +422,11 @@ func saveCall(ctx context.Context, tx *sql.Tx, call chat.ModelCall, finished boo
 	if finished {
 		at = time.Now().UnixNano()
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE ai_model_calls SET output=?,usage=?,model_reply_id=?,status=?,error=?,finished_at=? WHERE id=?`, jsonValue(call.Output), usage, reply, call.State, jsonValue(call.Error), at, call.ID)
+	history := call.RetryHistory
+	if history == nil {
+		history = []chat.ModelRetry{}
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE ai_model_calls SET output=?,usage=?,model_reply_id=?,status=?,error=?,finished_at=?,retry_count=?,next_retry_at=?,retry_history=? WHERE id=?`, jsonValue(call.Output), usage, reply, call.State, jsonValue(call.Error), at, call.RetryCount, timeValue(call.NextRetryAt), jsonValue(history), call.ID)
 	return err
 }
 

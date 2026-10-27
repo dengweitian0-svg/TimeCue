@@ -47,7 +47,7 @@ func ChatError(err error) middleware.HTTPResult {
 	case errors.Is(err, chat.ErrRunTerminal):
 		return middleware.ErrorResult(http.StatusConflict, NewAPIError("run_terminal", "run is already terminal"), nil)
 	case errors.Is(err, chat.ErrModelUnavailable):
-		return middleware.ErrorResult(http.StatusServiceUnavailable, NewAPIError("model_config_unavailable", "selected model configuration or key unavailable"), nil)
+		return middleware.ErrorResult(http.StatusServiceUnavailable, NewAPIError("model_config_unavailable", "模型配置不可用，请检查模型预算及实例数据目录的 .env 密钥"), nil)
 	case errors.Is(err, chat.ErrStopping):
 		return middleware.ErrorResult(http.StatusServiceUnavailable, NewAPIError("service_stopping", "chat service stopping"), nil)
 	default:

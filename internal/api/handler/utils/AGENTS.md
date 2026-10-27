@@ -9,3 +9,4 @@
 
 - 聊天配置不可用映射 503 model_config_unavailable；未配置组合为 400 invalid_request；独立 error/end 由真实聊天服务提供，不保留旧 Mock 的连接占用/内存缓冲错误。
 - 运行概况允许 cancelled 且 finished_at=null 的取消收尾投影；succeeded/failed 仍必须带结束时间。公开 cancelled 状态本身不证明运行已经结束。
+- 配置 503 使用中文提示检查模型预算及实例 .env，不包含密钥；上游模型错误在已接受 run 的概况与事件中反馈，不直接改成本机 HTTP 状态。
