@@ -10,5 +10,6 @@
 约束：路由保持现有路径、JSON、状态码、错误码、日志和 SSE 语义；NewRouter 默认校验 127.0.0.1:10086，NewRouterWithPort 校验传入端口；健康检查允许在 App 为空时使用，并可接收只读运行信息。
 
 - T01 创建必填 provider，返回四字段回执（running 202、终态重放 200）；概况固定十字段并保留失败部分 output；/v1/model 返回 provider/model/available；/events 与 SSE 共用原始序号。
+- T03 创建重放只比较同会话原始 input，忽略新模型选择；wait_for_cancel 的 cancelled 投影重放为 200，概况保留 finished_at=null，仍占会话及全局名额。缺少键和非法请求在进入创建前拒绝。
 
 - 用例按 ModelService、RunService、SessionService 分别注入；HTTP Handler 只使用相应窄接口，App 通过独立 Lifecycle 管理启动与停止。

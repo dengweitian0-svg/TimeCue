@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -166,6 +167,10 @@ func receipt(r Record) Receipt {
 
 // CreateRun 优先重放持久化幂等回执，再校验配置并原子预留名额。
 func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt, error) {
+	if strings.TrimSpace(input.SessionID) == "" || strings.TrimSpace(input.Input) == "" ||
+		strings.TrimSpace(input.Provider) == "" || strings.TrimSpace(input.Model) == "" || strings.TrimSpace(input.IdempotencyKey) == "" {
+		return Receipt{}, ErrInvalidRequest
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopping || !s.started {
@@ -252,6 +257,17 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 			content := call.Output.Message.Content
 			r.Output = &content
 		}
+	}
+	// 取消恢复只保存已有事实，不重新登记或发送模型请求。
+	if r.State == StateWaitForCancel {
+		r.State = StateCancelled
+		r.Error = nil
+		call.State = StateCancelled
+		call.Error = nil
+		now := time.Now()
+		r.FinishedAt = &now
+		s.finish(call, r)
+		return
 	}
 	if r.Error == nil && !available(cfg) {
 		r.Error = &RunError{
