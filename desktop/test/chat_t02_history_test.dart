@@ -10,6 +10,108 @@ import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 import 'package:timecue_desktop/features/chat/chat_message_list.dart';
 
 void main() {
+  for (final failRecovery in [false, true]) {
+    test(
+      failRecovery
+          ? '取消终态补读失败后仍可分页重试，不重新订阅或占用名额'
+          : '活跃分页读到末尾后取消先确认终态，仍补齐未送达的尾批',
+      () async {
+        final fixture = await _HistoryServer.open();
+        addTearDown(fixture.close);
+        fixture.events.add(_event(1, 'start', {}));
+        final conversation = fixture.model.createLocalSession();
+        fixture.model.updateDraft('s', '问题');
+        await fixture.model.send('s', model: 'model', provider: 'test');
+        await _until(() => fixture.connections.isNotEmpty);
+        await fixture.send(fixture.events.first);
+        final run = conversation.runs.single;
+        await _until(() => run.lastEventId == 1);
+        await fixture.model.loadMoreEvents('r');
+        expect(run.hasMoreEvents, isFalse);
+        expect(run.isTerminal, isFalse);
+        fixture.events.addAll([
+          _event(2, 'text', {'content': '取消前的尾部正文'}),
+          _event(3, 'end', {'status': 'cancelled'}),
+        ]);
+        fixture
+          ..finished = true
+          ..status = 'cancelled'
+          ..output = '最终正文投影'
+          ..pageSize = 1
+          ..pageFailures = failRecovery ? 1 : 0;
+
+        await fixture.model.cancel('s');
+
+        expect(run.isTerminal, isTrue);
+        expect(fixture.model.activeRunCount, 0);
+        if (failRecovery) {
+          expect(run.eventsError, contains('历史稍后重试'));
+          expect(run.hasMoreEvents, isFalse);
+          expect(run.eventsLoading, isFalse);
+          await fixture.model.loadMoreEvents('r');
+          expect(run.hasMoreEvents, isTrue);
+          await fixture.model.loadMoreEvents('r');
+        }
+        await _until(
+          () => run.lastEventId == 3,
+          diagnostic: () =>
+              'seq=${run.lastEventId} hasMore=${run.hasMoreEvents} pages=${fixture.pageCursors}',
+        );
+        expect(run.timeline.map((e) => e.eventId), [1, 2, 3]);
+        expect(run.rawText, '最终正文投影');
+        expect(run.eventsError, isNull);
+        expect(run.hasMoreEvents, isFalse);
+        expect(fixture.model.activeRunCount, 0);
+        expect(fixture.pageCursors, [1, 1, 2]);
+        expect(fixture.cursors, [null]);
+      },
+    );
+  }
+
+  test('取消确认终态时分页尚未返回，尾批等待旧页应用后继续补齐', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture.events.add(_event(1, 'start', {}));
+    final conversation = fixture.model.createLocalSession();
+    fixture.model.updateDraft('s', '问题');
+    await fixture.model.send('s', model: 'model', provider: 'test');
+    await _until(() => fixture.connections.isNotEmpty);
+    await fixture.send(fixture.events.first);
+    final run = conversation.runs.single;
+    await _until(() => run.lastEventId == 1);
+    final oldPageGate = Completer<void>();
+    fixture.pageGate = oldPageGate;
+    addTearDown(() {
+      if (!oldPageGate.isCompleted) oldPageGate.complete();
+    });
+    final oldPage = fixture.model.loadMoreEvents('r');
+    await _until(() => fixture.pageCursors.isNotEmpty);
+    fixture.events.addAll([
+      _event(2, 'text', {'content': '尾部正文'}),
+      _event(3, 'end', {'status': 'cancelled'}),
+    ]);
+    fixture
+      ..finished = true
+      ..status = 'cancelled'
+      ..output = '最终正文投影';
+    final cancellation = fixture.model.cancel('s');
+    await _until(() => run.isTerminal);
+    expect(fixture.model.activeRunCount, 0);
+    expect(fixture.pageCursors, [1]);
+
+    oldPageGate.complete();
+    await Future.wait([oldPage, cancellation]);
+
+    expect(run.timeline.map((e) => e.eventId), [1, 2, 3]);
+    expect(run.lastEventId, 3);
+    expect(run.rawText, '最终正文投影');
+    expect(run.hasMoreEvents, isFalse);
+    expect(run.eventsLoading, isFalse);
+    expect(run.eventsError, isNull);
+    expect(fixture.pageCursors, [1, 1]);
+    expect(fixture.cursors, [null]);
+  });
+
   test('活跃分页读到末尾后刷新先取得终态，仍补齐未送达的尾批', () async {
     final fixture = await _HistoryServer.open();
     addTearDown(fixture.close);
@@ -502,6 +604,9 @@ class _HistoryServer {
               'finished_at': finished ? '2026-10-27T10:01:00+08:00' : null,
             }),
           );
+        case '/v1/run/r/cancel':
+          await request.drain<void>();
+          response.write(jsonEncode({'run_id': 'r', 'status': status}));
         case '/v1/session':
           response.write(
             jsonEncode({

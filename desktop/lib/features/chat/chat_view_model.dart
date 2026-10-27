@@ -560,6 +560,16 @@ class ChatViewModel extends ChangeNotifier {
         run._phase = ChatRunPhase.stopping;
       } else {
         await _loadRunSnapshot(run, generation);
+        if (run.isTerminal) {
+          // 终态概况可能早于 SSE 尾批，旧分页末尾不能作为补读完成的依据。
+          final recovery = run._eventQueue.then((_) async {
+            if (_isCurrent(generation, run)) {
+              await _recoverEventHistory(run, generation);
+            }
+          });
+          run._eventQueue = recovery;
+          await recovery;
+        }
       }
     } catch (error) {
       if (!_isCurrent(generation, run)) return;
