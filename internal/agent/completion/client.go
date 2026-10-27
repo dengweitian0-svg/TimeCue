@@ -85,9 +85,6 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 			output.Usage = json.RawMessage(raw)
 		}
 		for _, choice := range chunk.Choices {
-			if len(choice.Delta.ToolCalls) > 0 {
-				return output, failure("model_invalid_format")
-			}
 			var thinking string
 			if raw := choice.Delta.JSON.ExtraFields["reasoning_content"].Raw(); raw != "" && raw != "null" {
 				if json.Unmarshal([]byte(raw), &thinking) != nil {
@@ -127,6 +124,9 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 				if err = emit(delta.kind, delta.content); err != nil {
 					return output, failure("persistence_failed")
 				}
+			}
+			if len(choice.Delta.ToolCalls) > 0 {
+				return output, failure("model_invalid_format")
 			}
 			if choice.FinishReason != "" {
 				output.FinishReason = choice.FinishReason

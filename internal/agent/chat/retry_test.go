@@ -30,63 +30,17 @@ func TestTemporaryFailureRetriesSameLogicalCall(t *testing.T) {
 		fmt.Fprint(w, "data: {\"id\":\"retry-success\",\"choices\":[{\"delta\":{\"content\":\"恢复成功\"},\"finish_reason\":\"stop\"}],\"usage\":{\"total_tokens\":7}}\n\ndata: [DONE]\n\n")
 	}))
 	defer upstream.Close()
-	db := store.NewSqlite()
-	ctx := context.Background()
-	if err := db.Connect(ctx, filepath.Join(t.TempDir(), "chat.db")); err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if err := db.PrepareSchema(ctx); err != nil {
-		t.Fatal(err)
-	}
-	repo := store.NewChatStorage(db)
-	service := chat.NewService(repo, completion.NewClient(nil), func() ([]chat.ModelConfig, error) {
-		return []chat.ModelConfig{{
-			Provider:        "test",
-			Model:           "model",
-			BaseURL:         upstream.URL,
-			Key:             "secret",
-			ContextWindow:   32768,
-			MaxOutputTokens: 8192,
-			MaxRetry:        1,
-		}}, nil
-	})
-	if err := service.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	defer service.Stop()
-	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{
-		SessionID:      "retry-session",
-		Input:          "hello",
-		Provider:       "test",
-		Model:          "model",
-		IdempotencyKey: "retry",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	planned := awaitRetryWait(t, repo, receipt.RunID, 1)
-	deadline := time.Now().Add(8 * time.Second)
-	for {
-		run, err := service.GetRun(ctx, receipt.RunID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if run.Status != chat.StatusRunning {
-			if run.Status != chat.StatusSucceeded || run.Output == nil || *run.Output != "恢复成功" {
-				t.Fatalf("临时故障应恢复成功: %+v", run)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("重试未结束")
-		}
-		time.Sleep(10 * time.Millisecond)
+	repo, service := retryFixture(t, retrySettings(upstream.URL, 1))
+	id := createRetryRun(t, service)
+	planned := awaitRetryWait(t, repo, id, 1)
+	run := awaitRetryRun(t, service, id, 8*time.Second)
+	if run.Status != chat.StatusSucceeded || run.Output == nil || *run.Output != "恢复成功" {
+		t.Fatalf("临时故障应恢复成功: %+v", run)
 	}
 	if requests.Load() != 2 {
 		t.Fatalf("requests=%d", requests.Load())
 	}
-	call, err := repo.Execution.ReadCall(ctx, receipt.RunID)
+	call, err := repo.Execution.ReadCall(context.Background(), id)
 	if err != nil || call.ID != planned.ID || call.RetryCount != 1 || call.MaxRetry != 1 || call.NextRetryAt != nil || len(call.RetryHistory) != 1 || call.RetryHistory[0].Cause.Code != "model_server_busy" || call.RetryHistory[0].Result != "succeeded" {
 		t.Fatalf("逻辑调用未保存原预算及重试结果: %+v %v", call, err)
 	}
@@ -380,5 +334,44 @@ func TestThreeRetriesUseExponentialBackoffAndThenFail(t *testing.T) {
 	page, err := service.GetRunEvents(context.Background(), id, 0, 100)
 	if err != nil || len(page.Events) != 3 || page.Events[1].Type != chat.EventError || page.Events[2].Type != chat.EventEnd {
 		t.Fatalf("重试生成了重复公开错误或终态: %+v %v", page, err)
+	}
+}
+
+// TestKeyRemovedDuringRetryWaitSettlesHistory 验证退避期间删除密钥会结算历史且不再请求。
+func TestKeyRemovedDuringRetryWaitSettlesHistory(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(503)
+		fmt.Fprint(w, `{"error":{"message":"busy"}}`)
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	text := "chat_model:\n  - provider: test\n    base_url: " + server.URL + "\n    models:\n      - model: model\n        context_window: 32768\nchat:\n  max_retry: 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(envPath, []byte("TEST_MODEL=secret\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := config.NewManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if err := manager.LoadConfig(); err != nil {
+		t.Fatal(err)
+	}
+	repo, service := retryFixture(t, manager.ChatModels)
+	id := createRetryRun(t, service)
+	awaitRetryWait(t, repo, id, 1)
+	if err := os.Remove(envPath); err != nil {
+		t.Fatal(err)
+	}
+	run := awaitRetryRun(t, service, id, 8*time.Second)
+	call, err := repo.Execution.ReadCall(context.Background(), id)
+	if err != nil || run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "model_config_unavailable" || call.RetryHistory[0].Result != "failed" || call.RetryHistory[0].Error == nil || call.RetryHistory[0].Error.Code != "model_config_unavailable" || call.NextRetryAt != nil || requests.Load() != 1 {
+		t.Fatalf("请求前失败没有完整结算: run=%+v call=%+v err=%v requests=%d", run, call, err, requests.Load())
 	}
 }

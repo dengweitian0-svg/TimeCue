@@ -366,7 +366,8 @@ func (s *Runtime) finish(call ModelCall, r Record) {
 	call.NextRetryAt = nil
 	if len(call.RetryHistory) > 0 {
 		last := &call.RetryHistory[len(call.RetryHistory)-1]
-		if last.Result == "retry_wait" {
+		switch last.Result {
+		case "retry_wait", "running", "interrupted":
 			last.Result = string(r.State)
 			last.Error = r.Error
 		}

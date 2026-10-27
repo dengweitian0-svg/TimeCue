@@ -21,6 +21,7 @@
 - `model_retry.go`：同一逻辑调用的有限重试与 5 秒起始指数退避，只有无有效输出的超时、网络、429/500/503 故障可重试。每次实际请求前重读 Key 和超时，原 input 与 max_retry 固定；计划退避及请求前 running 均先保存再推进。
 - `retry_test.go`：真实服务、SQLite、配置监听及可控 HTTP 验证重试成功、5/10/20 秒耗尽、零预算、部分输出、取消、退出/重启沿用原调用和最后一次许可，以及 Key/超时更新与预算固定。
 - retry_count 在计划一次重试时增加，retry_wait 恢复沿用已计数的原计划及 next_retry_at，不额外扣次；未完成 running 的生命周期重发不增加网络重试次数。取消清除计划期限，退出保留 retry_wait。重试中间错误仅保存调用事实，最终错误与唯一 end 才进入公开事件。
+- 退避期间删除 Key 或请求开始前取消时，终态同事务结算尚未获得结果的重试历史项，不遗留 running；对应测试沿公共服务与真实配置/存储验证。
 
 - 用例按 ModelService、RunService、SessionService 分别注入；HTTP Handler 只使用相应窄接口，App 通过独立 Lifecycle 管理启动与停止。
 

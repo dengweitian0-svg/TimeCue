@@ -93,6 +93,19 @@ func TestAbruptStreamPreservesPartialResponse(t *testing.T) {
 	}
 }
 
+// TestUnexpectedToolDeltaPreservesAccompanyingText 验证意外工具增量仍保留同块正文、思考及用量。
+func TestUnexpectedToolDeltaPreservesAccompanyingText(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"mixed\",\"choices\":[{\"delta\":{\"content\":\"部分正文\",\"reasoning_content\":\"部分思考\",\"tool_calls\":[{\"index\":0,\"id\":\"tool\",\"type\":\"function\",\"function\":{\"name\":\"query\",\"arguments\":\"{\"}}]}}],\"usage\":{\"total_tokens\":3}}\n\n")
+	}))
+	defer server.Close()
+	output, failure := complete(t, server.URL, time.Second, time.Second, nil)
+	if failure == nil || failure.Code != "model_invalid_format" || output.Message.Content != "部分正文" || output.Message.ReasoningContent != "部分思考" || string(output.Usage) != `{"total_tokens":3}` {
+		t.Fatalf("意外工具拒绝丢失了同块已收到内容: %+v %+v", output, failure)
+	}
+}
+
 // TestTransportTimeoutUsesTimeoutSemanticCode 验证传输层超时使用统一超时错误码。
 func TestTransportTimeoutUsesTimeoutSemanticCode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
