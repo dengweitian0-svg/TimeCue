@@ -11,7 +11,7 @@ func hasModelOutput(output ModelOutput) bool {
 }
 
 func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call ModelCall) (ModelCall, *RunError) {
-	for r.Error == nil && ctx.Err() == nil {
+	for r.Error == nil {
 		if call.State == StateSucceeded && (call.CheckpointStage == "model_call_end" || call.CheckpointStage == "tool_start") {
 			var failure *RunError
 			call, failure = s.processTools(ctx, call)
@@ -19,7 +19,15 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				return call, failure
 			}
 		}
+		if ctx.Err() != nil {
+			return call, nil
+		}
 		if call.State == StateSucceeded && call.CheckpointStage == "tool_end" {
+			var ok bool
+			cfg, ok = s.currentModel(r.Provider, r.Model)
+			if !ok {
+				return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
+			}
 			request := call.Input
 			request.Messages = call.CheckpointContext
 			request.MaxTokens = cfg.MaxOutputTokens
@@ -155,7 +163,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 			} else if tool.RetryCount >= tool.MaxRetry {
 				tool.State = "failed"
 				tool.Error = toolError("tool_result_unconfirmed", "中断前工具结果未能确认，未重新执行")
-				call = toolProgress(call, tool, len(requests))
+				call = call.WithToolResult(tool, len(requests))
 				if err := s.toolStore.FinishTool(context.Background(), call, tool); err != nil {
 					return call, persistenceFailure()
 				}
@@ -199,7 +207,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 		}
 		tool := <-results
 		inFlight--
-		call = toolProgress(call, tool, len(requests))
+		call = call.WithToolResult(tool, len(requests))
 		if err := s.toolStore.FinishTool(context.Background(), call, tool); err != nil {
 			call.PendingTool = &tool
 			return call, persistenceFailure()
@@ -220,7 +228,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 			tool.Request = request
 			tool.State = "skipped"
 			tool.Error = toolError("tool_skipped", "运行已取消，未启动此工具")
-			call = toolProgress(call, tool, len(requests))
+			call = call.WithToolResult(tool, len(requests))
 			if err := s.toolStore.FinishTool(context.Background(), call, tool); err != nil {
 				return call, persistenceFailure()
 			}
@@ -229,7 +237,8 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 	return call, nil
 }
 
-func toolProgress(call ModelCall, tool ToolCall, total int) ModelCall {
+// WithToolResult 将原 ID 的工具结果合入完整上下文和本批进度，调用方须原子持久化。
+func (call ModelCall) WithToolResult(tool ToolCall, total int) ModelCall {
 	content := string(tool.Output)
 	if tool.Error != nil {
 		encoded, _ := json.Marshal(tool.Error)

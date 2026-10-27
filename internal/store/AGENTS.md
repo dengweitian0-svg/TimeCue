@@ -43,3 +43,5 @@ ReadUnacknowledged 在同一事务读取范围完整总数、有界提醒页及�
 - History 读取按 run.created_at 选择的最新终态 checkpoint 完整 context，保留实际消息顺序和有效摘要覆盖范围，不按 model_call.id 重建。兼容过滤旧快照中的全空 assistant，保留 thinking 与工具请求；中断说明独立追加在整轮之后。checkpoint 的调用结束快照只追加实际存在的 assistant 内容。会话 run_ids 同样按创建时间升序，时间相同以 run 主键稳定排序。
 - 预算拒绝在 Create 事务保存失败 run 与 start/error/end，不创建模型调用、checkpoint 或 compact。OrdinaryCallCount 从已有 continuation 与 compact 关联统计普通逻辑调用；ReadCall 同时回读 checkpoint 阶段与完整消息，不新增表、列或运行计数字段。
 - 聊天调用复用版本 3 已有 retry_count/max_retry/next_retry_at/retry_history 列；调用快照、重试事实及适用尾批同事务提交，ReadCall 完整回读以支持退避恢复，不新增表、列、索引或迁移。正常退出保留 retry_wait 的原错误和期限，终态清除计划期限。
+
+聊天异常收尾同一事务复用已提交工具结果，并将已接纳但尚无确认结果的原 ID 补齐 tool_result_unconfirmed；取消未启动项补齐 skipped/aborted。开始与结果事件和完整工具配对均保留，直接保存最终处理事实，不伪造 running/tool_use；正常退出不补造终态，保留原进度供恢复。

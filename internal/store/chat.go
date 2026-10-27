@@ -516,6 +516,11 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 				return err
 			}
 		}
+		var err error
+		call, err = closeToolBatch(ctx, tx, call, r)
+		if err != nil {
+			return err
+		}
 		if err := appendChatEvents(ctx, tx, call); err != nil {
 			return err
 		}
@@ -529,7 +534,7 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 				return err
 			}
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE ai_runs SET status=?,output=?,error=?,finished_at=? WHERE run_id=?`, r.State, stringValue(r.Output), jsonValue(r.Error), timeValue(r.FinishedAt), r.RunID)
+		_, err = tx.ExecContext(ctx, `UPDATE ai_runs SET status=?,output=?,error=?,finished_at=? WHERE run_id=?`, r.State, stringValue(r.Output), jsonValue(r.Error), timeValue(r.FinishedAt), r.RunID)
 		if err != nil {
 			return err
 		}

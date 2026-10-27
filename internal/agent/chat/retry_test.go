@@ -62,7 +62,7 @@ func retryFixture(t *testing.T, settings func() ([]chat.ModelConfig, error)) (ch
 
 func startRetryService(t *testing.T, repo chat.Storage, settings func() ([]chat.ModelConfig, error)) *chat.Runtime {
 	t.Helper()
-	service := chat.NewService(repo, completion.NewClient(nil), settings)
+	service := chat.NewService(repo, completion.NewClient(nil), settings, nil)
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}

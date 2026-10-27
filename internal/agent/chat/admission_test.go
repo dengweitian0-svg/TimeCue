@@ -528,7 +528,7 @@ func admissionDatabase(t *testing.T) (*store.Sqlite, chat.Storage, string) {
 
 func startAdmissionService(t *testing.T, ports chat.Storage, m chat.ModelClient, settings func() ([]chat.ModelConfig, error)) *chat.Runtime {
 	t.Helper()
-	s := chat.NewService(ports, m, settings)
+	s := chat.NewService(ports, m, settings, nil)
 	if err := s.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}

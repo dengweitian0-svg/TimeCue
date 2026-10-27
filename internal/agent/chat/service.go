@@ -44,7 +44,7 @@ type Runtime struct {
 }
 
 // NewService 装配真实聊天用例，不播种任何会话。
-func NewService(storage Storage, model ModelClient, settings func() ([]ModelConfig, error), registry ...*tools.Registry) *Runtime {
+func NewService(storage Storage, model ModelClient, settings func() ([]ModelConfig, error), registry *tools.Registry) *Runtime {
 	service := &Runtime{
 		runs:        storage.Runs,
 		sessions:    storage.Sessions,
@@ -57,9 +57,7 @@ func NewService(storage Storage, model ModelClient, settings func() ([]ModelConf
 		subscribers: map[string]*subscriber{},
 		stopSignal:  make(chan struct{}),
 		toolStore:   storage.Tools,
-	}
-	if len(registry) > 0 {
-		service.tools = registry[0]
+		tools:       registry,
 	}
 	return service
 }

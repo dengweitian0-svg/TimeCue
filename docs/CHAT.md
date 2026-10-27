@@ -37,7 +37,7 @@ HTTP 使用 `/v1/model`、`/v1/run`、`/v1/run/:run_id`、`/v1/run/:run_id/event
 
 ## 当前切片边界
 
-T06 已接通只读日程工具。所有工具实现统一的 `Tool.Info(ctx)` / `Tool.InvokableRun(ctx, argumentsJSON)` 接口，并通过 `Registry.Register` 注册；注册中心统一提供模型定义、校验参数、分发调用和转换错误，拒绝重复名称和不支持的定义。具体日程工具通过正式业务窄端口查询，不读取日程表，不注册创建、修改或删除工具。
+T06 已接通只读日程工具。应用只装配一个统一 Registry；所有工具实现统一的 `Tool.Info(ctx)` / `Tool.InvokableRun(ctx, argumentsJSON)` 接口，并通过 `Registry.Register` 注册；注册中心统一提供模型定义、校验参数、分发调用和转换错误，拒绝重复名称和不支持的定义。具体日程工具通过正式业务窄端口查询，不读取日程表，不注册创建、修改或删除工具。
 
 | 工具 | 查询能力 |
 | --- | --- |
@@ -45,13 +45,13 @@ T06 已接通只读日程工具。所有工具实现统一的 `Tool.Info(ctx)` /
 | `list_schedules` | 可选 `name`/`type`/`limit`/`offset`，名称包含过滤；默认 50 条、最大 50 条，保留数组结果及每条规则版本。 |
 | `query_occurrences` | 必填 `date`、可选 `cursor`，复用正式日期发生情况页和 `nextCursor`；支持 YYYY-MM-DD 及今天/明天/后天/昨天，实际解析时按北京时间计算。 |
 
-模型请求携带相同预算内的真实工具定义；适配器按流式 index 组装名称、ID 和 arguments 原文。只有正常结束且持久化接纳的模型回复才推进工具，断流片段不执行或网络重试。同一回复内重复 tool_call_id 整批拒绝为 model_invalid_format，不登记工具或生成工具事件，原 output/usage 与已收到正文、思考仍保留；无法配对的 tool_calls 不进入下一轮有效上下文。不同回复允许复用同值 ID。
+模型请求携带相同预算内的真实工具定义；适配器按流式 index 组装名称、ID 和 arguments 原文。只有正常结束且持久化接纳的模型回复才推进工具，断流片段不执行或网络重试。同一回复内重复 tool_call_id 整批拒绝为 model_invalid_format，不登记工具或生成工具事件，原 output/usage 与已收到正文、思考仍保留；无法配对的 tool_calls 不进入下一轮有效上下文。不同回复允许复用同值 ID。带工具请求的正常 length 截断逐条校验：坏参数按原 ID 回填解析错误，同批完整查询仍执行；纯文字自动续写由后续切片扩展。
 
 工具由单 run 协调器调度，当前只读查询最多三个并行；开始和结果事务串行合并。实际处理前先原子保存 running、arguments 原文的外层 JSON 字符串、调用关联、tool_start 与 tool_use checkpoint，提交后才做参数校验和正式查询，不创建 pending 占位。语法或参数不完整使用 tool_argument_parse_error；合法非对象、缺失/多余字段、类型或范围错误使用 tool_argument_validation_error，均不执行业务。开始事件 argument 对语法非法或非对象为 null，对可解析对象保持原对象。
 
 每个工具的原始 JSON output/error、tool_result、原 ID 的 tool 消息、completed_tool、last_tool 和 checkpoint 同事务保存；成功与失败都回填模型，工具错误不再重复生成 run error 事件。全部原 ID 取得结果后才保存 tool_end 并登记下一普通模型请求。列表、对象、标量及 null 均保持原始 JSON 类型；Flutter 复用同一事件解码器、原 ID 配对和默认折叠详情，查看完整参数、结果及错误。
 
-重启从已接纳回复和逐项 checkpoint 接续，不重发已成功模型请求、不重复已保存结果。中断且结果未确认的只读查询沿原记录使用剩余恢复预算，预算耗尽以 tool_result_unconfirmed 回填；不会按名称或事件猜测查询已完成。结果事务失败立即停止后续推进，以实际结果随失败收尾事务保存，仅重试持久化。当前工具参数和业务错误不自动重试；完整工具退避、配置化执行参数、写入取消与恢复由后续工具切片扩展。
+重启从已接纳回复和逐项 checkpoint 接续，不重发已成功模型请求、不重复已保存结果。中断且结果未确认的只读查询沿原记录使用剩余恢复预算，预算耗尽以 tool_result_unconfirmed 回填；不会按名称或事件猜测查询已完成。结果事务失败立即停止后续推进，以实际结果随失败收尾事务保存，仅重试持久化；其余已接纳但无确认结果的原 ID 在同一事务补齐 tool_result_unconfirmed，保留完整配对，接纳后立即取消也补齐 skipped/aborted。新的普通模型调用登记前读取最新重试及预算配置，已有调用的重试预算不变。当前工具参数和业务错误不自动重试；完整工具退避、配置化执行参数、写入取消与恢复由后续工具切片扩展。
 
 
 T05 已接通完整消息快照接续和运行预算。新 run 从按创建时间选出的最新已结束运行 checkpoint.context 读取有效消息，追加本轮真实输入；不按 model_call.id 重新拼接，也不补回已被实际快照替代的历史。原始 run.input、事件、调用 input/output 均保持原文，客户端仍只提交本轮输入。快照保留实际消息顺序、后端续写请求、有效摘要投影及工具请求/结果的配对；这些历史格式已覆盖测试，写入工具、自动续写与摘要生成仍随后续切片交付。

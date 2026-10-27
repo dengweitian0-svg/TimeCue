@@ -120,8 +120,8 @@ func finishTool(ctx context.Context, tx *sql.Tx, call chat.ModelCall, tool chat.
 		return nil
 	}
 	if tool.ID == 0 {
-		// 未开始便取消时直接保存 skipped，补齐开始与结果，不伪造 running/tool_use。
-		_, err := tx.ExecContext(ctx, `INSERT INTO ai_tool_calls(run_id,session_id,model_call_id,tool_call_id,name,input,status,max_retry,error,finished_at,created_at) VALUES(?,?,?,?,?,?,'skipped',?,?,?,?)`, call.RunID, call.SessionID, call.ID, tool.Request.ID, tool.Request.Function.Name, jsonValue(tool.Request.Function.Arguments), tool.MaxRetry, jsonValue(tool.Error), time.Now().UnixNano(), time.Now().UnixNano())
+		// 未开始便取消或因持久化故障收尾时直接保存最终事实，不伪造 running/tool_use。
+		_, err := tx.ExecContext(ctx, `INSERT INTO ai_tool_calls(run_id,session_id,model_call_id,tool_call_id,name,input,status,max_retry,error,finished_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, call.RunID, call.SessionID, call.ID, tool.Request.ID, tool.Request.Function.Name, jsonValue(tool.Request.Function.Arguments), tool.State, tool.MaxRetry, jsonValue(tool.Error), time.Now().UnixNano(), time.Now().UnixNano())
 		if err != nil {
 			return err
 		}
@@ -146,4 +146,63 @@ func finishTool(ctx context.Context, tx *sql.Tx, call chat.ModelCall, tool chat.
 		return err
 	}
 	return checkpoint(ctx, tx, call, call.CheckpointStage)
+}
+
+// closeToolBatch 在运行异常收尾事务中补齐已接纳但尚无结果的原调用，避免终态历史失配。
+func closeToolBatch(ctx context.Context, tx *sql.Tx, call chat.ModelCall, run chat.Record) (chat.ModelCall, error) {
+	if call.State != chat.StateSucceeded || call.Output == nil || len(call.Output.Message.ToolCalls) == 0 || run.State == chat.StateSucceeded {
+		return call, nil
+	}
+	var requests []chat.ToolRequest
+	if err := json.Unmarshal(call.Output.Message.ToolCalls, &requests); err != nil {
+		return call, err
+	}
+	var raw string
+	if err := tx.QueryRowContext(ctx, `SELECT status,state FROM ai_checkpoints WHERE run_id=?`, call.RunID).Scan(&call.CheckpointStage, &raw); err != nil {
+		return call, err
+	}
+	var progress struct {
+		Context   []chat.Message `json:"context"`
+		Completed []string       `json:"completed_tool"`
+		Last      string         `json:"last_tool"`
+	}
+	if err := json.Unmarshal([]byte(raw), &progress); err != nil {
+		return call, err
+	}
+	call.CheckpointContext, call.CompletedTools, call.LastTool = progress.Context, progress.Completed, progress.Last
+	completed := map[string]bool{}
+	for _, id := range call.CompletedTools {
+		completed[id] = true
+	}
+	for _, request := range requests {
+		if completed[request.ID] {
+			continue
+		}
+		tool := chat.ToolCall{
+			ModelCallID: call.ID,
+			Request:     request,
+			State:       "failed",
+			MaxRetry:    3,
+		}
+		err := tx.QueryRowContext(ctx, `SELECT id,max_retry,retry_count FROM ai_tool_calls WHERE model_call_id=? AND tool_call_id=?`, call.ID, request.ID).Scan(&tool.ID, &tool.MaxRetry, &tool.RetryCount)
+		if err != nil && err != sql.ErrNoRows {
+			return call, err
+		}
+		tool.Error = &chat.RunError{
+			Code:    "tool_result_unconfirmed",
+			Message: "持久化故障中断处理，未取得可确认的工具结果",
+		}
+		if run.State == chat.StateCancelled {
+			tool.State = "skipped"
+			tool.Error = &chat.RunError{
+				Code:    "tool_skipped",
+				Message: "运行已取消，未启动或未恢复此工具",
+			}
+		}
+		call = call.WithToolResult(tool, len(requests))
+		if err := finishTool(ctx, tx, call, tool); err != nil {
+			return call, err
+		}
+	}
+	return call, nil
 }

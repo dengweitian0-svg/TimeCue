@@ -51,7 +51,7 @@ func chatHTTPFixture(t *testing.T, key string, handler http.HandlerFunc, configu
 			ContextWindow:   32768,
 			MaxOutputTokens: 8192,
 		}}, nil
-	})
+	}, nil)
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}

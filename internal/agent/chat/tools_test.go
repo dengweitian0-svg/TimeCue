@@ -576,3 +576,146 @@ func TestLengthTruncatedToolDoesNotDiscardCompleteSibling(t *testing.T) {
 		t.Fatalf("run: %+v requests=%d", run, count.Load())
 	}
 }
+
+type acceptedToolGate struct {
+	chat.ToolRepository
+	accepted chan struct{}
+	release  chan struct{}
+}
+
+// AcceptResponse 在完整回复提交后的取消边界暂停，不改变真实提交内容。
+func (g *acceptedToolGate) AcceptResponse(ctx context.Context, call chat.ModelCall) error {
+	if err := g.ToolRepository.AcceptResponse(ctx, call); err != nil {
+		return err
+	}
+	close(g.accepted)
+	<-g.release
+	return nil
+}
+
+// TestCancelAfterToolReplyAcceptedPairsSkippedResults 验证接纳后立即取消仍按全部原 ID 保存跳过结果。
+func TestCancelAfterToolReplyAcceptedPairsSkippedResults(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		emitTools(w, []chat.ToolRequest{toolRequest("cancelled-query", "get_schedule", `{"id":1}`)})
+	}))
+	defer upstream.Close()
+	service, storage, application := newToolFixture(t, upstream.URL)
+	service.Stop()
+	gate := &acceptedToolGate{
+		ToolRepository: storage.Tools,
+		accepted:       make(chan struct{}),
+		release:        make(chan struct{}),
+	}
+	storage.Tools = gate
+	service = chat.NewService(storage, completion.NewClient(nil), toolSettings(upstream.URL), queryRegistry(t, application))
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	receipt, err := service.CreateRun(context.Background(), chat.CreateRunInput{
+		SessionID:      "cancel-accepted",
+		Input:          "查询",
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "query",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-gate.accepted
+	cancelCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, _ = service.CancelRun(cancelCtx, receipt.RunID)
+	close(gate.release)
+	run := awaitRun(t, service, receipt.RunID)
+	if run.Status != chat.StatusCancelled {
+		t.Fatalf("run: %+v", run)
+	}
+	page, _ := service.GetRunEvents(context.Background(), run.RunID, 0, 100)
+	if len(page.Events) != 4 || page.Events[1].Type != chat.EventToolStart || page.Events[2].Type != chat.EventToolResult {
+		t.Fatalf("unpaired cancelled tools: %s", mustJSON(page))
+	}
+	var result chat.ToolResultData
+	if err := json.Unmarshal(page.Events[2].Data, &result); err != nil || result.Error == nil || result.Error.Code != "tool_skipped" {
+		t.Fatalf("skip: %+v %v", result, err)
+	}
+}
+
+type failToolStart struct{ chat.ToolRepository }
+
+// BeginTool 在真实开始事务边界注入失败，工具不能执行。
+func (f failToolStart) BeginTool(context.Context, chat.ModelCall, chat.ToolCall) (int64, error) {
+	return 0, errors.New("injected tool start failure")
+}
+
+// TestToolStartPersistenceFailureKeepsNextHistoryPaired 验证开始事务失败仍让终态历史中的原调用取得明确错误配对。
+func TestToolStartPersistenceFailureKeepsNextHistoryPaired(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		emitTools(w, []chat.ToolRequest{toolRequest("not-started", "get_schedule", `{"id":1}`)})
+	}))
+	defer upstream.Close()
+	service, storage, application := newToolFixture(t, upstream.URL)
+	service.Stop()
+	storage.Tools = failToolStart{ToolRepository: storage.Tools}
+	service = chat.NewService(storage, completion.NewClient(nil), toolSettings(upstream.URL), queryRegistry(t, application))
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	run := startToolRun(t, service, "start-failure")
+	if run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "persistence_failed" {
+		t.Fatalf("run: %+v", run)
+	}
+	history, err := storage.Execution.History(context.Background(), run.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paired := false
+	for _, message := range history {
+		if message.Role == "tool" && message.ToolCallID == "not-started" {
+			paired = true
+		}
+	}
+	if !paired {
+		t.Fatalf("unpaired terminal history: %s", mustJSON(history))
+	}
+}
+
+// TestNextModelCallReadsCurrentRetryBudget 验证工具后的新逻辑调用读取最新重试配置。
+func TestNextModelCallReadsCurrentRetryBudget(t *testing.T) {
+	var budget atomic.Int32
+	budget.Store(1)
+	var count atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if count.Add(1) == 1 {
+			budget.Store(0)
+			w.Header().Set("Content-Type", "text/event-stream")
+			emitTools(w, []chat.ToolRequest{toolRequest("lookup", "get_schedule", `{"id":1}`)})
+			return
+		}
+		http.Error(w, "temporary", http.StatusServiceUnavailable)
+	}))
+	defer upstream.Close()
+	service, storage, application := newToolFixture(t, upstream.URL)
+	service.Stop()
+	settings := func() ([]chat.ModelConfig, error) {
+		configs, err := toolSettings(upstream.URL)()
+		configs[0].MaxRetry = int(budget.Load())
+		return configs, err
+	}
+	service = chat.NewService(storage, completion.NewClient(nil), settings, queryRegistry(t, application))
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	run := startToolRun(t, service, "hot-next")
+	if run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "model_server_busy" || count.Load() != 2 {
+		t.Fatalf("run: %+v requests=%d", run, count.Load())
+	}
+	call, err := storage.Execution.ReadCall(context.Background(), run.RunID)
+	if err != nil || call.MaxRetry != 0 {
+		t.Fatalf("retry budget: %+v %v", call, err)
+	}
+}
