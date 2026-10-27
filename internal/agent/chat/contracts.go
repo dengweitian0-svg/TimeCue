@@ -84,11 +84,15 @@ type CreateRunInput struct {
 
 // Receipt 是固定四字段创建回执。
 type Receipt struct {
-	RunID  string    `json:"run_id"`
-	Status Status    `json:"status"`
-	Output *string   `json:"output"`
-	Error  *RunError `json:"error"`
+	RunID   string    `json:"run_id"`
+	Status  Status    `json:"status"`
+	Output  *string   `json:"output"`
+	Error   *RunError `json:"error"`
+	created bool
 }
+
+// NewlyCreated 区分本次真正创建与幂等重放，不进入公开四字段 JSON。
+func (r Receipt) NewlyCreated() bool { return r.created }
 
 // Run 是固定十字段运行概况。
 type Run struct {

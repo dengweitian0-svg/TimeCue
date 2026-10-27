@@ -121,7 +121,7 @@ func TestNextRunUsesActualMessageSnapshot(t *testing.T) {
 		}
 		completedUpstreamForRetry(w)
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
 	service := startAdmissionService(t, ports, completion.NewClient(nil), retrySettings(upstream.URL, 0))
 	input := admissionInput(r.SessionID, "next")
 	input.Input = " 下一轮\n"
@@ -214,7 +214,7 @@ func TestInterruptedRepliesRemainExactInNextRun(t *testing.T) {
 				}
 				// 无正常结束信号的流在模型故障边界注入断流。
 			}))
-			defer upstream.Close()
+			t.Cleanup(upstream.Close)
 			service := startAdmissionService(t, ports, completion.NewClient(nil), retrySettings(upstream.URL, 0))
 			ctx := context.Background()
 			input := admissionInput("partial", "one")
@@ -380,7 +380,7 @@ func TestRecoveredOrdinaryRoundBudgetUsesLogicalCalls(t *testing.T) {
 				requests <- input
 				completedUpstreamForRetry(w)
 			}))
-			defer upstream.Close()
+			t.Cleanup(upstream.Close)
 			settings := retrySettings(upstream.URL, 3)
 			if mode == "custom_limit" {
 				settings = func() ([]chat.ModelConfig, error) {
@@ -432,7 +432,7 @@ func TestRequestBudgetMatchesPersistedAndWireBytes(t *testing.T) {
 		wire <- raw
 		completedUpstreamForRetry(w)
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
 	service := startAdmissionService(t, ports, completion.NewClient(nil), retrySettings(upstream.URL, 0))
 	input := admissionInput("wire", "one")
 	input.Input = " 中文🙂 <>&\n\"\\ "
@@ -460,7 +460,7 @@ func TestBudgetFailureIsAtomicAndReplayable(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		t.Error("预算拒绝不应请求上游")
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
 	service := startAdmissionService(t, ports, completion.NewClient(nil), retrySettings(upstream.URL, 0))
 	input := admissionInput("budget", "one")
 	input.Input = " " + strings.Repeat("中🙂\"\\", 15000) + "\n"
@@ -493,7 +493,9 @@ func TestBudgetFailureIsAtomicAndReplayable(t *testing.T) {
 		t.Fatalf("预算拒绝事件不完整: %+v %v", page, err)
 	}
 	replay, err := service.CreateRun(context.Background(), input)
-	if err != nil || !reflect.DeepEqual(replay, receipt) {
+	originalJSON, _ := json.Marshal(receipt)
+	replayedJSON, _ := json.Marshal(replay)
+	if err != nil || !bytes.Equal(originalJSON, replayedJSON) || !receipt.NewlyCreated() || replay.NewlyCreated() {
 		t.Fatalf("预算失败未沿原键重放: %+v %v", replay, err)
 	}
 }
@@ -508,7 +510,7 @@ func TestRequestBudgetRoundsUTF8BytesUp(t *testing.T) {
 				requests.Add(1)
 				completedUpstreamForRetry(w)
 			}))
-			defer upstream.Close()
+			t.Cleanup(upstream.Close)
 			settings := func() ([]chat.ModelConfig, error) {
 				models, err := retrySettings(upstream.URL, 0)()
 				models[0].MaxOutputTokens = 8
@@ -609,7 +611,7 @@ func TestHistorySelectsLatestSnapshotByCreationTime(t *testing.T) {
 		requests <- input
 		completedUpstreamForRetry(w)
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
 	service := startAdmissionService(t, ports, completion.NewClient(nil), retrySettings(upstream.URL, 0))
 	input := admissionInput("ordered", "new")
 	input.Input = "新输入"
@@ -624,5 +626,123 @@ func TestHistorySelectsLatestSnapshotByCreationTime(t *testing.T) {
 	session, err := service.GetSession(ctx, "ordered")
 	if err != nil || !reflect.DeepEqual(session.RunIDs, []string{"earlier", "later", receipt.RunID}) {
 		t.Fatalf("会话运行顺序错误: %+v %v", session, err)
+	}
+}
+
+// TestCancellationRecoveryKeepsCompletedCallAndPairedContext 验证取消恢复只收尾运行，不改写成功调用或丢弃已配对结果。
+func TestCancellationRecoveryKeepsCompletedCallAndPairedContext(t *testing.T) {
+	_, ports, path := admissionDatabase(t)
+	ctx := context.Background()
+	r := chat.Record{
+		Run: chat.Run{
+			RunID:     "cancel-recovery",
+			SessionID: "cancel-history",
+			Provider:  "test",
+			Model:     "model",
+			Input:     "原始输入",
+			CreatedAt: time.Now(),
+		},
+		State:          chat.StateWaitForCancel,
+		IdempotencyKey: "old",
+	}
+	if err := ports.Runs.Create(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	assistant := chat.Message{
+		Role:      "assistant",
+		Content:   "准备查询",
+		ToolCalls: json.RawMessage(`[{"id":"t1","type":"function","function":{"name":"query_schedule","arguments":"{}"}}]`),
+	}
+	messages := []chat.Message{
+		{
+			Role:    "user",
+			Content: r.Input,
+		},
+		assistant,
+		{
+			Role:       "tool",
+			Content:    `{"output":{"title":"实际查询结果"},"error":null}`,
+			ToolCallID: "t1",
+		},
+	}
+	call := chat.ModelCall{
+		RunID:     r.RunID,
+		SessionID: r.SessionID,
+		Input:     chat.ModelRequest{Messages: messages[:1]},
+		Output:    &chat.ModelOutput{Message: assistant},
+		State:     chat.StateSucceeded,
+	}
+	var err error
+	call.ID, err = ports.Execution.BeginCall(ctx, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = ports.Execution.SaveEvents(ctx, call); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fixture.Close()
+	state, err := json.Marshal(map[string]any{"context": messages, "completed_tool": []string{"t1"}, "last_tool": "tool_result: query_schedule-t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = fixture.Exec(`UPDATE ai_checkpoints SET status='tool_end',state=? WHERE run_id=?`, string(state), r.RunID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := ports.Execution.ReadCall(ctx, r.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := make(chan chat.ModelRequest, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var input chat.ModelRequest
+		if err := json.NewDecoder(req.Body).Decode(&input); err != nil {
+			t.Error(err)
+			return
+		}
+		requests <- input
+		completedUpstreamForRetry(w)
+	}))
+	t.Cleanup(upstream.Close)
+	service := startAdmissionService(t, ports, completion.NewClient(nil), retrySettings(upstream.URL, 0))
+	run := awaitRun(t, service, r.RunID)
+	deadline := time.Now().Add(3 * time.Second)
+	for run.FinishedAt == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("取消恢复未完成收尾")
+		}
+		time.Sleep(time.Millisecond)
+		run, err = service.GetRun(ctx, r.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, err := ports.Execution.ReadCall(ctx, r.RunID)
+	if err != nil || run.Status != chat.StatusCancelled || !reflect.DeepEqual(before, after) || len(requests) != 0 {
+		t.Fatalf("取消恢复改写成功调用或请求上游: run=%+v before=%+v after=%+v error=%v", run, before, after, err)
+	}
+	var persisted string
+	if err = fixture.QueryRow(`SELECT state FROM ai_checkpoints WHERE run_id=?`, r.RunID).Scan(&persisted); err != nil || persisted != string(state) {
+		t.Fatalf("取消恢复丢弃实际工具进度: %s %v", persisted, err)
+	}
+	input := admissionInput(r.SessionID, "next")
+	input.Input = "继续"
+	receipt, err := service.CreateRun(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitRun(t, service, receipt.RunID)
+	want := append(messages, chat.Message{
+		Role:    "user",
+		Content: "上一轮回复未完成；其操作表述不代表业务已经生效。",
+	}, chat.Message{
+		Role:    "user",
+		Content: "继续",
+	})
+	if actual := awaitHistoryRequest(t, requests); !reflect.DeepEqual(actual.Messages, want) {
+		t.Fatalf("中断说明打断了工具配对: %+v", actual.Messages)
 	}
 }

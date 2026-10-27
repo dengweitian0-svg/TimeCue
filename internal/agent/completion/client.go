@@ -14,7 +14,6 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/shared"
 )
 
 // Client 使用官方 openai-go SDK 调用兼容的 Chat Completions 服务。
@@ -31,9 +30,12 @@ func NewClient(client *http.Client) *Client {
 // Complete 通过 SDK 消费流式响应，保留提供方扩展思考字段和原始 usage。
 func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.ModelRequest, emit func(chat.EventType, string) error) (chat.ModelOutput, *chat.RunError) {
 	output := chat.ModelOutput{Message: chat.Message{Role: "assistant"}}
-	params, err := requestParams(input)
-	if err != nil {
-		return output, failure("model_invalid_params")
+	for _, message := range input.Messages {
+		switch message.Role {
+		case "system", "user", "assistant", "tool":
+		default:
+			return output, failure("model_invalid_params")
+		}
 	}
 	encoded, err := json.Marshal(input)
 	if err != nil {
@@ -75,7 +77,7 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 	}()
 	client := openai.NewClient(option.WithAPIKey(cfg.Key), option.WithBaseURL(strings.TrimRight(cfg.BaseURL, "/")+"/"), option.WithHTTPClient(c.http), option.WithMaxRetries(0))
 	// 使用与预算检查、持久化完全相同的序列化结果，避免 SDK 消息转换改变字节预算。
-	stream := client.Chat.Completions.NewStreaming(requestCtx, params, option.WithRequestBody("application/json", encoded))
+	stream := client.Chat.Completions.NewStreaming(requestCtx, openai.ChatCompletionNewParams{}, option.WithRequestBody("application/json", encoded))
 	defer stream.Close()
 	finished := false
 	for stream.Next() {
@@ -174,34 +176,6 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 		return output, failure("model_invalid_format")
 	}
 	return output, nil
-}
-
-func requestParams(input chat.ModelRequest) (openai.ChatCompletionNewParams, error) {
-	params := openai.ChatCompletionNewParams{
-		Model:         shared.ChatModel(input.Model),
-		MaxTokens:     openai.Int(int64(input.MaxTokens)),
-		StreamOptions: openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(input.StreamOptions["include_usage"])},
-	}
-	for _, message := range input.Messages {
-		var value openai.ChatCompletionMessageParamUnion
-		switch message.Role {
-		case "system":
-			value = openai.SystemMessage(message.Content)
-		case "user":
-			value = openai.UserMessage(message.Content)
-		case "tool":
-			value = openai.ToolMessage(message.Content, message.ToolCallID)
-		case "assistant":
-			value = openai.AssistantMessage(message.Content)
-			if message.ReasoningContent != "" {
-				value.OfAssistant.SetExtraFields(map[string]any{"reasoning_content": message.ReasoningContent})
-			}
-		default:
-			return params, errors.New("unsupported message role")
-		}
-		params.Messages = append(params.Messages, value)
-	}
-	return params, nil
 }
 
 func failure(code string) *chat.RunError {

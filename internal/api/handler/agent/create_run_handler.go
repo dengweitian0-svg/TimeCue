@@ -49,7 +49,7 @@ func CreateRunHandler(service chat.RunService) middleware.HTTPHandler {
 			return utils.InternalErrorResult(errInvalidRunID)
 		}
 		status := http.StatusOK
-		if receipt.Status == chat.StatusRunning {
+		if receipt.NewlyCreated() || receipt.Status == chat.StatusRunning {
 			status = http.StatusAccepted
 		}
 		return middleware.JSONResult(status, receipt)

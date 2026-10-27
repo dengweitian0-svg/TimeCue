@@ -14,7 +14,7 @@
 
 新 run 沿按创建时间选出的最新终态运行完整 checkpoint.context 接续，不按模型调用 ID 拼接历史、不重新补回已覆盖原文；checkpoint 保留实际消息顺序、后端请求及工具配对。failed/cancelled 的有效部分 assistant（含仅 thinking）保持原文，完全无输出不伪造空 assistant；独立 user 中断说明放在旧轮及其配对结果之后、本轮真实输入之前，保存到实际请求及 checkpoint，恢复直接复用原请求。原始事件始终按 run 创建时间及 run 内 seq 查询展示，不用事件回放恢复执行。
 
-创建前预算失败在创建事务中保存 failed、原输入、错误与 start/error/end，不登记 model_call、checkpoint 或 compact，不占执行名额。普通轮数默认 20，可由统一 chat.max_rounds 配置；每次登记新普通调用前读取现有非 continuation 且不关联任何 compact 的逻辑调用数量。重试和未完成调用恢复不重复计数；已完成 tool_end 恢复沿完整快照登记下一调用，到达上限时仅失败运行，保留此前成功调用与进度。工具业务执行、自动续写及摘要生成仍由对应后续切片交付。
+创建前预算失败在创建事务中保存 failed、原输入、错误与 start/error/end，不登记 model_call、checkpoint 或 compact，不占执行名额。回执内部 NewlyCreated 仅区分 HTTP 首次创建和重放，不进入公开 JSON。普通轮数默认 20，可由统一 chat.max_rounds 配置；每次登记新普通调用前读取现有非 continuation 且不关联任何 compact 的逻辑调用数量。重试和未完成调用恢复不重复计数；已完成 tool_end 恢复沿完整快照登记下一调用，到达上限时仅失败运行，保留此前成功调用与进度。取消只读恢复遇到已终态调用时只结束 run，保留原调用与完整 checkpoint 工具配对。工具业务执行、自动续写及摘要生成仍由对应后续切片交付。
 
 创建互斥区覆盖幂等查询、配置与准入检查及真实创建事务；提交失败不登记运行占用或幂等键。幂等只比较同会话中的原始 input，provider/model 不参与比较；已删除会话优先拒绝。running 与 wait_for_cancel 均占名额，历史和订阅不占名额，正常终态保存成功后由唯一协调器释放；持久化故障耗尽遵循下述例外。
 

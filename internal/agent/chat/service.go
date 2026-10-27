@@ -239,8 +239,10 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 	if err = s.runs.Create(ctx, r); err != nil {
 		return Receipt{}, err
 	}
+	result := receipt(r)
+	result.created = true
 	if r.State.Terminal() {
-		return receipt(r), nil
+		return result, nil
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	run := &execution{
@@ -256,7 +258,7 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 		State:     StateRunning,
 		MaxRetry:  cfg.MaxRetry,
 	})
-	return receipt(r), nil
+	return result, nil
 }
 
 func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg ModelConfig, previous *ModelCall) {
@@ -286,8 +288,16 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 	if r.State == StateWaitForCancel {
 		r.State = StateCancelled
 		r.Error = nil
-		call.State = StateCancelled
-		call.Error = nil
+		if call.State.Terminal() {
+			// 只结束运行，已成功调用及其完整工具进度保持原事实。
+			call = ModelCall{
+				RunID:     r.RunID,
+				SessionID: r.SessionID,
+			}
+		} else {
+			call.State = StateCancelled
+			call.Error = nil
+		}
 		now := time.Now()
 		r.FinishedAt = &now
 		s.finish(call, r)
