@@ -92,7 +92,7 @@ void main() {
       reason: '最新消息应继续保持在实际滚动范围末尾',
     );
     expect(find.text('Tool calling · 已发起 3 次调用'), findsWidgets);
-    final lastTool = find.byKey(const ValueKey('chat-tool-scroll-tool-2'));
+    final lastTool = find.byKey(const ValueKey('chat-tool-4:scroll-tool-2'));
     expect(lastTool, findsOneWidget, reason: '最新多工具消息应自动滚动到视口内，不能停留在旧历史尾部');
     expect(_distanceToLatest(_verticalScroll(tester, viewport)), lessThan(48));
 

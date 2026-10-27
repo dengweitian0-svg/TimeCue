@@ -40,7 +40,17 @@ type Runtime struct {
 
 // NewService 装配真实聊天用例，不播种任何会话。
 func NewService(storage Storage, model ModelClient, settings func() ([]ModelConfig, error)) *Runtime {
-	return &Runtime{runs: storage.Runs, sessions: storage.Sessions, execution: storage.Execution, events: storage.Events, model: model, settings: settings, active: map[string]*execution{}, subscribers: map[string]*subscriber{}, stopSignal: make(chan struct{})}
+	return &Runtime{
+		runs:        storage.Runs,
+		sessions:    storage.Sessions,
+		execution:   storage.Execution,
+		events:      storage.Events,
+		model:       model,
+		settings:    settings,
+		active:      map[string]*execution{},
+		subscribers: map[string]*subscriber{},
+		stopSignal:  make(chan struct{}),
+	}
 }
 
 // Start 在 ready 前恢复活跃占用，后台沿原 input 和同一逻辑调用恢复请求。
@@ -68,7 +78,10 @@ func (s *Runtime) Start(ctx context.Context) error {
 		} else if e != nil {
 			return e
 		} else if len(session.RunIDs) > 0 && session.RunIDs[len(session.RunIDs)-1] != r.RunID {
-			records[i].Error = &RunError{Code: "run_superseded", Message: "同一会话已有后续运行，旧运行仅做失败收尾"}
+			records[i].Error = &RunError{
+				Code:    "run_superseded",
+				Message: "同一会话已有后续运行，旧运行仅做失败收尾",
+			}
 		}
 	}
 	for _, r := range records {
@@ -82,7 +95,11 @@ func (s *Runtime) Start(ctx context.Context) error {
 			}
 		}
 		runCtx, cancel := context.WithCancel(context.Background())
-		run := &execution{cancel: cancel, done: make(chan struct{}), session: r.SessionID}
+		run := &execution{
+			cancel:  cancel,
+			done:    make(chan struct{}),
+			session: r.SessionID,
+		}
 		if hidden[r.RunID] || r.State == StateWaitForCancel {
 			run.requested = true
 			cancel()
@@ -127,12 +144,19 @@ func (s *Runtime) GetModels(context.Context) ([]ModelOption, error) {
 	}
 	models := []ModelOption{}
 	for _, cfg := range configs {
-		models = append(models, ModelOption{Provider: cfg.Provider, Model: cfg.Model, Available: available(cfg)})
+		models = append(models, ModelOption{
+			Provider:  cfg.Provider,
+			Model:     cfg.Model,
+			Available: available(cfg),
+		})
 	}
 	return models, nil
 }
 func receipt(r Record) Receipt {
-	result := Receipt{RunID: r.RunID, Status: r.State.Public()}
+	result := Receipt{
+		RunID:  r.RunID,
+		Status: r.State.Public(),
+	}
 	if r.State != StateRunning {
 		result.Output = r.Output
 		result.Error = r.Error
@@ -184,12 +208,28 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 	if len(s.active) >= 3 {
 		return Receipt{}, ErrSessionConcurrencyLimit
 	}
-	r := Record{Run: Run{RunID: uuid.NewString(), SessionID: input.SessionID, Provider: input.Provider, Model: input.Model, Input: input.Input, Status: StatusRunning, CreatedAt: time.Now()}, State: StateRunning, IdempotencyKey: input.IdempotencyKey}
+	r := Record{
+		Run: Run{
+			RunID:     uuid.NewString(),
+			SessionID: input.SessionID,
+			Provider:  input.Provider,
+			Model:     input.Model,
+			Input:     input.Input,
+			Status:    StatusRunning,
+			CreatedAt: time.Now(),
+		},
+		State:          StateRunning,
+		IdempotencyKey: input.IdempotencyKey,
+	}
 	if err = s.runs.Create(ctx, r); err != nil {
 		return Receipt{}, err
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	run := &execution{cancel: cancel, done: make(chan struct{}), session: r.SessionID}
+	run := &execution{
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		session: r.SessionID,
+	}
 	s.active[r.RunID] = run
 	go s.execute(runCtx, run, r, cfg, nil)
 	return receipt(r), nil
@@ -197,7 +237,12 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 
 func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg ModelConfig, previous *ModelCall) {
 	defer func() { s.mu.Lock(); delete(s.active, r.RunID); close(run.done); s.mu.Unlock(); run.cancel() }()
-	call := ModelCall{RunID: r.RunID, SessionID: r.SessionID, State: StateRunning, MaxRetry: cfg.MaxRetry}
+	call := ModelCall{
+		RunID:     r.RunID,
+		SessionID: r.SessionID,
+		State:     StateRunning,
+		MaxRetry:  cfg.MaxRetry,
+	}
 	var err error
 	if previous != nil {
 		call = *previous
@@ -209,17 +254,32 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 		}
 	}
 	if r.Error == nil && !available(cfg) {
-		r.Error = &RunError{Code: "model_config_unavailable", Message: "原运行的模型配置或密钥不可用"}
+		r.Error = &RunError{
+			Code:    "model_config_unavailable",
+			Message: "原运行的模型配置或密钥不可用",
+		}
 	}
 	if previous == nil && r.Error == nil {
 		history, historyErr := s.execution.History(ctx, r.SessionID)
 		err = historyErr
 		if err == nil {
-			call.Input = ModelRequest{Model: r.Model, Messages: append(history, Message{Role: "user", Content: r.Input}), Stream: true, MaxTokens: cfg.MaxOutputTokens, StreamOptions: map[string]bool{"include_usage": true}}
+			call.Input = ModelRequest{
+				Model: r.Model,
+				Messages: append(history, Message{
+					Role:    "user",
+					Content: r.Input,
+				}),
+				Stream:        true,
+				MaxTokens:     cfg.MaxOutputTokens,
+				StreamOptions: map[string]bool{"include_usage": true},
+			}
 			encoded, _ := json.Marshal(call.Input)
 			if (len(encoded)+3)/4 > cfg.ContextWindow-cfg.MaxOutputTokens {
 				r.State = StateFailed
-				r.Error = &RunError{Code: "context_budget_exceeded", Message: "输入超出模型上下文预算"}
+				r.Error = &RunError{
+					Code:    "context_budget_exceeded",
+					Message: "输入超出模型上下文预算",
+				}
 				now := time.Now()
 				r.FinishedAt = &now
 				s.finish(call, r)
@@ -229,19 +289,29 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 		}
 	}
 	if err != nil {
-		r.Error = &RunError{Code: "persistence_failed", Message: "保存模型请求失败"}
-	} else if r.Error == nil {
-		partial := ModelOutput{Message: Message{Role: "assistant"}}
-		output, failure := s.model.Complete(ctx, cfg, call.Input, func(kind EventType, content string) error {
-			if kind == EventText {
-				partial.Message.Content += content
-			} else {
-				partial.Message.ReasoningContent += content
+		if !errors.Is(err, context.Canceled) || ctx.Err() == nil {
+			r.Error = &RunError{
+				Code:    "persistence_failed",
+				Message: "保存模型请求失败",
 			}
-			call.Output = &partial
-			data, _ := json.Marshal(TextData{Content: content})
-			return s.execution.SaveDelta(context.Background(), call, Event{Type: kind, Data: data})
-		})
+		}
+	} else if r.Error == nil {
+		modelCtx, cancel := context.WithCancel(ctx)
+		batch := &eventBatch{
+			repository: s.execution,
+			call:       call,
+			partial:    ModelOutput{Message: Message{Role: "assistant"}},
+			cancel:     cancel,
+		}
+		output, failure := s.model.Complete(modelCtx, cfg, call.Input, batch.append)
+		call, err = batch.close()
+		cancel()
+		if err != nil {
+			failure = &RunError{
+				Code:    "persistence_failed",
+				Message: "保存模型输出失败",
+			}
+		}
 		// 失败或退出且没有新有效输出时保留旧快照；完整成功响应即使为空也采用本次实际结果。
 		if failure == nil || call.Output == nil || output.Message.Content != "" || output.Message.ReasoningContent != "" {
 			call.Output = &output
@@ -254,11 +324,21 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 		}
 	}
 	s.mu.Lock()
-	if s.stopping && !run.requested {
+	if s.stopping && !run.requested && (r.Error == nil || r.Error.Code != "persistence_failed") {
 		s.mu.Unlock()
 		if call.ID != 0 {
 			if err = s.execution.Pause(context.Background(), call); err != nil {
 				logger.Error("[chat] 保存退出进度失败", "run_id", r.RunID, "error", err)
+				r.State = StateFailed
+				r.Error = &RunError{
+					Code:    "persistence_failed",
+					Message: "保存退出进度失败",
+				}
+				call.State = r.State
+				call.Error = r.Error
+				now := time.Now()
+				r.FinishedAt = &now
+				s.finish(call, r)
 			}
 		}
 		return
@@ -397,7 +477,10 @@ func (s *Runtime) Subscribe(ctx context.Context, id string, after int64) (*Subsc
 		old.cancel()
 	}
 	subCtx, cancel := context.WithCancel(ctx)
-	sub := &subscriber{cancel: cancel, done: make(chan struct{})}
+	sub := &subscriber{
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
 	s.subscribers[id] = sub
 	events := make(chan Event)
 	go func() {
@@ -439,5 +522,8 @@ func (s *Runtime) Subscribe(ctx context.Context, id string, after int64) (*Subsc
 			}
 		}
 	}()
-	return &Subscription{Events: events, Close: cancel}, nil
+	return &Subscription{
+		Events: events,
+		Close:  cancel,
+	}, nil
 }

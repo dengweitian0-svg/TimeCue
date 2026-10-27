@@ -273,6 +273,7 @@ class ChatViewModel extends ChangeNotifier {
       // 保持服务端顺序，并复用已运行的 run，避免重置游标或连接。
       final orderedRuns = <ChatRunState>[];
       final runsToConnect = <ChatRunState>[];
+      final runsToRecover = <ChatRunState>[];
       final newlyLoadedRuns = <String, ChatRunState>{};
       for (final runId in session.runIds) {
         final cached = _runsById[runId];
@@ -280,7 +281,7 @@ class ChatViewModel extends ChangeNotifier {
           if (cached.sessionId != sessionId) {
             throw StateError('缓存运行所属的 session ID 与当前会话不匹配');
           }
-          if (!cached.isTerminal) {
+          if (!cached.isTerminal || cached._needsSnapshot) {
             final snapshot = await _gateway.getRun(runId);
             if (!_isSessionCurrent(generation, sessionId, sessionGeneration)) {
               return;
@@ -290,9 +291,10 @@ class ChatViewModel extends ChangeNotifier {
               throw StateError('运行快照身份与当前会话不匹配');
             }
             _mergeSnapshot(cached, snapshot);
-            if (!cached.isTerminal &&
-                snapshot.status == ChatRunStatus.running) {
+            if (!cached.isTerminal) {
               runsToConnect.add(cached);
+            } else {
+              runsToRecover.add(cached);
             }
           }
           orderedRuns.add(cached);
@@ -309,7 +311,7 @@ class ChatViewModel extends ChangeNotifier {
         final state = ChatRunState._fromSnapshot(snapshot);
         newlyLoadedRuns[runId] = state;
         orderedRuns.add(state);
-        if (snapshot.status == ChatRunStatus.running) {
+        if (!state.isTerminal) {
           runsToConnect.add(state);
         }
       }
@@ -327,6 +329,15 @@ class ChatViewModel extends ChangeNotifier {
       existing._historyLoaded = true;
       for (final run in runsToConnect) {
         unawaited(_connect(run, generation));
+      }
+      for (final run in runsToRecover) {
+        final recovery = run._eventQueue.then((_) async {
+          if (_isCurrent(generation, run)) {
+            await _recoverEventHistory(run, generation);
+          }
+        });
+        run._eventQueue = recovery;
+        await recovery;
       }
     } catch (error) {
       if (!_isSessionCurrent(generation, sessionId, sessionGeneration)) return;
@@ -577,6 +588,46 @@ class ChatViewModel extends ChangeNotifier {
     await _connect(run, _runtimeGeneration);
   }
 
+  /// 当前网关是否提供持久化事件分页。
+  bool get supportsEventHistory => _gateway is ChatEventHistoryGateway;
+
+  /// 按需读取下一页，事件应用与 SSE 共用每个运行的串行队列。
+  Future<void> loadMoreEvents(String runId) async {
+    final run = _runsById[runId];
+    if (!_acceptingOperations ||
+        !supportsEventHistory ||
+        run == null ||
+        run._eventsLoading) {
+      return;
+    }
+    final generation = _runtimeGeneration;
+    run._eventsLoading = true;
+    run._eventsError = null;
+    _scheduleNotify();
+    final pending = run._eventQueue.then((_) async {
+      if (!_isCurrent(generation, run)) return;
+      try {
+        if (run._needsSnapshot) await _loadRunSnapshot(run, generation);
+        await _readEvents(run, generation);
+        if (run._sseFinished && run._subscription != null) {
+          await _detachEvents(run);
+          await _loadRunSnapshot(run, generation);
+        }
+      } catch (error) {
+        if (_isCurrent(generation, run)) {
+          run._eventsError = _errorMessage(error);
+        }
+      } finally {
+        if (_isCurrent(generation, run)) {
+          run._eventsLoading = false;
+          _scheduleNotify();
+        }
+      }
+    });
+    run._eventQueue = pending;
+    await pending;
+  }
+
   /// 阻止新的用户操作，但保留已知状态及其占用事实。
   void stopNewWork() {
     _acceptingOperations = false;
@@ -648,13 +699,24 @@ class ChatViewModel extends ChangeNotifier {
         run._phase = switch (result.status) {
           ChatRunStatus.succeeded => ChatRunPhase.succeeded,
           ChatRunStatus.failed => ChatRunPhase.failed,
-          ChatRunStatus.cancelled => ChatRunPhase.cancelled,
+          ChatRunStatus.cancelled => ChatRunPhase.stopping,
           ChatRunStatus.running => ChatRunPhase.running,
         };
         run._connectionState = ChatConnectionState.idle;
+        run._terminalConfirmed = result.status != ChatRunStatus.cancelled;
+        run._sseFinished = run._terminalConfirmed;
+        run._cancelPending = result.status == ChatRunStatus.cancelled;
         _scheduleNotify();
         _scheduleHistoryNotify();
         unawaited(_refreshSessionName(conversation, generation));
+        if (result.status == ChatRunStatus.cancelled) {
+          await _loadRunSnapshot(run, generation);
+        }
+        if (run.isTerminal) {
+          await _recoverEventHistory(run, generation);
+        } else {
+          await _connect(run, generation);
+        }
         return;
       }
       _scheduleNotify();
@@ -670,6 +732,7 @@ class ChatViewModel extends ChangeNotifier {
         run._error = _errorMessage(error);
       } else {
         run._status = ChatRunStatus.failed;
+        run._terminalConfirmed = true;
         run._phase = ChatRunPhase.failed;
         run._error = _errorMessage(error);
       }
@@ -719,7 +782,8 @@ class ChatViewModel extends ChangeNotifier {
     if (!_acceptingOperations ||
         !_isCurrent(generation, run) ||
         run.runId == null ||
-        run.isTerminal) {
+        run.isTerminal ||
+        run._sseFinished) {
       return;
     }
     if (run._retryTimer != null) return;
@@ -782,148 +846,242 @@ class ChatViewModel extends ChangeNotifier {
   ) async {
     if (!_isCurrent(generation, run) ||
         run._connectionEpoch != connectionEpoch ||
-        run.isTerminal) {
+        run._sseFinished) {
       return;
     }
-    final previousPhase = run._phase;
-    final previousConnection = run._connectionState;
     if (signal is ChatRunEventsNoContent) {
-      ++run._connectionEpoch;
-      final subscription = run._subscription;
-      run._subscription = null;
-      if (subscription != null) await subscription.cancel();
-      _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
-      if (!_acceptingOperations) return;
+      run._sseFinished = true;
+      run._terminalConfirmed = true;
+      run._status = null;
+      run._cancelPending = false;
+      run._phase = ChatRunPhase.recovering;
+      run._needsSnapshot = true;
+      _scheduleNotify();
+      _scheduleHistoryNotify();
+      await _detachEvents(run);
       await _loadRunSnapshot(run, generation);
-      if (_isCurrent(generation, run) && !run.isTerminal) {
-        _scheduleReconnect(run, generation, StateError('终态查询仍返回运行中'));
-      }
+      await _recoverEventHistory(run, generation);
       return;
     }
     final event = (signal as ChatRunEventFrame).event;
     if (event.eventId <= run.lastEventId) return;
-    if (event.eventId != run.lastEventId + 1) {
-      final subscription = run._subscription;
-      run._subscription = null;
-      ++run._connectionEpoch;
-      if (subscription != null) await subscription.cancel();
-      _scheduleReconnect(run, generation, StateError('事件序号存在缺口'));
-      _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
-      return;
+    try {
+      if (event.eventId > run.lastEventId + 1) {
+        await _readEvents(
+          run,
+          generation,
+          through: event.eventId - 1,
+          connectionEpoch: connectionEpoch,
+        );
+      }
+      if (!_isCurrent(generation, run) ||
+          run._connectionEpoch != connectionEpoch) {
+        return;
+      }
+      if (event.eventId > run.lastEventId) _applyEvent(run, event);
+      if (run._sseFinished) {
+        await _detachEvents(run);
+        await _loadRunSnapshot(run, generation);
+      }
+    } catch (error) {
+      await _connectionLost(run, error, generation, connectionEpoch);
     }
+  }
 
+  Future<void> _detachEvents(ChatRunState run) async {
+    ++run._connectionEpoch;
+    final subscription = run._subscription;
+    run._subscription = null;
+    run._connectionState = ChatConnectionState.idle;
+    if (subscription != null) await subscription.cancel();
+  }
+
+  void _applyEvent(ChatRunState run, ChatSseEvent event) {
+    if (event.eventId <= run.lastEventId) return;
+    if (event.eventId != run.lastEventId + 1) throw StateError('事件序号存在缺口');
+    final previousPhase = run._phase;
+    final previousConnection = run._connectionState;
     switch (event.type) {
       case ChatEventType.start:
-        if (!run._cancelPending) run._phase = ChatRunPhase.running;
+        if (!run.isTerminal && !run._cancelPending) {
+          run._phase = ChatRunPhase.running;
+        }
+      case ChatEventType.compact:
+        break;
       case ChatEventType.thinking:
-        if (!run._cancelPending) run._phase = ChatRunPhase.thinking;
+        if (!run.isTerminal && !run._cancelPending) {
+          run._phase = ChatRunPhase.thinking;
+        }
       case ChatEventType.text:
         final data = event.data as ChatContentEventData;
-        if (!run._cancelPending) run._phase = ChatRunPhase.replying;
-        run._rawText += data.content;
+        if (!run.isTerminal) {
+          if (!run._cancelPending) run._phase = ChatRunPhase.replying;
+          run._rawText += data.content;
+        }
       case ChatEventType.error:
-        run._error = (event.data as ChatProtocolError).message;
+        if (!run.isTerminal) {
+          run._error = (event.data as ChatProtocolError).message;
+        }
       case ChatEventType.toolResult:
-        // 工具结果不作为模型错误，也不据此确认运行终态。
+        final result = event.data as ChatToolResultData;
+        final index = run._toolCalls.indexWhere(
+          (call) => call.id == result.toolCallId && !call.hasResult,
+        );
+        if (index >= 0) {
+          final call = run._toolCalls[index];
+          run._toolCalls[index] = ChatToolCall(
+            id: call.id,
+            name: call.name,
+            startSeq: call.startSeq,
+            argument: call.argument,
+            hasResult: true,
+            output: result.output,
+            error: result.error,
+          );
+        }
         break;
       case ChatEventType.toolStart:
         final tools = event.data is List<ChatToolEventData>
             ? event.data as List<ChatToolEventData>
             : [event.data as ChatToolEventData];
         for (final tool in tools) {
-          if (!run._toolIds.contains(tool.id)) {
-            run._toolIds.add(tool.id);
-            run._toolCalls.add(
-              ChatToolCall(id: tool.id, name: tool.function.name),
-            );
-          }
+          run._toolCalls.add(
+            ChatToolCall(
+              id: tool.id,
+              name: tool.function.name,
+              startSeq: event.eventId,
+              argument: tool.function.args.value,
+            ),
+          );
         }
-        if (!run._cancelPending) run._phase = ChatRunPhase.toolCalling;
+        if (!run.isTerminal && !run._cancelPending) {
+          run._phase = ChatRunPhase.toolCalling;
+        }
       case ChatEventType.end:
-        run._lastEventId = event.eventId;
-        run._connectionState = ChatConnectionState.disconnected;
-        ++run._connectionEpoch;
-        final subscription = run._subscription;
-        run._subscription = null;
-        if (subscription != null) await subscription.cancel();
-        _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
-        _scheduleNotify();
-        if (!_acceptingOperations) return;
-        await _loadRunSnapshot(run, generation);
-        if (_isCurrent(generation, run) && !run.isTerminal) {
-          _scheduleReconnect(run, generation, StateError('结束事件后终态尚未可读'));
-        }
-        return;
+        final end = event.data as ChatEndEventData;
+        if (!run.isTerminal) run._needsSnapshot = true;
+        run._status = end.status;
+        run._terminalConfirmed = true;
+        run._sseFinished = true;
+        run._cancelPending = false;
+        run._phase = run._statusPhase;
     }
+    run._timeline.add(event);
     run._lastEventId = event.eventId;
-    run._status = ChatRunStatus.running;
     _scheduleNotify();
     _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
+  }
+
+  Future<void> _readEvents(
+    ChatRunState run,
+    int generation, {
+    bool all = false,
+    int? through,
+    int? connectionEpoch,
+  }) async {
+    final history = _gateway;
+    if (history is! ChatEventHistoryGateway || run.runId == null) return;
+    do {
+      final page = await (history as ChatEventHistoryGateway).getRunEvents(
+        run.runId!,
+        afterSeq: run.lastEventId,
+      );
+      if (!_isCurrent(generation, run) ||
+          (connectionEpoch != null &&
+              run._connectionEpoch != connectionEpoch)) {
+        return;
+      }
+      if (page.events.isEmpty) {
+        if (through != null && run.lastEventId < through) {
+          throw StateError('事件缺口尚未保存');
+        }
+        if (page.nextAfterSeq != run.lastEventId || page.hasMore) {
+          throw StateError('空页游标无效');
+        }
+        run._hasMoreEvents = false;
+        return;
+      }
+      final before = run.lastEventId;
+      for (final saved in page.events) {
+        _applyEvent(run, saved);
+      }
+      if (run.lastEventId == before) throw StateError('事件分页未前进');
+      run._hasMoreEvents = page.hasMore;
+      if (through != null && run.lastEventId >= through) return;
+      if (!all && through == null) return;
+      if (!page.hasMore) {
+        if (through != null && run.lastEventId < through) {
+          throw StateError('事件缺口未补齐');
+        }
+        return;
+      }
+    } while (true);
+  }
+
+  Future<void> _recoverEventHistory(ChatRunState run, int generation) async {
+    run._eventsLoading = true;
+    run._eventsError = null;
+    try {
+      await _readEvents(run, generation, all: true);
+    } catch (error) {
+      if (_isCurrent(generation, run)) run._eventsError = _errorMessage(error);
+    } finally {
+      if (_isCurrent(generation, run)) {
+        run._eventsLoading = false;
+        _scheduleNotify();
+      }
+    }
   }
 
   Future<void> _loadRunSnapshot(ChatRunState run, int generation) async {
     if (run.runId == null) return;
     final previousPhase = run._phase;
     final previousConnection = run._connectionState;
+    final previousText = run._rawText;
     try {
       final snapshot = await _gateway.getRun(run.runId!);
       if (!_isCurrent(generation, run)) return;
-      if (run.isTerminal) return;
       if (snapshot.runId != run.runId || snapshot.sessionId != run.sessionId) {
         throw StateError('运行快照身份与当前会话不匹配');
       }
-      run._status = snapshot.status;
-      run._createdAt = snapshot.createdAt;
-      if (snapshot.error != null) {
-        run._error = snapshot.error!.message;
-      } else if (snapshot.status != ChatRunStatus.running) {
-        run._error = null;
-      }
-      if (snapshot.status == ChatRunStatus.running) {
-        run._phase = run._cancelPending
-            ? ChatRunPhase.stopping
-            : run._reconnectAttempts > 0
-            ? ChatRunPhase.reconnecting
-            : ChatRunPhase.running;
-      } else {
-        run._rawText = snapshot.output ?? '';
-        run._cancelPending = false;
-        run._phase = switch (snapshot.status) {
-          ChatRunStatus.succeeded => ChatRunPhase.succeeded,
-          ChatRunStatus.failed => ChatRunPhase.failed,
-          ChatRunStatus.cancelled => ChatRunPhase.cancelled,
-          ChatRunStatus.running => ChatRunPhase.running,
-        };
-        run._connectionState = ChatConnectionState.idle;
-        run._retryTimer?.cancel();
-        run._retryTimer = null;
-      }
+      _mergeSnapshot(run, snapshot);
     } catch (error) {
       if (!_isCurrent(generation, run)) return;
       run._error = _errorMessage(error);
     }
     _scheduleNotify();
+    if (run._rawText != previousText) _scheduleHistoryNotify();
     _notifyHistoryOnRunStateChange(run, previousPhase, previousConnection);
   }
 
   void _mergeSnapshot(ChatRunState run, ChatRun snapshot) {
-    if (run.isTerminal) return;
-    run._createdAt = snapshot.createdAt;
-    if (snapshot.status == ChatRunStatus.running) {
-      run._status = ChatRunStatus.running;
-      run._error = snapshot.error?.message;
+    if (run.isTerminal &&
+        (snapshot.finishedAt == null ||
+            (run.status != null && snapshot.status != run.status))) {
       return;
     }
+    run._createdAt = snapshot.createdAt;
     run._status = snapshot.status;
+    if (snapshot.finishedAt == null) {
+      if (snapshot.status == ChatRunStatus.cancelled) {
+        run._cancelPending = true;
+        run._phase = ChatRunPhase.stopping;
+      } else {
+        run._phase = run._cancelPending
+            ? ChatRunPhase.stopping
+            : run._reconnectAttempts > 0
+            ? ChatRunPhase.reconnecting
+            : ChatRunPhase.running;
+      }
+      return;
+    }
+    run._terminalConfirmed = true;
+    run._sseFinished = true;
+    run._needsSnapshot = false;
     run._rawText = snapshot.output ?? '';
     run._error = snapshot.error?.message;
     run._cancelPending = false;
-    run._phase = switch (snapshot.status) {
-      ChatRunStatus.succeeded => ChatRunPhase.succeeded,
-      ChatRunStatus.failed => ChatRunPhase.failed,
-      ChatRunStatus.cancelled => ChatRunPhase.cancelled,
-      ChatRunStatus.running => ChatRunPhase.running,
-    };
+    run._phase = run._statusPhase;
     run._connectionState = ChatConnectionState.idle;
     run._retryTimer?.cancel();
     run._retryTimer = null;
@@ -958,13 +1116,19 @@ class ChatViewModel extends ChangeNotifier {
       return;
     }
     await _loadRunSnapshot(run, generation);
-    if (_isCurrent(generation, run) && !run.isTerminal) {
-      _scheduleReconnect(run, generation, error);
+    if (_isCurrent(generation, run)) {
+      if (run.isTerminal) {
+        await _recoverEventHistory(run, generation);
+      } else {
+        _scheduleReconnect(run, generation, error);
+      }
     }
   }
 
   void _scheduleReconnect(ChatRunState run, int generation, Object error) {
-    if (!_isCurrent(generation, run) || run.isTerminal) return;
+    if (!_isCurrent(generation, run) || run.isTerminal || run._sseFinished) {
+      return;
+    }
     if (!_acceptingOperations) return;
     final previousPhase = run._phase;
     final previousConnection = run._connectionState;
@@ -1198,6 +1362,13 @@ class ChatRunState {
     );
     state._runId = snapshot.runId;
     state._status = snapshot.status;
+    state._terminalConfirmed = snapshot.finishedAt != null;
+    state._sseFinished = state._terminalConfirmed;
+    if (snapshot.status == ChatRunStatus.cancelled &&
+        snapshot.finishedAt == null) {
+      state._cancelPending = true;
+      state._phase = ChatRunPhase.stopping;
+    }
     state._rawText = snapshot.output ?? '';
     state._error = snapshot.error?.message;
     return state;
@@ -1233,12 +1404,12 @@ class ChatRunState {
   final String provider;
   String _rawText = '';
 
-  /// 当前已累计的原始助手正文；事件重放只拼接尚未处理的部分。
+  /// 生成期间的正文预览；终态采用概况 output，原始事件另存时间线。
   String get rawText => _rawText;
 
   ChatRunStatus? _status;
 
-  /// 服务端 run 状态；尚未确认创建时为 null。
+  /// 服务端具体结果状态；创建待确认或 204 后概况待读取时为 null。
   ChatRunStatus? get status => _status;
   ChatRunPhase _phase;
 
@@ -1254,7 +1425,31 @@ class ChatRunState {
   String? get error => _error;
   int _lastEventId = 0;
 
-  /// 五类事件共用的最后成功处理游标。
+  final List<ChatSseEvent> _timeline = [];
+
+  /// 已连续应用的原始事件，与最终正文投影分别保留。
+  List<ChatSseEvent> get timeline => List.unmodifiable(_timeline);
+
+  bool _terminalConfirmed = false;
+  bool _sseFinished = false;
+  bool _needsSnapshot = false;
+
+  /// 已知结束但概况读取失败时允许重新获取最终正文。
+  bool get needsSnapshot => _needsSnapshot;
+  bool _hasMoreEvents = true;
+  bool _eventsLoading = false;
+  String? _eventsError;
+
+  /// 查询时是否还有后续已保存事件，不表示运行是否结束。
+  bool get hasMoreEvents => _hasMoreEvents;
+
+  /// 历史分页是否正在读取或等待应用。
+  bool get eventsLoading => _eventsLoading;
+
+  /// 事件历史读取错误，与模型错误分别展示。
+  String? get eventsError => _eventsError;
+
+  /// 所有事件共用的连续成功应用位置，包括不渲染的控制事件。
   int get lastEventId => _lastEventId;
 
   bool _cancelPending = false;
@@ -1267,17 +1462,16 @@ class ChatRunState {
   StreamSubscription<ChatRunEventSignal>? _subscription;
   Future<void> _eventQueue = Future<void>.value();
   int _connectionEpoch = 0;
-  final List<String> _toolIds = [];
   final List<ChatToolCall> _toolCalls = [];
 
-  /// 按工具调用 ID 去重后，依首次事件顺序排列的调用。
+  /// 按开始事件 seq 与工具原 ID 区分实例，保留原始参数和已配对结果。
   List<ChatToolCall> get toolCalls => List.unmodifiable(_toolCalls);
 
   /// 是否仍需计入同会话及全局并发上限。
   bool get occupiesSlot => !isTerminal;
 
   /// 是否已有服务端确认的终态。
-  bool get isTerminal => _status != null && _status != ChatRunStatus.running;
+  bool get isTerminal => _terminalConfirmed;
 
   ChatRunPhase get _statusPhase => switch (_status) {
     ChatRunStatus.succeeded => ChatRunPhase.succeeded,
@@ -1297,6 +1491,7 @@ enum ChatRunPhase {
   replying,
   reconnecting,
   stopping,
+  recovering,
   succeeded,
   failed,
   cancelled,
@@ -1305,15 +1500,41 @@ enum ChatRunPhase {
 /// 当前 SSE 连接状态。
 enum ChatConnectionState { idle, connected, disconnected, reconnecting }
 
-/// 已发起的工具调用名称和服务端调用 ID。
+/// 以开始事件区分的工具请求及其已配对原始结果。
 class ChatToolCall {
-  const ChatToolCall({required this.id, required this.name});
+  const ChatToolCall({
+    required this.id,
+    required this.name,
+    this.startSeq = 0,
+    this.argument,
+    this.hasResult = false,
+    this.output,
+    this.error,
+  });
 
   /// 服务端提供的工具调用身份，与 SSE 事件 ID 无关。
   final String id;
 
   /// 工具函数名称，不包含参数中的同名字段。
   final String name;
+
+  /// 工具开始事件的位置，与原 ID 共同标识展示实例。
+  final int startSeq;
+
+  /// 模型返回的原始参数对象或 null。
+  final Object? argument;
+
+  /// 是否已经取得对应结果，避免把 null 结果当成尚未返回。
+  final bool hasResult;
+
+  /// 工具输出原值，保留对象、数组、布尔值、字符串及 null。
+  final Object? output;
+
+  /// 工具处理错误或跳过说明，与运行错误分别展示。
+  final ChatProtocolError? error;
+
+  /// 展示实例的稳定身份，允许后续回复复用原工具 ID。
+  String get instanceId => '$startSeq:$id';
 }
 
 bool _isAmbiguousCreationFailure(Object error) {

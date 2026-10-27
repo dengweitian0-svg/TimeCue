@@ -31,7 +31,7 @@ class ChatSessionIds {
       ChatSessionIds(_requiredStringList(json, 'sessions'));
 }
 
-/// 聊天 run 的终态和运行态。
+/// 聊天 run 的公开状态；cancelled 也可能表示仍在收尾。
 enum ChatRunStatus { running, succeeded, failed, cancelled }
 
 /// HTTP run 和 SSE 事件共用的协议错误对象。
@@ -94,7 +94,9 @@ class ChatRun {
         'running run must not contain terminal fields',
       );
     }
-    if (!isRunning && finishedAtText == null) {
+    if (!isRunning &&
+        status != ChatRunStatus.cancelled &&
+        finishedAtText == null) {
       throw const ChatContractFormatException(
         'terminal run must contain finished_at',
       );
@@ -251,6 +253,29 @@ class ChatToolEventData {
       );
 }
 
+/// 工具结果保留原始 JSON 输出及独立错误。
+class ChatToolResultData {
+  const ChatToolResultData({
+    required this.toolCallId,
+    required this.output,
+    required this.error,
+  });
+
+  final String toolCallId;
+  final Object? output;
+  final ChatProtocolError? error;
+
+  /// 保留结果的 JSON 类型及原工具调用标识，不把错误替换为输出。
+  factory ChatToolResultData.fromJson(Map<String, Object?> json) {
+    final error = _nullableObject(json, 'error');
+    return ChatToolResultData(
+      toolCallId: _requiredString(json, 'tool_call_id'),
+      output: _required(json, 'output'),
+      error: error == null ? null : ChatProtocolError.fromJson(error),
+    );
+  }
+}
+
 /// end 事件数据，不推断工具执行结果。
 class ChatEndEventData {
   const ChatEndEventData({required this.status});
@@ -267,8 +292,17 @@ ChatRunStatus _runStatus(String value) => ChatRunStatus.values.firstWhere(
       throw ChatContractFormatException('status has unsupported value'),
 );
 
-/// 聊天 SSE 的五种事件类型。
-enum ChatEventType { start, thinking, text, error, end, toolStart, toolResult }
+/// 聊天分页和 SSE 共用的八种事件类型。
+enum ChatEventType {
+  start,
+  thinking,
+  text,
+  error,
+  end,
+  toolStart,
+  toolResult,
+  compact,
+}
 
 /// 解码后的单条 SSE 事件；`eventId` 与工具调用 `toolCallId` 独立。
 class ChatSseEvent {
@@ -276,11 +310,15 @@ class ChatSseEvent {
     required this.eventId,
     required this.type,
     required this.data,
+    this.rawData,
   });
 
   final int eventId;
   final ChatEventType type;
   final Object? data;
+
+  /// 未改写的协议 data，供原始时间线查看。
+  final Map<String, Object?>? rawData;
 
   /// 从 SSE 的事件名、数值 ID 和 JSON data 严格解码协议事件。
   factory ChatSseEvent.fromJson({
@@ -309,6 +347,7 @@ class ChatSseEvent {
     Object? decoded;
     switch (type) {
       case ChatEventType.start:
+      case ChatEventType.compact:
         decoded = data.isEmpty
             ? const <String, Object?>{}
             : _expectEmptyObject(data);
@@ -330,11 +369,62 @@ class ChatSseEvent {
             )
             .toList();
       case ChatEventType.toolResult:
-        decoded = data;
+        decoded = ChatToolResultData.fromJson(data);
       case ChatEventType.end:
         decoded = ChatEndEventData.fromJson(data);
     }
-    return ChatSseEvent(eventId: eventId, type: type, data: decoded);
+    return ChatSseEvent(
+      eventId: eventId,
+      type: type,
+      data: decoded,
+      rawData: Map.unmodifiable(data),
+    );
+  }
+}
+
+/// 原始运行事件的只读分页结果，游标不代表客户端消费位置。
+class ChatEventPage {
+  const ChatEventPage({
+    required this.events,
+    required this.nextAfterSeq,
+    required this.hasMore,
+  });
+
+  final List<ChatSseEvent> events;
+  final int nextAfterSeq;
+  final bool hasMore;
+
+  /// 解码分页原始事件，分页位置不代表客户端已经应用的位置。
+  factory ChatEventPage.fromJson(Map<String, Object?> json) {
+    final entries = _required(json, 'events');
+    final next = _required(json, 'next_after_seq');
+    final more = _required(json, 'has_more');
+    if (entries is! List || next is! int || next < 0 || more is! bool) {
+      throw const ChatContractFormatException('invalid event page');
+    }
+    final events = <ChatSseEvent>[];
+    for (final entry in entries) {
+      if (entry is! Map<String, Object?> || entry['seq'] is! int) {
+        throw const ChatContractFormatException('invalid paged event');
+      }
+      events.add(
+        ChatSseEvent.fromJson(
+          id: '${entry['seq']}',
+          event: _requiredString(entry, 'type'),
+          data: _requiredObject(entry, 'data'),
+        ),
+      );
+    }
+    if (events.isNotEmpty && next != events.last.eventId) {
+      throw const ChatContractFormatException(
+        'event page cursor differs from last event',
+      );
+    }
+    return ChatEventPage(
+      events: List.unmodifiable(events),
+      nextAfterSeq: next,
+      hasMore: more,
+    );
   }
 }
 
@@ -445,6 +535,16 @@ class ChatModelOption {
 abstract interface class ChatModelGateway {
   /// 查询全部模型及本地可用性。
   Future<List<ChatModelOption>> getModels();
+}
+
+/// 运行事件历史的只读分页端口。
+abstract interface class ChatEventHistoryGateway {
+  /// 按 seq 分页读取完整原始事件，不保存消费位置。
+  Future<ChatEventPage> getRunEvents(
+    String runId, {
+    int afterSeq = 0,
+    int limit = 10,
+  });
 }
 
 /// 七个聊天 HTTP 操作的窄契约，不规定传输实现。

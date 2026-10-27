@@ -5,8 +5,9 @@ import 'dart:io';
 import '../contracts/chat_contracts.dart';
 import 'http_notebook_repository.dart' show defaultNotebookApiBase;
 
-/// 将聊天七接口映射到本机 HTTP 与 SSE。
-class HttpChatGateway implements ChatGateway, ChatModelGateway {
+/// 将聊天、模型和事件分页接口映射到本机 HTTP 与 SSE。
+class HttpChatGateway
+    implements ChatGateway, ChatModelGateway, ChatEventHistoryGateway {
   HttpChatGateway({
     Uri? baseUri,
     HttpClient? client,
@@ -194,6 +195,30 @@ class HttpChatGateway implements ChatGateway, ChatModelGateway {
   Future<ChatRun> getRun(String runId) async => ChatRun.fromJson(
     await _jsonRequest('GET', '/v1/run/${Uri.encodeComponent(runId)}'),
   );
+
+  @override
+  Future<ChatEventPage> getRunEvents(
+    String runId, {
+    int afterSeq = 0,
+    int limit = 10,
+  }) async {
+    if (afterSeq < 0 || limit < 1 || limit > 100) {
+      throw ArgumentError('无效事件分页参数');
+    }
+    final page = ChatEventPage.fromJson(
+      await _jsonRequest(
+        'GET',
+        '/v1/run/${Uri.encodeComponent(runId)}/events?after_seq=$afterSeq&limit=$limit',
+      ),
+    );
+    if (page.events.isEmpty &&
+        (page.nextAfterSeq != afterSeq || page.hasMore)) {
+      throw const ChatContractFormatException(
+        'empty event page must retain cursor',
+      );
+    }
+    return page;
+  }
 
   @override
   Future<ChatCancelRunResult> cancelRun(String runId) async =>

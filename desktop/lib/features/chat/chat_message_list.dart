@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../theme/notebook_theme.dart';
+import '../../contracts/chat_contracts.dart';
 import 'chat_markdown_body.dart';
 import 'chat_tool_call_list.dart';
 import 'chat_view_model.dart';
+import 'chat_event_timeline.dart';
 
 /// 显示单会话的用户消息、助手正文和独立过程信息。
 class ChatMessageList extends StatefulWidget {
@@ -16,6 +18,7 @@ class ChatMessageList extends StatefulWidget {
     required this.onReadingPosition,
     required this.onRetryCreate,
     required this.onRetryConnection,
+    this.onLoadMoreEvents,
   });
 
   final String sessionId;
@@ -25,6 +28,7 @@ class ChatMessageList extends StatefulWidget {
   final void Function(double offset, bool followLatest) onReadingPosition;
   final ValueChanged<String> onRetryCreate;
   final ValueChanged<String> onRetryConnection;
+  final ValueChanged<String>? onLoadMoreEvents;
 
   @override
   State<ChatMessageList> createState() => _ChatMessageListState();
@@ -126,6 +130,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
                     run: widget.runs[index],
                     onRetryCreate: widget.onRetryCreate,
                     onRetryConnection: widget.onRetryConnection,
+                    onLoadMoreEvents: widget.onLoadMoreEvents,
                   ),
           ),
         ),
@@ -181,12 +186,14 @@ class _ChatTurn extends StatelessWidget {
     required this.run,
     required this.onRetryCreate,
     required this.onRetryConnection,
+    this.onLoadMoreEvents,
   });
 
   final String sessionId;
   final ChatRunState run;
   final ValueChanged<String> onRetryCreate;
   final ValueChanged<String> onRetryConnection;
+  final ValueChanged<String>? onLoadMoreEvents;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -239,11 +246,7 @@ class _ChatTurn extends StatelessWidget {
                       ],
                     ),
                     if (run.toolCalls.isNotEmpty)
-                      ChatToolCallList(
-                        calls: run.toolCalls,
-                        idOf: (call) => call.id,
-                        nameOf: (call) => call.name,
-                      ),
+                      ChatToolCallList(calls: run.toolCalls),
                     if (run.rawText.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
@@ -260,6 +263,8 @@ class _ChatTurn extends StatelessWidget {
                         padding: EdgeInsets.only(top: 5),
                         child: LinearProgressIndicator(minHeight: 2),
                       ),
+                    if (run.timeline.isNotEmpty || onLoadMoreEvents != null)
+                      ChatEventTimeline(run: run, onLoadMore: onLoadMoreEvents),
                     if (run.error != null)
                       _InlineChatError(
                         message: run.error!,
@@ -267,6 +272,10 @@ class _ChatTurn extends StatelessWidget {
                             run.phase == ChatRunPhase.creating &&
                                 run.runId == null
                             ? () => onRetryCreate(sessionId)
+                            : run.needsSnapshot &&
+                                  onLoadMoreEvents != null &&
+                                  run.runId != null
+                            ? () => onLoadMoreEvents!(run.runId!)
                             : run.connectionState ==
                                       ChatConnectionState.disconnected &&
                                   run.runId != null &&
@@ -293,7 +302,9 @@ String _phaseLabel(ChatRunState run) => switch (run.phase) {
   ChatRunPhase.toolCalling => 'Tool calling · 已发起 ${run.toolCalls.length} 次调用',
   ChatRunPhase.replying => 'Replying · 正在回复',
   ChatRunPhase.reconnecting => '正在重连',
-  ChatRunPhase.stopping => '正在停止',
+  ChatRunPhase.recovering => '运行已结束，正在读取记录',
+  ChatRunPhase.stopping =>
+    run.status == ChatRunStatus.cancelled ? '取消收尾中' : '正在停止',
   ChatRunPhase.succeeded => '回复完成',
   ChatRunPhase.failed => '回复失败',
   ChatRunPhase.cancelled => '已停止',

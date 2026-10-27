@@ -224,7 +224,7 @@ void main() {
       expect(gateway.controllers, hasLength(2));
     });
 
-    test('事件游标去重，工具按调用 ID 首次顺序保留并用最终快照收敛', () async {
+    test('事件游标去重，工具按开始事件区分实例并用最终快照收敛', () async {
       final gateway = _FakeChatGateway();
       gateway.createResponses.add(
         Future.value(const ChatCreateRunResult('run-1')),
@@ -263,10 +263,12 @@ void main() {
       expect(conversation.activeRun?.lastEventId, 4);
       expect(conversation.activeRun?.toolCalls.map((tool) => tool.id), [
         'call-a',
+        'call-a',
         'call-b',
       ]);
       expect(conversation.activeRun?.toolCalls.map((tool) => tool.name), [
         'search_schedules',
+        'renamed_duplicate',
         'search_schedules',
       ]);
 
@@ -452,7 +454,8 @@ void main() {
       expect(conversation.name, '');
       expect(conversation.error, contains('session ID'));
       expect(run.rawText, '本地已收到');
-      expect(run.status, ChatRunStatus.running);
+      expect(run.status, ChatRunStatus.succeeded);
+      expect(run.isTerminal, isTrue);
       expect(run.error, contains('身份'));
     });
 

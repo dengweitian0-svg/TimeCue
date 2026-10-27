@@ -25,3 +25,4 @@
 - `d8_host_smoke.py` 配合测试 Dart 入口运行 managed/external 两种真实宿主闭环，保存新隔离目录、PID、sent/未确认及退出证据；`d8_native_go_smoke.py` 用 --go/--driver 的明确路径验证生产原生监管的真实 Go，覆盖优雅停止、EOF 和宿主崩溃。两者仅结束自身创建并持有句柄的测试进程。
 
 - 仅本地 UI/Profile 夹具使用 ChatAcceptanceGateway；夹具采用 provider 与新 error/end 协议，不注入生产、开发或发行聊天入口。
+- 聊天截图工具按开始事件 seq 与原工具 ID 定位展示实例，允许同一运行中不同回复复用原 ID。

@@ -30,11 +30,19 @@ chat:
 
 Go 启动时通过现有 PrepareSchema 初始化或备份升级数据库到版本 3；新增 `ai_sessions`、`ai_runs`、`ai_model_calls`、`ai_checkpoints`、`ai_events`、`ai_tool_calls` 六张表，原四张日程与提醒业务表保留。旧 Flutter 库升级前在原库旁生成一致性 `.before-upgrade-*.bak`，失败回滚；不转换 Wails 或未知结构。
 
-调用模型前，短事务保存实际 input、running 和 checkpoint；流式增量提交后供 SSE 和分页共同读取；完成时原子保存结构化 output、上游原始 usage、checkpoint、运行终态及 error/end。没有返回 usage 时保存 SQL NULL。会话软删除只隐藏父会话和公开子查询，不删除日程或执行事实。
+调用模型前，短事务保存实际 input、running 和 checkpoint；流式增量满 5 条或首条等待 5 秒提交，后续增量不延后首条期限。结束、取消、错误和正常退出立即保存尾批，逐条保留原始事件，不合并或裁剪；尾批与相应调用结果和状态在同一事务保存，终态同时提交 checkpoint 和 error/end。只有成功提交的事件才供 SSE 和分页读取，事务失败不会留下已提交序号缺口。没有返回 usage 时保存 SQL NULL。会话软删除只隐藏父会话和公开子查询，不删除日程或执行事实。
 
 HTTP 使用 `/v1/model`、`/v1/run`、`/v1/run/:run_id`、`/v1/run/:run_id/events`、`/v1/run/:run_id/event`、`/v1/run/:run_id/cancel` 与原有 session 路径。创建必填 session_id/input/provider/model，回执固定 run_id/status/output/error；概况固定十字段，错误与部分正文可以同时保留。thinking/text 仅含 content，error 含 code/message，end 仅含 status。事件页固定 events/next_after_seq/has_more；默认 10、最大 100 条，事件序号与 SSE 共用。
 
 ## 当前切片边界
+
+T02 提供完整原始运行记录、按需翻页与 SSE 断线接续。界面以 (run_id, seq) 合并两种来源，先补缺口、成功应用后再推进连续消费位置；分页 next_after_seq 不直接作为 SSE 消费位置。页面重建复用宿主持有的内容和游标，新 ViewModel 或进程从零读取所需历史。204 后停止订阅该运行，查询概况并补齐事件；后端没有保存客户端阅读或消费位置。
+
+204 已确认运行结束，即使概况与历史同时读取失败也释放前端占用，显示“运行已结束，正在读取记录”并保留读取重试；具体成功/失败和最终正文仍等待真实概况，不重新建立 SSE。
+
+消息中的“运行记录”按原始 seq 查看正文增量、思考、工具、错误及控制记录，思考与完整 JSON 默认折叠。run.output 单独作为最终正文投影，终态查询不会覆盖时间线，也不会把旧尝试或恢复重发的事件再次拼入最终正文。当前公开事件不提供模型调用、续写或恢复尝试分组信息，界面不猜测这些边界。
+
+cancelled 且 finished_at=null 显示为取消收尾中，继续接收事件并保留运行占用；取消回执和独立 error 事件不表示已经结束。工具展示实例以开始事件 seq 与原工具 ID 区分，结果与尚未完成的同 ID 请求配对，支持查看参数、任意 JSON 类型的原始 output 及 error；后续回复复用同值 ID 时保留新实例。当前工具及等待工具取消仅验证客户端协议展示，真实业务执行随后续工具切片交付。
 
 T01 提供真实文字模型请求、多轮原始历史、完成会话重启查询、无在途工具的模型取消及会话隐藏。正常退出关闭上游连接、保留未完成事实，下次启动沿同一逻辑调用与原 input 重发；保留此前已持久化的展示事件。
 
