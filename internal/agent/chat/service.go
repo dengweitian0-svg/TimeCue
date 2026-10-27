@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -228,8 +227,22 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 		State:          StateRunning,
 		IdempotencyKey: input.IdempotencyKey,
 	}
+	request, err := s.newRequest(ctx, r, cfg)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if failure := requestBudgetError(request, cfg); failure != nil {
+		r.State, r.Error = StateFailed, failure
+		now := time.Now()
+		r.FinishedAt = &now
+	}
 	if err = s.runs.Create(ctx, r); err != nil {
 		return Receipt{}, err
+	}
+	result := receipt(r)
+	result.created = true
+	if r.State.Terminal() {
+		return result, nil
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	run := &execution{
@@ -238,8 +251,14 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 		session: r.SessionID,
 	}
 	s.active[r.RunID] = run
-	go s.execute(runCtx, run, r, cfg, nil)
-	return receipt(r), nil
+	go s.execute(runCtx, run, r, cfg, &ModelCall{
+		RunID:     r.RunID,
+		SessionID: r.SessionID,
+		Input:     request,
+		State:     StateRunning,
+		MaxRetry:  cfg.MaxRetry,
+	})
+	return result, nil
 }
 
 func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg ModelConfig, previous *ModelCall) {
@@ -269,8 +288,16 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 	if r.State == StateWaitForCancel {
 		r.State = StateCancelled
 		r.Error = nil
-		call.State = StateCancelled
-		call.Error = nil
+		if call.State.Terminal() {
+			// 只结束运行，已成功调用及其完整工具进度保持原事实。
+			call = ModelCall{
+				RunID:     r.RunID,
+				SessionID: r.SessionID,
+			}
+		} else {
+			call.State = StateCancelled
+			call.Error = nil
+		}
 		now := time.Now()
 		r.FinishedAt = &now
 		s.finish(call, r)
@@ -282,33 +309,52 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 			Message: "原运行的模型配置或密钥不可用",
 		}
 	}
-	if previous == nil && r.Error == nil {
-		history, historyErr := s.execution.History(ctx, r.SessionID)
-		err = historyErr
+	// 已完成工具阶段的恢复从完整快照登记下一次普通调用，不重发已成功的调用。
+	if previous != nil && previous.State == StateSucceeded && previous.CheckpointStage == "tool_end" {
+		request := previous.Input
+		request.Messages = previous.CheckpointContext
+		request.MaxTokens = cfg.MaxOutputTokens
+		call = ModelCall{
+			RunID:     r.RunID,
+			SessionID: r.SessionID,
+			Input:     request,
+			State:     StateRunning,
+			MaxRetry:  cfg.MaxRetry,
+		}
+	}
+	if call.ID == 0 && r.Error == nil {
+		if call.Input.Model == "" {
+			call.Input, err = s.newRequest(ctx, r, cfg)
+		}
 		if err == nil {
-			call.Input = ModelRequest{
-				Model: r.Model,
-				Messages: append(history, Message{
-					Role:    "user",
-					Content: r.Input,
-				}),
-				Stream:        true,
-				MaxTokens:     cfg.MaxOutputTokens,
-				StreamOptions: map[string]bool{"include_usage": true},
+			if failure := requestBudgetError(call.Input, cfg); failure != nil {
+				r.State = StateFailed
+				r.Error = failure
+				now := time.Now()
+				r.FinishedAt = &now
+				s.finish(call, r)
+				return
 			}
-			encoded, _ := json.Marshal(call.Input)
-			if (len(encoded)+3)/4 > cfg.ContextWindow-cfg.MaxOutputTokens {
+			count, countErr := s.execution.OrdinaryCallCount(ctx, r.RunID)
+			err = countErr
+			limit := cfg.MaxRounds
+			if limit <= 0 {
+				limit = 20
+			}
+			if err == nil && count >= limit {
 				r.State = StateFailed
 				r.Error = &RunError{
-					Code:    "context_budget_exceeded",
-					Message: "输入超出模型上下文预算",
+					Code:    "model_round_limit_exceeded",
+					Message: "已达到普通模型轮数上限，任务仍需继续",
 				}
 				now := time.Now()
 				r.FinishedAt = &now
 				s.finish(call, r)
 				return
 			}
-			call.ID, err = s.execution.BeginCall(ctx, call)
+			if err == nil {
+				call.ID, err = s.execution.BeginCall(ctx, call)
+			}
 		}
 	}
 	if err != nil {

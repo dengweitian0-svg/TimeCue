@@ -73,6 +73,46 @@ func completedUpstream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	fmt.Fprint(w, "data: {\"id\":\"reply\",\"choices\":[{\"delta\":{\"reasoning_content\":\"想\",\"content\":\"回答\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 }
+
+// TestBudgetFailureHTTPKeepsCreationAndReplayStatus 验证预算失败首次创建仍为 202，终态重放为 200，公开回执固定四字段。
+func TestBudgetFailureHTTPKeepsCreationAndReplayStatus(t *testing.T) {
+	router, service := chatHTTPFixture(t, "secret", func(http.ResponseWriter, *http.Request) {
+		t.Error("预算拒绝不能请求上游")
+	})
+	input := " " + strings.Repeat("中🙂", 20000) + "\n"
+	encoded, err := json.Marshal(map[string]string{
+		"session_id": testSessionID,
+		"input":      input,
+		"provider":   "test",
+		"model":      "configured-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := chatRequest(router, "POST", "/v1/run", string(encoded))
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("首次预算失败必须保留 202: %d %s", first.Code, first.Body)
+	}
+	var receipt map[string]json.RawMessage
+	if err = json.Unmarshal(first.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if len(receipt) != 4 || string(receipt["status"]) != `"failed"` || string(receipt["output"]) != "null" || !bytes.Contains(receipt["error"], []byte(`"context_budget_exceeded"`)) {
+		t.Fatalf("预算失败四字段回执错误: %s", first.Body)
+	}
+	var id string
+	if err = json.Unmarshal(receipt["run_id"], &id); err != nil {
+		t.Fatal(err)
+	}
+	run, err := service.GetRun(context.Background(), id)
+	if err != nil || run.Input != input || run.FinishedAt == nil {
+		t.Fatalf("预算失败查询未保留原始输入或终态: %+v %v", run, err)
+	}
+	replay := chatRequest(router, "POST", "/v1/run", string(encoded))
+	if replay.Code != http.StatusOK || !bytes.Equal(first.Body.Bytes(), replay.Body.Bytes()) {
+		t.Fatalf("终态重放必须 200 且回执不变: %d %s", replay.Code, replay.Body)
+	}
+}
 func TestRealChatHTTPContract(t *testing.T) {
 	router, service := chatHTTPFixture(t, "secret", completedUpstream)
 	body := `{"session_id":"` + testSessionID + `","input":"你好","provider":"test","model":"configured-model"}`

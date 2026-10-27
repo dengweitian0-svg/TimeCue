@@ -15,6 +15,7 @@ chat_model:
         context_window: 32768
         max_output_tokens: 8192
 chat:
+  max_rounds: 20
   max_retry: 3
   first_timeout_seconds: 120
   idle_timeout_seconds: 60
@@ -35,6 +36,14 @@ Go 启动时通过现有 PrepareSchema 初始化或备份升级数据库到版�
 HTTP 使用 `/v1/model`、`/v1/run`、`/v1/run/:run_id`、`/v1/run/:run_id/events`、`/v1/run/:run_id/event`、`/v1/run/:run_id/cancel` 与原有 session 路径。创建必填 session_id/input/provider/model，回执固定 run_id/status/output/error；概况固定十字段，错误与部分正文可以同时保留。thinking/text 仅含 content，error 含 code/message，end 仅含 status。事件页固定 events/next_after_seq/has_more；默认 10、最大 100 条，事件序号与 SSE 共用。
 
 ## 当前切片边界
+
+T05 已接通完整消息快照接续和运行预算。新 run 从按创建时间选出的最新已结束运行 checkpoint.context 读取有效消息，追加本轮真实输入；不按 model_call.id 重新拼接，也不补回已被实际快照替代的历史。原始 run.input、事件、调用 input/output 均保持原文，客户端仍只提交本轮输入。快照保留实际消息顺序、后端续写请求、有效摘要投影及工具请求/结果的配对；这些历史格式已覆盖测试，工具执行、自动续写与摘要生成仍随后续切片交付。
+
+失败或取消前已收到的 assistant 正文和 reasoning_content 原样参与下一轮；只有 thinking 也保留，完全无输出不构造空 assistant。Go 在旧轮所有消息及其配对结果之后、本轮真实输入之前追加独立 user 消息：“上一轮回复未完成；其操作表述不代表业务已经生效。”说明与实际 input 和请求前 checkpoint 一起保存，重启直接沿原 input 恢复，不重复追加；文字表述不作为业务成功证明。
+
+整体预算使用实际 ModelRequest 完整 JSON 序列化结果，统一以 ceil(UTF-8 字节数 / 4) 估算；SDK 发送同一序列化内容，中文、emoji、转义和结构开销均参与计算。可用输入预算为 context_window - max_output_tokens，等于预算时允许请求。当前尚未实现自动摘要；超过实际预算时原子创建可查询、可幂等重放的 failed run，保存 context_budget_exceeded 和 start/error/end，不创建 model_call、checkpoint 或 compact，不请求上游或保留执行占用。首次创建的 HTTP 状态仍为 202，终态原回执重放为 200，JSON 始终只有 run_id/status/output/error。
+
+chat.max_rounds 缺省或 0 使用 20，负数配置拒绝发布。普通轮数按同一 run 内 continuation=false 且不关联 compact 的逻辑 model_call 统计，失败摘要也不计普通轮数；网络重试和未完成调用恢复沿用原记录。达到上限且仍需下一次普通调用时以 model_round_limit_exceeded 失败，已有成功模型调用、实际结果、checkpoint 和部分正文保持原事实，不新增 run 配置快照或计数字段。
 
 T04 已接通模型有限重试。每个逻辑 model_call 在登记时固定 max_retry，缺省首次外三次，显式 0 禁止网络重试；默认退避为 5/10/20 秒，后续按指数增加。retry_count 在计划一次重试时递增，retry_wait、next_retry_at 和 retry_history 原子保存；重试沿用原 model_call 和实际 input，不另建调用。retry_history 中每项保留 retry/at/result/cause/error，记录计划时间、结果和实际故障。退出保留计划期限，重启执行原计划不重复扣次；未完成 running 的生命周期重发仍不额外消耗网络预算。
 

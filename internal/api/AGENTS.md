@@ -14,3 +14,4 @@
 
 - 用例按 ModelService、RunService、SessionService 分别注入；HTTP Handler 只使用相应窄接口，App 通过独立 Lifecycle 管理启动与停止。
 - T04 保持 HTTP 结构与状态码：配置拒绝为 503 model_config_unavailable 并提示检查本地配置；模型重试及上游语义错误通过原 run 概况和事件反馈。
+- T05 真正新建统一返回 202，包括创建事务内已保存的预算 failed；终态幂等重放返回 200。是否新建只通过服务内部元信息区分，不新增公开 JSON 字段。
