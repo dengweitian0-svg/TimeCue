@@ -172,15 +172,18 @@ type ModelConfig struct {
 	ContextWindow   int
 	MaxOutputTokens int
 	MaxRetry        int
+	MaxRounds       int
 	FirstTimeout    time.Duration
 	IdleTimeout     time.Duration
 }
 
 // Message 保存实际模型消息，包括已收到的思考内容。
 type Message struct {
-	Role             string `json:"role"`
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Role             string          `json:"role"`
+	Content          string          `json:"content"`
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	ToolCalls        json.RawMessage `json:"tool_calls,omitempty"`
+	ToolCallID       string          `json:"tool_call_id,omitempty"`
 }
 
 // ModelRequest 是实际提交的 Chat Completions 请求。
@@ -219,6 +222,9 @@ type ModelCall struct {
 	RetryCount   int
 	NextRetryAt  *time.Time
 	RetryHistory []ModelRetry
+	// CheckpointStage 和 CheckpointContext 回读当前进度，不新增持久化列或运行快照。
+	CheckpointStage   string
+	CheckpointContext []Message
 	// PendingEvents 与调用快照一起提交，序号只在事务成功后对外可见。
 	PendingEvents []Event
 }
@@ -258,6 +264,8 @@ type SessionRepository interface {
 type ExecutionRepository interface {
 	// History 从实际输入与模型输出组装有效消息。
 	History(context.Context, string) ([]Message, error)
+	// OrdinaryCallCount 统计当前运行中非续写且不关联 compact 的逻辑模型调用。
+	OrdinaryCallCount(context.Context, string) (int, error)
 	// BeginCall 原子保存请求 input、running 和 checkpoint。
 	BeginCall(context.Context, ModelCall) (int64, error)
 	// ReadCall 读取当前逻辑调用的原请求与部分结果。

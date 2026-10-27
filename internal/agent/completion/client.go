@@ -35,6 +35,10 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 	if err != nil {
 		return output, failure("model_invalid_params")
 	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return output, failure("model_invalid_params")
+	}
 	requestCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	first, idle := cfg.FirstTimeout, cfg.IdleTimeout
@@ -70,7 +74,8 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 		timer.Stop()
 	}()
 	client := openai.NewClient(option.WithAPIKey(cfg.Key), option.WithBaseURL(strings.TrimRight(cfg.BaseURL, "/")+"/"), option.WithHTTPClient(c.http), option.WithMaxRetries(0))
-	stream := client.Chat.Completions.NewStreaming(requestCtx, params)
+	// 使用与预算检查、持久化完全相同的序列化结果，避免 SDK 消息转换改变字节预算。
+	stream := client.Chat.Completions.NewStreaming(requestCtx, params, option.WithRequestBody("application/json", encoded))
 	defer stream.Close()
 	finished := false
 	for stream.Next() {
@@ -184,6 +189,8 @@ func requestParams(input chat.ModelRequest) (openai.ChatCompletionNewParams, err
 			value = openai.SystemMessage(message.Content)
 		case "user":
 			value = openai.UserMessage(message.Content)
+		case "tool":
+			value = openai.ToolMessage(message.Content, message.ToolCallID)
 		case "assistant":
 			value = openai.AssistantMessage(message.Content)
 			if message.ReasoningContent != "" {

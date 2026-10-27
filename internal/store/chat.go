@@ -155,7 +155,7 @@ func (s *chatStore) Create(ctx context.Context, r chat.Record) error {
 		if deleted == 1 {
 			return chat.ErrSessionDeleted
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO ai_runs(run_id,session_id,provider,model,input,status,idempotency_key,created_at) VALUES(?,?,?,?,?,?,?,?)`, r.RunID, r.SessionID, r.Provider, r.Model, r.Input, r.State, r.IdempotencyKey, r.CreatedAt.UnixNano())
+		_, err = tx.ExecContext(ctx, `INSERT INTO ai_runs(run_id,session_id,provider,model,input,status,output,error,idempotency_key,created_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, r.RunID, r.SessionID, r.Provider, r.Model, r.Input, r.State, stringValue(r.Output), jsonValue(r.Error), r.IdempotencyKey, r.CreatedAt.UnixNano(), timeValue(r.FinishedAt))
 		if err != nil {
 			return err
 		}
@@ -163,13 +163,33 @@ func (s *chatStore) Create(ctx context.Context, r chat.Record) error {
 		if err != nil {
 			return err
 		}
-		return appendChatEvent(ctx, tx, chat.ModelCall{
+		call := chat.ModelCall{
 			RunID:     r.RunID,
 			SessionID: r.SessionID,
-		}, chat.Event{
+		}
+		if err = appendChatEvent(ctx, tx, call, chat.Event{
 			Type: chat.EventStart,
 			Data: json.RawMessage(`{}`),
-		})
+		}); err != nil {
+			return err
+		}
+		if r.State.Terminal() {
+			if r.Error != nil {
+				data, _ := json.Marshal(r.Error)
+				if err = appendChatEvent(ctx, tx, call, chat.Event{
+					Type: chat.EventError,
+					Data: data,
+				}); err != nil {
+					return err
+				}
+			}
+			data, _ := json.Marshal(chat.EndData{Status: r.State.Public()})
+			return appendChatEvent(ctx, tx, call, chat.Event{
+				Type: chat.EventEnd,
+				Data: data,
+			})
+		}
+		return nil
 	})
 }
 
@@ -200,7 +220,7 @@ func (s *chatStore) Session(ctx context.Context, id string) (chat.Session, error
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT run_id FROM ai_runs WHERE session_id=? ORDER BY id`, id)
+		rows, err := tx.QueryContext(ctx, `SELECT run_id FROM ai_runs WHERE session_id=? ORDER BY created_at,id`, id)
 		if err != nil {
 			return err
 		}
@@ -259,45 +279,58 @@ func (s *chatStore) Hide(ctx context.Context, id string) error {
 	return nil
 }
 
-// History 从实际调用输出和原始输入构造未压缩会话消息，不回放展示事件。
+// History 沿最新已结束运行的完整消息快照接续，不重放事件或重新拼入已覆盖原文。
 func (s *chatStore) History(ctx context.Context, session string) ([]chat.Message, error) {
 	db, err := s.db.handle()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT r.input,r.status,m.output FROM ai_runs r JOIN ai_model_calls m ON m.run_id=r.run_id WHERE r.session_id=? AND r.status NOT IN ('running','wait_for_cancel') ORDER BY r.id,m.id`, session)
+	var raw, status string
+	err = db.QueryRowContext(ctx, `SELECT c.state,r.status FROM ai_runs r JOIN ai_checkpoints c ON c.run_id=r.run_id WHERE r.session_id=? AND r.status NOT IN ('running','wait_for_cancel') ORDER BY r.created_at DESC,r.id DESC LIMIT 1`, session).Scan(&raw, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return []chat.Message{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := []chat.Message{}
-	for rows.Next() {
-		var input, status string
-		var output sql.NullString
-		if err = rows.Scan(&input, &status, &output); err != nil {
-			return nil, err
-		}
-		result = append(result, chat.Message{
-			Role:    "user",
-			Content: input,
-		})
-		if output.Valid {
-			var value chat.ModelOutput
-			if err = json.Unmarshal([]byte(output.String), &value); err != nil {
-				return nil, err
-			}
-			if value.Message.Content != "" || value.Message.ReasoningContent != "" {
-				result = append(result, value.Message)
-			}
-		}
-		if status != "succeeded" {
-			result = append(result, chat.Message{
-				Role:    "user",
-				Content: "上一轮回复未完成；其操作表述不代表业务已经生效。",
-			})
+	var state struct {
+		Context []chat.Message `json:"context"`
+	}
+	if err = json.Unmarshal([]byte(raw), &state); err != nil {
+		return nil, err
+	}
+	// 兼容旧快照中失败前尚无任何输出的空 assistant；thinking 和工具请求均保留。
+	messages := make([]chat.Message, 0, len(state.Context)+1)
+	for _, message := range state.Context {
+		if message.Role != "assistant" || hasAssistantContent(message) {
+			messages = append(messages, message)
 		}
 	}
-	return result, rows.Err()
+	state.Context = messages
+	// 快照已包含按实际顺序接纳的 assistant 和配对结果；中断说明只追加在整轮之后。
+	if status != "succeeded" {
+		state.Context = append(state.Context, chat.Message{
+			Role:    "user",
+			Content: "上一轮回复未完成；其操作表述不代表业务已经生效。",
+		})
+	}
+	return state.Context, nil
+}
+
+func hasAssistantContent(message chat.Message) bool {
+	return message.Content != "" || message.ReasoningContent != "" ||
+		len(message.ToolCalls) > 0 && string(message.ToolCalls) != "null" && string(message.ToolCalls) != "[]"
+}
+
+// OrdinaryCallCount 从实际调用记录计算普通轮数，重试及摘要是否成功不影响分类。
+func (s *chatStore) OrdinaryCallCount(ctx context.Context, run string) (int, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_model_calls m WHERE m.run_id=? AND m.continuation=0 AND NOT EXISTS(SELECT 1 FROM ai_events e WHERE e.model_call_id=m.id AND e.type='compact')`, run).Scan(&count)
+	return count, err
 }
 
 func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall, stage string) error {
@@ -309,7 +342,7 @@ func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall, stage stri
 		Context:   call.Input.Messages,
 		Completed: []string{},
 	}
-	if stage == "model_call_end" && call.Output != nil {
+	if stage == "model_call_end" && call.Output != nil && hasAssistantContent(call.Output.Message) {
 		state.Context = append(append([]chat.Message{}, state.Context...), call.Output.Message)
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO ai_checkpoints(run_id,model_call_id,status,state) VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET model_call_id=excluded.model_call_id,status=excluded.status,state=excluded.state`, call.RunID, call.ID, stage, jsonValue(state))
@@ -341,10 +374,10 @@ func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, e
 		return nil, err
 	}
 	call := &chat.ModelCall{RunID: id}
-	var input, retries string
+	var input, retries, progress string
 	var nextRetry sql.NullInt64
 	var output, failure sql.NullString
-	err = db.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.status,m.error,m.max_retry,m.retry_count,m.next_retry_at,m.retry_history FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &call.State, &failure, &call.MaxRetry, &call.RetryCount, &nextRetry, &retries)
+	err = db.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.status,m.error,m.max_retry,m.retry_count,m.next_retry_at,m.retry_history,c.status,c.state FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &call.State, &failure, &call.MaxRetry, &call.RetryCount, &nextRetry, &retries, &call.CheckpointStage, &progress)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -354,6 +387,13 @@ func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, e
 	if err = json.Unmarshal([]byte(input), &call.Input); err != nil {
 		return nil, err
 	}
+	var state struct {
+		Context []chat.Message `json:"context"`
+	}
+	if err = json.Unmarshal([]byte(progress), &state); err != nil {
+		return nil, err
+	}
+	call.CheckpointContext = state.Context
 	if err = json.Unmarshal([]byte(retries), &call.RetryHistory); err != nil {
 		return nil, err
 	}
