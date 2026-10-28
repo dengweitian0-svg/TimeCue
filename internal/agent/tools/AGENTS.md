@@ -1,5 +1,7 @@
 # 工具注册与日程业务
 
+- `Failure` 仅以明确的 tool_timeout 或 tool_temporary_error 参与协调器重试；未分类、参数及业务错误默认不可重试。工具将 context 传入正式业务，取消仅发出停止信号，不证明事务或副作用已回滚；执行尝试不直接保存 checkpoint。
+
 - `registry.go`：统一 `Tool.Info` / `Tool.InvokableRun` 契约、`ToolInfo` 元数据、显式注册、模型定义和对象参数 schema 校验；支持字符串、整数、布尔与字符串数组，拒绝重名和不支持的定义，执行入口统一处理解析、校验、错误及 JSON 结果。
 - `schedule.go`：`get_schedule`、`list_schedules`、`query_occurrences` 三个具体工具，分别提供定义并实现同步调用；入口通过 `ScheduleTools` 和 `Registry.Register` 注册，依赖 `ScheduleQueries` 正式窄端口。
 

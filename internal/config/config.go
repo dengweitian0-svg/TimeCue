@@ -164,6 +164,10 @@ func (m *Manager) CurrentConfig() (Config, error) {
 		copied := *current.Chat.MaxRetry
 		result.Chat.MaxRetry = &copied
 	}
+	if current.Chat.ToolMaxRetry != nil {
+		copied := *current.Chat.ToolMaxRetry
+		result.Chat.ToolMaxRetry = &copied
+	}
 	return result, nil
 }
 

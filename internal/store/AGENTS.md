@@ -1,5 +1,7 @@
 # SQLite 存储
 
+- `chat_tools.go` 沿版本 3 已有 next_retry_at/status/error 保存工具 retry_wait，重启完整回读；暂时故障不写最终结果事件或完成集合。实际重试的 retry_count、running、期限清除及 tool_use checkpoint 同事务提交，沿用原身份、参数和键，不新增 tool_start。最终结果清除退避期限，重试等待的取消与故障补齐由聊天统一进度裁决。
+
 - `chat_tools.go`：版本 3 已有工具表的按模型调用回读、完整模型回复接纳、工具 running/开始事件登记及逐项结果事务；参数以外层 JSON 字符串保存，结果保持原 JSON 类型。开始与结果事务回读已提交 checkpoint，调用聊天完整进度操作，提交成功后返回完整快照，失败返回原快照；已终态工具复用已提交进度，不重复事件。tool_start/tool_result 与关联、消息、completed_tool/last_tool 和 checkpoint 原子保存，取消跳过不伪造 running；结果事务失败时可在运行失败收尾事务中复用同一逐项合并保存实际结果。无表、列、索引或迁移变化。
 
 提供日程与提醒的持久化、事务操作和数据库健康检查，满足 `service/schedule` 与 `service/notification` 定义的存储接口。健康检查验证通知 schedule_id/notify_time 完整唯一键；Unix 纳秒时间写入前拒绝超出 int64 范围的日程及提醒时间。

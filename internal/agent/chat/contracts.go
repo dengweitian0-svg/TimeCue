@@ -24,7 +24,7 @@ type RunState string
 
 const (
 	StateRunning RunState = "running"
-	// StateRetryWait 仅用于逻辑模型调用，运行本身仍保持 running。
+	// StateRetryWait 用于逻辑模型及工具调用，运行本身仍保持 running。
 	StateRetryWait     RunState = "retry_wait"
 	StateWaitForCancel RunState = "wait_for_cancel"
 	StateSucceeded     RunState = "succeeded"
@@ -183,6 +183,9 @@ type ModelConfig struct {
 	MaxRounds       int
 	FirstTimeout    time.Duration
 	IdleTimeout     time.Duration
+	ToolConcurrency int
+	ToolTimeout     time.Duration
+	ToolMaxRetry    *int
 }
 
 // Message 保存实际模型消息，包括已收到的思考内容。
@@ -228,6 +231,7 @@ type ToolCall struct {
 	State          string
 	MaxRetry       int
 	RetryCount     int
+	NextRetryAt    *time.Time
 }
 
 // ToolStartData 保存公开工具开始事件，一个开始记录包含实际处理的调用。
@@ -257,6 +261,8 @@ type ToolRepository interface {
 	ReadTools(context.Context, int64) ([]ToolCall, error)
 	// BeginTool 原子登记开始事实，返回已提交完整进度与原身份工具；失败保留传入快照。
 	BeginTool(context.Context, ModelCall, ToolCall) (ModelCall, ToolCall, error)
+	// WaitToolRetry 保存暂时故障和退避期限，不回填最终结果或改变完成集合。
+	WaitToolRetry(context.Context, ToolCall) error
 	// FinishTool 沿事务内已提交事实合并结果，返回已提交完整进度；失败保留传入快照。
 	FinishTool(context.Context, ModelCall, ToolCall) (ModelCall, error)
 }
