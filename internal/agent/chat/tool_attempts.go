@@ -47,6 +47,17 @@ func toolConfig(cfg ModelConfig) (concurrency int, timeout time.Duration, maxRet
 	return
 }
 
+func (s *Runtime) preserveToolRetry(ctx context.Context, runID string) bool {
+	if ctx.Err() == nil {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run := s.active[runID]
+	// 正常退出暂停逻辑调用；用户取消和会话删除仍终止后续重试。
+	return s.stopping && run != nil && !run.requested
+}
+
 func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cfg ModelConfig) (result ModelCall, failure *RunError) {
 	// 模型密钥读取失败不改变仍有效的工具权限；从运行已有配置起保留最近有效参数。
 	limit, timeout, maxRetry := toolConfig(cfg)
@@ -95,7 +106,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 		}
 	}()
 	settle := func(tool ToolCall) *RunError {
-		if ctx.Err() == nil && toolRetryable(tool.Error) && tool.RetryCount < tool.MaxRetry {
+		if toolRetryable(tool.Error) && tool.RetryCount < tool.MaxRetry && s.preserveToolRetry(ctx, r.RunID) {
 			next := time.Now().Add(retryDelay(tool.RetryCount + 1))
 			if latest := time.Unix(0, 1<<63-1); next.After(latest) {
 				next = latest
@@ -139,6 +150,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 				draining = false
 			}
 		}
+		expired := false
 		for id, attempt := range active {
 			if attempt.ctx.Err() == nil {
 				continue
@@ -151,6 +163,12 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 			if failure := settle(tool); failure != nil {
 				return call, failure
 			}
+			// 保存可能阻塞，先重新接纳期间及时返回的事实，再裁定下一个超时。
+			expired = true
+			break
+		}
+		if expired {
+			continue
 		}
 		serial := false
 		for _, attempt := range active {
