@@ -295,13 +295,7 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 	if r.State == StateWaitForCancel {
 		r.State = StateCancelled
 		r.Error = nil
-		if call.State.Terminal() {
-			// 只结束运行，已成功调用及其完整工具进度保持原事实。
-			call = ModelCall{
-				RunID:     r.RunID,
-				SessionID: r.SessionID,
-			}
-		} else {
+		if !call.State.Terminal() {
 			call.State = StateCancelled
 			call.Error = nil
 		}

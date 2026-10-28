@@ -115,7 +115,7 @@ func toolError(code, message string) *RunError {
 	}
 }
 
-func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, *RunError) {
+func (s *Runtime) processTools(ctx context.Context, call ModelCall) (result ModelCall, failure *RunError) {
 	var requests []ToolRequest
 	if call.Output == nil || json.Unmarshal(call.Output.Message.ToolCalls, &requests) != nil {
 		return call, toolError("model_invalid_format", "工具响应无效")
@@ -131,6 +131,21 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 	// 查询工具可并行，开始及结果进度始终由当前协调器串行提交。
 	results := make(chan ToolCall, 3)
 	inFlight, next := 0, 0
+	// 保存失败后停止启动，只收集已返回事实；其余在途查询不阻挡故障收尾。
+	defer func() {
+		if failure == nil {
+			return
+		}
+		for inFlight > 0 {
+			select {
+			case tool := <-results:
+				result.PendingTools = append(result.PendingTools, tool)
+				inFlight--
+			default:
+				return
+			}
+		}
+	}()
 	for next < len(requests) || inFlight > 0 {
 		for next < len(requests) && inFlight < cap(results) {
 			request := requests[next]
@@ -153,11 +168,10 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 				// 最终结果和 completed_tool 在同一事务提交，不允许孤立的终态记录再次执行。
 				return call, persistenceFailure()
 			} else if tool.RetryCount >= tool.MaxRetry {
-				tool.State = "failed"
-				tool.Error = toolError("tool_result_unconfirmed", "中断前工具结果未能确认，未重新执行")
+				tool = tool.WithResultUnconfirmed()
 				progress, err := s.toolStore.FinishTool(context.Background(), call, tool)
 				if err != nil {
-					call.PendingTool = &tool
+					call.PendingTools = append(call.PendingTools, tool)
 					return call, persistenceFailure()
 				}
 				call = progress
@@ -202,32 +216,11 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 		inFlight--
 		progress, err := s.toolStore.FinishTool(context.Background(), call, tool)
 		if err != nil {
-			call.PendingTool = &tool
+			call.PendingTools = append(call.PendingTools, tool)
 			return call, persistenceFailure()
 		}
 		call = progress
 	}
-	// 退出保存未完成进度；用户取消则补齐原 ID 的 aborted 结果。
-	s.mu.Lock()
-	requested := s.active[call.RunID] != nil && s.active[call.RunID].requested
-	s.mu.Unlock()
-	if requested {
-		for ; next < len(requests); next++ {
-			request := requests[next]
-			if call.ToolCompleted(request.ID) {
-				continue
-			}
-			tool := known[request.ID]
-			tool.Request = request
-			tool.State = "skipped"
-			tool.Error = toolError("tool_skipped", "运行已取消，未启动此工具")
-			progress, err := s.toolStore.FinishTool(context.Background(), call, tool)
-			if err != nil {
-				call.PendingTool = &tool
-				return call, persistenceFailure()
-			}
-			call = progress
-		}
-	}
+	// 退出只保留已提交进度；用户取消的缺失结果交由终态事务统一补齐。
 	return call, nil
 }
