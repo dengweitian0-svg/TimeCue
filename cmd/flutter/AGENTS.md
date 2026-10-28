@@ -19,4 +19,4 @@
 显式 instance-id 才进入托管模式，必须同时指定 data-dir；身份只允许 1–128 个 ASCII 字母、数字、连字符或下划线。托管 stdout 只输出一次 ready，Gin 使用 release 模式；手动运行不读取 stdin 控制，每次生成新身份。停止、EOF 和信号均只取消原运行 context，协议及启动错误返回非零退出码。管道读取必须在退出时关闭并等待；Windows 适配不提供命名管道服务、父 PID 轮询或心跳。固定端口冲突明确失败，不结束其他进程。固定端口的生命周期与进程测试用 `go test -p 1` 串行运行。
 
 - `main.go` 装配运行、会话、模型执行、工具事务与事件查询五个 SQLite 持久化端口、真实 chat.Runtime、Chat Completions 客户端与 Manager.ChatModels；正常、managed 与 external 入口共用，无聊天 Mock 或播种。
-- `main.go` 通过统一 Tool Registry 注册正式日程单条、列表和日期查询，注入 chat.Runtime 及工具事务持久化端口；工具注册失败时不启动服务。
+- `main.go` 通过统一 Tool Registry 注册正式日程单条、列表和日期查询，以及串行创建/修改工具；写入复用 App.WriteSchedule、空业务 key 和版本保护。注入 chat.Runtime 及工具事务持久化端口；工具注册失败时不启动服务。
