@@ -13,13 +13,14 @@ import (
 // AcceptResponse 原子接纳完整模型响应及尾批，工具执行只能在提交后推进。
 func (s *chatStore) AcceptResponse(ctx context.Context, call chat.ModelCall) error {
 	return s.transaction(ctx, func(tx *sql.Tx) error {
+		call = call.WithResponseAccepted()
 		if err := saveCall(ctx, tx, call, true); err != nil {
 			return err
 		}
 		if err := appendChatEvents(ctx, tx, call); err != nil {
 			return err
 		}
-		return checkpoint(ctx, tx, call, "model_call_end")
+		return checkpoint(ctx, tx, call)
 	})
 }
 
@@ -99,7 +100,7 @@ func (s *chatStore) BeginTool(ctx context.Context, call chat.ModelCall, tool cha
 				return err
 			}
 		}
-		return checkpoint(ctx, tx, call, "tool_start")
+		return checkpoint(ctx, tx, call.WithToolStarted(tool))
 	})
 	return id, err
 }
@@ -145,7 +146,7 @@ func finishTool(ctx context.Context, tx *sql.Tx, call chat.ModelCall, tool chat.
 	}); err != nil {
 		return err
 	}
-	return checkpoint(ctx, tx, call, call.CheckpointStage)
+	return checkpoint(ctx, tx, call)
 }
 
 // closeToolBatch 在运行异常收尾事务中补齐已接纳但尚无结果的原调用，避免终态历史失配。
@@ -157,19 +158,11 @@ func closeToolBatch(ctx context.Context, tx *sql.Tx, call chat.ModelCall, run ch
 	if err := json.Unmarshal(call.Output.Message.ToolCalls, &requests); err != nil {
 		return call, err
 	}
-	var raw string
-	if err := tx.QueryRowContext(ctx, `SELECT status,state FROM ai_checkpoints WHERE run_id=?`, call.RunID).Scan(&call.CheckpointStage, &raw); err != nil {
+	var err error
+	call, err = readCheckpoint(ctx, tx, call)
+	if err != nil {
 		return call, err
 	}
-	var progress struct {
-		Context   []chat.Message `json:"context"`
-		Completed []string       `json:"completed_tool"`
-		Last      string         `json:"last_tool"`
-	}
-	if err := json.Unmarshal([]byte(raw), &progress); err != nil {
-		return call, err
-	}
-	call.CheckpointContext, call.CompletedTools, call.LastTool = progress.Context, progress.Completed, progress.Last
 	completed := map[string]bool{}
 	for _, id := range call.CompletedTools {
 		completed[id] = true
@@ -205,4 +198,16 @@ func closeToolBatch(ctx context.Context, tx *sql.Tx, call chat.ModelCall, run ch
 		}
 	}
 	return call, nil
+}
+
+func readCheckpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall) (chat.ModelCall, error) {
+	var stage, raw string
+	if err := tx.QueryRowContext(ctx, `SELECT status,state FROM ai_checkpoints WHERE run_id=? AND model_call_id=?`, call.RunID, call.ID).Scan(&stage, &raw); err != nil {
+		return call, err
+	}
+	var state chat.CheckpointState
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		return call, err
+	}
+	return call.WithCheckpoint(stage, state), nil
 }
