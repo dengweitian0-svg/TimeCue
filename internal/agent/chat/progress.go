@@ -1,6 +1,9 @@
 package chat
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+)
 
 // CheckpointState 是版本 3 的三字段磁盘格式，不持有独立于 ModelCall 的可推进状态。
 type CheckpointState struct {
@@ -44,7 +47,7 @@ func (state CheckpointState) History(status RunState) []Message {
 	return messages
 }
 
-// Checkpoint 返回隔离的可保存快照，旧工具存储契约仍只以 ModelCall 的进度字段为事实来源。
+// Checkpoint 返回隔离的可保存快照，以 ModelCall 的进度字段为唯一事实来源。
 func (call ModelCall) Checkpoint() CheckpointState {
 	return CheckpointState{
 		Context:   cloneMessages(call.CheckpointContext),
@@ -103,8 +106,16 @@ func (call ModelCall) WithToolStarted(tool ToolCall) ModelCall {
 	return call
 }
 
-// WithToolResult 将原 ID 的工具结果合入隔离的上下文和本批进度，调用方须原子持久化。
-func (call ModelCall) WithToolResult(tool ToolCall, total int) ModelCall {
+// ToolCompleted 判断当前回复的原 ID 是否已有配对结果，不表示业务成功。
+func (call ModelCall) ToolCompleted(id string) bool {
+	return slices.Contains(call.CompletedTools, id)
+}
+
+// WithToolResult 合入单项配对结果，仅在全部原调用均有结果时表达批次完成事实。
+func (call ModelCall) WithToolResult(tool ToolCall) ModelCall {
+	if call.ToolCompleted(tool.Request.ID) {
+		return call.WithCheckpoint(call.CheckpointStage, call.Checkpoint())
+	}
 	call = call.WithCheckpoint("tool_start", call.Checkpoint())
 	content := string(tool.Output)
 	if tool.Error != nil {
@@ -121,8 +132,21 @@ func (call ModelCall) WithToolResult(tool ToolCall, total int) ModelCall {
 	})
 	call.CompletedTools = append(call.CompletedTools, tool.Request.ID)
 	call.LastTool = "tool_result: " + tool.Request.Function.Name + "-" + tool.Request.ID
-	if len(call.CompletedTools) == total {
+	if call.toolBatchComplete() {
 		call.CheckpointStage = "tool_end"
 	}
 	return call
+}
+
+func (call ModelCall) toolBatchComplete() bool {
+	var requests []ToolRequest
+	if call.Output == nil || json.Unmarshal(call.Output.Message.ToolCalls, &requests) != nil || len(requests) == 0 {
+		return false
+	}
+	for _, request := range requests {
+		if !call.ToolCompleted(request.ID) {
+			return false
+		}
+	}
+	return true
 }

@@ -1,13 +1,14 @@
 # Chat 模块
 
-- `progress.go`：集中模型回复接纳、调用开始/结束快照、旧格式历史接续及工具进度的兼容操作。ModelCall 进度字段是唯一事实来源，CheckpointState 仅承载版本 3 的 context/completed_tool/last_tool 磁盘格式；新调用重置工具事实，同调用恢复保留原事实。待提交快照复制消息、原始工具 JSON 与完成集合，提交失败不采用新进度。
+- `progress.go`：集中模型回复接纳、调用开始/结束快照、旧格式历史接续、工具开始与单项结果的完整进度操作。ModelCall 进度字段是唯一事实来源，CheckpointState 仅承载版本 3 的 context/completed_tool/last_tool 磁盘格式；新调用重置工具事实，同调用恢复保留原事实。待提交快照复制消息、原始工具 JSON 与完成集合，提交失败不采用新进度。工具结果按接纳次序合并，完成集合按原 ID 配对；全部原请求取得结果才表达 tool_end，不决定下一步执行策略。
 - `progress_regression_test.go`：通过公开运行/会话用例、独立旧格式 SQLite 样本及真实接纳事务故障验证空 assistant 兼容、仅思考及原工具配对、退出恢复的说明去重、原始 output/usage 保留、未接纳工具的上下文隔离，以及新调用清空工具事实后跨回复同值 ID 的独立结果。
 - `tool_loop.go`：完整模型回复接纳后的工具循环；最多三个查询并行，协调器逐个登记开始与合并结果，原调用 ID 补齐后再进入下一普通模型调用。开始事务失败不执行业务，结果保存失败只重试保存已取得事实，不重执查询。
 - `tools_test.go`：公共服务、真实 HTTP 适配器、SQLite 和 App 日程入口验证分块参数、查询规则/revision、列表数组、北京时间日期发生情况、参数/业务错误、重复 ID 拒绝、已接纳回复与结果的恢复复用，以及结果事务故障停止推进并原子保留实际结果。
+- `tool_progress_test.go`：在真实回复接纳、部分结果及 tool_end 提交边界取得一致 SQLite 快照，通过公开用例重建运行，验证已接纳模型与已保存结果复用、原身份与参数、未确认查询预算和按真实接纳次序回填；独立版本 3 样本覆盖不同完成次序、任意 JSON 类型与恢复预算耗尽。
 
 工具只从统一 Registry 的 Tool 接口执行，模型定义与预算使用相同序列化 input。正常完成的回复先保存 succeeded、原 output/usage、尾批与 model_call_end，再启动工具；非正常部分工具增量不执行、不网络重试，同一回复内重复 ID 整批拒绝并排除无法配对的有效历史。
 
-每个工具实际开始时保存 running、参数原文的外层 JSON 字符串、关联、tool_start 和 tool_use checkpoint，不创建 pending。参数解析及 schema 校验在提交后执行；每个最终结果、原始 JSON output/error、tool_result、原 ID 的 tool 消息、completed_tool/last_tool 与 checkpoint 同事务保存，不生成工具专用 error 事件。全部结果完成才进入 tool_end；不同模型回复允许复用同值 ID。恢复复用已保存结果，未确认的只读查询沿原记录有限重执行；不重发已接纳的模型回复。
+每个工具实际开始时保存 running、参数原文的外层 JSON 字符串、关联、tool_start 和 tool_use checkpoint，不创建 pending。参数解析及 schema 校验在提交后执行；每个最终结果、原始 JSON output/error、tool_result、原 ID 的 tool 消息、completed_tool/last_tool 与 checkpoint 同事务保存，不生成工具专用 error 事件。开始与结果存储操作在事务内回读已提交进度，应用统一完整操作，成功后返回完整快照；协调器只采用提交结果，不逐字段构造进度或维护第二份完成集合。全部结果完成才进入 tool_end；不同模型回复允许复用同值 ID。恢复复用已保存结果，未确认的只读查询沿原记录有限重执行；不重发已接纳的模型回复。
 
 - `contracts.go`：固定四字段回执、十字段概况、模型选项、分页事件、内外状态，以及模型端口和运行、会话、模型执行、工具事务、事件查询五个独立存储接口。
 - `request.go`：从完整有效历史追加本轮真实输入，按完整序列化请求的 UTF-8 字节数统一估算预算；估算器供请求及后续工具结果复用，不作为 usage。

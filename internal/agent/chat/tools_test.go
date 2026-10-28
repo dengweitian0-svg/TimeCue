@@ -309,29 +309,18 @@ func TestRecoveredAcceptedToolReplyDoesNotCallModelAgain(t *testing.T) {
 	if err := storage.Tools.AcceptResponse(ctx, call); err != nil {
 		t.Fatal(err)
 	}
-	call.CheckpointStage = "tool_start"
-	call.CheckpointContext = append(call.Input.Messages, call.Output.Message)
-	call.CompletedTools = []string{}
-	call.LastTool = "tool_use: get_schedule-saved"
 	tool := chat.ToolCall{
 		ModelCallID: call.ID,
 		Request:     requests[0],
 		State:       "running",
 		MaxRetry:    3,
 	}
-	tool.ID, err = storage.Tools.BeginTool(ctx, call, tool)
+	call, tool, err = storage.Tools.BeginTool(ctx, call, tool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tool.State, tool.Output = "succeeded", json.RawMessage(`{"name":"已保存结果"}`)
-	call.CompletedTools = []string{"saved"}
-	call.LastTool = "tool_result: get_schedule-saved"
-	call.CheckpointContext = append(call.CheckpointContext, chat.Message{
-		Role:       "tool",
-		ToolCallID: "saved",
-		Content:    string(tool.Output),
-	})
-	if err := storage.Tools.FinishTool(ctx, call, tool); err != nil {
+	if _, err := storage.Tools.FinishTool(ctx, call, tool); err != nil {
 		t.Fatal(err)
 	}
 	restarted := chat.NewService(storage, completion.NewClient(nil), toolSettings(upstream.URL), queryRegistry(t, application))
@@ -436,9 +425,9 @@ type failToolResultOnce struct {
 }
 
 // FinishTool 在事务边界注入一次结果提交失败，不替代真实查询或持久化。
-func (f *failToolResultOnce) FinishTool(ctx context.Context, call chat.ModelCall, tool chat.ToolCall) error {
+func (f *failToolResultOnce) FinishTool(ctx context.Context, call chat.ModelCall, tool chat.ToolCall) (chat.ModelCall, error) {
 	if !f.failed.Swap(true) {
-		return errors.New("injected result transaction failure")
+		return call, errors.New("injected result transaction failure")
 	}
 	return f.ToolRepository.FinishTool(ctx, call, tool)
 }
@@ -645,8 +634,8 @@ func TestCancelAfterToolReplyAcceptedPairsSkippedResults(t *testing.T) {
 type failToolStart struct{ chat.ToolRepository }
 
 // BeginTool 在真实开始事务边界注入失败，工具不能执行。
-func (f failToolStart) BeginTool(context.Context, chat.ModelCall, chat.ToolCall) (int64, error) {
-	return 0, errors.New("injected tool start failure")
+func (f failToolStart) BeginTool(_ context.Context, call chat.ModelCall, tool chat.ToolCall) (chat.ModelCall, chat.ToolCall, error) {
+	return call, tool, errors.New("injected tool start failure")
 }
 
 // TestToolStartPersistenceFailureKeepsNextHistoryPaired 验证开始事务失败仍让终态历史中的原调用取得明确错误配对。

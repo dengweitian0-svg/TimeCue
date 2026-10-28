@@ -1,6 +1,6 @@
 # SQLite 存储
 
-- `chat_tools.go`：版本 3 已有工具表的按模型调用回读、完整模型回复接纳、工具 running/开始事件登记及逐项结果事务；参数以外层 JSON 字符串保存，结果保持原 JSON 类型。tool_start/tool_result 与关联、消息、completed_tool/last_tool 和 checkpoint 原子保存，取消跳过不伪造 running；结果事务失败时可在运行失败收尾事务中保存实际结果。无表、列、索引或迁移变化。
+- `chat_tools.go`：版本 3 已有工具表的按模型调用回读、完整模型回复接纳、工具 running/开始事件登记及逐项结果事务；参数以外层 JSON 字符串保存，结果保持原 JSON 类型。开始与结果事务回读已提交 checkpoint，调用聊天完整进度操作，提交成功后返回完整快照，失败返回原快照；已终态工具复用已提交进度，不重复事件。tool_start/tool_result 与关联、消息、completed_tool/last_tool 和 checkpoint 原子保存，取消跳过不伪造 running；结果事务失败时可在运行失败收尾事务中复用同一逐项合并保存实际结果。无表、列、索引或迁移变化。
 
 提供日程与提醒的持久化、事务操作和数据库健康检查，满足 `service/schedule` 与 `service/notification` 定义的存储接口。健康检查验证通知 schedule_id/notify_time 完整唯一键；Unix 纳秒时间写入前拒绝超出 int64 范围的日程及提醒时间。
 
@@ -46,4 +46,4 @@ ReadUnacknowledged 在同一事务读取范围完整总数、有界提醒页及�
 
 聊天异常收尾同一事务复用已提交工具结果，并将已接纳但尚无确认结果的原 ID 补齐 tool_result_unconfirmed；取消未启动项补齐 skipped/aborted。开始与结果事件和完整工具配对均保留，直接保存最终处理事实，不伪造 running/tool_use；正常退出不补造终态，保留原进度供恢复。
 
-待保存工具结果仅携带实际取得的事实，Finish 在同一事务回读当前调用的已提交 checkpoint，再通过聊天进度操作合入结果；保存失败不以待提交上下文替代数据库事实。工具收尾策略仍保留现有契约供后续进度迁移，不新增存储格式或迁移。
+待保存工具结果仅携带实际取得的事实，Finish 在同一事务复用正常单项结果合并，回读当前调用的已提交 checkpoint 后调用聊天进度操作；保存失败不以待提交上下文替代数据库事实。异常补齐策略仍由现有收尾契约负责，不新增存储格式或迁移。
