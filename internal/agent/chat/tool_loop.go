@@ -2,11 +2,6 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
-	"time"
-
-	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
-	"github.com/google/uuid"
 )
 
 func hasModelOutput(output ModelOutput) bool {
@@ -17,7 +12,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 	for r.Error == nil {
 		if call.State == StateSucceeded && (call.CheckpointStage == "model_call_end" || call.CheckpointStage == "tool_start") {
 			var failure *RunError
-			call, failure = s.processTools(ctx, call)
+			call, failure = s.processTools(ctx, call, *r, cfg)
 			if failure != nil || ctx.Err() != nil {
 				return call, failure
 			}
@@ -116,118 +111,4 @@ func toolError(code, message string) *RunError {
 		Code:    code,
 		Message: message,
 	}
-}
-
-func (s *Runtime) processTools(ctx context.Context, call ModelCall) (result ModelCall, failure *RunError) {
-	var requests []ToolRequest
-	if call.Output == nil || json.Unmarshal(call.Output.Message.ToolCalls, &requests) != nil {
-		return call, toolError("model_invalid_format", "工具响应无效")
-	}
-	stored, err := s.toolStore.ReadTools(context.Background(), call.ID)
-	if err != nil {
-		return call, persistenceFailure()
-	}
-	known := map[string]ToolCall{}
-	for _, tool := range stored {
-		known[tool.Request.ID] = tool
-	}
-	// 查询工具可并行，开始及结果进度始终由当前协调器串行提交。
-	results := make(chan ToolCall, 3)
-	inFlight, next := 0, 0
-	// 保存失败后停止启动，只收集已返回事实；其余在途查询不阻挡故障收尾。
-	defer func() {
-		if failure == nil {
-			return
-		}
-		for inFlight > 0 {
-			select {
-			case tool := <-results:
-				result.PendingTools = append(result.PendingTools, tool)
-				inFlight--
-			default:
-				return
-			}
-		}
-	}()
-	for next < len(requests) || inFlight > 0 {
-		for next < len(requests) && inFlight < cap(results) {
-			request := requests[next]
-			if call.ToolCompleted(request.ID) {
-				next++
-				continue
-			}
-			if ctx.Err() != nil {
-				break
-			}
-			entry, registered := s.tools.Lookup(request.Function.Name)
-			parallel := !registered || entry.Parallel
-			if !parallel && inFlight > 0 {
-				break
-			}
-			tool, exists := known[request.ID]
-			if !exists {
-				tool = ToolCall{
-					ModelCallID: call.ID,
-					Request:     request,
-					State:       "running",
-					MaxRetry:    3,
-				}
-				if registered && entry.Dangerous {
-					tool.IdempotencyKey = "tool:" + request.ID + ":" + uuid.NewString()
-				}
-			} else if tool.State != "running" {
-				// 最终结果和 completed_tool 在同一事务提交，不允许孤立的终态记录再次执行。
-				return call, persistenceFailure()
-			} else if tool.RetryCount >= tool.MaxRetry {
-				tool = tool.WithResultUnconfirmed()
-				progress, err := s.toolStore.FinishTool(context.Background(), call, tool)
-				if err != nil {
-					call.PendingTools = append(call.PendingTools, tool)
-					return call, persistenceFailure()
-				}
-				call = progress
-				next++
-				continue
-			} else {
-				tool.RetryCount++
-			}
-			started, registeredTool, err := s.toolStore.BeginTool(context.Background(), call, tool)
-			if err != nil {
-				return call, persistenceFailure()
-			}
-			call = started
-			tool = registeredTool
-			inFlight++
-			next++
-			go func(tool ToolCall) {
-				// 已开始的工具取得实际结果或达到原超时，取消仅阻止后续启动。
-				attempt, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-				defer cancel()
-				attempt = tools.WithExecutionKey(attempt, tool.IdempotencyKey)
-				output, failure := s.tools.Execute(attempt, tool.Request.Function.Name, tool.Request.Function.Arguments)
-				tool.Output, tool.State = output, "succeeded"
-				if failure != nil {
-					tool.State = "failed"
-					tool.Error = toolError(failure.Code, failure.Message)
-				}
-				results <- tool
-			}(tool)
-			if !parallel {
-				break
-			}
-		}
-		if inFlight == 0 {
-			break
-		}
-		tool := <-results
-		inFlight--
-		progress, err := s.toolStore.FinishTool(context.Background(), call, tool)
-		if err != nil {
-			call.PendingTools = append(call.PendingTools, tool)
-			return call, persistenceFailure()
-		}
-		call = progress
-	}
-	// 退出只保留已提交进度；用户取消的缺失结果交由终态事务统一补齐。
-	return call, nil
 }

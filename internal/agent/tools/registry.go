@@ -42,6 +42,7 @@ type Property struct {
 }
 
 // Failure 是工具自身的公开错误，不作为运行 error 事件发送。
+// 仅 tool_timeout 与明确的 tool_temporary_error 可进入工具重试，其他错误默认最终失败。
 type Failure struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

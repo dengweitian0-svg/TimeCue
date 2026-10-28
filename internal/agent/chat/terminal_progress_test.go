@@ -275,7 +275,12 @@ func TestTerminalRetryUsesCommittedFactsWithoutPartialProgress(t *testing.T) {
 
 func awaitFinishedRun(t *testing.T, service chat.RunService, id string) chat.Run {
 	t.Helper()
-	deadline := time.Now().Add(4 * time.Second)
+	return awaitFinishedRunWithin(t, service, id, 4*time.Second)
+}
+
+func awaitFinishedRunWithin(t *testing.T, service chat.RunService, id string, timeout time.Duration) chat.Run {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		run, err := service.GetRun(context.Background(), id)
 		if err != nil {

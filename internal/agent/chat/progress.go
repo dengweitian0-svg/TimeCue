@@ -177,7 +177,7 @@ func (call ModelCall) WithRunFinished(status RunState, stored []ToolCall) (Model
 		if call.ToolCompleted(tool.Request.ID) {
 			continue
 		}
-		if saved, ok := known[tool.Request.ID]; ok && saved.State != "running" {
+		if saved, ok := known[tool.Request.ID]; ok && saved.State != "running" && saved.State != "retry_wait" {
 			tool = saved
 		}
 		call = call.WithToolResult(tool)
@@ -195,7 +195,7 @@ func (call ModelCall) WithRunFinished(status RunState, stored []ToolCall) (Model
 				MaxRetry:    3,
 			}
 		}
-		if !exists || tool.State == "running" {
+		if !exists || tool.State == "running" || tool.State == "retry_wait" {
 			tool = tool.WithResultUnconfirmed()
 			if status == StateCancelled {
 				tool.State = "skipped"

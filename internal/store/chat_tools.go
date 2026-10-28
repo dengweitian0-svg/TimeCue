@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
@@ -34,7 +35,7 @@ func (s *chatStore) ReadTools(ctx context.Context, modelCall int64) ([]chat.Tool
 }
 
 func readTools(ctx context.Context, reader schemaReader, modelCall int64) ([]chat.ToolCall, error) {
-	rows, err := reader.QueryContext(ctx, `SELECT id,tool_call_id,name,input,output,error,status,max_retry,retry_count,idempotency_key FROM ai_tool_calls WHERE model_call_id=? ORDER BY id`, modelCall)
+	rows, err := reader.QueryContext(ctx, `SELECT id,tool_call_id,name,input,output,error,status,max_retry,retry_count,idempotency_key,next_retry_at FROM ai_tool_calls WHERE model_call_id=? ORDER BY id`, modelCall)
 	if err != nil {
 		return nil, err
 	}
@@ -44,8 +45,13 @@ func readTools(ctx context.Context, reader schemaReader, modelCall int64) ([]cha
 		call := chat.ToolCall{ModelCallID: modelCall}
 		var input string
 		var output, failure, key sql.NullString
-		if err = rows.Scan(&call.ID, &call.Request.ID, &call.Request.Function.Name, &input, &output, &failure, &call.State, &call.MaxRetry, &call.RetryCount, &key); err != nil {
+		var next sql.NullInt64
+		if err = rows.Scan(&call.ID, &call.Request.ID, &call.Request.Function.Name, &input, &output, &failure, &call.State, &call.MaxRetry, &call.RetryCount, &key, &next); err != nil {
 			return nil, err
+		}
+		if next.Valid {
+			at := time.Unix(0, next.Int64)
+			call.NextRetryAt = &at
 		}
 		call.IdempotencyKey = key.String
 		call.Request.Type = "function"
@@ -92,7 +98,7 @@ func (s *chatStore) BeginTool(ctx context.Context, call chat.ModelCall, tool cha
 		}
 		if tool.ID != 0 {
 			// 恢复复用原身份和已登记执行键，不再发送开始事件。
-			_, err := tx.ExecContext(ctx, `UPDATE ai_tool_calls SET status='running',retry_count=? WHERE id=? AND model_call_id=?`, tool.RetryCount, tool.ID, call.ID)
+			_, err := tx.ExecContext(ctx, `UPDATE ai_tool_calls SET status='running',retry_count=?,error=NULL,output=NULL,next_retry_at=NULL WHERE id=? AND model_call_id=?`, tool.RetryCount, tool.ID, call.ID)
 			if err != nil {
 				return err
 			}
@@ -120,6 +126,24 @@ func (s *chatStore) BeginTool(ctx context.Context, call chat.ModelCall, tool cha
 		return originalCall, originalTool, err
 	}
 	return call, tool, nil
+}
+
+// WaitToolRetry 只保存一次尝试的暂时错误和退避，不生成最终消息或结果事件。
+func (s *chatStore) WaitToolRetry(ctx context.Context, tool chat.ToolCall) error {
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE ai_tool_calls SET status='retry_wait',output=?,error=?,next_retry_at=? WHERE id=? AND model_call_id=? AND status='running' AND retry_count=?`, jsonValue(tool.Output), jsonValue(tool.Error), timeValue(tool.NextRetryAt), tool.ID, tool.ModelCallID, tool.RetryCount)
+		if err != nil {
+			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed != 1 {
+			return fmt.Errorf("工具尝试已结算或身份不匹配: %d", tool.ID)
+		}
+		return nil
+	})
 }
 
 // FinishTool 同事务合并实际结果、原始 JSON、配对事件和进度，提交成功才返回新快照。
@@ -172,7 +196,7 @@ func saveToolResult(ctx context.Context, tx *sql.Tx, call chat.ModelCall, tool c
 			return false, err
 		}
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE ai_tool_calls SET output=?,error=?,status=?,finished_at=? WHERE id=? AND model_call_id=?`, jsonValue(tool.Output), jsonValue(tool.Error), tool.State, time.Now().UnixNano(), id, call.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE ai_tool_calls SET output=?,error=?,status=?,finished_at=?,next_retry_at=NULL WHERE id=? AND model_call_id=?`, jsonValue(tool.Output), jsonValue(tool.Error), tool.State, time.Now().UnixNano(), id, call.ID)
 		if err != nil {
 			return false, err
 		}

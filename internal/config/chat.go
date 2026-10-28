@@ -32,6 +32,9 @@ type ChatRuntime struct {
 	MaxRetry            *int `mapstructure:"max_retry"`
 	FirstTimeoutSeconds int  `mapstructure:"first_timeout_seconds"`
 	IdleTimeoutSeconds  int  `mapstructure:"idle_timeout_seconds"`
+	ToolConcurrency     int  `mapstructure:"tool_concurrency"`
+	ToolTimeoutSeconds  int  `mapstructure:"tool_timeout_seconds"`
+	ToolMaxRetry        *int `mapstructure:"tool_max_retry"`
 }
 
 func chatKeyName(provider, model string) string {
@@ -62,6 +65,9 @@ func validateChatConfig(cfg *Config) error {
 	}
 	if cfg.Chat.MaxRetry != nil && *cfg.Chat.MaxRetry < 0 || cfg.Chat.MaxRounds < 0 || cfg.Chat.FirstTimeoutSeconds < 0 || cfg.Chat.IdleTimeoutSeconds < 0 {
 		return fmt.Errorf("chat rounds, retry and timeouts must not be negative")
+	}
+	if cfg.Chat.ToolConcurrency < 0 || cfg.Chat.ToolTimeoutSeconds < 0 || cfg.Chat.ToolMaxRetry != nil && *cfg.Chat.ToolMaxRetry < 0 {
+		return fmt.Errorf("tool concurrency, retry and timeout must not be negative")
 	}
 	return nil
 }
@@ -110,6 +116,16 @@ func (m *Manager) ChatModels() ([]chat.ModelConfig, error) {
 				idle = cfg.Chat.IdleTimeoutSeconds
 			}
 			keyName := chatKeyName(p.Provider, model.Model)
+			toolConcurrency, toolTimeout, toolRetry := 3, 30, 3
+			if cfg.Chat.ToolConcurrency > 0 {
+				toolConcurrency = cfg.Chat.ToolConcurrency
+			}
+			if cfg.Chat.ToolTimeoutSeconds > 0 {
+				toolTimeout = cfg.Chat.ToolTimeoutSeconds
+			}
+			if cfg.Chat.ToolMaxRetry != nil {
+				toolRetry = *cfg.Chat.ToolMaxRetry
+			}
 			key := strings.TrimSpace(keys[keyName])
 			u, e := url.Parse(p.BaseURL)
 			if e != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
@@ -126,6 +142,9 @@ func (m *Manager) ChatModels() ([]chat.ModelConfig, error) {
 				MaxRounds:       rounds,
 				FirstTimeout:    time.Duration(first) * time.Second,
 				IdleTimeout:     time.Duration(idle) * time.Second,
+				ToolConcurrency: toolConcurrency,
+				ToolTimeout:     time.Duration(toolTimeout) * time.Second,
+				ToolMaxRetry:    &toolRetry,
 			})
 		}
 	}
