@@ -142,9 +142,9 @@ func TestRecoveryQueuesExcessUnfinishedSessions(t *testing.T) {
 		t.Fatalf("恢复执行超过全局上限: %d", m.peak.Load())
 	}
 	for i := 0; i < 4; i++ {
-		run, err := s.GetRun(ctx, fmt.Sprintf("recover-%d", i))
-		if err != nil || run.FinishedAt == nil || run.Status != chat.StatusCancelled {
-			t.Fatalf("排队运行丢失或被伪造终态: %+v %v", run, err)
+		run := awaitFinishedRun(t, s, fmt.Sprintf("recover-%d", i))
+		if run.Status != chat.StatusCancelled {
+			t.Fatalf("排队运行丢失或被伪造终态: %+v", run)
 		}
 	}
 }
@@ -357,6 +357,7 @@ func TestRestartRebuildsAllSlotsBeforeAdmission(t *testing.T) {
 	if status, err := resumed.CancelRun(ctx, ids[0]); err != nil || status != chat.StatusCancelled {
 		t.Fatalf("恢复后取消: %s %v", status, err)
 	}
+	awaitFinishedRun(t, resumed, ids[0])
 	retry := admissionInput("fourth", "rejected-key")
 	retry.Input = "先前被拒绝的请求没有登记键"
 	if _, err := resumed.CreateRun(ctx, retry); err != nil {
@@ -373,6 +374,7 @@ func TestRestartRebuildsAllSlotsBeforeAdmission(t *testing.T) {
 	if status, err := resumed.CancelRun(ctx, ids[1]); err != nil || status != chat.StatusCancelled {
 		t.Fatalf("取消第二会话: %s %v", status, err)
 	}
+	awaitFinishedRun(t, resumed, ids[1])
 	if _, err := resumed.CreateRun(ctx, admissionInput("first", "busy-key")); err != nil {
 		t.Fatalf("同会话忙碌拒绝消耗键: %v", err)
 	}

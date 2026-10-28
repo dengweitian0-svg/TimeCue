@@ -133,6 +133,7 @@ func TestCancelDuringRetryWaitStopsFutureRequests(t *testing.T) {
 	if err != nil || status != chat.StatusCancelled {
 		t.Fatalf("取消失败: %s %v", status, err)
 	}
+	awaitFinishedRun(t, service, id)
 	call, err := repo.Execution.ReadCall(context.Background(), id)
 	if err != nil || call.NextRetryAt != nil || call.RetryHistory[0].Result != "cancelled" || requests.Load() != 1 {
 		t.Fatalf("取消后仍保留计划重试: %+v err=%v requests=%d", call, err, requests.Load())
@@ -147,7 +148,7 @@ func awaitRetryRun(t *testing.T, service chat.RunService, id string, timeout tim
 		if err != nil {
 			t.Fatal(err)
 		}
-		if run.Status != chat.StatusRunning {
+		if run.FinishedAt != nil {
 			return run
 		}
 		if time.Now().After(deadline) {

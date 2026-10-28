@@ -82,6 +82,13 @@ func TestHTTPCancellationReplayRemainsActive(t *testing.T) {
 	if req.code != 409 || !strings.Contains(req.body, "session_busy") {
 		t.Fatalf("取消收尾提前释放名额: %d %s", req.code, req.body)
 	}
+	readLogs := captureHTTPLogs(t)
+	started := time.Now()
+	response = chatRequest(router, http.MethodPost, "/v1/run/"+id+"/cancel", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"cancelled"`) {
+		t.Fatalf("取消受理回执: %d %s", response.Code, response.Body)
+	}
+	requireHTTPRecord(t, readLogs(), http.MethodPost, "/v1/run/"+id+"/cancel", "INFO", "run cancellation requested", http.StatusOK, time.Since(started))
 }
 
 type admissionHTTPResponse struct {

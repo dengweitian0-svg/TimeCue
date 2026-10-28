@@ -48,14 +48,11 @@ func toolConfig(cfg ModelConfig) (concurrency int, timeout time.Duration, maxRet
 }
 
 func (s *Runtime) preserveToolRetry(ctx context.Context, runID string) bool {
-	if ctx.Err() == nil {
-		return true
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run := s.active[runID]
 	// 正常退出暂停逻辑调用；用户取消和会话删除仍终止后续重试。
-	return s.stopping && run != nil && !run.requested
+	return run != nil && !run.requested && (ctx.Err() == nil || s.stopping)
 }
 
 func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cfg ModelConfig) (result ModelCall, failure *RunError) {
@@ -219,8 +216,15 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 				tool.RetryCount++
 			}
 			tool.State, tool.Error, tool.Output, tool.NextRetryAt = "running", nil, nil, nil
+			// 与取消受理共用启动门，取消提交后不能再登记有效尝试。
+			s.mu.Lock()
+			if ctx.Err() != nil {
+				s.mu.Unlock()
+				break
+			}
 			started, registeredTool, err := s.toolStore.BeginTool(context.Background(), call, tool)
 			if err != nil {
+				s.mu.Unlock()
 				return call, persistenceFailure()
 			}
 			call, tool = started, registeredTool
@@ -252,6 +256,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 				case <-closed:
 				}
 			}(attempt)
+			s.mu.Unlock()
 			serial = !parallel
 		}
 		if len(active) == 0 && (ctx.Err() != nil || call.toolBatchComplete()) {

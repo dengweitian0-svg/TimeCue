@@ -455,7 +455,7 @@ func TestToolRetryExhaustionAndCancelWait(t *testing.T) {
 				// 协调器仍停在退避提交边界，先请求取消，再释放它进行收尾。
 				cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				if _, err := fixture.service.CancelRun(cancelCtx, receipt.RunID); !errors.Is(err, context.DeadlineExceeded) {
+				if _, err := fixture.service.CancelRun(cancelCtx, receipt.RunID); err != nil {
 					t.Fatal(err)
 				}
 			}

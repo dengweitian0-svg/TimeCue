@@ -10,3 +10,5 @@
 - `chat_admission_test.go`：真实 SQLite、公开 HTTP 和取消终态事务故障边界验证 202 四字段回执、重放先于模型与并发门禁、同键冲突、会话/全局 409、非法请求不登记键、被拒绝键重用，以及取消投影 200、十字段概况与空 finished_at 期间继续占用。
 
 聊天 HTTP 契约隔离测试显式为 NewService 传入 nil Registry；真实注册工具、日程查询及回填由 internal/agent/chat 的公共用例集成测试覆盖。
+
+- `chat_admission_test.go` 验证取消等待中的 POST cancel 直接返回 200/cancelled，并记录 Info 的 run cancellation requested；公开服务集成中的活动会话删除验证位于 chat/cancel_test.go，覆盖全部新查询不可见及原 SSE 收尾。

@@ -114,7 +114,11 @@ func TestCancellationRecoveryClosesAcceptedLegacyBatch(t *testing.T) {
 			}
 			for _, tool := range tools {
 				if stage == "model_call_end" || stage == "tool_start" && tool.Request.ID == "second" {
-					if tool.State != "skipped" || tool.Error == nil || tool.Error.Code != "tool_skipped" {
+					expectedState, expectedCode := "skipped", "tool_skipped"
+					if stage == "tool_start" {
+						expectedState, expectedCode = "failed", "tool_result_unconfirmed"
+					}
+					if tool.State != expectedState || tool.Error == nil || tool.Error.Code != expectedCode {
 						t.Fatalf("取消工具事实不符: %+v", tool)
 					}
 				}
