@@ -76,23 +76,27 @@ func toolStartEvent(tool chat.ToolCall) chat.Event {
 	}
 }
 
-// BeginTool 在实际处理前登记 running、原参数、开始事件与 tool_use checkpoint。
-func (s *chatStore) BeginTool(ctx context.Context, call chat.ModelCall, tool chat.ToolCall) (int64, error) {
-	var id int64
+// BeginTool 沿已提交进度原子登记 running、原参数、开始事件及开始侧 checkpoint。
+func (s *chatStore) BeginTool(ctx context.Context, call chat.ModelCall, tool chat.ToolCall) (chat.ModelCall, chat.ToolCall, error) {
+	originalCall, originalTool := call, tool
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		var err error
+		call, err = readCheckpoint(ctx, tx, call)
+		if err != nil {
+			return err
+		}
 		if tool.ID != 0 {
 			// 恢复只读查询复用原身份，不再发送开始事件。
 			_, err := tx.ExecContext(ctx, `UPDATE ai_tool_calls SET status='running',retry_count=? WHERE id=? AND model_call_id=?`, tool.RetryCount, tool.ID, call.ID)
 			if err != nil {
 				return err
 			}
-			id = tool.ID
 		} else {
 			result, err := tx.ExecContext(ctx, `INSERT INTO ai_tool_calls(run_id,session_id,model_call_id,tool_call_id,name,input,status,max_retry,created_at) VALUES(?,?,?,?,?,?,'running',?,?)`, call.RunID, call.SessionID, call.ID, tool.Request.ID, tool.Request.Function.Name, jsonValue(tool.Request.Function.Arguments), tool.MaxRetry, time.Now().UnixNano())
 			if err != nil {
 				return err
 			}
-			id, err = result.LastInsertId()
+			tool.ID, err = result.LastInsertId()
 			if err != nil {
 				return err
 			}
@@ -100,39 +104,57 @@ func (s *chatStore) BeginTool(ctx context.Context, call chat.ModelCall, tool cha
 				return err
 			}
 		}
-		return checkpoint(ctx, tx, call.WithToolStarted(tool))
+		call = call.WithToolStarted(tool)
+		return checkpoint(ctx, tx, call)
 	})
-	return id, err
+	if err != nil {
+		return originalCall, originalTool, err
+	}
+	return call, tool, nil
 }
 
-// FinishTool 同事务保存工具最终结果、原始 JSON、配对事件和逐项 checkpoint 进度。
-func (s *chatStore) FinishTool(ctx context.Context, call chat.ModelCall, tool chat.ToolCall) error {
-	return s.transaction(ctx, func(tx *sql.Tx) error { return finishTool(ctx, tx, call, tool) })
+// FinishTool 同事务合并实际结果、原始 JSON、配对事件和进度，提交成功才返回新快照。
+func (s *chatStore) FinishTool(ctx context.Context, call chat.ModelCall, tool chat.ToolCall) (chat.ModelCall, error) {
+	original := call
+	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		var err error
+		call, err = finishTool(ctx, tx, call, tool)
+		return err
+	})
+	if err != nil {
+		return original, err
+	}
+	return call, nil
 }
 
-func finishTool(ctx context.Context, tx *sql.Tx, call chat.ModelCall, tool chat.ToolCall) error {
+func finishTool(ctx context.Context, tx *sql.Tx, call chat.ModelCall, tool chat.ToolCall) (chat.ModelCall, error) {
+	// 正常结果与失败收尾都从事务内的完整快照合并，不采用调用方预先拼装的进度。
+	call, err := readCheckpoint(ctx, tx, call)
+	if err != nil {
+		return call, err
+	}
 	// 提交结果不明后的保存重试只复用已提交结果，不能再次生成结果事件。
 	var state string
-	err := tx.QueryRowContext(ctx, `SELECT status FROM ai_tool_calls WHERE model_call_id=? AND tool_call_id=?`, call.ID, tool.Request.ID).Scan(&state)
+	err = tx.QueryRowContext(ctx, `SELECT status FROM ai_tool_calls WHERE model_call_id=? AND tool_call_id=?`, call.ID, tool.Request.ID).Scan(&state)
 	if err != nil && err != sql.ErrNoRows {
-		return err
+		return call, err
 	}
 	if state == "succeeded" || state == "failed" || state == "skipped" {
-		return nil
+		return call, nil
 	}
 	if tool.ID == 0 {
 		// 未开始便取消或因持久化故障收尾时直接保存最终事实，不伪造 running/tool_use。
 		_, err := tx.ExecContext(ctx, `INSERT INTO ai_tool_calls(run_id,session_id,model_call_id,tool_call_id,name,input,status,max_retry,error,finished_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, call.RunID, call.SessionID, call.ID, tool.Request.ID, tool.Request.Function.Name, jsonValue(tool.Request.Function.Arguments), tool.State, tool.MaxRetry, jsonValue(tool.Error), time.Now().UnixNano(), time.Now().UnixNano())
 		if err != nil {
-			return err
+			return call, err
 		}
 		if err = appendChatEvent(ctx, tx, call, toolStartEvent(tool)); err != nil {
-			return err
+			return call, err
 		}
 	} else {
 		_, err := tx.ExecContext(ctx, `UPDATE ai_tool_calls SET output=?,error=?,status=?,finished_at=? WHERE id=? AND model_call_id=?`, jsonValue(tool.Output), jsonValue(tool.Error), tool.State, time.Now().UnixNano(), tool.ID, call.ID)
 		if err != nil {
-			return err
+			return call, err
 		}
 	}
 	data, _ := json.Marshal(chat.ToolResultData{
@@ -144,9 +166,10 @@ func finishTool(ctx context.Context, tx *sql.Tx, call chat.ModelCall, tool chat.
 		Type: chat.EventToolResult,
 		Data: data,
 	}); err != nil {
-		return err
+		return call, err
 	}
-	return checkpoint(ctx, tx, call)
+	call = call.WithToolResult(tool)
+	return call, checkpoint(ctx, tx, call)
 }
 
 // closeToolBatch 在运行异常收尾事务中补齐已接纳但尚无结果的原调用，避免终态历史失配。
@@ -163,12 +186,8 @@ func closeToolBatch(ctx context.Context, tx *sql.Tx, call chat.ModelCall, run ch
 	if err != nil {
 		return call, err
 	}
-	completed := map[string]bool{}
-	for _, id := range call.CompletedTools {
-		completed[id] = true
-	}
 	for _, request := range requests {
-		if completed[request.ID] {
+		if call.ToolCompleted(request.ID) {
 			continue
 		}
 		tool := chat.ToolCall{
@@ -192,8 +211,8 @@ func closeToolBatch(ctx context.Context, tx *sql.Tx, call chat.ModelCall, run ch
 				Message: "运行已取消，未启动或未恢复此工具",
 			}
 		}
-		call = call.WithToolResult(tool, len(requests))
-		if err := finishTool(ctx, tx, call, tool); err != nil {
+		call, err = finishTool(ctx, tx, call, tool)
+		if err != nil {
 			return call, err
 		}
 	}

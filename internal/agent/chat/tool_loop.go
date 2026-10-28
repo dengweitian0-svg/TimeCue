@@ -125,12 +125,8 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 		return call, persistenceFailure()
 	}
 	known := map[string]ToolCall{}
-	completed := map[string]bool{}
 	for _, tool := range stored {
 		known[tool.Request.ID] = tool
-	}
-	for _, id := range call.CompletedTools {
-		completed[id] = true
 	}
 	// 查询工具可并行，开始及结果进度始终由当前协调器串行提交。
 	results := make(chan ToolCall, 3)
@@ -138,7 +134,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 	for next < len(requests) || inFlight > 0 {
 		for next < len(requests) && inFlight < cap(results) {
 			request := requests[next]
-			if completed[request.ID] {
+			if call.ToolCompleted(request.ID) {
 				next++
 				continue
 			}
@@ -159,8 +155,8 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 			} else if tool.RetryCount >= tool.MaxRetry {
 				tool.State = "failed"
 				tool.Error = toolError("tool_result_unconfirmed", "中断前工具结果未能确认，未重新执行")
-				progress := call.WithToolResult(tool, len(requests))
-				if err := s.toolStore.FinishTool(context.Background(), progress, tool); err != nil {
+				progress, err := s.toolStore.FinishTool(context.Background(), call, tool)
+				if err != nil {
 					call.PendingTool = &tool
 					return call, persistenceFailure()
 				}
@@ -175,12 +171,12 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 			if !parallel && inFlight > 0 {
 				break
 			}
-			started := call.WithToolStarted(tool)
-			tool.ID, err = s.toolStore.BeginTool(context.Background(), started, tool)
+			started, registeredTool, err := s.toolStore.BeginTool(context.Background(), call, tool)
 			if err != nil {
 				return call, persistenceFailure()
 			}
 			call = started
+			tool = registeredTool
 			inFlight++
 			next++
 			go func(tool ToolCall) {
@@ -204,13 +200,12 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 		}
 		tool := <-results
 		inFlight--
-		progress := call.WithToolResult(tool, len(requests))
-		if err := s.toolStore.FinishTool(context.Background(), progress, tool); err != nil {
+		progress, err := s.toolStore.FinishTool(context.Background(), call, tool)
+		if err != nil {
 			call.PendingTool = &tool
 			return call, persistenceFailure()
 		}
 		call = progress
-		completed[tool.Request.ID] = true
 	}
 	// 退出保存未完成进度；用户取消则补齐原 ID 的 aborted 结果。
 	s.mu.Lock()
@@ -219,15 +214,15 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 	if requested {
 		for ; next < len(requests); next++ {
 			request := requests[next]
-			if completed[request.ID] {
+			if call.ToolCompleted(request.ID) {
 				continue
 			}
 			tool := known[request.ID]
 			tool.Request = request
 			tool.State = "skipped"
 			tool.Error = toolError("tool_skipped", "运行已取消，未启动此工具")
-			progress := call.WithToolResult(tool, len(requests))
-			if err := s.toolStore.FinishTool(context.Background(), progress, tool); err != nil {
+			progress, err := s.toolStore.FinishTool(context.Background(), call, tool)
+			if err != nil {
 				call.PendingTool = &tool
 				return call, persistenceFailure()
 			}

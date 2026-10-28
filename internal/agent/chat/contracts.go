@@ -254,10 +254,10 @@ type ToolRepository interface {
 	AcceptResponse(context.Context, ModelCall) error
 	// ReadTools 读取当前模型调用已登记的工具事实，不跨回复复用同值 ID。
 	ReadTools(context.Context, int64) ([]ToolCall, error)
-	// BeginTool 保存 running、原参数、开始事件与 tool_use 进度。
-	BeginTool(context.Context, ModelCall, ToolCall) (int64, error)
-	// FinishTool 同事务保存结果、事件、配对消息及完成进度。
-	FinishTool(context.Context, ModelCall, ToolCall) error
+	// BeginTool 原子登记开始事实，返回已提交完整进度与原身份工具；失败保留传入快照。
+	BeginTool(context.Context, ModelCall, ToolCall) (ModelCall, ToolCall, error)
+	// FinishTool 沿事务内已提交事实合并结果，返回已提交完整进度；失败保留传入快照。
+	FinishTool(context.Context, ModelCall, ToolCall) (ModelCall, error)
 }
 
 // ModelOutput 保留结构化部分响应、完成原因和原始 usage。
@@ -287,7 +287,7 @@ type ModelCall struct {
 	RetryCount   int
 	NextRetryAt  *time.Time
 	RetryHistory []ModelRetry
-	// 进度字段是单一事实来源，由 progress.go 的完整操作生成快照；旧工具端口继续使用这些字段。
+	// 进度字段是单一事实来源，由 progress.go 的完整操作生成，协调器仅采用成功提交的快照。
 	CheckpointStage   string
 	CheckpointContext []Message
 	CompletedTools    []string

@@ -461,17 +461,9 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 		}
 		var err error
 		if call.PendingTool != nil {
-			// 失败结果只携带待保存事实；在同一事务中沿已提交进度重新准备结果快照。
-			call, err = readCheckpoint(ctx, tx, call)
+			// 实际待保存结果复用逐项结果事务规则，仅重试持久化。
+			call, err = finishTool(ctx, tx, call, *call.PendingTool)
 			if err != nil {
-				return err
-			}
-			var requests []chat.ToolRequest
-			if err := json.Unmarshal(call.Output.Message.ToolCalls, &requests); err != nil {
-				return err
-			}
-			call = call.WithToolResult(*call.PendingTool, len(requests))
-			if err := finishTool(ctx, tx, call, *call.PendingTool); err != nil {
 				return err
 			}
 		}
