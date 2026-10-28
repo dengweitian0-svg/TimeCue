@@ -77,6 +77,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				}
 				return call, persistenceFailure()
 			}
+			call = call.WithCallStarted()
 		}
 		var failure *RunError
 		call, failure = s.complete(ctx, *r, call)
@@ -97,16 +98,11 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				Message: "工具执行端口未装配",
 			}
 		}
-		call.State = StateSucceeded
-		call.CheckpointStage = "model_call_end"
-		call.CheckpointContext = append(append([]Message{}, call.Input.Messages...), call.Output.Message)
-		call.CompletedTools = []string{}
-		call.LastTool = ""
-		if err := s.toolStore.AcceptResponse(context.Background(), call); err != nil {
-			call.State = StateRunning
-			call.CheckpointStage = ""
+		accepted := call.WithResponseAccepted()
+		if err := s.toolStore.AcceptResponse(context.Background(), accepted); err != nil {
 			return call, persistenceFailure()
 		}
+		call = accepted
 		call.PendingEvents = nil
 	}
 	return call, r.Error
@@ -163,10 +159,12 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 			} else if tool.RetryCount >= tool.MaxRetry {
 				tool.State = "failed"
 				tool.Error = toolError("tool_result_unconfirmed", "中断前工具结果未能确认，未重新执行")
-				call = call.WithToolResult(tool, len(requests))
-				if err := s.toolStore.FinishTool(context.Background(), call, tool); err != nil {
+				progress := call.WithToolResult(tool, len(requests))
+				if err := s.toolStore.FinishTool(context.Background(), progress, tool); err != nil {
+					call.PendingTool = &tool
 					return call, persistenceFailure()
 				}
+				call = progress
 				next++
 				continue
 			} else {
@@ -177,13 +175,12 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 			if !parallel && inFlight > 0 {
 				break
 			}
-			beforeStart := call
-			call.CheckpointStage = "tool_start"
-			call.LastTool = "tool_use: " + request.Function.Name + "-" + request.ID
-			tool.ID, err = s.toolStore.BeginTool(context.Background(), call, tool)
+			started := call.WithToolStarted(tool)
+			tool.ID, err = s.toolStore.BeginTool(context.Background(), started, tool)
 			if err != nil {
-				return beforeStart, persistenceFailure()
+				return call, persistenceFailure()
 			}
+			call = started
 			inFlight++
 			next++
 			go func(tool ToolCall) {
@@ -207,11 +204,12 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 		}
 		tool := <-results
 		inFlight--
-		call = call.WithToolResult(tool, len(requests))
-		if err := s.toolStore.FinishTool(context.Background(), call, tool); err != nil {
+		progress := call.WithToolResult(tool, len(requests))
+		if err := s.toolStore.FinishTool(context.Background(), progress, tool); err != nil {
 			call.PendingTool = &tool
 			return call, persistenceFailure()
 		}
+		call = progress
 		completed[tool.Request.ID] = true
 	}
 	// 退出保存未完成进度；用户取消则补齐原 ID 的 aborted 结果。
@@ -228,35 +226,13 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (ModelCall, 
 			tool.Request = request
 			tool.State = "skipped"
 			tool.Error = toolError("tool_skipped", "运行已取消，未启动此工具")
-			call = call.WithToolResult(tool, len(requests))
-			if err := s.toolStore.FinishTool(context.Background(), call, tool); err != nil {
+			progress := call.WithToolResult(tool, len(requests))
+			if err := s.toolStore.FinishTool(context.Background(), progress, tool); err != nil {
+				call.PendingTool = &tool
 				return call, persistenceFailure()
 			}
+			call = progress
 		}
 	}
 	return call, nil
-}
-
-// WithToolResult 将原 ID 的工具结果合入完整上下文和本批进度，调用方须原子持久化。
-func (call ModelCall) WithToolResult(tool ToolCall, total int) ModelCall {
-	content := string(tool.Output)
-	if tool.Error != nil {
-		encoded, _ := json.Marshal(tool.Error)
-		content = string(encoded)
-	}
-	if tool.State == "skipped" {
-		content = "aborted"
-	}
-	call.CheckpointContext = append(call.CheckpointContext, Message{
-		Role:       "tool",
-		Content:    content,
-		ToolCallID: tool.Request.ID,
-	})
-	call.CompletedTools = append(call.CompletedTools, tool.Request.ID)
-	call.LastTool = "tool_result: " + tool.Request.Function.Name + "-" + tool.Request.ID
-	call.CheckpointStage = "tool_start"
-	if len(call.CompletedTools) == total {
-		call.CheckpointStage = "tool_end"
-	}
-	return call
 }

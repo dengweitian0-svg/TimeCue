@@ -1,0 +1,128 @@
+package chat
+
+import "encoding/json"
+
+// CheckpointState 是版本 3 的三字段磁盘格式，不持有独立于 ModelCall 的可推进状态。
+type CheckpointState struct {
+	Context   []Message `json:"context"`
+	Completed []string  `json:"completed_tool"`
+	Last      string    `json:"last_tool"`
+}
+
+func cloneMessages(messages []Message) []Message {
+	if messages == nil {
+		return nil
+	}
+	result := make([]Message, len(messages))
+	copy(result, messages)
+	for i := range result {
+		result[i].ToolCalls = append(json.RawMessage(nil), messages[i].ToolCalls...)
+	}
+	return result
+}
+
+func hasAssistantContent(message Message) bool {
+	return message.Content != "" || message.ReasoningContent != "" ||
+		len(message.ToolCalls) > 0 && string(message.ToolCalls) != "null" && string(message.ToolCalls) != "[]"
+}
+
+// History 沿完整快照保留消息次序，并在旧轮全部消息之后追加独立中断说明。
+func (state CheckpointState) History(status RunState) []Message {
+	messages := make([]Message, 0, len(state.Context)+1)
+	for _, message := range cloneMessages(state.Context) {
+		// 兼容旧快照的全空 assistant，保留仅思考回复及原工具配对。
+		if message.Role != "assistant" || hasAssistantContent(message) {
+			messages = append(messages, message)
+		}
+	}
+	if status != StateSucceeded {
+		messages = append(messages, Message{
+			Role:    "user",
+			Content: "上一轮回复未完成；其操作表述不代表业务已经生效。",
+		})
+	}
+	return messages
+}
+
+// Checkpoint 返回隔离的可保存快照，旧工具存储契约仍只以 ModelCall 的进度字段为事实来源。
+func (call ModelCall) Checkpoint() CheckpointState {
+	return CheckpointState{
+		Context:   cloneMessages(call.CheckpointContext),
+		Completed: append([]string{}, call.CompletedTools...),
+		Last:      call.LastTool,
+	}
+}
+
+// WithCheckpoint 回读同一调用的已提交进度，保留其完成集合和最近工具事实。
+func (call ModelCall) WithCheckpoint(stage string, state CheckpointState) ModelCall {
+	call.CheckpointStage = stage
+	call.CheckpointContext = cloneMessages(state.Context)
+	call.CompletedTools = append([]string{}, state.Completed...)
+	call.LastTool = state.Last
+	return call
+}
+
+// WithCallStarted 为新调用建立请求快照并清空本次工具事实，不用于恢复同一调用。
+func (call ModelCall) WithCallStarted() ModelCall {
+	return call.WithCheckpoint("model_call_start", CheckpointState{Context: call.Input.Messages})
+}
+
+// WithResponseAccepted 生成完整成功回复的待提交进度，提交成功后才可进入工具流程。
+func (call ModelCall) WithResponseAccepted() ModelCall {
+	call.State = StateSucceeded
+	call.Error = nil
+	// 从实际请求构造一次回复快照，不累计上次调用的工具事实。
+	call = call.WithCallStarted()
+	return call.WithCallEnded()
+}
+
+// WithCallEnded 生成调用结束快照，未接纳的工具片段只保留可用正文和思考。
+func (call ModelCall) WithCallEnded() ModelCall {
+	if call.CheckpointStage == "tool_start" || call.CheckpointStage == "tool_end" ||
+		call.CheckpointStage == "model_call_end" && call.State == StateSucceeded {
+		return call.WithCheckpoint(call.CheckpointStage, call.Checkpoint())
+	}
+	call = call.WithCallStarted()
+	call.CheckpointStage = "model_call_end"
+	if call.Output != nil {
+		message := call.Output.Message
+		if call.Error != nil || call.State != StateSucceeded {
+			message.ToolCalls = nil
+		}
+		if hasAssistantContent(message) {
+			call.CheckpointContext = append(call.CheckpointContext, cloneMessages([]Message{message})[0])
+		}
+	}
+	return call
+}
+
+// WithToolStarted 在原进度上生成单项开始快照，不改变此前保存的消息或完成集合。
+func (call ModelCall) WithToolStarted(tool ToolCall) ModelCall {
+	call = call.WithCheckpoint("tool_start", call.Checkpoint())
+	call.LastTool = "tool_use: " + tool.Request.Function.Name + "-" + tool.Request.ID
+	return call
+}
+
+// WithToolResult 将原 ID 的工具结果合入隔离的上下文和本批进度，调用方须原子持久化。
+func (call ModelCall) WithToolResult(tool ToolCall, total int) ModelCall {
+	call = call.WithCheckpoint("tool_start", call.Checkpoint())
+	content := string(tool.Output)
+	if tool.Error != nil {
+		encoded, _ := json.Marshal(tool.Error)
+		content = string(encoded)
+	}
+	if tool.State == "skipped" {
+		content = "aborted"
+	}
+	call.CheckpointContext = append(call.CheckpointContext, Message{
+		Role:       "tool",
+		Content:    content,
+		ToolCallID: tool.Request.ID,
+	})
+	call.CompletedTools = append(call.CompletedTools, tool.Request.ID)
+	call.LastTool = "tool_result: " + tool.Request.Function.Name + "-" + tool.Request.ID
+	if len(call.CompletedTools) == total {
+		call.CheckpointStage = "tool_end"
+	}
+	return call
+}

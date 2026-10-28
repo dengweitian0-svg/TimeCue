@@ -294,33 +294,11 @@ func (s *chatStore) History(ctx context.Context, session string) ([]chat.Message
 	if err != nil {
 		return nil, err
 	}
-	var state struct {
-		Context []chat.Message `json:"context"`
-	}
+	var state chat.CheckpointState
 	if err = json.Unmarshal([]byte(raw), &state); err != nil {
 		return nil, err
 	}
-	// 兼容旧快照中失败前尚无任何输出的空 assistant；thinking 和工具请求均保留。
-	messages := make([]chat.Message, 0, len(state.Context)+1)
-	for _, message := range state.Context {
-		if message.Role != "assistant" || hasAssistantContent(message) {
-			messages = append(messages, message)
-		}
-	}
-	state.Context = messages
-	// 快照已包含按实际顺序接纳的 assistant 和配对结果；中断说明只追加在整轮之后。
-	if status != "succeeded" {
-		state.Context = append(state.Context, chat.Message{
-			Role:    "user",
-			Content: "上一轮回复未完成；其操作表述不代表业务已经生效。",
-		})
-	}
-	return state.Context, nil
-}
-
-func hasAssistantContent(message chat.Message) bool {
-	return message.Content != "" || message.ReasoningContent != "" ||
-		len(message.ToolCalls) > 0 && string(message.ToolCalls) != "null" && string(message.ToolCalls) != "[]"
+	return state.History(chat.RunState(status)), nil
 }
 
 // OrdinaryCallCount 从实际调用记录计算普通轮数，重试及摘要是否成功不影响分类。
@@ -334,32 +312,8 @@ func (s *chatStore) OrdinaryCallCount(ctx context.Context, run string) (int, err
 	return count, err
 }
 
-func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall, stage string) error {
-	state := struct {
-		Context   []chat.Message `json:"context"`
-		Completed []string       `json:"completed_tool"`
-		Last      string         `json:"last_tool"`
-	}{
-		Context:   call.Input.Messages,
-		Completed: []string{},
-	}
-	if stage == "model_call_end" && call.Output != nil && hasAssistantContent(call.Output.Message) {
-		message := call.Output.Message
-		// 未正常接纳的参数片段或无法配对的调用不作为后续有效工具上下文。
-		if call.Error != nil || call.State != chat.StateSucceeded {
-			message.ToolCalls = nil
-		}
-		if hasAssistantContent(message) {
-			state.Context = append(append([]chat.Message{}, state.Context...), message)
-		}
-	}
-	if call.CheckpointStage == "tool_start" || call.CheckpointStage == "tool_end" {
-		stage = call.CheckpointStage
-		state.Context = call.CheckpointContext
-		state.Completed = call.CompletedTools
-		state.Last = call.LastTool
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO ai_checkpoints(run_id,model_call_id,status,state) VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET model_call_id=excluded.model_call_id,status=excluded.status,state=excluded.state`, call.RunID, call.ID, stage, jsonValue(state))
+func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO ai_checkpoints(run_id,model_call_id,status,state) VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET model_call_id=excluded.model_call_id,status=excluded.status,state=excluded.state`, call.RunID, call.ID, call.CheckpointStage, jsonValue(call.Checkpoint()))
 	return err
 }
 
@@ -376,7 +330,7 @@ func (s *chatStore) BeginCall(ctx context.Context, call chat.ModelCall) (int64, 
 			return err
 		}
 		call.ID = id
-		return checkpoint(ctx, tx, call, "model_call_start")
+		return checkpoint(ctx, tx, call.WithCallStarted())
 	})
 	return id, err
 }
@@ -401,17 +355,11 @@ func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, e
 	if err = json.Unmarshal([]byte(input), &call.Input); err != nil {
 		return nil, err
 	}
-	var state struct {
-		Context   []chat.Message `json:"context"`
-		Completed []string       `json:"completed_tool"`
-		Last      string         `json:"last_tool"`
-	}
+	var state chat.CheckpointState
 	if err = json.Unmarshal([]byte(progress), &state); err != nil {
 		return nil, err
 	}
-	call.CheckpointContext = state.Context
-	call.CompletedTools = state.Completed
-	call.LastTool = state.Last
+	*call = call.WithCheckpoint(call.CheckpointStage, state)
 	if err = json.Unmarshal([]byte(retries), &call.RetryHistory); err != nil {
 		return nil, err
 	}
@@ -511,12 +459,22 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 		if state.Terminal() {
 			return nil
 		}
+		var err error
 		if call.PendingTool != nil {
+			// 失败结果只携带待保存事实；在同一事务中沿已提交进度重新准备结果快照。
+			call, err = readCheckpoint(ctx, tx, call)
+			if err != nil {
+				return err
+			}
+			var requests []chat.ToolRequest
+			if err := json.Unmarshal(call.Output.Message.ToolCalls, &requests); err != nil {
+				return err
+			}
+			call = call.WithToolResult(*call.PendingTool, len(requests))
 			if err := finishTool(ctx, tx, call, *call.PendingTool); err != nil {
 				return err
 			}
 		}
-		var err error
 		call, err = closeToolBatch(ctx, tx, call, r)
 		if err != nil {
 			return err
@@ -530,7 +488,7 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 					return err
 				}
 			}
-			if err := checkpoint(ctx, tx, call, "model_call_end"); err != nil {
+			if err := checkpoint(ctx, tx, call.WithCallEnded()); err != nil {
 				return err
 			}
 		}

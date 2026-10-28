@@ -287,7 +287,7 @@ type ModelCall struct {
 	RetryCount   int
 	NextRetryAt  *time.Time
 	RetryHistory []ModelRetry
-	// CheckpointStage 和 CheckpointContext 回读当前进度，不新增持久化列或运行快照。
+	// 进度字段是单一事实来源，由 progress.go 的完整操作生成快照；旧工具端口继续使用这些字段。
 	CheckpointStage   string
 	CheckpointContext []Message
 	CompletedTools    []string
