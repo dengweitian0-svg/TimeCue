@@ -1,4 +1,4 @@
-// Package tools 提供代码内置工具和正式日程查询的窄端口。
+// Package tools 提供代码内置工具和正式日程业务的窄端口。
 package tools
 
 import (
@@ -23,7 +23,7 @@ type Function struct {
 	Parameters  Schema `json:"parameters"`
 }
 
-// Schema 描述查询工具的对象参数，拒绝未声明字段。
+// Schema 描述工具的对象参数，拒绝未声明字段。
 type Schema struct {
 	Type                 string              `json:"type"`
 	Properties           map[string]Property `json:"properties"`
@@ -31,13 +31,14 @@ type Schema struct {
 	AdditionalProperties bool                `json:"additionalProperties"`
 }
 
-// Property 描述一个查询参数的类型、范围及允许值。
+// Property 描述工具参数的类型、范围、允许值及字符串数组元素。
 type Property struct {
-	Type        string   `json:"type"`
-	Description string   `json:"description,omitempty"`
-	Minimum     *int     `json:"minimum,omitempty"`
-	Maximum     *int     `json:"maximum,omitempty"`
-	Enum        []string `json:"enum,omitempty"`
+	Type        string    `json:"type"`
+	Description string    `json:"description,omitempty"`
+	Minimum     *int      `json:"minimum,omitempty"`
+	Maximum     *int      `json:"maximum,omitempty"`
+	Enum        []string  `json:"enum,omitempty"`
+	Items       *Property `json:"items,omitempty"`
 }
 
 // Failure 是工具自身的公开错误，不作为运行 error 事件发送。
@@ -103,8 +104,11 @@ func (r *Registry) Register(ctx context.Context, tool Tool) error {
 		return fmt.Errorf("工具名称重复：%s", info.Name)
 	}
 	for key, property := range info.Parameters.Properties {
-		if key == "" || property.Type != "integer" && property.Type != "string" {
+		if key == "" || property.Type != "integer" && property.Type != "string" && property.Type != "boolean" && property.Type != "array" {
 			return fmt.Errorf("工具 %s 的字段 %s 类型不受支持", info.Name, key)
+		}
+		if property.Type == "array" && (property.Items == nil || property.Items.Type != "string") {
+			return fmt.Errorf("工具 %s 的字段 %s 只支持字符串数组", info.Name, key)
 		}
 	}
 	for _, key := range info.Parameters.Required {
@@ -159,7 +163,7 @@ func Argument(raw string) json.RawMessage {
 	return json.RawMessage(raw)
 }
 
-// Execute 在工具开始事务提交后解析、校验并执行正式只读查询。
+// Execute 在工具开始事务提交后解析、校验并执行正式业务。
 func (r *Registry) Execute(ctx context.Context, name, raw string) (json.RawMessage, *Failure) {
 	var value any
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {
@@ -191,6 +195,20 @@ func (r *Registry) Execute(ctx context.Context, name, raw string) (json.RawMessa
 			return nil, validation("不支持的字段 " + key)
 		}
 		switch property.Type {
+		case "boolean":
+			if _, ok := value.(bool); !ok {
+				return nil, validation(key + " 必须为布尔值")
+			}
+		case "array":
+			items, ok := value.([]any)
+			if !ok {
+				return nil, validation(key + " 必须为字符串数组")
+			}
+			for _, item := range items {
+				if _, ok := item.(string); !ok {
+					return nil, validation(key + " 必须为字符串数组")
+				}
+			}
 		case "integer":
 			number, ok := value.(float64)
 			if !ok || math.Trunc(number) != number || number >= float64(math.MaxInt) || property.Minimum != nil && number < float64(*property.Minimum) || property.Maximum != nil && number > float64(*property.Maximum) {

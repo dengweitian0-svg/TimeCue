@@ -79,7 +79,8 @@ func runApp(ctx context.Context, options startupOptions, log *logger.Logger) err
 	if err != nil {
 		return err
 	}
-	toolRegistry, err := tools.NewRegistry(ctx, tools.ScheduleTools(application)...)
+	scheduleTools := append(tools.ScheduleTools(application), tools.ScheduleWriteTools(application, nil)...)
+	toolRegistry, err := tools.NewRegistry(ctx, scheduleTools...)
 	if err != nil {
 		return err
 	}

@@ -173,6 +173,16 @@ func encodeResult(value any) (string, error) {
 
 func scheduleFailure(err error) error {
 	switch {
+	case errors.Is(err, model.ErrScheduleConflict):
+		return &Failure{
+			Code:    "revision_conflict",
+			Message: "日程已被修改，版本冲突；请报告冲突，不自动重试或覆盖",
+		}
+	case errors.Is(err, schedule.ErrInvalidSchedule):
+		return &Failure{
+			Code:    "invalid_schedule",
+			Message: "日程规则不符合正式业务校验，未写入；请澄清或调整参数",
+		}
 	case errors.Is(err, schedule.ErrScheduleNotFound), errors.Is(err, model.ErrRecordNotFound):
 		return &Failure{
 			Code:    "schedule_not_found",
