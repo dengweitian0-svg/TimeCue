@@ -501,6 +501,20 @@ func TestMultiRoundRequestKeepsDeepSeekReasoning(t *testing.T) {
 	}
 }
 
+type observedSlowFinish struct {
+	chat.ExecutionRepository
+	committed chan error
+}
+
+// Finish 在真实提交边界模拟慢存储，并报告事务实际结果，不替代 SQLite 持久化。
+func (s observedSlowFinish) Finish(ctx context.Context, call chat.ModelCall, run chat.Record) error {
+	// 慢提交明确超过普通用例的三秒轮询期限，保证恢复测试不依赖本机磁盘速度。
+	time.Sleep(4 * time.Second)
+	err := s.ExecutionRepository.Finish(ctx, call, run)
+	s.committed <- err
+	return err
+}
+
 func TestRestartDoesNotReplaySupersededRun(t *testing.T) {
 	var requests atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -522,6 +536,11 @@ func TestRestartDoesNotReplaySupersededRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	ports := store.NewChatStorage(db)
+	committed := make(chan error, 4)
+	ports.Execution = observedSlowFinish{
+		ExecutionRepository: ports.Execution,
+		committed:           committed,
+	}
 	normal := ports
 	fault := &failFirstFinish{
 		ExecutionRepository: ports.Execution,
@@ -575,16 +594,33 @@ func TestRestartDoesNotReplaySupersededRun(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	awaitRun(t, service, latest.RunID)
+	// 等待真实事务回执后再从公开接口断言；保存错误应直接报告，不能隐藏为轮询超时。
+	awaitCommit := func() {
+		t.Helper()
+		select {
+		case err := <-committed:
+			if err != nil {
+				t.Fatalf("真实终态事务失败: %v", err)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatal("等待真实终态事务完成超时")
+		}
+	}
+	awaitCommit()
+	latestRun, err := service.GetRun(ctx, latest.RunID)
+	if err != nil || latestRun.Status != chat.StatusSucceeded || latestRun.FinishedAt == nil {
+		t.Fatalf("后续运行未成功提交: %+v %v", latestRun, err)
+	}
 	service.Stop()
 	restarted := chat.NewService(normal, completion.NewClient(nil), settings, nil)
 	if err = restarted.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	defer restarted.Stop()
-	run := awaitRun(t, restarted, old.RunID)
-	if run.Status != chat.StatusFailed || requests.Load() != 2 || run.Output == nil || *run.Output != "保留正文" {
-		t.Fatalf("superseded status=%s output=%v requests=%d", run.Status, run.Output, requests.Load())
+	awaitCommit()
+	run, err := restarted.GetRun(ctx, old.RunID)
+	if err != nil || run.Status != chat.StatusFailed || run.FinishedAt == nil || run.Error == nil || run.Error.Code != "run_superseded" || requests.Load() != 2 || run.Output == nil || *run.Output != "保留正文" {
+		t.Fatalf("superseded run=%+v error=%v requests=%d", run, err, requests.Load())
 	}
 }
 

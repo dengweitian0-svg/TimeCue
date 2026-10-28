@@ -294,8 +294,8 @@ type ModelCall struct {
 	LastTool          string
 	// PendingEvents 与调用快照一起提交，序号只在事务成功后对外可见。
 	PendingEvents []Event
-	// PendingTool 仅在结果事务失败时随运行失败事务重试保存，不重新执行业务。
-	PendingTool *ToolCall
+	// PendingTools 在事务失败后保留已取得的实际结果，随终态事务重试保存，不重新执行业务。
+	PendingTools []ToolCall
 }
 
 // ModelRetry 保存同一逻辑调用内一次已计划重试的时间、结果及故障原因。

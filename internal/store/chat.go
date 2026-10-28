@@ -341,11 +341,15 @@ func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, e
 	if err != nil {
 		return nil, err
 	}
+	return readCall(ctx, db, id)
+}
+
+func readCall(ctx context.Context, reader schemaReader, id string) (*chat.ModelCall, error) {
 	call := &chat.ModelCall{RunID: id}
 	var input, retries, progress string
 	var nextRetry sql.NullInt64
 	var output, failure sql.NullString
-	err = db.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.status,m.error,m.max_retry,m.retry_count,m.next_retry_at,m.retry_history,c.status,c.state FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &call.State, &failure, &call.MaxRetry, &call.RetryCount, &nextRetry, &retries, &call.CheckpointStage, &progress)
+	err := reader.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.status,m.error,m.max_retry,m.retry_count,m.next_retry_at,m.retry_history,c.status,c.state FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &call.State, &failure, &call.MaxRetry, &call.RetryCount, &nextRetry, &retries, &call.CheckpointStage, &progress)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -459,32 +463,51 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 		if state.Terminal() {
 			return nil
 		}
-		var err error
-		if call.PendingTool != nil {
-			// 实际待保存结果复用逐项结果事务规则，仅重试持久化。
-			call, err = finishTool(ctx, tx, call, *call.PendingTool)
+		if call.ID != 0 {
+			// 终态事务内回读实际已提交调用、checkpoint 与工具事实，成功调用不可被旧快照覆盖。
+			committed, err := readCall(ctx, tx, r.RunID)
 			if err != nil {
 				return err
 			}
-		}
-		call, err = closeToolBatch(ctx, tx, call, r)
-		if err != nil {
-			return err
-		}
-		if err := appendChatEvents(ctx, tx, call); err != nil {
-			return err
-		}
-		if call.ID != 0 {
-			if call.CheckpointStage != "tool_start" && call.CheckpointStage != "tool_end" && call.CheckpointStage != "model_call_end" {
+			if committed == nil || committed.ID != call.ID {
+				return chat.ErrInvalidRequest
+			}
+			if committed.State.Terminal() {
+				pending := call.PendingTools
+				call = *committed
+				call.PendingTools = pending
+			}
+			stored, err := readTools(ctx, tx, call.ID)
+			if err != nil {
+				return err
+			}
+			var results []chat.ToolCall
+			call, results, err = call.WithRunFinished(r.State, stored)
+			if err != nil {
+				return err
+			}
+			for _, tool := range results {
+				// 进度裁决已经完成；逐项保存沿用正常结果的 SQL 和事件写入。
+				if _, err := saveToolResult(ctx, tx, call, tool); err != nil {
+					return err
+				}
+			}
+			if !committed.State.Terminal() {
 				if err := saveCall(ctx, tx, call, true); err != nil {
 					return err
 				}
 			}
-			if err := checkpoint(ctx, tx, call.WithCallEnded()); err != nil {
-				return err
+			if len(results) > 0 || !committed.State.Terminal() {
+				if err := checkpoint(ctx, tx, call); err != nil {
+					return err
+				}
 			}
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE ai_runs SET status=?,output=?,error=?,finished_at=? WHERE run_id=?`, r.State, stringValue(r.Output), jsonValue(r.Error), timeValue(r.FinishedAt), r.RunID)
+		if err := appendChatEvents(ctx, tx, call); err != nil {
+			return err
+		}
+
+		_, err := tx.ExecContext(ctx, `UPDATE ai_runs SET status=?,output=?,error=?,finished_at=? WHERE run_id=?`, r.State, stringValue(r.Output), jsonValue(r.Error), timeValue(r.FinishedAt), r.RunID)
 		if err != nil {
 			return err
 		}

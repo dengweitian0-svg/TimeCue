@@ -150,3 +150,60 @@ func (call ModelCall) toolBatchComplete() bool {
 	}
 	return true
 }
+
+// WithResultUnconfirmed 保留原调用身份，为无法确认的处理生成统一失败事实。
+func (tool ToolCall) WithResultUnconfirmed() ToolCall {
+	tool.State = "failed"
+	tool.Error = toolError("tool_result_unconfirmed", "中断前工具结果未能确认，未重新执行")
+	return tool
+}
+
+// WithRunFinished 沿事务内已提交事实收拢异常批次，实际结果优先于取消或未确认补齐。
+func (call ModelCall) WithRunFinished(status RunState, stored []ToolCall) (ModelCall, []ToolCall, error) {
+	call = call.WithCallEnded()
+	if call.State != StateSucceeded || call.Output == nil || len(call.Output.Message.ToolCalls) == 0 || status == StateSucceeded {
+		return call, nil, nil
+	}
+	var requests []ToolRequest
+	if err := json.Unmarshal(call.Output.Message.ToolCalls, &requests); err != nil {
+		return call, nil, err
+	}
+	known := make(map[string]ToolCall, len(stored))
+	for _, tool := range stored {
+		known[tool.Request.ID] = tool
+	}
+	results := []ToolCall{}
+	for _, tool := range call.PendingTools {
+		if call.ToolCompleted(tool.Request.ID) {
+			continue
+		}
+		if saved, ok := known[tool.Request.ID]; ok && saved.State != "running" {
+			tool = saved
+		}
+		call = call.WithToolResult(tool)
+		results = append(results, tool)
+	}
+	for _, request := range requests {
+		if call.ToolCompleted(request.ID) {
+			continue
+		}
+		tool, exists := known[request.ID]
+		if !exists {
+			tool = ToolCall{
+				ModelCallID: call.ID,
+				Request:     request,
+				MaxRetry:    3,
+			}
+		}
+		if !exists || tool.State == "running" {
+			tool = tool.WithResultUnconfirmed()
+			if status == StateCancelled {
+				tool.State = "skipped"
+				tool.Error = toolError("tool_skipped", "运行已取消，未启动或未恢复此工具")
+			}
+		}
+		call = call.WithToolResult(tool)
+		results = append(results, tool)
+	}
+	return call, results, nil
+}
