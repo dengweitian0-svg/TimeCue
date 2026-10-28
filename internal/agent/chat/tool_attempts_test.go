@@ -399,6 +399,23 @@ func receiveAttemptStart(t *testing.T, started <-chan string) string {
 	}
 }
 
+// retryWaitCommitGate 在真实提交边界同步测试与协调器，不替代退避状态保存。
+type retryWaitCommitGate struct {
+	chat.ToolRepository
+	committed chan chat.ToolCall
+	release   chan struct{}
+}
+
+// WaitToolRetry 在真实退避提交后暂停，避免测试通过轮询竞争短暂状态。
+func (g *retryWaitCommitGate) WaitToolRetry(ctx context.Context, tool chat.ToolCall) error {
+	if err := g.ToolRepository.WaitToolRetry(ctx, tool); err != nil {
+		return err
+	}
+	g.committed <- tool
+	<-g.release
+	return nil
+}
+
 // TestToolRetryExhaustionAndCancelWait 验证最后一次失败如实回填，取消退避不再尝试也不提前完成。
 func TestToolRetryExhaustionAndCancelWait(t *testing.T) {
 	for _, cancelWait := range []bool{false, true} {
@@ -417,20 +434,34 @@ func TestToolRetryExhaustionAndCancelWait(t *testing.T) {
 					}
 				},
 			})
+			fixture.service.Stop()
+			gate := &retryWaitCommitGate{
+				ToolRepository: fixture.storage.Tools,
+				committed:      make(chan chat.ToolCall, 1),
+				release:        make(chan struct{}),
+			}
+			fixture.storage.Tools = gate
+			fixture.restart()
+			var once sync.Once
+			t.Cleanup(func() { once.Do(func() { close(gate.release) }) })
 			receipt := createAttemptRun(t, fixture.service, "exhausted")
-			call, _ := awaitToolState(t, fixture.storage, receipt.RunID, "retry", "retry_wait")
+			var waiting chat.ToolCall
+			select {
+			case waiting = <-gate.committed:
+			case <-time.After(30 * time.Second):
+				t.Fatal("工具未提交退避状态")
+			}
 			if cancelWait {
-				if _, err := fixture.service.CancelRun(context.Background(), receipt.RunID); err != nil {
+				// 协调器仍停在退避提交边界，先请求取消，再释放它进行收尾。
+				cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if _, err := fixture.service.CancelRun(cancelCtx, receipt.RunID); !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatal(err)
 				}
-			} else {
-				deadline := time.Now().Add(8 * time.Second)
-				for attempts.Load() < 2 && time.Now().Before(deadline) {
-					time.Sleep(time.Millisecond)
-				}
 			}
-			run := awaitFinishedRun(t, fixture.service, receipt.RunID)
-			stored, err := fixture.storage.Tools.ReadTools(context.Background(), call.ID)
+			once.Do(func() { close(gate.release) })
+			run := awaitFinishedRunWithin(t, fixture.service, receipt.RunID, 30*time.Second)
+			stored, err := fixture.storage.Tools.ReadTools(context.Background(), waiting.ModelCallID)
 			if err != nil || len(stored) != 1 || stored[0].Error == nil || stored[0].NextRetryAt != nil {
 				t.Fatalf("最终记录: %+v %v", stored, err)
 			}
@@ -570,7 +601,7 @@ func newAttemptFixture(t *testing.T, calls []chat.ToolRequest, configure func(*c
 		return cfg, err
 	}
 	fixture.restart = func() {
-		fixture.service = chat.NewService(storage, completion.NewClient(nil), settings, registry)
+		fixture.service = chat.NewService(fixture.storage, completion.NewClient(nil), settings, registry)
 		if err := fixture.service.Start(context.Background()); err != nil {
 			t.Fatal(err)
 		}

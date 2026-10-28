@@ -18,9 +18,12 @@ import (
 
 type slowTimeoutSettlement struct {
 	chat.ToolRepository
-	timeout  *atomic.Int64
-	settling chan struct{}
-	modelID  atomic.Int64
+	timeout      *atomic.Int64
+	settling     chan struct{}
+	peerContext  chan context.Context
+	peerReturned chan struct{}
+	settled      chan struct{}
+	modelID      atomic.Int64
 }
 
 // BeginTool 在首次开始提交后为其他尝试设置较长的独立期限。
@@ -28,7 +31,7 @@ func (g *slowTimeoutSettlement) BeginTool(ctx context.Context, call chat.ModelCa
 	progress, saved, err := g.ToolRepository.BeginTool(ctx, call, tool)
 	g.modelID.Store(call.ID)
 	if tool.Request.ID == "expired" {
-		g.timeout.Store(int64(500 * time.Millisecond))
+		g.timeout.Store(int64(5 * time.Second))
 	}
 	return progress, saved, err
 }
@@ -37,9 +40,16 @@ func (g *slowTimeoutSettlement) BeginTool(ctx context.Context, call chat.ModelCa
 func (g *slowTimeoutSettlement) FinishTool(ctx context.Context, call chat.ModelCall, tool chat.ToolCall) (chat.ModelCall, error) {
 	if tool.Request.ID == "expired" {
 		close(g.settling)
-		time.Sleep(600 * time.Millisecond)
+		// 先确认其他工具已实际返回，再等其原期限经过，精确构造保存阻塞窗口。
+		peer := <-g.peerContext
+		<-g.peerReturned
+		<-peer.Done()
 	}
-	return g.ToolRepository.FinishTool(ctx, call, tool)
+	progress, err := g.ToolRepository.FinishTool(ctx, call, tool)
+	if tool.Request.ID == "expired" {
+		close(g.settled)
+	}
+	return progress, err
 }
 
 // TestToolTimelyResultsSurviveSlowTimeoutSettlement 验证阻塞结算期间已及时返回的其他结果不会被误判超时。
@@ -54,6 +64,9 @@ func TestToolTimelyResultsSurviveSlowTimeoutSettlement(t *testing.T) {
 				ToolRepository: storage.Tools,
 				timeout:        &timeout,
 				settling:       make(chan struct{}),
+				peerContext:    make(chan context.Context, 1),
+				peerReturned:   make(chan struct{}),
+				settled:        make(chan struct{}),
 			}
 			storage.Tools = gate
 			release := make(chan struct{})
@@ -66,10 +79,12 @@ func TestToolTimelyResultsSurviveSlowTimeoutSettlement(t *testing.T) {
 				name:     "timely",
 				parallel: true,
 				run: func(ctx context.Context, _ string) (string, error) {
+					gate.peerContext <- ctx
 					<-gate.settling
 					if ctx.Err() != nil {
 						t.Error("工具未能在原期限内返回，复现前提不成立")
 					}
+					close(gate.peerReturned)
 					return `"actual success"`, nil
 				},
 			})
@@ -77,9 +92,7 @@ func TestToolTimelyResultsSurviveSlowTimeoutSettlement(t *testing.T) {
 				t.Fatal(err)
 			}
 			requests := []chat.ToolRequest{toolRequest("expired", "expired", `{}`)}
-			for i := 0; i < 4; i++ {
-				requests = append(requests, toolRequest(fmt.Sprintf("timely-%d", i), "timely", `{}`))
-			}
+			requests = append(requests, toolRequest("timely", "timely", `{}`))
 			var models atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -100,7 +113,7 @@ func TestToolTimelyResultsSurviveSlowTimeoutSettlement(t *testing.T) {
 				cfg, err := toolSettings(upstream.URL)()
 				zero := 0
 				cfg[0].ToolMaxRetry = &zero
-				cfg[0].ToolConcurrency = 5
+				cfg[0].ToolConcurrency = 2
 				cfg[0].ToolTimeout = time.Duration(timeout.Load())
 				return cfg, err
 			}
@@ -118,9 +131,14 @@ func TestToolTimelyResultsSurviveSlowTimeoutSettlement(t *testing.T) {
 				}
 			})
 			receipt := createAttemptRun(t, service, "slow-timeout")
-			run := awaitFinishedRun(t, service, receipt.RunID)
+			select {
+			case <-gate.settled:
+			case <-time.After(30 * time.Second):
+				t.Fatal("未完成超时保存边界")
+			}
+			run := awaitFinishedRunWithin(t, service, receipt.RunID, 30*time.Second)
 			stored, err := storage.Tools.ReadTools(context.Background(), gate.modelID.Load())
-			if err != nil || len(stored) != 5 {
+			if err != nil || len(stored) != 2 {
 				t.Fatalf("工具记录: %+v %v", stored, err)
 			}
 			for _, tool := range stored {
@@ -131,7 +149,7 @@ func TestToolTimelyResultsSurviveSlowTimeoutSettlement(t *testing.T) {
 			if run.Status != chat.StatusSucceeded || models.Load() != 2 {
 				t.Fatalf("运行未按整批真实结果完成: %+v models=%d", run, models.Load())
 			}
-			assertAttemptEvents(t, service, receipt.RunID, 5)
+			assertAttemptEvents(t, service, receipt.RunID, 2)
 		})
 	}
 }
