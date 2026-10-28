@@ -23,6 +23,7 @@ type slowTimeoutSettlement struct {
 	peerContext  chan context.Context
 	peerReturned chan struct{}
 	settled      chan struct{}
+	abort        chan struct{}
 	modelID      atomic.Int64
 }
 
@@ -41,9 +42,19 @@ func (g *slowTimeoutSettlement) FinishTool(ctx context.Context, call chat.ModelC
 	if tool.Request.ID == "expired" {
 		close(g.settling)
 		// 先确认其他工具已实际返回，再等其原期限经过，精确构造保存阻塞窗口。
-		peer := <-g.peerContext
-		<-g.peerReturned
-		<-peer.Done()
+		var peer context.Context
+		select {
+		case peer = <-g.peerContext:
+		case <-g.abort:
+			return call, context.Canceled
+		}
+		for _, signal := range []<-chan struct{}{g.peerReturned, peer.Done()} {
+			select {
+			case <-signal:
+			case <-g.abort:
+				return call, context.Canceled
+			}
+		}
 	}
 	progress, err := g.ToolRepository.FinishTool(ctx, call, tool)
 	if tool.Request.ID == "expired" {
@@ -67,6 +78,7 @@ func TestToolTimelyResultsSurviveSlowTimeoutSettlement(t *testing.T) {
 				peerContext:    make(chan context.Context, 1),
 				peerReturned:   make(chan struct{}),
 				settled:        make(chan struct{}),
+				abort:          make(chan struct{}),
 			}
 			storage.Tools = gate
 			release := make(chan struct{})
@@ -80,7 +92,11 @@ func TestToolTimelyResultsSurviveSlowTimeoutSettlement(t *testing.T) {
 				parallel: true,
 				run: func(ctx context.Context, _ string) (string, error) {
 					gate.peerContext <- ctx
-					<-gate.settling
+					select {
+					case <-gate.settling:
+					case <-gate.abort:
+						return "", context.Canceled
+					}
 					if ctx.Err() != nil {
 						t.Error("工具未能在原期限内返回，复现前提不成立")
 					}
@@ -123,6 +139,7 @@ func TestToolTimelyResultsSurviveSlowTimeoutSettlement(t *testing.T) {
 			}
 			t.Cleanup(service.Stop)
 			t.Cleanup(func() {
+				close(gate.abort)
 				close(release)
 				select {
 				case <-returned:
