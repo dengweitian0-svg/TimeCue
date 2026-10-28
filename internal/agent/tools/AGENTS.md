@@ -4,6 +4,7 @@
 - `schedule.go`：`get_schedule`、`list_schedules`、`query_occurrences` 三个具体工具，分别提供定义并实现同步调用；入口通过 `ScheduleTools` 和 `Registry.Register` 注册，依赖 `ScheduleQueries` 正式窄端口。
 
 - `schedule_write.go`：`create_schedule` / `update_schedule` 通过 `ScheduleWrites` 调用 App 正式回读和 WriteSchedule；参数使用平铺 name/description/notifyTime/cron/open，创建还需 type，修改必填 id/expectedRevision 并保留未提交字段。结果保留完整规则、revision 和正式提醒变更摘要。
+- `schedule_delete.go`：`delete_schedule` 为唯一 dangerous=true、串行工具，必填 id/expectedRevision；以 context 中已登记的后台键调用正式 DeleteScheduleVersion，不先读版本、不接受模型指定执行身份、不构造 checkpoint。返回已提交软删除状态、revision 与 mutation；没有后台键时拒绝执行。
 - `time.go`：解析 RFC3339、北京时间 YYYY-MM-DD HH:mm 及 今天/明天/后天/昨天 HH:mm；相对词每次解析才读时钟，不使用运行创建时间，不补默认日期或时刻，秒精度仍由正式规则拒绝。
 
 应用只装配一个统一 Registry，所有工具都必须注册后才能供模型使用和执行。注册在服务启动前完成，运行时只读；名称、说明、schema、dangerous 与 parallel 均由后端代码固定，不能由模型覆写。三个查询工具非危险、可并行；创建/修改非危险、串行、空业务 key，工具键 SQL NULL，不按名称或时间去重。不访问 SQLite 或 HTTP Handler，不拼装 checkpoint；开始、回填及异常配对沿统一聊天进度契约执行。

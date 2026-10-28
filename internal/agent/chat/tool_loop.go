@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
+	"github.com/google/uuid"
 )
 
 func hasModelOutput(output ModelOutput) bool {
@@ -156,6 +159,11 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (result Mode
 			if ctx.Err() != nil {
 				break
 			}
+			entry, registered := s.tools.Lookup(request.Function.Name)
+			parallel := !registered || entry.Parallel
+			if !parallel && inFlight > 0 {
+				break
+			}
 			tool, exists := known[request.ID]
 			if !exists {
 				tool = ToolCall{
@@ -163,6 +171,9 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (result Mode
 					Request:     request,
 					State:       "running",
 					MaxRetry:    3,
+				}
+				if registered && entry.Dangerous {
+					tool.IdempotencyKey = "tool:" + request.ID + ":" + uuid.NewString()
 				}
 			} else if tool.State != "running" {
 				// 最终结果和 completed_tool 在同一事务提交，不允许孤立的终态记录再次执行。
@@ -180,11 +191,6 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (result Mode
 			} else {
 				tool.RetryCount++
 			}
-			entry, registered := s.tools.Lookup(request.Function.Name)
-			parallel := !registered || entry.Parallel
-			if !parallel && inFlight > 0 {
-				break
-			}
 			started, registeredTool, err := s.toolStore.BeginTool(context.Background(), call, tool)
 			if err != nil {
 				return call, persistenceFailure()
@@ -194,9 +200,10 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall) (result Mode
 			inFlight++
 			next++
 			go func(tool ToolCall) {
-				// 已开始的只读查询取得结果或达到原超时，取消仅阻止后续启动。
+				// 已开始的工具取得实际结果或达到原超时，取消仅阻止后续启动。
 				attempt, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 				defer cancel()
+				attempt = tools.WithExecutionKey(attempt, tool.IdempotencyKey)
 				output, failure := s.tools.Execute(attempt, tool.Request.Function.Name, tool.Request.Function.Arguments)
 				tool.Output, tool.State = output, "succeeded"
 				if failure != nil {

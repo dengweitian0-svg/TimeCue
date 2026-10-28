@@ -219,14 +219,15 @@ type ToolFunction struct {
 
 // ToolCall 保存工具执行身份、原始结果及版本 3 已有的重试事实。
 type ToolCall struct {
-	ID          int64
-	ModelCallID int64
-	Request     ToolRequest
-	Output      json.RawMessage
-	Error       *RunError
-	State       string
-	MaxRetry    int
-	RetryCount  int
+	ID             int64
+	IdempotencyKey string
+	ModelCallID    int64
+	Request        ToolRequest
+	Output         json.RawMessage
+	Error          *RunError
+	State          string
+	MaxRetry       int
+	RetryCount     int
 }
 
 // ToolStartData 保存公开工具开始事件，一个开始记录包含实际处理的调用。

@@ -2,6 +2,7 @@
 
 - `app.go`：组装日程、提醒与恢复服务，保留 App 用例门面和正式操作锁。
 - `schedule.go`、`notification.go`、`recovery.go`、`query.go`：编排领域服务、统一写入边界和只读组合查询。
+- `schedule.go` 提供 DeleteScheduleVersion 正式版本删除与独立只读 ReadScheduleDeleteReceipt；删除共用 operations 锁并在提交后通知调度器，只读核对不进入写入入口或触发调度器。
 - `runtime.go`、`runtime_info.go`：本机 HTTP 服务、配置/数据库生命周期、监听端口和运行身份。
 
 # 约束

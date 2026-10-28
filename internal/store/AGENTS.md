@@ -31,6 +31,8 @@
 - `schedule_change.go`：获取事务写锁后检查版本；原子保存生效区间、到期文本、未来提醒及幂等回执。暂停/删除设置 delivery_stopped，恢复只复用未触发、可撤销的未来 pending/loaded，不清除旧到期记录的停止标记。
 - 创建、更新和删除只在事务提交成功后返回变更结果；更新/删除结果包含事务内旧状态，删除结果还包含实际写入后的状态。幂等命中显式返回 `Replayed=true`，不返回本次变更前态，不改写已有回执格式或数据库结构。
 - `schedule_change_test.go`：13:00 → 17:00、历史名称及失败结果、暂停/恢复与重启、删除后确认、并发版本、事务回滚、已到期单次与未来唯一键复用。
+- `schedule_change.go` 的 ApplyScheduleDelete 与传统停止操作共用事务实现，在写锁内优先核对原回执，原子完成版本检查、软删除、到期快照、未来提醒撤销、投递停止、版本区间及业务回执；ReadScheduleReceipt 为独立只读 SELECT，未命中返回 nil。schedule_delete_test.go 通过正式 App 和真实 SQLite 验证版本竞争、回执失败回滚、重复调用、提醒和只读核对。
+- `chat_tools.go` 从版本 3 已有 idempotency_key 列保存并回读后台生成的危险工具身份；原参数、running、键、事件及 checkpoint 同事务登记。恢复保留原键，非危险工具仍保存 SQL NULL，结果保存不改变执行身份；不增加数据库结构。
 
 - `open_schedule_count_test.go`：用实际 SQLite 读取验证日期的完整启用日程数，覆盖超过 50 条分页、同日多次去重、已确认单次/周期、暂停/删除/取消及空日期。
 

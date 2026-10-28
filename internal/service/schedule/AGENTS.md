@@ -2,6 +2,7 @@
 
 - `schedule.go`：日程查询端口、事实与规则投影、日期/月历及分页。
 - `schedule_change.go`：正式规则写入、校验、幂等摘要和存储提交。
+- `schedule_delete.go`：正式版本删除与独立只读回执查询，摘要包含删除操作、目标和 expectedRevision；同键不同请求拒绝，回执优先于版本和删除状态判断，未命中核对不执行业务。
 - `schedule_mutation.go`：日程正式写入结果的只读变更摘要。
 - `rules.go`：周期规则解析、下一次触发计算和投影转换。
 - `next_notify_test.go`、`schedule_mutation_test.go`：规则与变更摘要测试。
