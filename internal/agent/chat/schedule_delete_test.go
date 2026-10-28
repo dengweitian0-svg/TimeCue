@@ -27,8 +27,9 @@ import (
 func TestAssistantDeletePersistsIdentityAndPairsActualResults(t *testing.T) {
 	ctx := context.Background()
 	_, ports, application, _ := deleteFixture(t)
+	deletedID := "deleted-" + strings.Repeat("x", 128)
 	calls := []chat.ToolRequest{
-		toolRequest("deleted", "delete_schedule", `{"id":1,"expectedRevision":1}`),
+		toolRequest(deletedID, "delete_schedule", `{"id":1,"expectedRevision":1}`),
 		toolRequest("absent", "delete_schedule", `{"id":1,"expectedRevision":1}`),
 		toolRequest("conflict", "delete_schedule", `{"id":2,"expectedRevision":2}`),
 		toolRequest("invalid", "delete_schedule", `{"id":`),
@@ -56,8 +57,8 @@ func TestAssistantDeletePersistsIdentityAndPairsActualResults(t *testing.T) {
 				t.Errorf("%s 未回填实际错误 %s: %s", id, code, results[id])
 			}
 		}
-		if !strings.Contains(string(results["deleted"]), `"deleted":true`) || !strings.Contains(string(results["deleted"]), `"revision":2`) {
-			t.Errorf("未回填实际删除: %s", results["deleted"])
+		if !strings.Contains(string(results[deletedID]), `"deleted":true`) || !strings.Contains(string(results[deletedID]), `"revision":2`) {
+			t.Errorf("未回填实际删除: %s", results[deletedID])
 		}
 		emitText(w, "已按实际结果处理")
 	}))

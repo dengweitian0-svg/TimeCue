@@ -6,13 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"strings"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 )
 
 func deletionRequest(id, revision int, key string) (model.ScheduleDelete, error) {
-	if id < 1 || revision < 1 || key == "" || len(key) > 128 || strings.TrimSpace(key) != key || strings.ContainsAny(key, "\r\n") {
+	// 执行键是后端生成的完整工具身份，不能套用外部写入键的长度或字符限制。
+	if id < 1 || revision < 1 || key == "" {
 		return model.ScheduleDelete{}, ErrInvalidSchedule
 	}
 	input, _ := json.Marshal(struct {
