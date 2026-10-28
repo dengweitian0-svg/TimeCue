@@ -52,7 +52,7 @@ HTTP 使用 `/v1/model`、`/v1/run`、`/v1/run/:run_id`、`/v1/run/:run_id/event
 
 ## 当前切片边界
 
-T09 已接通工具有界调度、单次超时及有限重试。`chat.tool_concurrency` 默认 3，调度持续读取当前值（空闲等待最长约 100 毫秒重读），调低不取消已开始尝试；可并行工具允许执行区间重叠，串行工具与其他有效尝试互斥。退避及已超时尝试释放名额，不形成队首屏障、不保证 FIFO、不保存队列顺序；业务依赖仍分不同模型轮次表达。
+T09 已接通工具有界调度、单次超时及有限重试。`chat.tool_concurrency` 默认 3，调度持续读取当前值（空闲等待最长约 100 毫秒重读），调低不取消已开始尝试；密钥文件读取失败或模型配置暂时不可读时保留本批最近有效工具参数，不扩大并发或重试预算。可并行工具允许执行区间重叠，串行工具与其他有效尝试互斥。退避及已超时尝试释放名额，不形成队首屏障、不保证 FIFO、不保存队列顺序；业务依赖仍分不同模型轮次表达。
 
 `chat.tool_timeout_seconds` 默认 30，每次实际执行前读取、尝试内固定。期限到达立即向业务 context 发出取消并结算，释放有效执行名额，不等待忽略 context 的工具返回；取消信号不证明副作用已经回滚。协调器以独立尝试 token 隔离迟到结果，旧尝试不能覆盖新尝试或再次推进运行。工具 goroutine 只返回事实，协调器持有唯一结算权，最终结果仍交统一进度保存。用户取消阻止后续启动与重试，在途尝试等待原结果或原期限；完整写入取消/恢复核对仍属后续切片。
 
@@ -90,7 +90,7 @@ T06 已接通只读日程工具。应用只装配一个统一 Registry；所有�
 
 模型请求携带相同预算内的真实工具定义；适配器按流式 index 组装名称、ID 和 arguments 原文。只有正常结束且持久化接纳的模型回复才推进工具，断流片段不执行或网络重试。同一回复内重复 tool_call_id 整批拒绝为 model_invalid_format，不登记工具或生成工具事件，原 output/usage 与已收到正文、思考仍保留；无法配对的 tool_calls 不进入下一轮有效上下文。不同回复允许复用同值 ID。带工具请求的正常 length 截断逐条校验：坏参数按原 ID 回填解析错误，同批完整查询仍执行；纯文字自动续写由后续切片扩展。
 
-工具由单 run 协调器调度，当前只读查询最多三个并行；开始和结果事务串行合并。实际处理前先原子保存 running、arguments 原文的外层 JSON 字符串、调用关联、tool_start 与 tool_use checkpoint，提交后才做参数校验和正式查询，不创建 pending 占位。语法或参数不完整使用 tool_argument_parse_error；合法非对象、缺失/多余字段、类型或范围错误使用 tool_argument_validation_error，均不执行业务。开始事件 argument 对语法非法或非对象为 null，对可解析对象保持原对象。
+工具由单 run 协调器调度，只读查询在当前配置上限内并行（默认三个）；开始和结果事务串行合并。实际处理前先原子保存 running、arguments 原文的外层 JSON 字符串、调用关联、tool_start 与 tool_use checkpoint，提交后才做参数校验和正式查询，不创建 pending 占位。语法或参数不完整使用 tool_argument_parse_error；合法非对象、缺失/多余字段、类型或范围错误使用 tool_argument_validation_error，均不执行业务。开始事件 argument 对语法非法或非对象为 null，对可解析对象保持原对象。
 
 每个工具的原始 JSON output/error、tool_result、原 ID 的 tool 消息、completed_tool、last_tool 和 checkpoint 同事务保存；成功与失败都回填模型，工具错误不再重复生成 run error 事件。全部原 ID 取得结果后才保存 tool_end 并登记下一普通模型请求。列表、对象、标量及 null 均保持原始 JSON 类型；Flutter 复用同一事件解码器、原 ID 配对和默认折叠详情，查看完整参数、结果及错误。
 

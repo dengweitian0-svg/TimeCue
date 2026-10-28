@@ -33,9 +33,8 @@ func toolRetryable(failure *RunError) bool {
 	return failure != nil && (failure.Code == "tool_timeout" || failure.Code == "tool_temporary_error")
 }
 
-func (s *Runtime) toolConfig(r Record) (concurrency int, timeout time.Duration, maxRetry int) {
+func toolConfig(cfg ModelConfig) (concurrency int, timeout time.Duration, maxRetry int) {
 	concurrency, timeout, maxRetry = 3, 30*time.Second, 3
-	cfg, _ := s.currentModel(r.Provider, r.Model)
 	if cfg.ToolConcurrency > 0 {
 		concurrency = cfg.ToolConcurrency
 	}
@@ -48,7 +47,15 @@ func (s *Runtime) toolConfig(r Record) (concurrency int, timeout time.Duration, 
 	return
 }
 
-func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record) (result ModelCall, failure *RunError) {
+func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cfg ModelConfig) (result ModelCall, failure *RunError) {
+	// 模型密钥读取失败不改变仍有效的工具权限；从运行已有配置起保留最近有效参数。
+	limit, timeout, maxRetry := toolConfig(cfg)
+	refreshConfig := func() {
+		latest, _ := s.currentModel(r.Provider, r.Model)
+		if latest.Provider == r.Provider && latest.Model == r.Model {
+			limit, timeout, maxRetry = toolConfig(latest)
+		}
+	}
 	var requests []ToolRequest
 	if call.Output == nil || json.Unmarshal(call.Output.Message.ToolCalls, &requests) != nil {
 		return call, toolError("model_invalid_format", "工具响应无效")
@@ -150,7 +157,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record) (r
 			serial = serial || !attempt.parallel
 		}
 		for _, request := range requests {
-			limit, timeout, maxRetry := s.toolConfig(r)
+			refreshConfig()
 			if ctx.Err() != nil || serial || len(active) >= limit {
 				break
 			}

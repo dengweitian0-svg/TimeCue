@@ -515,10 +515,11 @@ func TestToolRetryKeepsDeleteReceiptIdentity(t *testing.T) {
 }
 
 type attemptFixture struct {
-	service *chat.Runtime
-	storage chat.Storage
-	models  atomic.Int32
-	restart func()
+	service         *chat.Runtime
+	storage         chat.Storage
+	models          atomic.Int32
+	settingsFailure atomic.Bool
+	restart         func()
 }
 
 func newAttemptFixture(t *testing.T, calls []chat.ToolRequest, configure func(*chat.ModelConfig), controlled ...attemptTool) *attemptFixture {
@@ -559,6 +560,9 @@ func newAttemptFixture(t *testing.T, calls []chat.ToolRequest, configure func(*c
 		}
 	}
 	settings := func() ([]chat.ModelConfig, error) {
+		if fixture.settingsFailure.Load() {
+			return nil, errors.New("injected settings read failure")
+		}
 		cfg, err := toolSettings(upstream.URL)()
 		if configure != nil {
 			configure(&cfg[0])
@@ -574,6 +578,53 @@ func newAttemptFixture(t *testing.T, calls []chat.ToolRequest, configure func(*c
 	fixture.restart()
 	t.Cleanup(func() { fixture.service.Stop() })
 	return fixture
+}
+
+// TestToolSettingsReadFailureKeepsEffectiveLimits 验证密钥读取故障不扩大现有并发及零重试权限。
+func TestToolSettingsReadFailureKeepsEffectiveLimits(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	fixture := newAttemptFixture(t, []chat.ToolRequest{
+		toolRequest("first", "first", `{}`),
+		toolRequest("second", "second", `{}`),
+	}, func(cfg *chat.ModelConfig) {
+		zero := 0
+		cfg.ToolConcurrency = 1
+		cfg.ToolMaxRetry = &zero
+	}, attemptTool{
+		name:     "first",
+		parallel: true,
+		run:      func(context.Context, string) (string, error) { started <- "first"; <-release; return `true`, nil },
+	}, attemptTool{
+		name:     "second",
+		parallel: true,
+		run: func(context.Context, string) (string, error) {
+			started <- "second"
+			return "", &tools.Failure{
+				Code:    "tool_temporary_error",
+				Message: "不允许重试",
+			}
+		},
+	})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	receipt := createAttemptRun(t, fixture.service, "config-failure")
+	if receiveAttemptStart(t, started) != "first" {
+		t.Fatal("并发上限未生效")
+	}
+	fixture.settingsFailure.Store(true)
+	select {
+	case name := <-started:
+		t.Fatalf("配置读取失败扩大并发: %s", name)
+	case <-time.After(250 * time.Millisecond):
+	}
+	once.Do(func() { close(release) })
+	receiveAttemptStart(t, started)
+	run := awaitFinishedRun(t, fixture.service, receipt.RunID)
+	_, saved := awaitToolState(t, fixture.storage, receipt.RunID, "second", "failed")
+	if saved.MaxRetry != 0 || saved.RetryCount != 0 || run.Error == nil || run.Error.Code != "model_config_unavailable" {
+		t.Fatalf("读取失败重置预算或模型门禁: tool=%+v run=%+v", saved, run)
+	}
 }
 
 func createAttemptRun(t *testing.T, service *chat.Runtime, session string) chat.Receipt {

@@ -12,7 +12,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 	for r.Error == nil {
 		if call.State == StateSucceeded && (call.CheckpointStage == "model_call_end" || call.CheckpointStage == "tool_start") {
 			var failure *RunError
-			call, failure = s.processTools(ctx, call, *r)
+			call, failure = s.processTools(ctx, call, *r, cfg)
 			if failure != nil || ctx.Err() != nil {
 				return call, failure
 			}
