@@ -34,7 +34,7 @@ func (s *chatStore) ReadTools(ctx context.Context, modelCall int64) ([]chat.Tool
 }
 
 func readTools(ctx context.Context, reader schemaReader, modelCall int64) ([]chat.ToolCall, error) {
-	rows, err := reader.QueryContext(ctx, `SELECT id,tool_call_id,name,input,output,error,status,max_retry,retry_count FROM ai_tool_calls WHERE model_call_id=? ORDER BY id`, modelCall)
+	rows, err := reader.QueryContext(ctx, `SELECT id,tool_call_id,name,input,output,error,status,max_retry,retry_count,idempotency_key FROM ai_tool_calls WHERE model_call_id=? ORDER BY id`, modelCall)
 	if err != nil {
 		return nil, err
 	}
@@ -43,10 +43,11 @@ func readTools(ctx context.Context, reader schemaReader, modelCall int64) ([]cha
 	for rows.Next() {
 		call := chat.ToolCall{ModelCallID: modelCall}
 		var input string
-		var output, failure sql.NullString
-		if err = rows.Scan(&call.ID, &call.Request.ID, &call.Request.Function.Name, &input, &output, &failure, &call.State, &call.MaxRetry, &call.RetryCount); err != nil {
+		var output, failure, key sql.NullString
+		if err = rows.Scan(&call.ID, &call.Request.ID, &call.Request.Function.Name, &input, &output, &failure, &call.State, &call.MaxRetry, &call.RetryCount, &key); err != nil {
 			return nil, err
 		}
+		call.IdempotencyKey = key.String
 		call.Request.Type = "function"
 		if err = json.Unmarshal([]byte(input), &call.Request.Function.Arguments); err != nil {
 			return nil, err
@@ -90,13 +91,17 @@ func (s *chatStore) BeginTool(ctx context.Context, call chat.ModelCall, tool cha
 			return err
 		}
 		if tool.ID != 0 {
-			// 恢复只读查询复用原身份，不再发送开始事件。
+			// 恢复复用原身份和已登记执行键，不再发送开始事件。
 			_, err := tx.ExecContext(ctx, `UPDATE ai_tool_calls SET status='running',retry_count=? WHERE id=? AND model_call_id=?`, tool.RetryCount, tool.ID, call.ID)
 			if err != nil {
 				return err
 			}
 		} else {
-			result, err := tx.ExecContext(ctx, `INSERT INTO ai_tool_calls(run_id,session_id,model_call_id,tool_call_id,name,input,status,max_retry,created_at) VALUES(?,?,?,?,?,?,'running',?,?)`, call.RunID, call.SessionID, call.ID, tool.Request.ID, tool.Request.Function.Name, jsonValue(tool.Request.Function.Arguments), tool.MaxRetry, time.Now().UnixNano())
+			var key any
+			if tool.IdempotencyKey != "" {
+				key = tool.IdempotencyKey
+			}
+			result, err := tx.ExecContext(ctx, `INSERT INTO ai_tool_calls(run_id,session_id,model_call_id,tool_call_id,name,input,status,max_retry,created_at,idempotency_key) VALUES(?,?,?,?,?,?,'running',?,?,?)`, call.RunID, call.SessionID, call.ID, tool.Request.ID, tool.Request.Function.Name, jsonValue(tool.Request.Function.Arguments), tool.MaxRetry, time.Now().UnixNano(), key)
 			if err != nil {
 				return err
 			}

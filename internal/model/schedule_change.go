@@ -16,6 +16,14 @@ type ScheduleChange struct {
 	Digest           string
 }
 
+// ScheduleDelete 是带版本及后端执行身份的正式删除请求，不携带可覆盖的规则。
+type ScheduleDelete struct {
+	ID               int
+	ExpectedRevision int
+	Key              string
+	Digest           string
+}
+
 // ScheduleWrite 保存操作的原始结果，重复请求返回同一结果及生效时刻。
 type ScheduleWrite struct {
 	Schedule     *Schedule

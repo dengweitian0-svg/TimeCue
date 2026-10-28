@@ -20,3 +20,4 @@
 
 - `main.go` 装配运行、会话、模型执行、工具事务与事件查询五个 SQLite 持久化端口、真实 chat.Runtime、Chat Completions 客户端与 Manager.ChatModels；正常、managed 与 external 入口共用，无聊天 Mock 或播种。
 - `main.go` 通过统一 Tool Registry 注册正式日程单条、列表和日期查询，以及串行创建/修改工具；写入复用 App.WriteSchedule、空业务 key 和版本保护。注入 chat.Runtime 及工具事务持久化端口；工具注册失败时不启动服务。
+- `main.go` 同一 Registry 注册串行 delete_schedule，作为唯一危险工具，使用 App.DeleteScheduleVersion 的版本和业务回执事务；独立只读回执端口用于核对，不增加 HTTP 接口。

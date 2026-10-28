@@ -80,6 +80,7 @@ func runApp(ctx context.Context, options startupOptions, log *logger.Logger) err
 		return err
 	}
 	scheduleTools := append(tools.ScheduleTools(application), tools.ScheduleWriteTools(application, nil)...)
+	scheduleTools = append(scheduleTools, tools.ScheduleDeleteTools(application)...)
 	toolRegistry, err := tools.NewRegistry(ctx, scheduleTools...)
 	if err != nil {
 		return err

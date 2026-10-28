@@ -66,3 +66,25 @@ func (a *App) DeleteScheduleWithResult(ctx context.Context, id int) (*model.Sche
 	}
 	return result, err
 }
+
+// DeleteScheduleVersion 通过正式操作锁提交带版本及回执的删除，并同步内存调度器。
+func (a *App) DeleteScheduleVersion(ctx context.Context, id, expectedRevision int, key string) (*model.ScheduleWrite, error) {
+	a.operations.Lock()
+	defer a.operations.Unlock()
+	if err := a.ensureScheduleService(); err != nil {
+		return nil, err
+	}
+	result, err := a.scheduleService.DeleteScheduleVersion(ctx, id, expectedRevision, key)
+	if err == nil && a.Scheduler != nil {
+		a.Scheduler.ScheduleChanged(ctx, result)
+	}
+	return result, err
+}
+
+// ReadScheduleDeleteReceipt 只读核对原删除回执，不调用写入入口或内存调度器。
+func (a *App) ReadScheduleDeleteReceipt(ctx context.Context, id, expectedRevision int, key string) (*model.ScheduleWrite, error) {
+	if err := a.ensureScheduleService(); err != nil {
+		return nil, err
+	}
+	return a.scheduleService.ReadScheduleDeleteReceipt(ctx, id, expectedRevision, key)
+}

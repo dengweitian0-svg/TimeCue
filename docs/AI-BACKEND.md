@@ -943,7 +943,7 @@ T01 将现有 chat.Service 及 DTO 迁移到目标契约：创建输入和 run �
 
 - 存储端口按原子业务操作提供能力：创建 run 及其幂等记录、保存模型调用开始 checkpoint、更新模型调用与 checkpoint、追加已编号事件、保存工具结果与进度、受理取消、提交 run 终态，以及只读详情与恢复扫描。run 创建允许暂时没有 checkpoint；需要共同提交的数据仍须使用同一原子操作，不能由 Handler 或循环拼接多个独立写入冒充事务。
 - run 协调器持有推进权；工具执行器只返回结果，不自行覆盖整个 checkpoint。超时与正常返回由同一协调器裁定，过期尝试不能再次结算。
-- App 为工具提供窄业务端口：日程查询、创建、带版本检查的修改、带版本检查的幂等软删除、只读业务回执查询。现有 WriteSchedule 已有可选幂等键与版本参数，创建、修改工具使用空业务 key；现有 DeleteScheduleWithResult 只有日程 ID，删除的版本与幂等能力、只读回执查询仍需补齐。
+- App 为工具提供窄业务端口：日程查询、创建、带版本检查的修改、带版本检查的幂等软删除、只读业务回执查询。WriteSchedule 提供可选幂等键与版本参数，创建、修改工具使用空业务 key；传统 DeleteScheduleWithResult 保持只有日程 ID，T08 的 DeleteScheduleVersion 和独立只读 ReadScheduleDeleteReceipt 已接通版本、幂等和回执核对，完整恢复策略仍归后续切片。
 - 删除的版本比较、业务变更与幂等回执必须在同一业务事务完成；不能在工具层先读版本，再调用不检查版本的删除函数来替代事务内检查。命中原幂等回执时复用原结果，不因原操作已经改变版本而拒绝恢复。
 - 数据库适配器实现事务与约束；模型适配器实现协议解析、有效输出识别与取消。循环只依赖契约，不依赖 SQLite 连接或 HTTP Handler。
 - App 负责调用聊天运行时的启动恢复与停止能力。先根据 run 状态及同会话后续 run 筛选：已有后续 run 的旧 running run 仅失败收尾，允许恢复的最新 running run 读取 checkpoint，wait_for_cancel 独立只读收尾；不把启动恢复变成前端必须先发起的请求。
@@ -970,6 +970,6 @@ T01 将现有 chat.Service 及 DTO 迁移到目标契约：创建输入和 run �
 - 数据契约：其余尚未覆盖的错误映射。独立 run 概况与 events 分页查询的 DTO、分页参数及原始事件完整返回规则已确定，不再列为待定。tool_start 的原 function 数组、tool_result 固定的 {tool_call_id, output, error}、成功 error=null 与失败 error={code, message}、原始 output 保留及没有输出时为 null、工具错误不重复发 error、严格调用 ID 配对及单个/多个工具折叠均已确定；取消跳过的工具同样保存 tool_result、分配 seq 并发送前端，error.code=tool_skipped，模型上下文保留原调用并按原 ID 回填 content="aborted" 的 tool 消息，与 completed_tool/last_tool 及 checkpoint 原子保存。实时和查询回放使用持久化的同一结果事件。协作式取消须保存已接收模型内容及工具 output/error，只有内部 cancelled 持久化后才发送唯一 end，HTTP 仍将 wait_for_cancel 显示为 cancelled。模型/运行错误及工具结果提交后均按 seq 推送和查询返回，取消收尾记录不隐藏，前端事件序号保持连续；不新增内部事件可见性字段。end 只保留 status、模型 finish_reason 保留在原 model_call.output、模型/运行 error 的 {code, message}、thinking/text 的 content、tool_start 的 function 数组及参数错误表示、已确认错误码等规则不再列为待定。
 - 上下文组装：事件增量到模型结构化消息的组装、其余部分回复的具体消息形式、各 checkpoint 阶段的完整恢复示例。重启从 checkpoint 关联调用读取 input.messages 和 output，缺少 output 时先进行既定错误恢复，工具结果按进度复用。新 run 沿有效上下文追加新输入，不从展示事件回放恢复执行状态。摘要覆盖除 system prompt 外的全部有效历史，成功后以 user 消息提供摘要，本轮真实输入保留，后续沿摘要及未覆盖消息接续，不重加已覆盖原文。continuation 保持 assistant:a、user/tool:b、assistant:c，工具结果按原 ID 配对，取消跳过回填 content="aborted"；上述已确认行为不再列为待定。
 - 配置与估算：统一配置字段的具体映射及有效范围。头尾比例已确定固定为 1:1，不作为配置项。裁剪阈值已确定默认 8192 个估算 token 且允许用户配置，具体配置键及有效范围继续细化。token 估算算法已统一为 ceil(UTF-8 字节数 / 4)，用于工具裁剪和整体请求预算检查。普通轮数、续写上限、模型和工具运行参数全部归现有 config 统一加载管理，不再为普通轮数及续写上限设计独立读取机制。工具定义保持代码内置；并发、超时及逻辑调用 max_retry 的既定执行生效规则保留，已用预算不清零，不新增 run 配置快照。
-- 服务与生命周期：正式接口签名及文件装配、带版本和幂等参数的删除入口、只读业务回执查询、5 秒宿主退出预算内的停止实现。HTTP ready 前完成配置加载、数据库连接、恢复登记及占用重建，ready 后后台继续恢复，不等待所有旧 run 执行结束；该启动顺序已确定。
+- 服务与生命周期：其余恢复端口装配与 5 秒宿主退出预算内的停止实现；带版本和幂等参数的删除入口、只读业务回执查询已由 T08 接通。HTTP ready 前完成配置加载、数据库连接、恢复登记及占用重建，ready 后后台继续恢复，不等待所有旧 run 执行结束；该启动顺序已确定。
 
 本文不授权数据库结构变更；表结构方案需讨论确定并获得明确请求后实施。

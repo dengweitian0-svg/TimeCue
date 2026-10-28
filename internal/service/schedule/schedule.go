@@ -15,6 +15,10 @@ type Repo interface {
 	// ReadUnacknowledged 在同一事务读取范围总数、提醒页及父日程。
 	ReadUnacknowledged(context.Context, model.UnacknowledgedRange, model.NotificationPosition, int) ([]*model.Schedule, []*model.Notification, int, error)
 	ApplyScheduleChange(context.Context, model.ScheduleChange, model.PrepareScheduleChange) (*model.ScheduleWrite, error)
+	// ApplyScheduleDelete 在同一事务检查版本、软删除、停止提醒并保存回执。
+	ApplyScheduleDelete(context.Context, model.ScheduleDelete) (*model.ScheduleWrite, error)
+	// ReadScheduleReceipt 只读核对请求摘要，未命中返回 nil，不补做业务。
+	ReadScheduleReceipt(context.Context, string, string) (*model.ScheduleWrite, error)
 	// ReadScheduleState 在同一读取事务获取日程规则与提醒事实，保持响应一致。
 	ReadScheduleState(context.Context, time.Time, time.Time, time.Time, model.NotificationPosition, int) ([]*model.Schedule, []*model.Notification, []*model.Notification, int, error)
 	// CreateSchedule 创建日程并返回数据库生成的 ID 与时间戳。
