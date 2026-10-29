@@ -39,6 +39,8 @@ func TestChatRejectsNegativeRoundLimit(t *testing.T) {
 	if err = manager.LoadConfig(); err != nil {
 		t.Fatal(err)
 	}
+	// 此用例只验证显式加载，避免目录监听读到覆盖写入的空文件中间态。
+	manager.Close()
 	if err = os.WriteFile(path, []byte("chat:\n  max_rounds: -1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +68,8 @@ func TestChatToolSettingsRejectNegativeAndKeepSnapshot(t *testing.T) {
 	if err := manager.LoadConfig(); err != nil {
 		t.Fatal(err)
 	}
+	// 热更新另有真实目录监听用例；此处只验证非法值拒绝和快照隔离。
+	manager.Close()
 	for _, field := range []string{"tool_concurrency", "tool_timeout_seconds", "tool_max_retry"} {
 		if err := os.WriteFile(path, []byte("chat:\n  "+field+": -1\n"), 0600); err != nil {
 			t.Fatal(err)
