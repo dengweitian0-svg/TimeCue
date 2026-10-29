@@ -12,3 +12,4 @@
 聊天 HTTP 契约隔离测试显式为 NewService 传入 nil Registry；真实注册工具、日程查询及回填由 internal/agent/chat 的公共用例集成测试覆盖。
 
 - `chat_admission_test.go` 验证取消等待中的 POST cancel 直接返回 200/cancelled，并记录 Info 的 run cancellation requested；公开服务集成中的活动会话删除验证位于 chat/cancel_test.go，覆盖全部新查询不可见及原 SSE 收尾。
+- 准入测试等待取消运行的 finished_at 后再复用名额，不把取消受理回执当作已释放。

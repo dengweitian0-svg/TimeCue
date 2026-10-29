@@ -446,7 +446,7 @@ void main() {
       expect(model.activeRunCount, 1);
     });
 
-    test('历史索引不确定时暂停新发送，运行中的会话不能删除', () async {
+    test('历史索引不确定时暂停新发送，活动会话删除后跟踪原连接收尾', () async {
       final gateway = _HistoryGateway(sessionIds: ['occupied'])
         ..sessions['occupied'] = const ChatSession(
           sessionId: 'occupied',
@@ -473,8 +473,21 @@ void main() {
         Future.value(const ChatCreateRunResult('live-run')),
       );
       await model.send(local.sessionId, model: 'model');
-      expect(await model.deleteSession(local.sessionId), isFalse);
-      expect(gateway.deleteCalls, 0);
+      expect(await model.deleteSession(local.sessionId), isTrue);
+      expect(gateway.deleteCalls, 1);
+      expect(model.conversations, isNot(contains(same(local))));
+      expect(model.activeRunCount, 1);
+      gateway.controllers.single.add(
+        const ChatRunEventFrame(
+          ChatSseEvent(
+            eventId: 1,
+            type: ChatEventType.end,
+            data: ChatEndEventData(status: ChatRunStatus.cancelled),
+          ),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(model.activeRunCount, 0);
     });
 
     test('运行失效后历史、新建及删除操作不会再访问远端', () async {

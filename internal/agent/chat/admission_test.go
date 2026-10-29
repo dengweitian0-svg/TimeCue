@@ -144,7 +144,7 @@ func TestRecoveryQueuesExcessUnfinishedSessions(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		run := awaitFinishedRun(t, s, fmt.Sprintf("recover-%d", i))
 		if run.Status != chat.StatusCancelled {
-			t.Fatalf("排队运行丢失或被伪造终态: %+v", run)
+			t.Fatalf("排队运行丢失或被伪造终态: %+v error=%+v", run, run.Error)
 		}
 	}
 }

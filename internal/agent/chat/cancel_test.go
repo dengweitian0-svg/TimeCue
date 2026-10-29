@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -155,6 +156,134 @@ func TestCancelWaitsForOriginalTimeout(t *testing.T) {
 type cancelWriteFailure struct {
 	chat.RunRepository
 	fail atomic.Bool
+}
+
+type cancelReadGate struct {
+	chat.ExecutionRepository
+	stage          string
+	entered        chan struct{}
+	storageFailure bool
+}
+
+func (g *cancelReadGate) wait(ctx context.Context) error {
+	close(g.entered)
+	<-ctx.Done()
+	if g.storageFailure {
+		return errors.New("injected storage read failure")
+	}
+	return ctx.Err()
+}
+
+// History 在恢复历史读取边界等待真实取消，区分请求中断和存储故障。
+func (g *cancelReadGate) History(ctx context.Context, session string) ([]chat.Message, error) {
+	if g.stage == "history" {
+		if err := g.wait(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return g.ExecutionRepository.History(ctx, session)
+}
+
+// OrdinaryCallCount 在轮数读取边界等待真实取消，不替代日程或模型执行。
+func (g *cancelReadGate) OrdinaryCallCount(ctx context.Context, run string) (int, error) {
+	if g.stage == "count" {
+		if err := g.wait(ctx); err != nil {
+			return 0, err
+		}
+	}
+	return g.ExecutionRepository.OrdinaryCallCount(ctx, run)
+}
+
+// BeginCall 在首次调用登记边界等待取消，检验独立保存错误不会被吞掉。
+func (g *cancelReadGate) BeginCall(ctx context.Context, call chat.ModelCall) (int64, error) {
+	if g.stage == "begin" {
+		if err := g.wait(ctx); err != nil {
+			return 0, err
+		}
+	}
+	return g.ExecutionRepository.BeginCall(ctx, call)
+}
+
+// SaveEvents 在重试登记边界等待取消，区分上下文中断和真实保存故障。
+func (g *cancelReadGate) SaveEvents(ctx context.Context, call chat.ModelCall) error {
+	if g.stage == "retry_save" {
+		if err := g.wait(ctx); err != nil {
+			return err
+		}
+	}
+	return g.ExecutionRepository.SaveEvents(ctx, call)
+}
+
+// TestCancellationDuringRecoveryReadDoesNotBecomeStorageFailure 验证恢复读取被取消不冒充存储故障，真正存储故障仍保留。
+func TestCancellationDuringRecoveryReadDoesNotBecomeStorageFailure(t *testing.T) {
+	for _, stage := range []string{"history", "count", "begin", "retry_save"} {
+		for _, storageFailure := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/storage_failure_%t", stage, storageFailure), func(t *testing.T) {
+				_, ports, _ := admissionDatabase(t)
+				ctx := context.Background()
+				if err := ports.Runs.Create(ctx, chat.Record{
+					Run: chat.Run{
+						RunID:     "cancel-read",
+						SessionID: "cancel-read",
+						Provider:  "test",
+						Model:     "model",
+						Input:     "原输入",
+						CreatedAt: time.Now(),
+					},
+					State:          chat.StateRunning,
+					IdempotencyKey: "key",
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if stage == "retry_save" {
+					call := chat.ModelCall{
+						RunID:     "cancel-read",
+						SessionID: "cancel-read",
+						State:     chat.StateRunning,
+						Input:     chat.ModelRequest{Model: "model"},
+					}
+					var err error
+					call.ID, err = ports.Execution.BeginCall(ctx, call)
+					if err != nil {
+						t.Fatal(err)
+					}
+					past := time.Now().Add(-time.Second)
+					call.State, call.NextRetryAt = chat.StateRetryWait, &past
+					if err = ports.Execution.SaveEvents(ctx, call); err != nil {
+						t.Fatal(err)
+					}
+				}
+				gate := &cancelReadGate{
+					ExecutionRepository: ports.Execution,
+					stage:               stage,
+					entered:             make(chan struct{}),
+					storageFailure:      storageFailure,
+				}
+				ports.Execution = gate
+				model := &admissionModel{release: make(chan struct{})}
+				service := startAdmissionService(t, ports, model, admissionSettings)
+				select {
+				case <-gate.entered:
+				case <-time.After(3 * time.Second):
+					t.Fatal("没有进入恢复读取边界")
+				}
+				if _, err := service.CancelRun(ctx, "cancel-read"); err != nil {
+					t.Fatal(err)
+				}
+				run := awaitFinishedRun(t, service, "cancel-read")
+				if model.starts.Load() != 0 {
+					t.Fatal("取消之后启动了模型")
+				}
+				if storageFailure {
+					if run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "persistence_failed" {
+						t.Fatalf("实际存储错误被吞掉: %+v error=%+v", run, run.Error)
+					}
+				} else if run.Status != chat.StatusCancelled || run.Error != nil {
+					t.Fatalf("取消被误判为存储错误: %+v error=%+v", run, run.Error)
+				}
+			})
+		}
+	}
 }
 
 // TestCancelRetainsPersistenceFailureAndActualToolResult 验证取消不吞掉运行自身保存故障，重试收尾仍保存实际结果。

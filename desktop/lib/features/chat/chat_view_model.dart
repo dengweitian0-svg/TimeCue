@@ -345,8 +345,7 @@ class ChatViewModel extends ChangeNotifier {
       if (!_isSessionCurrent(generation, sessionId, sessionGeneration)) return;
       if (_isMissingSession(error) &&
           existing._deleteNeedsVerification &&
-          !existing.isLocal &&
-          existing.activeRun == null) {
+          !existing.isLocal) {
         _removeDeletedConversation(sessionId, existing);
         return;
       }
@@ -1237,7 +1236,7 @@ class ChatViewModel extends ChangeNotifier {
 
   bool _isMissingSession(Object error) =>
       error is ChatHttpError &&
-      error.statusCode == 404 &&
+      (error.statusCode == 400 || error.statusCode == 404) &&
       error.code == 'session_not_found';
 
   bool _hasUnconfirmedCreation(ChatConversation conversation) =>

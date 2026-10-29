@@ -196,6 +196,21 @@ func TestHTTPAdmissionAndRejectedKeys(t *testing.T) {
 	if _, err := service.CancelRun(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
+	// 取消回执只受理请求，真实终态落库后才能复用全局名额。
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		run, err := service.GetRun(context.Background(), first)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.FinishedAt != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("取消收尾没有完成")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	response = admissionHTTPRequest(router, makeBody(sessions[3], "changed after rejection", "test", "configured-model"), key)
 	if response.code != 202 {
 		t.Fatalf("被拒绝键不能使用: %d %s", response.code, response.body)
