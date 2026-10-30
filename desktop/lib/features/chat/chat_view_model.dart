@@ -83,6 +83,7 @@ class ChatViewModel extends ChangeNotifier {
   final Set<String> _deletedSessionIds = {};
   final Map<String, int> _sessionGenerations = {};
   final Map<String, ChatRunState> _runsById = {};
+  final Map<String, ChatRunState> _deletedRuns = {};
   String? _selectedSessionId;
   int _runtimeGeneration = 0;
   bool _acceptingOperations = true;
@@ -152,6 +153,7 @@ class ChatViewModel extends ChangeNotifier {
   int get activeRunCount => _allRuns.where((run) => run.occupiesSlot).length;
 
   Iterable<ChatRunState> get _allRuns sync* {
+    yield* _deletedRuns.values;
     for (final conversation in _conversations.values) {
       yield* conversation.runs;
     }
@@ -343,8 +345,7 @@ class ChatViewModel extends ChangeNotifier {
       if (!_isSessionCurrent(generation, sessionId, sessionGeneration)) return;
       if (_isMissingSession(error) &&
           existing._deleteNeedsVerification &&
-          !existing.isLocal &&
-          existing.activeRun == null) {
+          !existing.isLocal) {
         _removeDeletedConversation(sessionId, existing);
         return;
       }
@@ -386,14 +387,15 @@ class ChatViewModel extends ChangeNotifier {
     await _loadHistorySession(sessionId, _runtimeGeneration);
   }
 
-  /// 删除服务端会话；运行仍占用名额时拒绝，成功后用墓碑阻止迟到恢复。
+  /// 删除服务端会话并立即隐藏，已有事件连接继续跟踪后台取消占用。
   Future<bool> deleteSession(String sessionId) async {
     _ensureUsable();
     final conversation = _conversations[sessionId];
     if (!acceptingOperations ||
         conversation == null ||
         conversation.isLocal ||
-        conversation.activeRun != null ||
+        (conversation.activeRun != null &&
+            conversation.activeRun!.runId == null) ||
         conversation.isDeleting ||
         (_historySessionIds.contains(sessionId) &&
             !conversation.historyLoaded)) {
@@ -433,8 +435,17 @@ class ChatViewModel extends ChangeNotifier {
     _historySessionIds.remove(sessionId);
     _conversations.remove(sessionId);
     _conversationOrder.remove(sessionId);
-    for (final runId in conversation._runs.map((run) => run.runId)) {
-      if (runId != null) _runsById.remove(runId);
+    for (final run in conversation._runs) {
+      final runId = run.runId;
+      if (runId == null) continue;
+      _runsById.remove(runId);
+      run._retryTimer?.cancel();
+      run._retryTimer = null;
+      if (!run.isTerminal && run._subscription != null) {
+        run._cancelPending = true;
+        run._phase = ChatRunPhase.stopping;
+        _deletedRuns[runId] = run;
+      }
     }
     _sessionGenerations[sessionId] = (_sessionGenerations[sessionId] ?? 0) + 1;
     if (wasSelected) createLocalSession();
@@ -859,6 +870,15 @@ class ChatViewModel extends ChangeNotifier {
         run._sseFinished) {
       return;
     }
+    if (_deletedRuns[run.runId] == run) {
+      // 删除后的新查询不可见；原连接只观察真正结束，不再补读历史。
+      if (signal is ChatRunEventsNoContent ||
+          signal is ChatRunEventFrame &&
+              signal.event.type == ChatEventType.end) {
+        await _releaseDeletedRun(run);
+      }
+      return;
+    }
     if (signal is ChatRunEventsNoContent) {
       run._sseFinished = true;
       run._terminalConfirmed = true;
@@ -1112,6 +1132,11 @@ class ChatViewModel extends ChangeNotifier {
         run.isTerminal) {
       return;
     }
+    if (_deletedRuns[run.runId] == run) {
+      // 隐藏运行断线后无法重查，后续准入由服务端的实际占用判定。
+      await _releaseDeletedRun(run);
+      return;
+    }
     final previousPhase = run._phase;
     final previousConnection = run._connectionState;
     ++run._connectionEpoch;
@@ -1185,9 +1210,16 @@ class ChatViewModel extends ChangeNotifier {
   bool _isCurrent(int generation, ChatRunState run) =>
       !_disposed &&
       generation == _runtimeGeneration &&
-      _conversations.values.any(
-        (conversation) => conversation._runs.contains(run),
-      );
+      (_deletedRuns[run.runId] == run ||
+          _conversations.values.any(
+            (conversation) => conversation._runs.contains(run),
+          ));
+
+  Future<void> _releaseDeletedRun(ChatRunState run) async {
+    _deletedRuns.remove(run.runId);
+    await _detachEvents(run);
+    _scheduleNotify();
+  }
 
   bool _isRuntimeCurrent(int generation) =>
       !_disposed && generation == _runtimeGeneration && _acceptingOperations;
@@ -1204,7 +1236,7 @@ class ChatViewModel extends ChangeNotifier {
 
   bool _isMissingSession(Object error) =>
       error is ChatHttpError &&
-      error.statusCode == 404 &&
+      (error.statusCode == 400 || error.statusCode == 404) &&
       error.code == 'session_not_found';
 
   bool _hasUnconfirmedCreation(ChatConversation conversation) =>

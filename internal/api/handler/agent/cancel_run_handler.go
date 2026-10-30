@@ -28,7 +28,10 @@ func CancelRunHandler(service chat.RunService) middleware.HTTPHandler {
 		if err != nil {
 			return utils.ChatError(err)
 		}
-		response := CancelRunResponse{RunID: runID, Status: status}
+		response := CancelRunResponse{
+			RunID:  runID,
+			Status: status,
+		}
 		resultStatus := http.StatusOK
 		if status == chat.StatusRunning {
 			resultStatus = http.StatusAccepted
@@ -36,7 +39,7 @@ func CancelRunHandler(service chat.RunService) middleware.HTTPHandler {
 			return utils.InternalErrorResult(fmt.Errorf("chat service returned unknown run status"))
 		}
 		result := middleware.JSONResult(resultStatus, response)
-		if status != chat.StatusRunning {
+		if status == chat.StatusSucceeded || status == chat.StatusFailed {
 			level := slog.LevelWarn
 			result.LogLevel = &level
 		}

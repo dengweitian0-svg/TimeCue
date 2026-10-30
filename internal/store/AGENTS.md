@@ -51,3 +51,5 @@ ReadUnacknowledged 在同一事务读取范围完整总数、有界提醒页及�
 聊天异常收尾同一事务复用已提交工具结果，并将已接纳但尚无确认结果的原 ID 补齐 tool_result_unconfirmed；取消未启动项补齐 skipped/aborted。开始与结果事件和完整工具配对均保留，直接保存最终处理事实，不伪造 running/tool_use；正常退出不补造终态，保留原进度供恢复。
 
 待保存工具结果仅携带实际取得的事实。Finish 在同一事务回读最新调用、checkpoint 与全部工具记录，调用聊天统一收尾操作后复用正常结果的事实及事件保存；存储不自行生成跳过或未确认结果。已终态调用不重写 output/usage/结束时间，未变化的已完成 checkpoint 保持原值；结果回执丢失时优先复用已提交事实，终态失败整体回滚，重试不重复结果或 end。不新增存储格式或迁移。
+
+- RequestCancel 原子将 running 改为 wait_for_cancel，不覆盖终态。Hide 在同一事务软删除父会话并保存其活动运行取消意图；所有子记录保留。Finish 重检已提交取消意图，取消与正常完成竞争时保存 cancelled 和唯一 end，不采用旧的成功快照。

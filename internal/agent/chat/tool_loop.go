@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 )
 
 func hasModelOutput(output ModelOutput) bool {
@@ -43,6 +44,9 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				call.Input, err = s.newRequest(ctx, *r, cfg)
 			}
 			if err != nil {
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+					return call, nil
+				}
 				return call, persistenceFailure()
 			}
 			if failure := requestBudgetError(call.Input, cfg); failure != nil {
@@ -53,6 +57,9 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 			}
 			count, err := s.execution.OrdinaryCallCount(ctx, r.RunID)
 			if err != nil {
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+					return call, nil
+				}
 				return call, persistenceFailure()
 			}
 			limit := cfg.MaxRounds
@@ -70,7 +77,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 			}
 			call.ID, err = s.execution.BeginCall(ctx, call)
 			if err != nil {
-				if ctx.Err() != nil {
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 					return call, nil
 				}
 				return call, persistenceFailure()

@@ -260,24 +260,38 @@ func (s *chatStore) Sessions(ctx context.Context) ([]string, error) {
 	return result, rows.Err()
 }
 
-// Hide 只软删除父会话，保留全部子记录。
+// RequestCancel 只将未结束运行改为取消等待，提交后才允许协调器停止推进。
+func (s *chatStore) RequestCancel(ctx context.Context, id string) (chat.RunState, error) {
+	var state chat.RunState
+	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE ai_runs SET status='wait_for_cancel' WHERE run_id=? AND status='running'`, id); err != nil {
+			return err
+		}
+		var err error
+		r, err := readRecord(tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM ai_runs r WHERE run_id=?`, id))
+		state = r.State
+		return err
+	})
+	return state, err
+}
+
+// Hide 原子软删除父会话并登记活动运行取消，保留全部子记录。
 func (s *chatStore) Hide(ctx context.Context, id string) error {
-	db, err := s.db.handle()
-	if err != nil {
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE ai_sessions SET deleted=1,updated_at=? WHERE session_id=?`, time.Now().UnixNano(), id)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return chat.ErrSessionNotFound
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE ai_runs SET status='wait_for_cancel' WHERE session_id=? AND status='running'`, id)
 		return err
-	}
-	result, err := db.ExecContext(ctx, `UPDATE ai_sessions SET deleted=1,updated_at=? WHERE session_id=?`, time.Now().UnixNano(), id)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return chat.ErrSessionNotFound
-	}
-	return nil
+	})
 }
 
 // History 沿最新已结束运行的完整消息快照接续，不重放事件或重新拼入已覆盖原文。
@@ -462,6 +476,13 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 		}
 		if state.Terminal() {
 			return nil
+		}
+		// 取消受理与正常收尾可能竞争，已提交的取消意图优先于旧终态快照。
+		if state == chat.StateWaitForCancel && (r.Error == nil || r.Error.Code != "persistence_failed") {
+			r.State, r.Error = chat.StateCancelled, nil
+			if !call.State.Terminal() {
+				call.State, call.Error = chat.StateCancelled, nil
+			}
 		}
 		if call.ID != 0 {
 			// 终态事务内回读实际已提交调用、checkpoint 与工具事实，成功调用不可被旧快照覆盖。

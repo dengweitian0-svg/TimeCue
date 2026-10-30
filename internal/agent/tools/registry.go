@@ -59,6 +59,34 @@ type Tool interface {
 	InvokableRun(context.Context, string) (string, error)
 }
 
+// ResultReader 仅核对已提交业务回执，未命中时不得补做业务。
+type ResultReader interface {
+	// ReadResult 返回既有结果及是否命中，不执行原操作。
+	ReadResult(context.Context, string) (string, bool, error)
+}
+
+// ReadResult 在取消恢复时只读核对原身份；不具备回执能力的工具返回未命中。
+func (r *Registry) ReadResult(ctx context.Context, name, raw string) (json.RawMessage, bool, error) {
+	if r != nil {
+		for _, entry := range r.entries {
+			if entry.info.Name == name {
+				if reader, ok := entry.tool.(ResultReader); ok {
+					output, found, err := reader.ReadResult(ctx, raw)
+					if err != nil || !found {
+						return nil, false, err
+					}
+					if !json.Valid([]byte(output)) {
+						return nil, false, errors.New("业务回执不是合法 JSON")
+					}
+					return json.RawMessage(output), true, nil
+				}
+				break
+			}
+		}
+	}
+	return nil, false, nil
+}
+
 // ToolInfo 定义模型描述与后端固定的安全性、调度方式。
 type ToolInfo struct {
 	Name        string

@@ -324,6 +324,8 @@ type RunRepository interface {
 	ReadRun(context.Context, string, bool) (Record, error)
 	// Active 扫描尚未结束的运行，供启动恢复登记。
 	Active(context.Context) ([]Record, error)
+	// RequestCancel 原子登记取消等待，返回实际状态，不覆盖已提交终态。
+	RequestCancel(context.Context, string) (RunState, error)
 }
 
 // SessionRepository 管理会话查询及软删除可见性。

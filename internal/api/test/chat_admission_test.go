@@ -82,6 +82,13 @@ func TestHTTPCancellationReplayRemainsActive(t *testing.T) {
 	if req.code != 409 || !strings.Contains(req.body, "session_busy") {
 		t.Fatalf("取消收尾提前释放名额: %d %s", req.code, req.body)
 	}
+	readLogs := captureHTTPLogs(t)
+	started := time.Now()
+	response = chatRequest(router, http.MethodPost, "/v1/run/"+id+"/cancel", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"cancelled"`) {
+		t.Fatalf("取消受理回执: %d %s", response.Code, response.Body)
+	}
+	requireHTTPRecord(t, readLogs(), http.MethodPost, "/v1/run/"+id+"/cancel", "INFO", "run cancellation requested", http.StatusOK, time.Since(started))
 }
 
 type admissionHTTPResponse struct {
@@ -188,6 +195,21 @@ func TestHTTPAdmissionAndRejectedKeys(t *testing.T) {
 	}
 	if _, err := service.CancelRun(context.Background(), first); err != nil {
 		t.Fatal(err)
+	}
+	// 取消回执只受理请求，真实终态落库后才能复用全局名额。
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		run, err := service.GetRun(context.Background(), first)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.FinishedAt != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("取消收尾没有完成")
+		}
+		time.Sleep(time.Millisecond)
 	}
 	response = admissionHTTPRequest(router, makeBody(sessions[3], "changed after rejection", "test", "configured-model"), key)
 	if response.code != 202 {

@@ -302,7 +302,7 @@ func TestToolCancellationDoesNotPreserveRetryOnShutdown(t *testing.T) {
 			}
 			cancelCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancel()
-			if _, err := fixture.service.CancelRun(cancelCtx, receipt.RunID); !errors.Is(err, context.DeadlineExceeded) {
+			if _, err := fixture.service.CancelRun(cancelCtx, receipt.RunID); err != nil {
 				t.Fatalf("未进入在途取消: %v", err)
 			}
 			once.Do(func() { close(release) })

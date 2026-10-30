@@ -68,7 +68,7 @@ func TestRealConversationSurvivesRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if run.Status != chat.StatusRunning {
+		if run.FinishedAt != nil {
 			if run.Status != chat.StatusSucceeded || run.Output == nil || *run.Output != "真实回复" {
 				t.Fatalf("run: %+v", run)
 			}
@@ -92,8 +92,8 @@ func TestRealConversationSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer service.Stop()
-	run, err := service.GetRun(ctx, receipt.RunID)
-	if err != nil || run.Output == nil || *run.Output != "真实回复" {
+	run := awaitFinishedRun(t, service, receipt.RunID)
+	if run.Output == nil || *run.Output != "真实回复" {
 		t.Fatalf("persisted run: %+v %v", run, err)
 	}
 	page, err := service.GetRunEvents(ctx, receipt.RunID, 0, 10)
@@ -166,7 +166,7 @@ func awaitRun(t *testing.T, service chat.RunService, id string) chat.Run {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if run.Status != chat.StatusRunning {
+		if run.FinishedAt != nil {
 			return run
 		}
 		if time.Now().After(deadline) {
@@ -221,8 +221,8 @@ func TestCancelledModelRetainsPartialReply(t *testing.T) {
 	if err != nil || status != chat.StatusCancelled {
 		t.Fatal(status, err)
 	}
-	run, err := service.GetRun(ctx, receipt.RunID)
-	if err != nil || run.Output == nil || *run.Output != "未完成的回复" || run.Error != nil || run.FinishedAt == nil {
+	run := awaitFinishedRun(t, service, receipt.RunID)
+	if run.Output == nil || *run.Output != "未完成的回复" || run.Error != nil || run.FinishedAt == nil {
 		t.Fatalf("partial cancellation: %+v %v", run, err)
 	}
 	if _, err = service.CancelRun(ctx, receipt.RunID); err != nil {
@@ -444,7 +444,7 @@ func TestFailedFinalCommitWaitsAndDoesNotRepeatModel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if run.Status != chat.StatusRunning {
+		if run.FinishedAt != nil {
 			break
 		}
 		if time.Now().After(deadline) {

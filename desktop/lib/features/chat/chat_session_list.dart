@@ -334,7 +334,9 @@ class _ChatSessionListState extends State<ChatSessionList> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除会话？'),
-        content: Text('“${conversation.displayName}”及其消息将从列表中删除。'),
+        content: Text(
+          '“${conversation.displayName}”及其消息将从列表中删除，进行中的回复将停止，已生效的日程会保留。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -355,12 +357,6 @@ class _ChatSessionListState extends State<ChatSessionList> {
         ).showSnackBar(const SnackBar(content: Text('创建结果尚未确认，请先恢复本轮状态再删除。')));
         return;
       }
-      await widget.chat.cancel(conversation.sessionId);
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('已请求停止，请等待本轮进入终态后再删除。')));
-      return;
     }
     final deleted = await widget.chat.deleteSession(conversation.sessionId);
     if (!mounted || deleted) return;

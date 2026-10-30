@@ -10,6 +10,51 @@ import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 import 'package:timecue_desktop/features/chat/chat_message_list.dart';
 
 void main() {
+  test('活动删除回执丢失后，刷新确认父会话不存在即隐藏并接续原 SSE 收尾', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    await fixture.model.loadHistory();
+    fixture.model.selectSession('s');
+    await _until(() => fixture.connections.isNotEmpty);
+    fixture.loseDeleteResponse = true;
+    expect(await fixture.model.deleteSession('s'), isFalse);
+    expect(fixture.model.historyConversations, hasLength(1));
+    await fixture.model.loadHistory(refresh: true);
+    expect(fixture.model.historyConversations, isEmpty);
+    expect(fixture.model.selectedConversation?.isLocal, isTrue);
+    expect(fixture.model.activeRunCount, 1);
+    await fixture.send(_event(7, 'end', {'status': 'cancelled'}));
+    await _until(() => fixture.model.activeRunCount == 0);
+    expect(fixture.hiddenReads, 1);
+  });
+  test('隐藏会话原连接断开后结束本地跟踪，不查询或重连隐藏运行', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    await fixture.model.loadHistory();
+    await _until(() => fixture.connections.isNotEmpty);
+    expect(await fixture.model.deleteSession('s'), isTrue);
+    expect(fixture.model.activeRunCount, 1);
+    await fixture.connections.single.close();
+    await _until(() => fixture.model.activeRunCount == 0);
+    expect(fixture.hiddenReads, 0);
+    expect(fixture.cursors, hasLength(1));
+  });
+  test('活动会话删除立即隐藏，原 SSE 收尾前保留占用且不再读取隐藏历史', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    await fixture.model.loadHistory();
+    fixture.model.selectSession('s');
+    await _until(() => fixture.connections.isNotEmpty);
+    expect(await fixture.model.deleteSession('s'), isTrue);
+    expect(fixture.model.historyConversations, isEmpty);
+    expect(fixture.model.selectedConversation?.isLocal, isTrue);
+    expect(fixture.model.activeRunCount, 1);
+    await fixture.send(_event(7, 'end', {'status': 'cancelled'}));
+    await _until(() => fixture.model.activeRunCount == 0);
+    expect(fixture.hiddenReads, 0);
+    await fixture.model.loadHistory();
+    expect(fixture.model.historyConversations, isEmpty);
+  });
   testWidgets('T06 查询对象与参数错误保持原值，详情默认折叠', (tester) async {
     final fixture = (await tester.runAsync(_HistoryServer.open))!;
     addTearDown(fixture.close);
@@ -647,11 +692,47 @@ class _HistoryServer {
   int pageSize = 2;
   int snapshotFailures = 0;
   int pageFailures = 0;
+  bool deleted = false;
+  bool loseDeleteResponse = false;
+  int hiddenReads = 0;
 
   Future<void> _handle(HttpRequest request) async {
     final response = request.response;
     try {
       response.headers.contentType = ContentType.json;
+      if (request.uri.path == '/v1/session/s' && request.method == 'DELETE') {
+        deleted = true;
+        if (loseDeleteResponse) {
+          response.statusCode = 500;
+          response.write(
+            jsonEncode({
+              'error': {'code': 'internal_error', 'message': '删除回执丢失'},
+            }),
+          );
+          await response.close();
+          return;
+        }
+        response.write(jsonEncode({'session_id': 's', 'status': 'deleted'}));
+        await response.close();
+        return;
+      }
+      if (deleted &&
+          (request.uri.path.startsWith('/v1/run/r') ||
+              request.uri.path == '/v1/session/s')) {
+        hiddenReads++;
+        final missingSession = request.uri.path == '/v1/session/s';
+        response.statusCode = missingSession ? 400 : 404;
+        response.write(
+          jsonEncode({
+            'error': {
+              'code': missingSession ? 'session_not_found' : 'run_not_found',
+              'message': '已隐藏',
+            },
+          }),
+        );
+        await response.close();
+        return;
+      }
       switch (request.uri.path) {
         case '/v1/run':
           await request.drain<void>();
@@ -695,7 +776,7 @@ class _HistoryServer {
         case '/v1/session':
           response.write(
             jsonEncode({
-              'sessions': ['s'],
+              'sessions': deleted ? <String>[] : ['s'],
             }),
           );
         case '/v1/session/s':

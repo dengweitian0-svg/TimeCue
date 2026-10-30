@@ -16,3 +16,5 @@
 单条及列表查询保留正式规则字段和 revision；列表默认 50、最大 50，支持 offset/name/type。日期查询复用正式发生情况页及 nextCursor，相对日期在每次实际解析时按北京时间计算。自动化通过 chat 公共用例、真实模型适配器、SQLite 与正式日程入口验证。
 
 写入复用正式规则校验、版本检查和提醒联动，版本冲突返回 revision_conflict、不存在返回 schedule_not_found、规则拒绝返回 invalid_schedule，不自动重试。缺信息或多目标先澄清，明确完整且唯一时直接执行；批量独立成功/失败，依赖操作分模型轮次。已保存明确时间和实际结果沿原进度复用，不承诺无键写入恰好执行一次；完整写入恢复由后续切片交付。
+
+- `ResultReader` 为可选只读业务回执端口，由 Registry.ReadResult 分发；delete_schedule 沿原参数与 context 后台键调用 ReadScheduleDeleteReceipt，不调用删除或补写，未命中由统一聊天进度表达结果未确认。

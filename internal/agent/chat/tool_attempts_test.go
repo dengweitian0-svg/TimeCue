@@ -229,9 +229,55 @@ func TestToolPermanentAndArgumentFailuresDoNotRetry(t *testing.T) {
 		},
 	)
 	receipt := createAttemptRun(t, fixture.service, "permanent")
-	run := awaitFinishedRun(t, fixture.service, receipt.RunID)
-	if run.Status != chat.StatusSucceeded || executions.Load() != 2 {
-		t.Fatalf("run=%+v executions=%d", run, executions.Load())
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		run, runErr := fixture.service.GetRun(ctx, receipt.RunID)
+		t.Logf("运行进度: run_id=%s status=%s finished_at=%v error=%+v read_error=%v model_requests=%d", receipt.RunID, run.Status, run.FinishedAt, run.Error, runErr, fixture.models.Load())
+		call, err := fixture.storage.Execution.ReadCall(ctx, receipt.RunID)
+		if err != nil || call == nil {
+			t.Logf("模型调用读取: call=%v error=%v", call, err)
+			return
+		}
+		t.Logf("调用进度: call_id=%d state=%s checkpoint=%s completed=%v", call.ID, call.State, call.CheckpointStage, call.CompletedTools)
+		stored, err := fixture.storage.Tools.ReadTools(ctx, call.ID)
+		if err != nil {
+			t.Logf("工具进度读取失败: %v", err)
+			return
+		}
+		for _, tool := range stored {
+			t.Logf("工具进度: tool_call_id=%s state=%s retry_count=%d next_retry_at=%v error=%+v", tool.Request.ID, tool.State, tool.RetryCount, tool.NextRetryAt, tool.Error)
+		}
+	})
+	// 等待期限只约束测试收尾观察，允许 CI 慢存储，不改变业务超时与重试策略。
+	run := awaitFinishedRunWithin(t, fixture.service, receipt.RunID, 30*time.Second)
+	if run.Status != chat.StatusSucceeded || executions.Load() != 2 || fixture.models.Load() != 2 {
+		t.Fatalf("run=%+v executions=%d models=%d", run, executions.Load(), fixture.models.Load())
+	}
+	page, err := fixture.service.GetRunEvents(context.Background(), receipt.RunID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantErrors := map[string]string{
+		"unknown":  "tool_execution_failed",
+		"business": "revision_conflict",
+		"syntax":   "tool_argument_parse_error",
+		"schema":   "tool_argument_validation_error",
+	}
+	for _, event := range page.Events {
+		if event.Type != chat.EventToolResult {
+			continue
+		}
+		var result chat.ToolResultData
+		if err := json.Unmarshal(event.Data, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Error == nil || result.Error.Code != wantErrors[result.ToolCallID] {
+			t.Fatalf("工具错误分类改变: %+v", result)
+		}
 	}
 	assertAttemptEvents(t, fixture.service, receipt.RunID, 4)
 }
@@ -455,7 +501,7 @@ func TestToolRetryExhaustionAndCancelWait(t *testing.T) {
 				// 协调器仍停在退避提交边界，先请求取消，再释放它进行收尾。
 				cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				if _, err := fixture.service.CancelRun(cancelCtx, receipt.RunID); !errors.Is(err, context.DeadlineExceeded) {
+				if _, err := fixture.service.CancelRun(cancelCtx, receipt.RunID); err != nil {
 					t.Fatal(err)
 				}
 			}

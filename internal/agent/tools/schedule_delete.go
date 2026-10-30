@@ -28,6 +28,30 @@ func ScheduleDeleteTools(port ScheduleDeletes) []Tool {
 
 type deleteScheduleTool struct{ port ScheduleDeletes }
 
+// ReadResult 以原参数和后台键查询正式删除回执，未命中不补做删除。
+func (t *deleteScheduleTool) ReadResult(ctx context.Context, raw string) (string, bool, error) {
+	reader, ok := t.port.(interface {
+		ReadScheduleDeleteReceipt(context.Context, int, int, string) (*model.ScheduleWrite, error)
+	})
+	key, _ := ctx.Value(executionKeyContext{}).(string)
+	if !ok || key == "" {
+		return "", false, nil
+	}
+	var input struct {
+		ID               int `json:"id"`
+		ExpectedRevision int `json:"expectedRevision"`
+	}
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return "", false, err
+	}
+	result, err := reader.ReadScheduleDeleteReceipt(ctx, input.ID, input.ExpectedRevision, key)
+	if err != nil || result == nil {
+		return "", false, err
+	}
+	output, err := encodeDeleteResult(result)
+	return output, err == nil, err
+}
+
 // Info 声明唯一目标及版本参数，不向模型暴露后台执行键。
 func (t *deleteScheduleTool) Info(context.Context) (*ToolInfo, error) {
 	positive := 1
@@ -72,6 +96,10 @@ func (t *deleteScheduleTool) InvokableRun(ctx context.Context, raw string) (stri
 	if err != nil {
 		return "", scheduleFailure(err)
 	}
+	return encodeDeleteResult(result)
+}
+
+func encodeDeleteResult(result *model.ScheduleWrite) (string, error) {
 	output := scheduleView(result.Schedule)
 	output["deleted"] = result.Schedule.Deleted
 	output["mutation"] = schedule.SummarizeScheduleWrite(result)

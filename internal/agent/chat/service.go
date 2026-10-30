@@ -301,6 +301,7 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 		}
 		now := time.Now()
 		r.FinishedAt = &now
+		call = s.readCancellationResults(call)
 		s.finish(call, r)
 		return
 	}
@@ -332,7 +333,9 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 		return
 	}
 	r.State = StateSucceeded
-	if run.requested {
+	if r.Error != nil && r.Error.Code == "persistence_failed" {
+		r.State = StateFailed
+	} else if run.requested {
 		r.State = StateCancelled
 		r.Error = nil
 	} else if r.Error != nil {
@@ -347,6 +350,32 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 	now := time.Now()
 	r.FinishedAt = &now
 	s.finish(call, r)
+}
+
+func (s *Runtime) readCancellationResults(call ModelCall) ModelCall {
+	if call.ID == 0 || s.toolStore == nil {
+		return call
+	}
+	stored, err := s.toolStore.ReadTools(context.Background(), call.ID)
+	if err != nil {
+		logger.Error("[chat] 取消恢复读取工具失败", "run_id", call.RunID, "model_call_id", call.ID, "error", err)
+		return call
+	}
+	for _, tool := range stored {
+		if tool.State != "running" || call.ToolCompleted(tool.Request.ID) {
+			continue
+		}
+		output, found, err := s.tools.ReadResult(tools.WithExecutionKey(context.Background(), tool.IdempotencyKey), tool.Request.Function.Name, tool.Request.Function.Arguments)
+		if err != nil {
+			logger.Warn("[chat] 取消恢复未确认业务回执", "run_id", call.RunID, "tool_call_id", tool.Request.ID, "error", err)
+		}
+		tool = tool.WithResultUnconfirmed()
+		if found {
+			tool.State, tool.Output, tool.Error = "succeeded", output, nil
+		}
+		call.PendingTools = append(call.PendingTools, tool)
+	}
+	return call
 }
 
 func (s *Runtime) finish(call ModelCall, r Record) {
@@ -408,7 +437,7 @@ func (s *Runtime) ListSessions(ctx context.Context) ([]string, error) {
 	return s.sessions.Sessions(ctx)
 }
 
-// CancelRun 中断无在途工具的模型请求，等候保存部分结果及唯一终态。
+// CancelRun 先持久化取消等待再停止后续推进，回执不表示工具已完成收尾。
 func (s *Runtime) CancelRun(ctx context.Context, id string) (Status, error) {
 	s.mu.Lock()
 	r, err := s.runs.ReadRun(ctx, id, true)
@@ -421,16 +450,16 @@ func (s *Runtime) CancelRun(ctx context.Context, id string) (Status, error) {
 		s.mu.Unlock()
 		return r.State.Public(), nil
 	}
-	run.requested = true
-	run.cancel()
-	s.mu.Unlock()
-	select {
-	case <-run.done:
-		current, err := s.runs.ReadRun(ctx, id, true)
-		return current.State.Public(), err
-	case <-ctx.Done():
-		return "", ctx.Err()
+	state, err := s.runs.RequestCancel(ctx, id)
+	if err != nil {
+		logger.Error("[chat] 保存取消等待失败", "run_id", id, "stage", "wait_for_cancel", "error", err)
 	}
+	if err == nil && !state.Terminal() {
+		run.requested = true
+		run.cancel()
+	}
+	s.mu.Unlock()
+	return state.Public(), err
 }
 
 // DeleteSession 先同步隐藏会话，再请求取消自有运行，不删除执行事实。

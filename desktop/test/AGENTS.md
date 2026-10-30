@@ -63,3 +63,7 @@
 - `chat_t04_configuration_test.dart`：本机 HTTP、真实 HttpChatGateway 和 ViewModel 验证明确配置 503 释放占用与中文提示，模型刷新后恢复可用并以新键发送新一轮；不替代后端真实 SQLite/模型适配器验收。
 - `chat_t02_history_test.dart`：本机真实 HttpServer、HttpChatGateway、ViewModel 与 Widget 验证分页/SSE 重叠去重及补缺、原始时间线与最终正文分离、204 恢复、按需翻页、重建后从零消费、取消收尾与取消投影回执，以及工具 ID 复用、原始 JSON 结果及折叠详情。覆盖取消查询先确认终态时补齐多页尾批、补读失败后的分页重试，以及在途旧页与取消补读串行应用；终态正文保持独立投影，已结束运行不因补读失败重新订阅或占用名额。工具事件来自协议夹具，不作为真实业务工具执行或等待工具取消的验收。
 - 同文件的 T06 展示测试使用已通过 Apifox 验收的查询对象与解析错误协议，验证交错结果按原 ID 配对、revision/参数/null 原始结果保留、工具错误不变成 run 错误，以及详情默认折叠和展开访问；真实工具执行由 Go 集成测试验证。
+
+- `chat_t02_history_test.dart` 的 T10 本机 HTTP 验证活动会话直接删除、历史立即隐藏、原 SSE 结束前保留占用、缺口 end 不触发隐藏历史补读和删除墓碑；取消投影与实际结束仍由原协议测试覆盖。
+- T10 删除回执丢失回归使用本机 HTTP 返回实际 session_not_found（400）确认隐藏，保留活动运行原 SSE 占用并阻止隐藏历史补读。
+- `chat_session_management_test.dart` 的活动删除测试在隐藏后保留原连接占用，收到取消 end 才释放，不再沿用运行中禁止删除的旧预期。

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -69,7 +70,7 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 				call.RetryHistory[len(call.RetryHistory)-1].Result = "running"
 			}
 			if err := s.execution.SaveEvents(ctx, call); err != nil {
-				if ctx.Err() != nil {
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 					return call, nil
 				}
 				return call, persistenceFailure()

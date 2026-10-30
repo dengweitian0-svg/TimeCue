@@ -10,3 +10,5 @@
 
 - 用例按 ModelService、RunService、SessionService 分别注入；HTTP Handler 只使用相应窄接口，App 通过独立 Lifecycle 管理启动与停止。
 - 创建 Handler 通过回执内部 NewlyCreated 元信息保持真正新建（含预算 failed）202、running 重放 202、终态重放 200；公开回执仍固定四字段。
+
+- 取消受理（含 wait_for_cancel 的 cancelled 投影及重复取消）返回 200，使用 Info 请求日志；已成功/失败的运行返回原终态并以 Warn 记录无效取消。回执不表示 end 已提交，SSE 及 finished_at 判断由服务层真实状态负责。

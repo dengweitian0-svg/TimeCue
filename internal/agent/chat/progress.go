@@ -197,8 +197,9 @@ func (call ModelCall) WithRunFinished(status RunState, stored []ToolCall) (Model
 		}
 		if !exists || tool.State == "running" || tool.State == "retry_wait" {
 			tool = tool.WithResultUnconfirmed()
-			if status == StateCancelled {
+			if status == StateCancelled && (!exists || known[request.ID].State == "retry_wait") {
 				tool.State = "skipped"
+				tool.Output = nil
 				tool.Error = toolError("tool_skipped", "运行已取消，未启动或未恢复此工具")
 			}
 		}
