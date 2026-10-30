@@ -362,3 +362,86 @@ func TestLengthOutputExcludesEarlierOrdinaryRound(t *testing.T) {
 		t.Fatalf("timeline lost original text: %s", text)
 	}
 }
+
+// TestLengthFeedbackKeepsPartialValuesAndBoundsDepth 验证补全不猜残缺字面值，深层片段仍能完成同批配对。
+func TestLengthFeedbackKeepsPartialValuesAndBoundsDepth(t *testing.T) {
+	cases := []struct {
+		id   string
+		raw  string
+		want string
+	}{
+		{
+			id:   "string",
+			raw:  `{"id":1,"name":"会议`,
+			want: `{"id":1,"name":"会议"}`,
+		},
+		{
+			id:   "literal",
+			raw:  `{"id":1,"flag":tru`,
+			want: `{"id":1}`,
+		},
+		{
+			id:   "number",
+			raw:  `{"id":1,"revision":12e`,
+			want: `{"id":1}`,
+		},
+		{
+			id:   "escape",
+			raw:  `{"id":1,"name":"会议\u4`,
+			want: `{"id":1}`,
+		},
+		{
+			id:   "deep",
+			raw:  `{"extra":` + strings.Repeat("[", 4096),
+			want: `{"extra":` + strings.Repeat("[", 4096) + strings.Repeat("]", 4096) + "}",
+		},
+		{
+			id:   "too-deep",
+			raw:  `{"extra":` + strings.Repeat("[", 10000),
+			want: "null",
+		},
+	}
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if calls.Add(1) == 1 {
+			var tools []chat.ToolRequest
+			for _, item := range cases {
+				tools = append(tools, toolRequest(item.id, "get_schedule", item.raw))
+			}
+			emitToolFinish(w, tools, "length")
+			return
+		}
+		var request chat.ModelRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		for _, item := range cases {
+			found := false
+			for _, message := range request.Messages {
+				if message.ToolCallID != item.id {
+					continue
+				}
+				found = true
+				var feedback struct {
+					Code    string          `json:"code"`
+					Context json.RawMessage `json:"context_arguments"`
+				}
+				if err := json.Unmarshal([]byte(message.Content), &feedback); err != nil || feedback.Code != "tool_argument_parse_error" || string(feedback.Context) != item.want {
+					t.Errorf("%s: context length=%d want length=%d error=%v", item.id, len(feedback.Context), len(item.want), err)
+				}
+			}
+			if !found {
+				t.Errorf("missing feedback %s", item.id)
+			}
+		}
+		emitText(w, "已收到参数错误")
+	}))
+	defer upstream.Close()
+	service, _, _ := newToolFixture(t, upstream.URL)
+	run := startToolRun(t, service, "partial-json")
+	if run.Status != chat.StatusSucceeded || calls.Load() != 2 {
+		t.Fatalf("run=%+v calls=%d", run, calls.Load())
+	}
+}

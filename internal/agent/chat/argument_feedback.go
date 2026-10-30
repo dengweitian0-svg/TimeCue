@@ -6,24 +6,24 @@ import (
 
 // partialJSONContext 只闭合已有容器和字符串；不完整字段或字面值整体省略，不推测业务值。
 func partialJSONContext(raw string) json.RawMessage {
+	type closing struct {
+		value  byte
+		parent *closing
+		depth  int
+	}
 	type boundary struct {
-		end  int
-		tail string
+		end   int
+		quote bool
+		stack *closing
 	}
 	var candidates []boundary
-	var stack []byte
+	var stack *closing
 	inString, escaped := false, false
 	remember := func(end int, quote bool) {
-		tail := ""
-		if quote {
-			tail = `"`
-		}
-		for i := len(stack) - 1; i >= 0; i-- {
-			tail += string(stack[i])
-		}
 		candidates = append(candidates, boundary{
-			end:  end,
-			tail: tail,
+			end:   end,
+			quote: quote,
+			stack: stack,
 		})
 	}
 	for i := 0; i < len(raw); i++ {
@@ -43,17 +43,29 @@ func partialJSONContext(raw string) json.RawMessage {
 		case '"':
 			inString = true
 		case '{', '[':
-			closing := byte('}')
+			value := byte('}')
 			if b == '[' {
-				closing = ']'
+				value = ']'
 			}
-			stack = append(stack, closing)
-			remember(i+1, false)
-		case '}', ']':
-			if len(stack) == 0 || stack[len(stack)-1] != b {
+			depth := 1
+			if stack != nil {
+				depth += stack.depth
+			}
+			// 与 encoding/json 的最大嵌套深度一致，超限片段不尝试补全。
+			if depth > 10000 {
 				return nil
 			}
-			stack = stack[:len(stack)-1]
+			stack = &closing{
+				value:  value,
+				parent: stack,
+				depth:  depth,
+			}
+			remember(i+1, false)
+		case '}', ']':
+			if stack == nil || stack.value != b {
+				return nil
+			}
+			stack = stack.parent
 			remember(i+1, false)
 		case ',', ' ', '\n', '\r', '\t':
 			remember(i, false)
@@ -65,7 +77,19 @@ func partialJSONContext(raw string) json.RawMessage {
 	}
 	for i := len(candidates) - 1; i >= 0; i-- {
 		candidate := candidates[i]
-		value := json.RawMessage(raw[:candidate.end] + candidate.tail)
+		depth := 0
+		if candidate.stack != nil {
+			depth = candidate.stack.depth
+		}
+		// 扫描时共享不可变栈，仅在验证候选时一次分配，避免逐层复制闭合串。
+		value := make(json.RawMessage, 0, candidate.end+depth+1)
+		value = append(value, raw[:candidate.end]...)
+		if candidate.quote {
+			value = append(value, '"')
+		}
+		for node := candidate.stack; node != nil; node = node.parent {
+			value = append(value, node.value)
+		}
 		if json.Valid(value) {
 			return value
 		}
