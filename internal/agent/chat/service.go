@@ -286,10 +286,7 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 	var err error
 	if previous != nil {
 		call = *previous
-		if call.Output != nil && call.Output.Message.Content != "" {
-			content := call.Output.Message.Content
-			r.Output = &content
-		}
+		r.Output = call.PresentedOutput()
 	}
 	// 取消恢复只保存已有事实，不重新登记或发送模型请求。
 	if r.State == StateWaitForCancel {

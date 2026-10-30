@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 )
@@ -70,6 +71,50 @@ func (call ModelCall) WithCallStarted() ModelCall {
 	return call.WithCheckpoint("model_call_start", CheckpointState{Context: call.Input.Messages})
 }
 
+// FollowupRequest 沿已接纳的完整配对快照生成后续请求，文字续写保留独立 user 边界。
+func (call ModelCall) FollowupRequest(continuation bool) ModelRequest {
+	request := call.Input
+	request.Messages = cloneMessages(call.CheckpointContext)
+	if continuation && len(call.Output.Message.ToolCalls) == 0 {
+		request.Messages = append(request.Messages, Message{
+			Role:    "user",
+			Content: "继续未完成的输出",
+		})
+	}
+	return request
+}
+
+// PresentedOutput 只拼接当前普通回复及其续写正文，不修改实际模型输出。
+func (call ModelCall) PresentedOutput() *string {
+	content := call.OutputPrefix
+	if call.Output != nil {
+		content += call.Output.Message.Content
+	}
+	if content == "" {
+		return nil
+	}
+	return &content
+}
+
+// WithContinuationBase 按实际请求的消息前缀恢复正文边界，不从事件重放或主键顺序猜测分组。
+func (call ModelCall) WithContinuationBase(base ModelRequest) (ModelCall, bool) {
+	if !call.Continuation || len(base.Messages) > len(call.Input.Messages) {
+		return call, false
+	}
+	actual, _ := json.Marshal(call.Input.Messages[:len(base.Messages)])
+	start, _ := json.Marshal(base.Messages)
+	if !bytes.Equal(actual, start) {
+		return call, false
+	}
+	call.OutputPrefix = ""
+	for _, message := range call.Input.Messages[len(base.Messages):] {
+		if message.Role == "assistant" {
+			call.OutputPrefix += message.Content
+		}
+	}
+	return call, true
+}
+
 // WithResponseAccepted 生成完整成功回复的待提交进度，提交成功后才可进入工具流程。
 func (call ModelCall) WithResponseAccepted() ModelCall {
 	call.State = StateSucceeded
@@ -124,6 +169,8 @@ func (call ModelCall) WithToolResult(tool ToolCall) ModelCall {
 	}
 	if tool.State == "skipped" {
 		content = "aborted"
+	} else {
+		content = call.toolFeedback(tool, content)
 	}
 	call.CheckpointContext = append(call.CheckpointContext, Message{
 		Role:       "tool",

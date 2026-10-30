@@ -1,5 +1,10 @@
 # Chat 模块
 
+- `tool_loop.go` 在正常 length 的回复/工具结果提交后创建 continuation=true 调用，默认每 run 5 次，按统一 chat.max_continue 热读并统计全部续写记录，不消耗普通轮数或原调用重试预算；未配齐原 ID 的工具结果不插入 user 请求。网络中断不触发长度续写，预算耗尽仅失败 run，保留实际成功调用。
+- `progress.go` 统一生成后续请求：文字/思考续写保留 assistant、独立 user“继续未完成的输出”、下一 assistant；工具续写沿原 tool 错误消息，不额外插入 user。正文投影只拼接最后普通轮及其续写；恢复按实际普通请求消息前缀确定边界，不按模型主键或事件重放猜分组，不新增持久化字段。
+- `argument_feedback.go` 仅为正常 length 的参数解析错误生成模型上下文反馈；闭合已有容器/字符串，省略未完成字段或字面值，不猜业务值，明确未执行业务且要求重新输出完整调用。原 model_call.output、tool_call.input/output/error、argument=null 事件均保持实际值；工具错误反馈与配对 checkpoint 同事务保存。
+- `continuation_test.go` 通过公共聊天用例、真实 SQLite/HTTP/日程验证正文与思考、混合工具批次、新调用 ID、上下文限定修复、预算耗尽、断流拒绝续写、重启原调用复用、普通轮边界及已有事件连续性。
+
 - `tool_attempts.go`：单 run 协调器按当前并发上限调度可并行/串行尝试，默认 3；串行与其他有效尝试互斥，不承诺 FIFO，退避项不阻挡其他就绪调用。每次开始前热读超时，默认 30 秒、尝试内固定；超时立即取消、结算并释放名额，token 隔离迟到返回，工具 goroutine 仅报告事实，不修改完整进度。已开始尝试在用户取消时仍等待原结果或原期限。
 - 工具首次开始固定当前 `tool_max_retry`（默认首次外 3 次）；仅 tool_timeout/tool_temporary_error 进入 5/10/20 秒指数退避，原记录、参数及适用键保持不变。retry_wait 保存错误/next_retry_at，不回填最终消息、不加入 completed_tool；实际重试前增加 retry_count，与 running/tool_use 原子保存。重启沿原期限与计数恢复，最后一次预算内执行仍允许启动。只有最终结果进入统一进度，全批完成才继续模型；取消退避统一保存 skipped/aborted。
 - `tool_attempts_test.go`：公共服务、真实 HTTP 模型适配器/SQLite/正式日程及可控阻塞工具验证执行区间、动态缩扩容、串行互斥、默认退避、重启与预算固定、期限热读、超时及迟到结果隔离、错误分类、预算耗尽、退避取消和真实删除回执复用。
@@ -39,7 +44,7 @@
 
 新 run 沿按创建时间选出的最新终态运行完整 checkpoint.context 接续，不按模型调用 ID 拼接历史、不重新补回已覆盖原文；checkpoint 保留实际消息顺序、后端请求及工具配对。failed/cancelled 的有效部分 assistant（含仅 thinking）保持原文，完全无输出不伪造空 assistant；独立 user 中断说明放在旧轮及其配对结果之后、本轮真实输入之前，保存到实际请求及 checkpoint，恢复直接复用原请求。原始事件始终按 run 创建时间及 run 内 seq 查询展示，不用事件回放恢复执行。
 
-创建前预算失败在创建事务中保存 failed、原输入、错误与 start/error/end，不登记 model_call、checkpoint 或 compact，不占执行名额。回执内部 NewlyCreated 仅区分 HTTP 首次创建和重放，不进入公开 JSON。普通轮数默认 20，可由统一 chat.max_rounds 配置；每次登记新普通调用前读取现有非 continuation 且不关联任何 compact 的逻辑调用数量。重试和未完成调用恢复不重复计数；已完成 tool_end 恢复沿完整快照登记下一调用，到达上限时仅失败运行，保留此前成功调用与进度。取消只读恢复遇到已终态调用时只结束 run，保留原调用与完整 checkpoint 工具配对。完整写入恢复、自动续写及摘要生成仍由对应后续切片交付。
+创建前预算失败在创建事务中保存 failed、原输入、错误与 start/error/end，不登记 model_call、checkpoint 或 compact，不占执行名额。回执内部 NewlyCreated 仅区分 HTTP 首次创建和重放，不进入公开 JSON。普通轮数默认 20，可由统一 chat.max_rounds 配置；每次登记新普通调用前读取现有非 continuation 且不关联任何 compact 的逻辑调用数量。重试和未完成调用恢复不重复计数；已完成 tool_end 恢复沿完整快照登记下一调用，到达上限时仅失败运行，保留此前成功调用与进度。取消只读恢复遇到已终态调用时只结束 run，保留原调用与完整 checkpoint 工具配对。正常长度自动续写已接通；完整写入恢复及摘要生成仍由对应后续切片交付。
 
 创建互斥区覆盖幂等查询、配置与准入检查及真实创建事务；提交失败不登记运行占用或幂等键。幂等只比较同会话中的原始 input，provider/model 不参与比较；已删除会话优先拒绝。running 与 wait_for_cancel 均占名额，历史和订阅不占名额，正常终态保存成功后由唯一协调器释放；持久化故障耗尽遵循下述例外。
 
@@ -47,7 +52,7 @@
 
 执行存储通过 SaveEvents 原子提交部分响应和原始事件批次，Pause/Finish 同事务保存未提交尾批；序号由存储事务分配，不缓存尚未提交的序号。正常退出中的真实保存失败仍按 persistence_failed 收尾；退出导致请求登记取消不冒充存储故障。
 
-缺少配置或 Key 不阻断启动与本地查询；拒绝真正新建，不回退固定回复。运行资源不依赖 HTTP 请求生命周期。内部 wait_for_cancel 与对外 cancelled 分开建模；完整写入恢复、自动续写和摘要由后续切片扩展。
+缺少配置或 Key 不阻断启动与本地查询；拒绝真正新建，不回退固定回复。运行资源不依赖 HTTP 请求生命周期。内部 wait_for_cancel 与对外 cancelled 分开建模；正常长度自动续写已接通；完整写入恢复和摘要由后续切片扩展。
 
 - `model_retry.go`：同一逻辑调用的有限重试与 5 秒起始指数退避，只有无有效输出的超时、网络、429/500/503 故障可重试。每次实际请求前重读 Key 和超时，原 input 与 max_retry 固定；计划退避及请求前 running 均先保存再推进。
 - `retry_test.go`：真实服务、SQLite、配置监听及可控 HTTP 验证重试成功、5/10/20 秒耗尽、零预算、部分输出、取消、退出/重启沿用原调用和最后一次许可，以及 Key/超时更新与预算固定。

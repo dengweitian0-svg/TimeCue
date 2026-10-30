@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
+	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
 	"github.com/google/uuid"
 )
 
@@ -246,6 +247,9 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 				if failure != nil {
 					tool.State = "failed"
 					tool.Error = toolError(failure.Code, failure.Message)
+					if failure.Code == "tool_argument_parse_error" {
+						logger.Warn("[chat] 工具参数不完整或 JSON 非法，未执行业务", "run_id", r.RunID, "model_call_id", tool.ModelCallID, "tool_call_id", tool.Request.ID)
+					}
 				}
 				select {
 				case results <- toolAttemptResult{

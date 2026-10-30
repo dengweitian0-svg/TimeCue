@@ -8,3 +8,6 @@ log:
 
 db:
   db_path: ./db/timecue.db
+
+chat:
+  max_continue: 5

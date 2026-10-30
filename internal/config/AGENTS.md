@@ -1,5 +1,7 @@
 # 配置管理
 
+- `chat.max_continue` 由 default.yaml 提供默认 5 次，缺省或 0 使用默认值，负数拒绝发布；沿统一配置覆盖、快照和目录监听热更新，由 ChatModels 提供协调器使用。chat_test.go 覆盖默认/覆盖/负数保留旧快照及真实热更新。
+
 - `chat.tool_concurrency`、`tool_timeout_seconds`、`tool_max_retry` 统一管理工具运行参数，默认 3/30/3；并发与超时的 0 使用默认值，显式零重试有效，负数拒绝发布。调度及每次尝试读取当前值，读取失败时保留批次最近有效工具参数，逻辑工具预算首次登记后固定；CurrentConfig 深拷贝工具重试指针。
 
 管理应用元数据、日志、数据库及聊天模型配置。
