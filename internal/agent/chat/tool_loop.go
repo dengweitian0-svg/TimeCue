@@ -24,7 +24,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 		}
 		if call.State == StateSucceeded && (call.CheckpointStage == "tool_end" || !hasTools) {
 			continuation := call.Output != nil && call.Output.FinishReason == "length"
-			if !hasTools && !continuation {
+			if !hasTools && !continuation && call.CheckpointStage != "tool_end" {
 				return call, nil
 			}
 			var ok bool

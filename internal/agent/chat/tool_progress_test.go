@@ -378,6 +378,7 @@ func assertToolResultOrder(t *testing.T, service chat.RunService, run string, in
 		t.Fatal(err)
 	}
 	results := []chat.Message{}
+	actualResults := cloneToolResultMessages(input.Messages)
 	starts := map[string]int{}
 	for index, event := range page.Events {
 		if event.ID != int64(index+1) {
@@ -398,6 +399,23 @@ func assertToolResultOrder(t *testing.T, service chat.RunService, run string, in
 			content := string(data.Output)
 			if data.Error != nil {
 				content = mustJSON(data.Error)
+				if data.Error.Code == "tool_argument_parse_error" {
+					for i := range actualResults {
+						if actualResults[i].ToolCallID != data.ToolCallID {
+							continue
+						}
+						var feedback struct {
+							chat.RunError
+							Context json.RawMessage `json:"context_arguments"`
+							Notice  string          `json:"notice"`
+						}
+						if err := json.Unmarshal([]byte(actualResults[i].Content), &feedback); err != nil || feedback.RunError != *data.Error || string(feedback.Context) != "{}" || !strings.Contains(feedback.Notice, "未执行业务") {
+							t.Fatalf("截断参数反馈未保留原错误或用途边界: %+v %v", feedback, err)
+						}
+						// 额外上下文字段已单独核验，剩余配对与次序继续和原始事件严格比较。
+						actualResults[i].Content = content
+					}
+				}
 			}
 			results = append(results, chat.Message{
 				Role:       "tool",
@@ -406,7 +424,7 @@ func assertToolResultOrder(t *testing.T, service chat.RunService, run string, in
 			})
 		}
 	}
-	if len(results) != len(calls) || len(input.Messages) != len(calls)+2 || !reflect.DeepEqual(input.Messages[2:], results) {
+	if len(results) != len(calls) || len(input.Messages) != len(calls)+2 || !reflect.DeepEqual(actualResults, results) {
 		t.Fatalf("模型未按真实接纳次序接收全批结果: input=%s events=%s", mustJSON(input), mustJSON(page))
 	}
 	var actual []chat.ToolRequest
@@ -420,4 +438,14 @@ func assertToolResultOrder(t *testing.T, service chat.RunService, run string, in
 		}
 		seen[result.ToolCallID] = true
 	}
+}
+
+func cloneToolResultMessages(messages []chat.Message) []chat.Message {
+	var results []chat.Message
+	for _, message := range messages {
+		if message.Role == "tool" {
+			results = append(results, message)
+		}
+	}
+	return results
 }
