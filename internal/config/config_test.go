@@ -92,8 +92,6 @@ func TestReloadConfigKeepsPreviousSnapshotOnFailure(t *testing.T) {
 	if err := manager.LoadConfig(); err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	// 同步重载断言只观察本次调用，目录监听的中间读取由热更新测试覆盖。
-	manager.Close()
 
 	previousPointer := manager.currentCfg.Load()
 	previous, err := manager.CurrentConfig()
