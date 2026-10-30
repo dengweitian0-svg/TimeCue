@@ -2,10 +2,17 @@ package chat
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 // partialJSONContext 只闭合已有容器和字符串；不完整字段或字面值整体省略，不推测业务值。
 func partialJSONContext(raw string) json.RawMessage {
+	// 扫描和候选校验共用 1 MiB 字节预算，避免上下文辅助补全长时间占用结果事务。
+	remaining := 1 << 20
+	if len(raw) > remaining {
+		return nil
+	}
+	remaining -= len(raw)
 	type closing struct {
 		value  byte
 		parent *closing
@@ -67,8 +74,13 @@ func partialJSONContext(raw string) json.RawMessage {
 			}
 			stack = stack.parent
 			remember(i+1, false)
-		case ',', ' ', '\n', '\r', '\t':
+		case ',':
 			remember(i, false)
+		case ' ', '\n', '\r', '\t':
+			// 字符串外连续空白只有首个位置形成不同的语法边界。
+			if i == 0 || !strings.ContainsRune(" \t\r\n", rune(raw[i-1])) {
+				remember(i, false)
+			}
 		}
 	}
 	// 不补齐未完成的转义或数字/布尔字面值，json.Valid 只接受已有完整 token。
@@ -81,8 +93,16 @@ func partialJSONContext(raw string) json.RawMessage {
 		if candidate.stack != nil {
 			depth = candidate.stack.depth
 		}
+		length := candidate.end + depth
+		if candidate.quote {
+			length++
+		}
+		if length > remaining {
+			return nil
+		}
+		remaining -= length
 		// 扫描时共享不可变栈，仅在验证候选时一次分配，避免逐层复制闭合串。
-		value := make(json.RawMessage, 0, candidate.end+depth+1)
+		value := make(json.RawMessage, 0, length)
 		value = append(value, raw[:candidate.end]...)
 		if candidate.quote {
 			value = append(value, '"')

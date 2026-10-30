@@ -400,6 +400,11 @@ func TestLengthFeedbackKeepsPartialValuesAndBoundsDepth(t *testing.T) {
 			raw:  `{"extra":` + strings.Repeat("[", 10000),
 			want: "null",
 		},
+		{
+			id:   "validation-budget",
+			raw:  `{"id":?` + strings.Repeat(`,"extra":1`, 2048),
+			want: "null",
+		},
 	}
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -443,5 +448,124 @@ func TestLengthFeedbackKeepsPartialValuesAndBoundsDepth(t *testing.T) {
 	run := startToolRun(t, service, "partial-json")
 	if run.Status != chat.StatusSucceeded || calls.Load() != 2 {
 		t.Fatalf("run=%+v calls=%d", run, calls.Load())
+	}
+}
+
+// TestLengthFeedbackLongWhitespacePreservesRawFacts 验证长空白候选合并、字符串空白保留与超预算安全降级。
+func TestLengthFeedbackLongWhitespacePreservesRawFacts(t *testing.T) {
+	cases := []struct {
+		id   string
+		raw  string
+		want string
+	}{
+		{
+			id:   "whitespace",
+			raw:  `{"id":` + strings.Repeat(" \t\r\n", 32<<10),
+			want: "{}",
+		},
+		{
+			id:   "string-spaces",
+			raw:  `{"name":"会议` + strings.Repeat(" ", 128<<10),
+			want: `{"name":"会议` + strings.Repeat(" ", 128<<10) + `"}`,
+		},
+		{
+			id:   "scan-budget",
+			raw:  `{"id":` + strings.Repeat(" ", 1<<20),
+			want: "null",
+		},
+	}
+	inputs := make(chan chat.ModelRequest, 1)
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if calls.Add(1) == 1 {
+			requests := []chat.ToolRequest{toolRequest("complete", "get_schedule", `{"id":1}`)}
+			for _, item := range cases {
+				requests = append(requests, toolRequest(item.id, "get_schedule", item.raw))
+			}
+			emitToolFinish(w, requests, "length")
+			return
+		}
+		var request chat.ModelRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		inputs <- request
+		emitText(w, "已保留原始错误及同批结果")
+	}))
+	defer upstream.Close()
+	old, storage, application := newToolFixture(t, upstream.URL)
+	old.Stop()
+	settings := func() ([]chat.ModelConfig, error) {
+		configs, err := toolSettings(upstream.URL)()
+		// 压力输入由可控上游构造，扩大上下文以验证工具补全而非下一轮预算拒绝。
+		configs[0].ContextWindow = 2 << 20
+		return configs, err
+	}
+	service := chat.NewService(storage, completion.NewClient(nil), settings, queryRegistry(t, application))
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Stop)
+	run := startToolRun(t, service, "whitespace-feedback")
+	if run.Status != chat.StatusSucceeded || calls.Load() != 2 {
+		t.Fatalf("run=%+v calls=%d", run, calls.Load())
+	}
+	request := <-inputs
+	if len(request.Messages) != 6 {
+		t.Fatalf("unexpected message count: %d", len(request.Messages))
+	}
+	var originals []chat.ToolRequest
+	if err := json.Unmarshal(request.Messages[1].ToolCalls, &originals); err != nil || len(originals) != 4 {
+		t.Fatalf("original calls: count=%d err=%v", len(originals), err)
+	}
+	for index, item := range cases {
+		if originals[index+1].ID != item.id || originals[index+1].Function.Arguments != item.raw {
+			t.Fatalf("%s: original arguments changed", item.id)
+		}
+		found := false
+		for _, message := range request.Messages[2:] {
+			if message.ToolCallID != item.id {
+				continue
+			}
+			found = true
+			var feedback struct {
+				Code    string          `json:"code"`
+				Context json.RawMessage `json:"context_arguments"`
+				Notice  string          `json:"notice"`
+			}
+			if err := json.Unmarshal([]byte(message.Content), &feedback); err != nil || feedback.Code != "tool_argument_parse_error" || string(feedback.Context) != item.want || !strings.Contains(feedback.Notice, "未执行业务") {
+				t.Fatalf("%s: feedback context length=%d want=%d err=%v", item.id, len(feedback.Context), len(item.want), err)
+			}
+		}
+		if !found {
+			t.Fatalf("missing feedback %s", item.id)
+		}
+	}
+	page := eventPage(t, service, run.RunID, 0, 100)
+	results := map[string]bool{}
+	for _, event := range page.Events {
+		if event.Type != chat.EventToolResult {
+			continue
+		}
+		var data chat.ToolResultData
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+		if results[data.ToolCallID] {
+			t.Fatalf("duplicate result %s", data.ToolCallID)
+		}
+		results[data.ToolCallID] = true
+		if data.ToolCallID == "complete" {
+			if data.Error != nil || !strings.Contains(string(data.Output), "真实会议") {
+				t.Fatalf("valid sibling failed: %s", event.Data)
+			}
+		} else if data.Error == nil || data.Error.Code != "tool_argument_parse_error" || string(data.Output) != "null" || strings.Contains(string(event.Data), "context_arguments") {
+			t.Fatalf("raw error changed: %s", event.Data)
+		}
+	}
+	if len(results) != 4 {
+		t.Fatalf("missing results: %v", results)
 	}
 }
