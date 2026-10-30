@@ -29,6 +29,7 @@ type ChatModel struct {
 // ChatRuntime 是模型请求的统一运行参数，零值使用默认值。
 type ChatRuntime struct {
 	MaxRounds           int  `mapstructure:"max_rounds"`
+	MaxContinue         int  `mapstructure:"max_continue"`
 	MaxRetry            *int `mapstructure:"max_retry"`
 	FirstTimeoutSeconds int  `mapstructure:"first_timeout_seconds"`
 	IdleTimeoutSeconds  int  `mapstructure:"idle_timeout_seconds"`
@@ -63,7 +64,7 @@ func validateChatConfig(cfg *Config) error {
 			keys[key] = true
 		}
 	}
-	if cfg.Chat.MaxRetry != nil && *cfg.Chat.MaxRetry < 0 || cfg.Chat.MaxRounds < 0 || cfg.Chat.FirstTimeoutSeconds < 0 || cfg.Chat.IdleTimeoutSeconds < 0 {
+	if cfg.Chat.MaxRetry != nil && *cfg.Chat.MaxRetry < 0 || cfg.Chat.MaxRounds < 0 || cfg.Chat.MaxContinue < 0 || cfg.Chat.FirstTimeoutSeconds < 0 || cfg.Chat.IdleTimeoutSeconds < 0 {
 		return fmt.Errorf("chat rounds, retry and timeouts must not be negative")
 	}
 	if cfg.Chat.ToolConcurrency < 0 || cfg.Chat.ToolTimeoutSeconds < 0 || cfg.Chat.ToolMaxRetry != nil && *cfg.Chat.ToolMaxRetry < 0 {
@@ -109,6 +110,10 @@ func (m *Manager) ChatModels() ([]chat.ModelConfig, error) {
 			if rounds == 0 {
 				rounds = 20
 			}
+			continues := cfg.Chat.MaxContinue
+			if continues == 0 {
+				continues = 5
+			}
 			if cfg.Chat.FirstTimeoutSeconds > 0 {
 				first = cfg.Chat.FirstTimeoutSeconds
 			}
@@ -140,6 +145,7 @@ func (m *Manager) ChatModels() ([]chat.ModelConfig, error) {
 				MaxOutputTokens: output,
 				MaxRetry:        retries,
 				MaxRounds:       rounds,
+				MaxContinue:     continues,
 				FirstTimeout:    time.Duration(first) * time.Second,
 				IdleTimeout:     time.Duration(idle) * time.Second,
 				ToolConcurrency: toolConcurrency,

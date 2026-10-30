@@ -181,6 +181,7 @@ type ModelConfig struct {
 	MaxOutputTokens int
 	MaxRetry        int
 	MaxRounds       int
+	MaxContinue     int
 	FirstTimeout    time.Duration
 	IdleTimeout     time.Duration
 	ToolConcurrency int
@@ -294,6 +295,9 @@ type ModelCall struct {
 	RetryCount   int
 	NextRetryAt  *time.Time
 	RetryHistory []ModelRetry
+	Continuation bool
+	// OutputPrefix 是从实际请求边界恢复的本轮已接纳正文，不单独写入数据库。
+	OutputPrefix string
 	// 进度字段是单一事实来源，由 progress.go 的完整操作生成，协调器仅采用成功提交的快照。
 	CheckpointStage   string
 	CheckpointContext []Message
@@ -344,6 +348,8 @@ type ExecutionRepository interface {
 	History(context.Context, string) ([]Message, error)
 	// OrdinaryCallCount 统计当前运行中非续写且不关联 compact 的逻辑模型调用。
 	OrdinaryCallCount(context.Context, string) (int, error)
+	// ContinuationCallCount 统计当前运行内全部逻辑续写，包含摘要续写。
+	ContinuationCallCount(context.Context, string) (int, error)
 	// BeginCall 原子保存请求 input、running 和 checkpoint。
 	BeginCall(context.Context, ModelCall) (int64, error)
 	// ReadCall 读取当前逻辑调用的原请求与部分结果。

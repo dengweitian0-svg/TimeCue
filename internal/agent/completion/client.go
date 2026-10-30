@@ -208,7 +208,7 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 		return output, failure("model_network_error")
 	}
 	// 正常长度截断的工具逐条校验，完整同批请求不能随坏参数一起丢弃；文字自动续写另由续写流程负责。
-	if output.FinishReason != "stop" && output.FinishReason != "tool_calls" && !(output.FinishReason == "length" && len(toolCalls) > 0) {
+	if output.FinishReason != "stop" && output.FinishReason != "tool_calls" && output.FinishReason != "length" {
 		return output, failure("model_invalid_format")
 	}
 	if output.FinishReason == "tool_calls" && len(toolCalls) == 0 {

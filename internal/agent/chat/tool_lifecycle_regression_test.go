@@ -263,6 +263,20 @@ func TestToolShutdownPreservesRetryableAttempt(t *testing.T) {
 	}
 }
 
+type slowCancelStorage struct{ chat.RunRepository }
+
+// RequestCancel 在真实取消保存入口模拟慢存储，避免用毫秒级请求期限断言业务取消行为。
+func (s slowCancelStorage) RequestCancel(ctx context.Context, id string) (chat.RunState, error) {
+	timer := time.NewTimer(50 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-timer.C:
+		return s.RunRepository.RequestCancel(ctx, id)
+	}
+}
+
 // TestToolCancellationDoesNotPreserveRetryOnShutdown 验证用户取消优先于正常退出，不保留后续重试。
 func TestToolCancellationDoesNotPreserveRetryOnShutdown(t *testing.T) {
 	for _, stop := range []bool{false, true} {
@@ -282,6 +296,9 @@ func TestToolCancellationDoesNotPreserveRetryOnShutdown(t *testing.T) {
 					}
 				},
 			})
+			fixture.service.Stop()
+			fixture.storage.Runs = slowCancelStorage{RunRepository: fixture.storage.Runs}
+			fixture.restart()
 			var once sync.Once
 			t.Cleanup(func() { once.Do(func() { close(release) }) })
 			receipt := createAttemptRun(t, fixture.service, "cancel-shutdown")
@@ -300,13 +317,14 @@ func TestToolCancellationDoesNotPreserveRetryOnShutdown(t *testing.T) {
 					time.Sleep(time.Millisecond)
 				}
 			}
-			cancelCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			// 请求期限只防止测试挂起，不把取消意图的真实落库限制在二十毫秒内。
+			cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if _, err := fixture.service.CancelRun(cancelCtx, receipt.RunID); err != nil {
-				t.Fatalf("未进入在途取消: %v", err)
+			if status, err := fixture.service.CancelRun(cancelCtx, receipt.RunID); err != nil || status != chat.StatusCancelled {
+				t.Fatalf("未进入在途取消: status=%s err=%v", status, err)
 			}
 			once.Do(func() { close(release) })
-			run := awaitFinishedRun(t, fixture.service, receipt.RunID)
+			run := awaitFinishedRunWithin(t, fixture.service, receipt.RunID, 30*time.Second)
 			call, err := fixture.storage.Execution.ReadCall(context.Background(), receipt.RunID)
 			if err != nil || call == nil {
 				t.Fatal(call, err)

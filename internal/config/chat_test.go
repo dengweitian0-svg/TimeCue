@@ -7,6 +7,50 @@ import (
 	"time"
 )
 
+// TestChatContinuationLimitUsesPublishedConfig 验证默认续写预算、用户覆盖、负数拒绝及快照保留。
+func TestChatContinuationLimitUsesPublishedConfig(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	models := "chat_model:\n  - provider: test\n    base_url: https://example.test\n    models:\n      - model: model\n        context_window: 32768\n"
+	if err := os.WriteFile(path, []byte(models), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if err := manager.LoadConfig(); err != nil {
+		t.Fatal(err)
+	}
+	manager.Close()
+	configs, err := manager.ChatModels()
+	if err != nil || len(configs) != 1 || configs[0].MaxContinue != 5 {
+		t.Fatalf("default budget: %+v %v", configs, err)
+	}
+	for _, budget := range []string{"2", "-1", "0"} {
+		if err := os.WriteFile(path, []byte(models+"chat:\n  max_continue: "+budget+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		err := manager.LoadConfig()
+		if budget == "-1" {
+			if err == nil {
+				t.Fatal("negative budget accepted")
+			}
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		configs, err = manager.ChatModels()
+		want := 2
+		if budget == "0" {
+			want = 5
+		}
+		if err != nil || configs[0].MaxContinue != want {
+			t.Fatalf("budget=%s configs=%+v err=%v", budget, configs, err)
+		}
+	}
+}
+
 // TestChatRejectsNormalizedKeyCollision 验证密钥名规范化冲突拒绝发布配置。
 func TestChatRejectsNormalizedKeyCollision(t *testing.T) {
 	directory := t.TempDir()
@@ -125,13 +169,13 @@ func TestChatSecretsAndTimeoutsReloadFromFixedDataDirectory(t *testing.T) {
 	if err != nil || configs[0].Key != "" {
 		t.Fatal("删除 .env 没有生效")
 	}
-	if err = os.WriteFile(configPath, []byte(models+"chat:\n  max_retry: 0\n  max_rounds: 7\n  first_timeout_seconds: 7\n  idle_timeout_seconds: 4\n  tool_concurrency: 2\n  tool_timeout_seconds: 8\n  tool_max_retry: 0\n"), 0600); err != nil {
+	if err = os.WriteFile(configPath, []byte(models+"chat:\n  max_retry: 0\n  max_rounds: 7\n  max_continue: 2\n  first_timeout_seconds: 7\n  idle_timeout_seconds: 4\n  tool_concurrency: 2\n  tool_timeout_seconds: 8\n  tool_max_retry: 0\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		configs, err = manager.ChatModels()
-		if err == nil && configs[0].MaxRetry == 0 && configs[0].MaxRounds == 7 && configs[0].FirstTimeout == 7*time.Second && configs[0].IdleTimeout == 4*time.Second && configs[0].ToolConcurrency == 2 && configs[0].ToolTimeout == 8*time.Second && *configs[0].ToolMaxRetry == 0 {
+		if err == nil && configs[0].MaxRetry == 0 && configs[0].MaxRounds == 7 && configs[0].MaxContinue == 2 && configs[0].FirstTimeout == 7*time.Second && configs[0].IdleTimeout == 4*time.Second && configs[0].ToolConcurrency == 2 && configs[0].ToolTimeout == 8*time.Second && *configs[0].ToolMaxRetry == 0 {
 			break
 		}
 		if time.Now().After(deadline) {

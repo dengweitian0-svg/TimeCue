@@ -326,6 +326,17 @@ func (s *chatStore) OrdinaryCallCount(ctx context.Context, run string) (int, err
 	return count, err
 }
 
+// ContinuationCallCount 复用版本 3 的用途标记，重试和重启不重复计数。
+func (s *chatStore) ContinuationCallCount(ctx context.Context, run string) (int, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_model_calls WHERE run_id=? AND continuation=1`, run).Scan(&count)
+	return count, err
+}
+
 func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO ai_checkpoints(run_id,model_call_id,status,state) VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET model_call_id=excluded.model_call_id,status=excluded.status,state=excluded.state`, call.RunID, call.ID, call.CheckpointStage, jsonValue(call.Checkpoint()))
 	return err
@@ -335,7 +346,7 @@ func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall) error {
 func (s *chatStore) BeginCall(ctx context.Context, call chat.ModelCall) (int64, error) {
 	var id int64
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `INSERT INTO ai_model_calls(run_id,session_id,input,status,max_retry,created_at) VALUES(?,?,?,'running',?,?)`, call.RunID, call.SessionID, jsonValue(call.Input), call.MaxRetry, time.Now().UnixNano())
+		result, err := tx.ExecContext(ctx, `INSERT INTO ai_model_calls(run_id,session_id,input,status,max_retry,continuation,created_at) VALUES(?,?,?,'running',?,?,?)`, call.RunID, call.SessionID, jsonValue(call.Input), call.MaxRetry, call.Continuation, time.Now().UnixNano())
 		if err != nil {
 			return err
 		}
@@ -363,7 +374,7 @@ func readCall(ctx context.Context, reader schemaReader, id string) (*chat.ModelC
 	var input, retries, progress string
 	var nextRetry sql.NullInt64
 	var output, failure sql.NullString
-	err := reader.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.status,m.error,m.max_retry,m.retry_count,m.next_retry_at,m.retry_history,c.status,c.state FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &call.State, &failure, &call.MaxRetry, &call.RetryCount, &nextRetry, &retries, &call.CheckpointStage, &progress)
+	err := reader.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.status,m.error,m.max_retry,m.retry_count,m.next_retry_at,m.retry_history,m.continuation,c.status,c.state FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &call.State, &failure, &call.MaxRetry, &call.RetryCount, &nextRetry, &retries, &call.Continuation, &call.CheckpointStage, &progress)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -392,6 +403,31 @@ func readCall(ctx context.Context, reader schemaReader, id string) (*chat.ModelC
 	}
 	if failure.Valid {
 		if err = json.Unmarshal([]byte(failure.String), &call.Error); err != nil {
+			return nil, err
+		}
+	}
+	if call.Continuation {
+		// 选取与实际续写 input 匹配的最长普通请求前缀；摘要调用不形成正文起点。
+		rows, err := reader.QueryContext(ctx, `SELECT m.input FROM ai_model_calls m WHERE m.run_id=? AND m.continuation=0 AND NOT EXISTS(SELECT 1 FROM ai_events e WHERE e.model_call_id=m.id AND e.type='compact') ORDER BY json_array_length(m.input,'$.messages') DESC`, id)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw string
+			if err := rows.Scan(&raw); err != nil {
+				return nil, err
+			}
+			var base chat.ModelRequest
+			if err := json.Unmarshal([]byte(raw), &base); err != nil {
+				return nil, err
+			}
+			if restored, ok := call.WithContinuationBase(base); ok {
+				*call = restored
+				break
+			}
+		}
+		if err := rows.Err(); err != nil {
 			return nil, err
 		}
 	}
