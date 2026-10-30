@@ -497,6 +497,11 @@ func TestLengthFeedbackLongWhitespacePreservesRawFacts(t *testing.T) {
 	defer upstream.Close()
 	old, storage, application := newToolFixture(t, upstream.URL)
 	old.Stop()
+	committed := make(chan error, 1)
+	storage.Execution = observedSlowFinish{
+		ExecutionRepository: storage.Execution,
+		committed:           committed,
+	}
 	settings := func() ([]chat.ModelConfig, error) {
 		configs, err := toolSettings(upstream.URL)()
 		// 压力输入由可控上游构造，扩大上下文以验证工具补全而非下一轮预算拒绝。
@@ -508,7 +513,31 @@ func TestLengthFeedbackLongWhitespacePreservesRawFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(service.Stop)
-	run := startToolRun(t, service, "whitespace-feedback")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	receipt, err := service.CreateRun(ctx, chat.CreateRunInput{
+		SessionID:      "whitespace-feedback",
+		Input:          "查询日程",
+		Provider:       "test",
+		Model:          "model",
+		IdempotencyKey: "query",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 按真实事务回执同步，不将大参数的落库耗时误当成补全性能契约。
+	select {
+	case err := <-committed:
+		if err != nil {
+			t.Fatalf("终态提交失败: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("未收到终态提交回执: %v", ctx.Err())
+	}
+	run, err := service.GetRun(ctx, receipt.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if run.Status != chat.StatusSucceeded || calls.Load() != 2 {
 		t.Fatalf("run=%+v calls=%d", run, calls.Load())
 	}
