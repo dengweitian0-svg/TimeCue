@@ -24,6 +24,45 @@ kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
 kernel.OpenProcess.restype = ctypes.c_void_p
 kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
 kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+kernel.LocalFree.argtypes = [ctypes.c_void_p]
+
+
+def executable_integrity_level(path):
+    """只读 EXE 的强制完整性标签；无显式标签时返回未知，不修改文件安全属性。"""
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    security.GetNamedSecurityInfoW.argtypes = [wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+                                             ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                                             ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p)]
+    security.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    security.GetAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    security.GetSidSubAuthority.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    security.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
+    sacl, descriptor = ctypes.c_void_p(), ctypes.c_void_p()
+    status = security.GetNamedSecurityInfoW(str(path), 1, 0x10, None, None, None,
+                                           ctypes.byref(sacl), ctypes.byref(descriptor))
+    if status:
+        raise OSError(status, "无法读取发行程序的完整性标签")
+    try:
+        if sacl.value:
+            # ACL 头偏移 4 处为 ACE 数量；强制标签 ACE 的 SID 位于头和 mask 之后。
+            count = ctypes.c_ushort.from_address(sacl.value + 4).value
+            for index in range(count):
+                ace = ctypes.c_void_p()
+                if not security.GetAce(sacl, index, ctypes.byref(ace)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if ctypes.c_ubyte.from_address(ace.value).value == 0x11:
+                    return security.GetSidSubAuthority(ace.value + 8, 0).contents.value
+        return None
+    finally:
+        kernel.LocalFree(descriptor)
+
+
+integrity = executable_integrity_level(app)
+if integrity is not None and integrity < 8192:
+    raise SystemExit(
+        f"发行验收未启动：程序继承了低完整性标签（{integrity}），无法登记用户安装目录。"
+        "请从普通 Windows 终端将发行 ZIP 解压到此工作区以外的新目录后再验证；"
+        "切换终端直接运行原 EXE 不会移除文件标签。")
 
 
 class ProcessEntry(ctypes.Structure):

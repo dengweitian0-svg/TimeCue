@@ -124,6 +124,8 @@ git switch -c feat/12-recurring-reminder
 - 本地运行：在 `desktop/` 执行 `flutter run -d windows --debug -a --backend=managed -a --data-dir=<仓库绝对目录>`，Flutter 会启动同目录 Go 服务并使用 1145；Profile 同样使用 1145。已有实例切换 backend 前需完整退出，Go 源码更改需退出并重新运行 Flutter，热重载不会重建 Go。独立后端联调可先在根目录运行 `go run ./cmd/flutter --data-dir=<仓库绝对目录> --port 1145`，再用 `flutter run -d windows --debug -a --backend=external -a --data-dir=<仓库绝对目录>` 启动；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
 `dev` 和 `main` 的 Required Checks 均使用现有 `Go Windows Checks` 和 `Flutter Windows Checks` 两项，无需配置新的检查名。dev 按路径选择检查，按路径跳过的 job 在 GitHub 中显示为 skipped，并视为成功；纯文档 dev PR 仍会运行轻量分类。main PR 不按路径跳过：Go job 执行 Go 检查，Flutter job 执行 Python、Flutter 检查、完整 Windows 发布构建和原生验证。Python 更新脚本检查由 `Flutter Windows Checks` 承载，无需新增 required check 名称。dev 集成工作流在合并后运行，失败时先修复或回退 dev 变更；纯文档 push 不触发集成构建。手动运行 `release-package.yml` 才会上传发行包。CI 通过后再合并 PR。
 
+dev 集成工作流在完整发行构建和原生 CTest 后运行 `scripts/release-smoke.py`，核验正式入口、版本 3 空聊天会话、传统日程写入与重启、重复启动和宿主崩溃后的自有 Go 回收。测试只使用新建隔离目录；若本机 EXE 继承了工作区 `Low Mandatory Level` 标签，需使用普通目录中的发行包验证，不能通过修改用户注册表或工作区权限让测试通过。脚本在启动前报告该标签，原生登记失败会显示实际进程完整性级别。
+
 ## main 分支策略
 
 `main` 只接受本仓库 `dev → main` 且由发布负责人 dengweitian0-svg 提出的版本发布 PR。protect-main.yml 对不满足条件的 PR 留言并关闭；所有 main PR 均由现有 `Go Windows Checks` 和 `Flutter Windows Checks` 执行完整验证，合法来源由 protect-main 管理。

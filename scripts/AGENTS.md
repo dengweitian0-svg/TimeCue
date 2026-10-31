@@ -11,4 +11,5 @@
 - 脚本不包含业务数据库、用户配置、日志或签名凭据，不发布 GitHub Release。
 - 打包将 Flutter 构建目标的相对/绝对路径规范化后与 desktop/lib/main.dart 比较，再检查 DART_DEFINES；拒绝测试入口或 TIMECUE_DEMO=true。清单中的 Flutter 版本和渠道来自生成配置所指 SDK 的版本文件，避免依赖 DART_DEFINES 或当前 PATH；同时记录工作区是否有未提交内容。
 - `release-smoke.py --package <发行目录>`：在 `.gotmp-release-smoke/` 使用全新隔离中文路径，验证首次运行、版本 3 与无聊天种子、正式接口写入/重启保留、普通重复启动及宿主强退后的 Job 清理；通过 Windows 只读进程快照核对服务父 PID，只结束自身宿主，不操作用户实例，端口占用时拒绝测试。
+- 发行 smoke 在启动前只读核对 EXE 完整性标签；低于 Medium 时直接说明标签限制并拒绝启动，不修改文件标签、注册表权限或把失败记为通过。
 - `update.py`：发行目录中随 ZIP 一起交付；运行 `python update.py` 更新已登记安装，旧版可从新发行目录运行 `python update.py --register <绝对安装目录>` 登记当前用户安装路径。
