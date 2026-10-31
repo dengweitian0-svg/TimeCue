@@ -11,6 +11,7 @@ import (
 type eventBatch struct {
 	mu         sync.Mutex
 	repository ExecutionRepository
+	context    func() context.Context
 	call       ModelCall
 	partial    ModelOutput
 	timer      *time.Timer
@@ -65,7 +66,7 @@ func (b *eventBatch) flush() {
 		b.timer.Stop()
 		b.timer = nil
 	}
-	if err := b.repository.SaveEvents(context.Background(), b.call); err != nil {
+	if err := b.repository.SaveEvents(b.context(), b.call); err != nil {
 		b.failure = err
 		b.cancel()
 		return

@@ -1,5 +1,7 @@
 # Chat Completions 适配器
 
+- 完整响应的完成原因与工具身份由 chat.ModelOutput.ValidateResponse 统一校验，正常适配与生命周期恢复遵循同一规则；网络中断与未完成增量仍不接纳为工具执行依据。
+
 - `client.go`：官方 openai-go/v3 SDK 的流式调用与响应转换、reasoning_content/content、响应 ID、finish_reason 与原始 usage；上游错误映射及首次有效输出、空闲超时。
 - `client_test.go`：真实 HTTP/SSE 验证七类上游错误及脱敏、未分类 HTTP 不冒充可重试 500、保活不延长期限、首次/空闲及传输超时、断流部分正文和原始 usage。
 

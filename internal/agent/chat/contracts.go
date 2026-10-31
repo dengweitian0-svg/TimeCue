@@ -281,6 +281,34 @@ type ModelOutput struct {
 	Usage        json.RawMessage `json:"usage"`
 }
 
+// ValidateResponse 校验完整响应及本回复内的工具身份，供适配器和生命周期恢复共用。
+func (output ModelOutput) ValidateResponse() *RunError {
+	invalid := func() *RunError {
+		return &RunError{
+			Code:    "model_invalid_format",
+			Message: "模型请求或响应格式不受支持",
+		}
+	}
+	if output.FinishReason != "stop" && output.FinishReason != "tool_calls" && output.FinishReason != "length" {
+		return invalid()
+	}
+	var requests []ToolRequest
+	if len(output.Message.ToolCalls) > 0 && json.Unmarshal(output.Message.ToolCalls, &requests) != nil {
+		return invalid()
+	}
+	if output.FinishReason == "tool_calls" && len(requests) == 0 {
+		return invalid()
+	}
+	ids := map[string]bool{}
+	for _, request := range requests {
+		if request.ID == "" || ids[request.ID] || request.Type != "function" || request.Function.Name == "" {
+			return invalid()
+		}
+		ids[request.ID] = true
+	}
+	return nil
+}
+
 // ModelClient 在上游边界提供可取消的增量请求。
 type ModelClient interface {
 	// Complete 通过上游端口读取真实模型响应及有效增量。
@@ -425,6 +453,6 @@ type Services struct {
 type Lifecycle interface {
 	// Start 在 ready 前恢复占用并启动后台推进。
 	Start(context.Context) error
-	// Stop 停止准入和上游请求，保存已取得进度。
-	Stop()
+	// Shutdown 在宿主共享期限内停止准入和上游请求，保存已取得进度。
+	Shutdown(context.Context)
 }

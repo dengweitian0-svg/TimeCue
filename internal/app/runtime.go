@@ -80,11 +80,18 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 		return fmt.Errorf("listen on %s: %w", address, err)
 	}
 	defer listener.Close()
+	stopChat := func(context.Context) {}
 	if lifecycle := a.ChatRuntime; lifecycle != nil {
 		if err = lifecycle.Start(ctx); err != nil {
 			return fmt.Errorf("start chat service: %w", err)
 		}
-		defer lifecycle.Stop()
+		var stopOnce sync.Once
+		stopChat = func(ctx context.Context) { stopOnce.Do(func() { lifecycle.Shutdown(ctx) }) }
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			stopChat(shutdownCtx)
+		}()
 	}
 	if ctx.Err() != nil {
 		return nil
@@ -122,14 +129,12 @@ func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
 		WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
 	defer func() {
-		stop()
-		if lifecycle := a.ChatRuntime; lifecycle != nil {
-			lifecycle.Stop()
-		}
-		a.StopDelivery()
-		requests.stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		stop()
+		a.StopDelivery()
+		stopChat(shutdownCtx)
+		requests.stop()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			log.Error("[app] HTTP shutdown exceeded graceful window", "error", err)
 			_ = server.Close()

@@ -26,7 +26,7 @@ func TestChatToolResultLimitUsesPublishedConfig(t *testing.T) {
 	}
 	manager.Close()
 	configs, err := manager.ChatModels()
-	if err != nil || configs[0].ToolResultMaxTokens != 8192 {
+	if err != nil || len(configs) != 1 || configs[0].ToolResultMaxTokens != 8192 {
 		t.Fatalf("默认阈值错误：%+v %v", configs, err)
 	}
 	want := 8192
@@ -35,6 +35,8 @@ func TestChatToolResultLimitUsesPublishedConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		err = manager.LoadConfig()
+		// 每轮显式加载后停止监听，避免下一次覆盖写入发布空文件中间态。
+		manager.Close()
 		valid := value == "64" || value == "512" || value == "0"
 		if valid && err != nil || !valid && err == nil {
 			t.Fatalf("value=%s err=%v", value, err)
@@ -46,7 +48,7 @@ func TestChatToolResultLimitUsesPublishedConfig(t *testing.T) {
 			}
 		}
 		configs, err = manager.ChatModels()
-		if err != nil || configs[0].ToolResultMaxTokens != want {
+		if err != nil || len(configs) != 1 || configs[0].ToolResultMaxTokens != want {
 			t.Fatalf("非法配置污染快照：value=%s config=%+v err=%v", value, configs, err)
 		}
 	}
@@ -70,7 +72,7 @@ func TestChatCompactThresholdUsesPublishedConfig(t *testing.T) {
 	}
 	manager.Close()
 	configs, err := manager.ChatModels()
-	if err != nil || configs[0].CompactThreshold != 0.8 {
+	if err != nil || len(configs) != 1 || configs[0].CompactThreshold != 0.8 {
 		t.Fatalf("default=%+v err=%v", configs, err)
 	}
 	for _, value := range []string{"0.6", "-0.1", "1.1", ".nan", ".inf", "0"} {
@@ -78,6 +80,8 @@ func TestChatCompactThresholdUsesPublishedConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		err = manager.LoadConfig()
+		// 每次成功加载都会重启监听，下一次覆盖写入前须关闭并等待其退出。
+		manager.Close()
 		invalid := value != "0.6" && value != "0"
 		if invalid && err == nil || !invalid && err != nil {
 			t.Fatalf("value=%s err=%v", value, err)
@@ -87,7 +91,7 @@ func TestChatCompactThresholdUsesPublishedConfig(t *testing.T) {
 		if value == "0" {
 			want = 0.8
 		}
-		if err != nil || configs[0].CompactThreshold != want {
+		if err != nil || len(configs) != 1 || configs[0].CompactThreshold != want {
 			t.Fatalf("value=%s config=%+v err=%v", value, configs, err)
 		}
 	}
@@ -119,6 +123,8 @@ func TestChatContinuationLimitUsesPublishedConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		err := manager.LoadConfig()
+		// LoadConfig 会重新建立监听，同步预算断言须逐轮等待监听退出。
+		manager.Close()
 		if budget == "-1" {
 			if err == nil {
 				t.Fatal("negative budget accepted")
@@ -131,7 +137,7 @@ func TestChatContinuationLimitUsesPublishedConfig(t *testing.T) {
 		if budget == "0" {
 			want = 5
 		}
-		if err != nil || configs[0].MaxContinue != want {
+		if err != nil || len(configs) != 1 || configs[0].MaxContinue != want {
 			t.Fatalf("budget=%s configs=%+v err=%v", budget, configs, err)
 		}
 	}
@@ -261,7 +267,7 @@ func TestChatSecretsAndTimeoutsReloadFromFixedDataDirectory(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		configs, err = manager.ChatModels()
-		if err == nil && configs[0].MaxRetry == 0 && configs[0].MaxRounds == 7 && configs[0].MaxContinue == 2 && configs[0].FirstTimeout == 7*time.Second && configs[0].IdleTimeout == 4*time.Second && configs[0].ToolConcurrency == 2 && configs[0].ToolTimeout == 8*time.Second && *configs[0].ToolMaxRetry == 0 {
+		if err == nil && len(configs) == 1 && configs[0].MaxRetry == 0 && configs[0].MaxRounds == 7 && configs[0].MaxContinue == 2 && configs[0].FirstTimeout == 7*time.Second && configs[0].IdleTimeout == 4*time.Second && configs[0].ToolConcurrency == 2 && configs[0].ToolTimeout == 8*time.Second && configs[0].ToolMaxRetry != nil && *configs[0].ToolMaxRetry == 0 {
 			break
 		}
 		if time.Now().After(deadline) {

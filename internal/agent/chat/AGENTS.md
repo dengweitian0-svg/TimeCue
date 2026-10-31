@@ -1,5 +1,10 @@
 # Chat 模块
 
+- `model_recovery_test.go`：通过公共用例、真实 SQLite 及模型/保存故障边界验证完整结果复用、无 checkpoint/缺失与部分输出/退避/取消的配置门禁、完整摘要在原配置移除后保留，以及退出保存到期时不伪造终态。
+- `model_retry.go` 复用正常退出保存的完整响应，和适配器共用 ModelOutput.ValidateResponse；缺失及部分响应沿原请求重发，不增加逻辑调用或网络重试次数。retry_wait 在缺配置时立即失败，不等待修复或原退避期限；已接纳结果及取消只读恢复不受模型门禁阻断。
+- `service.go` 的 Shutdown 接受宿主共享退出 context，Stop 为独立调用提供五秒期限；增量、结果、尾批、退出保存及收尾沿同一存储 context，期限到达停止等待与保存，保留已提交进度。工具等待至多使用剩余宿主预算，原工具身份与未完成事实保留供重启读取；用户取消仍按原尝试期限收尾。
+- 退出期限在取得运行锁前关联存储取消，持锁中的工具登记也能被期限解除；Pause 只有错误匹配实际已结束的退出 context 才保留运行进度，存储自身的取消或超时仍按 persistence_failed 收尾。`model_recovery_test.go` 在真实存储端口注入等待及独立取消验证这两类边界。
+
 - `tool_loop.go` 在正常 length 的回复/工具结果提交后创建 continuation=true 调用，默认每 run 5 次，按统一 chat.max_continue 热读并统计全部续写记录，不消耗普通轮数或原调用重试预算；未配齐原 ID 的工具结果不插入 user 请求。网络中断不触发长度续写，预算耗尽仅失败 run，保留实际成功调用。
 - `progress.go` 统一生成后续请求：文字/思考续写保留 assistant、独立 user“继续未完成的输出”、下一 assistant；工具续写沿原 tool 错误消息，不额外插入 user。正文投影只拼接最后普通轮及其续写；恢复按实际普通请求消息前缀确定边界，不按模型主键或事件重放猜分组，不新增持久化字段。
 - `argument_feedback.go` 仅为正常 length 的参数解析错误生成模型上下文反馈；闭合已有容器/字符串，省略未完成字段或字面值，不猜业务值，明确未执行业务且要求重新输出完整调用。原 model_call.output、tool_call.input/output/error、argument=null 事件均保持实际值；工具错误反馈与配对 checkpoint 同事务保存。

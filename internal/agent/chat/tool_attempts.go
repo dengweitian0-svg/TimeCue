@@ -71,7 +71,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 	if call.Output == nil || json.Unmarshal(call.Output.Message.ToolCalls, &requests) != nil {
 		return call, toolError("model_invalid_format", "工具响应无效")
 	}
-	stored, err := s.toolStore.ReadTools(context.Background(), call.ID)
+	stored, err := s.toolStore.ReadTools(s.persistenceContext(), call.ID)
 	if err != nil {
 		return call, persistenceFailure()
 	}
@@ -115,14 +115,14 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 				next = latest
 			}
 			tool.State, tool.NextRetryAt = "retry_wait", &next
-			if err := s.toolStore.WaitToolRetry(context.Background(), tool); err != nil {
+			if err := s.toolStore.WaitToolRetry(s.persistenceContext(), tool); err != nil {
 				// 中间故障不能冒充最终结果；失败收尾按未确认规则补齐。
 				return persistenceFailure()
 			}
 			known[tool.Request.ID] = tool
 			return nil
 		}
-		progress, err := s.toolStore.FinishTool(context.Background(), call, tool)
+		progress, err := s.toolStore.FinishTool(s.persistenceContext(), call, tool)
 		if err != nil {
 			call.PendingTools = append(call.PendingTools, tool)
 			return persistenceFailure()
@@ -142,6 +142,10 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 	}
 	// 周期唤醒读取热配置；精确超时及退避期限用最近期限定时器唤醒。
 	for {
+		// 宿主退出预算到期后保留未完成工具；用户取消仍等待原结果或原期限。
+		if s.persistenceContext().Err() != nil {
+			return call, nil
+		}
 		// 已在期限内返回的事实优先接纳，短事务等待不能将其改判超时。
 		for draining := true; draining; {
 			select {
@@ -228,7 +232,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 				s.mu.Unlock()
 				break
 			}
-			started, registeredTool, err := s.toolStore.BeginTool(context.Background(), call, tool)
+			started, registeredTool, err := s.toolStore.BeginTool(s.storageCtx, call, tool)
 			if err != nil {
 				s.mu.Unlock()
 				return call, persistenceFailure()
