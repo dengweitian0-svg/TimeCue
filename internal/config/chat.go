@@ -29,6 +29,7 @@ type ChatModel struct {
 
 // ChatRuntime 是模型请求的统一运行参数，零值使用默认值。
 type ChatRuntime struct {
+	ToolResultMaxTokens int     `mapstructure:"tool_result_max_tokens"`
 	CompactThreshold    float64 `mapstructure:"compact_threshold"`
 	MaxRounds           int     `mapstructure:"max_rounds"`
 	MaxContinue         int     `mapstructure:"max_continue"`
@@ -53,6 +54,9 @@ func chatKeyName(provider, model string) string {
 }
 
 func validateChatConfig(cfg *Config) error {
+	if value := cfg.Chat.ToolResultMaxTokens; value != 0 && (value < 64 || value > int(^uint(0)>>1)/4) {
+		return fmt.Errorf("chat tool_result_max_tokens must be zero or between 64 and max_int/4")
+	}
 	if math.IsNaN(cfg.Chat.CompactThreshold) || math.IsInf(cfg.Chat.CompactThreshold, 0) || cfg.Chat.CompactThreshold < 0 || cfg.Chat.CompactThreshold > 1 {
 		return fmt.Errorf("chat compact_threshold must be between 0 and 1")
 	}
@@ -141,26 +145,31 @@ func (m *Manager) ChatModels() ([]chat.ModelConfig, error) {
 				toolRetry = *cfg.Chat.ToolMaxRetry
 			}
 			key := strings.TrimSpace(keys[keyName])
+			toolResultTokens := cfg.Chat.ToolResultMaxTokens
+			if toolResultTokens == 0 {
+				toolResultTokens = 8192
+			}
 			u, e := url.Parse(p.BaseURL)
 			if e != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
 				key = ""
 			}
 			result = append(result, chat.ModelConfig{
-				Provider:         p.Provider,
-				Model:            model.Model,
-				BaseURL:          p.BaseURL,
-				Key:              key,
-				ContextWindow:    model.ContextWindow,
-				MaxOutputTokens:  output,
-				MaxRetry:         retries,
-				MaxRounds:        rounds,
-				MaxContinue:      continues,
-				CompactThreshold: threshold,
-				FirstTimeout:     time.Duration(first) * time.Second,
-				IdleTimeout:      time.Duration(idle) * time.Second,
-				ToolConcurrency:  toolConcurrency,
-				ToolTimeout:      time.Duration(toolTimeout) * time.Second,
-				ToolMaxRetry:     &toolRetry,
+				Provider:            p.Provider,
+				Model:               model.Model,
+				BaseURL:             p.BaseURL,
+				Key:                 key,
+				ContextWindow:       model.ContextWindow,
+				MaxOutputTokens:     output,
+				MaxRetry:            retries,
+				MaxRounds:           rounds,
+				MaxContinue:         continues,
+				CompactThreshold:    threshold,
+				FirstTimeout:        time.Duration(first) * time.Second,
+				IdleTimeout:         time.Duration(idle) * time.Second,
+				ToolConcurrency:     toolConcurrency,
+				ToolTimeout:         time.Duration(toolTimeout) * time.Second,
+				ToolMaxRetry:        &toolRetry,
+				ToolResultMaxTokens: toolResultTokens,
 			})
 		}
 	}

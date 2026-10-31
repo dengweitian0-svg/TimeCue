@@ -3,9 +3,54 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
+
+// TestChatToolResultLimitUsesPublishedConfig 验证工具结果阈值默认、覆盖、零值恢复和非法配置保留快照。
+func TestChatToolResultLimitUsesPublishedConfig(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	models := "chat_model:\n  - provider: test\n    base_url: https://example.test\n    models:\n      - model: model\n        context_window: 32768\n"
+	if err := os.WriteFile(path, []byte(models), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if err = manager.LoadConfig(); err != nil {
+		t.Fatal(err)
+	}
+	manager.Close()
+	configs, err := manager.ChatModels()
+	if err != nil || configs[0].ToolResultMaxTokens != 8192 {
+		t.Fatalf("默认阈值错误：%+v %v", configs, err)
+	}
+	want := 8192
+	for _, value := range []string{"64", "512", "-1", "63", strconv.FormatUint(uint64(^uint(0)>>1)/4+1, 10), "0"} {
+		if err := os.WriteFile(path, []byte(models+"chat:\n  tool_result_max_tokens: "+value+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		err = manager.LoadConfig()
+		valid := value == "64" || value == "512" || value == "0"
+		if valid && err != nil || !valid && err == nil {
+			t.Fatalf("value=%s err=%v", value, err)
+		}
+		if valid {
+			want, _ = strconv.Atoi(value)
+			if want == 0 {
+				want = 8192
+			}
+		}
+		configs, err = manager.ChatModels()
+		if err != nil || configs[0].ToolResultMaxTokens != want {
+			t.Fatalf("非法配置污染快照：value=%s config=%+v err=%v", value, configs, err)
+		}
+	}
+}
 
 // TestChatCompactThresholdUsesPublishedConfig 验证摘要阈值默认值、覆盖及非法更新保留有效快照。
 func TestChatCompactThresholdUsesPublishedConfig(t *testing.T) {

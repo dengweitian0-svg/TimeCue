@@ -97,11 +97,11 @@ func (f *compactCancelFault) History(ctx context.Context, session string) ([]cha
 }
 
 // CompleteCompact 在切换前注入故障，确认取消不会掩盖独立存储错误。
-func (f *compactCancelFault) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall) (chat.ModelCall, error) {
+func (f *compactCancelFault) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall, terminal *chat.Record) (chat.ModelCall, error) {
 	if f.seam == "switch" && f.armed.CompareAndSwap(true, false) {
 		return call, f.fail(ctx)
 	}
-	return f.ExecutionRepository.CompleteCompact(ctx, call, next)
+	return f.ExecutionRepository.CompleteCompact(ctx, call, next, terminal)
 }
 
 // TestCompactCancellationPreservesStorageFailure 验证三个持久化边界只将真正的 context 错误归为生命周期中断。

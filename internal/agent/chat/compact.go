@@ -1,10 +1,12 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 )
 
 const compactInstructions = `你正在执行一次上下文检查点压缩。
@@ -40,7 +42,11 @@ func needsCompact(request ModelRequest, cfg ModelConfig) bool {
 }
 
 func compactRequest(request ModelRequest) ModelRequest {
-	history, _ := json.Marshal(compactHistory(request))
+	return compactRequestWithHistory(request, compactHistory(request))
+}
+
+func compactRequestWithHistory(request ModelRequest, messages []Message) ModelRequest {
+	history, _ := json.Marshal(messages)
 	request.Messages = []Message{
 		{
 			Role:    "system",
@@ -53,6 +59,33 @@ func compactRequest(request ModelRequest) ModelRequest {
 	}
 	request.Tools = nil
 	return request
+}
+
+func runtimeCompactRequest(request, base ModelRequest) ModelRequest {
+	// 首次摘要沿创建时的完整前缀定位真实输入；已生效的运行中摘要后，
+	// 有效前缀固定为 system、新摘要、真实输入。不能按输入文字搜索以免重名。
+	index := len(base.Messages) - 1
+	matched := index < len(request.Messages)
+	if matched {
+		actual, _ := json.Marshal(request.Messages[:index+1])
+		original, _ := json.Marshal(base.Messages)
+		matched = bytes.Equal(actual, original)
+	}
+	if !matched {
+		index = 1
+		for _, message := range request.Messages {
+			if message.Role != "system" {
+				break
+			}
+			index++
+		}
+	}
+	history := cloneMessages(request.Messages)
+	history = append(history[:index], history[index+1:]...)
+	for len(history) > 0 && history[0].Role == "system" {
+		history = history[1:]
+	}
+	return compactRequestWithHistory(request, history)
 }
 
 func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig, call ModelCall) (ModelCall, *RunError) {
@@ -103,13 +136,15 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			request := call.FollowupRequest(true)
 			request.MaxTokens = cfg.MaxOutputTokens
 			call = ModelCall{
-				RunID:           r.RunID,
-				SessionID:       r.SessionID,
-				Input:           request,
-				State:           StateRunning,
-				MaxRetry:        cfg.MaxRetry,
-				Continuation:    true,
-				CheckpointStage: "compact",
+				RunID:             r.RunID,
+				SessionID:         r.SessionID,
+				Input:             request,
+				State:             StateRunning,
+				MaxRetry:          cfg.MaxRetry,
+				Continuation:      true,
+				CheckpointStage:   "compact",
+				CheckpointContext: call.CheckpointContext,
+				OutputPrefix:      call.OutputPrefix,
 			}
 			continue
 		}
@@ -126,7 +161,14 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 		}
 		ordinary.Messages = projected.CheckpointContext
 		failure := requestBudgetError(ordinary, cfg)
+		if failure == nil {
+			failure = s.ordinaryRoundBudgetError(ctx, r.RunID, cfg)
+			if ctx.Err() != nil || failure != nil && failure.Code == "persistence_failed" {
+				return call, failure
+			}
+		}
 		var next *ModelCall
+		var terminal *Record
 		if failure == nil {
 			next = &ModelCall{
 				RunID:     r.RunID,
@@ -135,8 +177,14 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 				State:     StateRunning,
 				MaxRetry:  cfg.MaxRetry,
 			}
+		} else {
+			finished := *r
+			finished.State, finished.Error = StateFailed, failure
+			now := time.Now()
+			finished.FinishedAt = &now
+			terminal = &finished
 		}
-		committed, err := s.execution.CompleteCompact(ctx, projected, next)
+		committed, err := s.execution.CompleteCompact(ctx, projected, next, terminal)
 		if err != nil {
 			// 提交回执丢失时沿实际 checkpoint 收尾，不能重发已经登记的普通调用或丢弃有效摘要。
 			if saved, readErr := s.execution.ReadCall(context.Background(), r.RunID); readErr == nil && saved != nil && (saved.ID != call.ID || saved.State == StateSucceeded) {
