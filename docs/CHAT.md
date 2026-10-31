@@ -187,3 +187,5 @@ T12 已接通创建前的长会话摘要。完整普通请求（含 system、工
 预算内，同事务保存摘要最终结果/usage/尾批、compact_succeeded=1、session.compact_event_id、下一普通 model_call 和 model_call_start checkpoint，提交后才发普通请求。成功后仍超预算时保存有效摘要和 compact checkpoint，本 run 以 context_budget_exceeded 结束，不登记普通调用、不递归压缩；后续新 run 可复用成功摘要。预算内即使仍达触发阈值，也只继续普通请求。约 10k token 是摘要目标而非精确硬门禁。
 
 摘要失败或取消不更新有效引用，保留旧摘要、全部未覆盖有效消息和原始执行记录，当前 run 按实际状态收尾；后续新 run 的上下文不纳入专用提示或部分摘要，并保留此次真实输入与独立中断说明。切换事务失败整体回滚；提交成功但回执丢失时按实际 checkpoint 收尾，不重发已登记调用。T12 公共服务测试通过真实 SQLite、HTTP 模型适配器及正式日程验证完整工具配对、业务事实输入、固定提示原文、投影与后续复用、失败/取消、重试/续写恢复、原子回滚/回执丢失、共享预算及约 10k 非硬门禁。沿用数据库版本 3，无 HTTP、Flutter 或 checkpoint 格式变更；运行中摘要与工具结果裁剪仍由后续切片交付。
+
+摘要完整返回后若 Key 被热删除，仍保存并启用成功摘要，下一普通请求独立以 model_config_unavailable 收尾；修复 Key 后新 run 可直接复用该摘要。摘要登记、读取与切换仅在实际错误匹配当前 context 错误时按取消/退出处理；同时发生的独立存储故障仍以 persistence_failed 失败，不被取消覆盖。

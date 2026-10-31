@@ -389,11 +389,18 @@ func TestCompactRetryContinuationAndRestart(t *testing.T) {
 
 type compactSwitchFault struct {
 	chat.ExecutionRepository
-	mode string
+	mode    string
+	entered chan struct{}
+	release chan struct{}
 }
 
 // CompleteCompact 在真实原子切换事务内注入外键失败，或模拟提交成功但回执丢失。
 func (f *compactSwitchFault) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall) (chat.ModelCall, error) {
+	if f.mode == "cancel" {
+		close(f.entered)
+		<-f.release
+		return f.ExecutionRepository.CompleteCompact(context.Background(), call, next)
+	}
 	if f.mode == "rollback" {
 		invalid := *next
 		invalid.SessionID = "missing-session"
@@ -408,7 +415,7 @@ func (f *compactSwitchFault) CompleteCompact(ctx context.Context, call chat.Mode
 
 // TestCompactAtomicSwitchFailure 验证切换事务回滚保留旧历史，已提交却丢失回执时保留成功摘要且不重复请求。
 func TestCompactAtomicSwitchFailure(t *testing.T) {
-	for _, mode := range []string{"rollback", "lost-ack"} {
+	for _, mode := range []string{"rollback", "lost-ack", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			var expanded atomic.Bool
 			requests := make(chan chat.ModelRequest, 6)
@@ -429,22 +436,37 @@ func TestCompactAtomicSwitchFailure(t *testing.T) {
 			}))
 			defer upstream.Close()
 			_, ports, _ := admissionDatabase(t)
-			ports.Execution = &compactSwitchFault{
+			fault := &compactSwitchFault{
 				ExecutionRepository: ports.Execution,
 				mode:                mode,
+				entered:             make(chan struct{}),
+				release:             make(chan struct{}),
 			}
+			ports.Execution = fault
 			service := startAdmissionService(t, ports, completion.NewClient(nil), compactSettings(upstream.URL, &expanded))
 			awaitFinishedRun(t, service, createCompactRun(t, service, "first").RunID)
 			<-requests
-			run := awaitFinishedRun(t, service, createCompactRun(t, service, "second").RunID)
-			if run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "persistence_failed" {
+			receipt := createCompactRun(t, service, "second")
+			if mode == "cancel" {
+				select {
+				case <-fault.entered:
+				case <-time.After(5 * time.Second):
+					t.Fatal("摘要没有进入切换")
+				}
+				if _, err := service.CancelRun(context.Background(), receipt.RunID); err != nil {
+					t.Fatal(err)
+				}
+				close(fault.release)
+			}
+			run := awaitFinishedRun(t, service, receipt.RunID)
+			if mode == "cancel" && run.Status != chat.StatusCancelled || mode != "cancel" && (run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "persistence_failed") {
 				t.Fatalf("run=%+v", run)
 			}
 			<-requests
 			expanded.Store(true)
 			awaitFinishedRun(t, service, createCompactRun(t, service, "third").RunID)
 			next := <-requests
-			if mode == "rollback" && !strings.Contains(mustJSON(next), "old-history-") || mode == "lost-ack" && (next.Messages[0].Content != "有效摘要" || strings.Contains(mustJSON(next), "old-history-")) {
+			if mode != "lost-ack" && !strings.Contains(mustJSON(next), "old-history-") || mode == "lost-ack" && (next.Messages[0].Content != "有效摘要" || strings.Contains(mustJSON(next), "old-history-")) {
 				t.Fatal("摘要原子切换被破坏")
 			}
 		})

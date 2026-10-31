@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 )
 
@@ -62,7 +63,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 		if call.ID == 0 {
 			id, err := s.execution.BeginCall(ctx, call)
 			if err != nil {
-				if ctx.Err() != nil {
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 					return call, nil
 				}
 				return call, persistenceFailure()
@@ -80,10 +81,9 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 				return call, toolError("model_invalid_format", "摘要响应必须为正文或思考，不允许调用工具")
 			}
 		}
-		var ok bool
-		cfg, ok = s.currentModel(r.Provider, r.Model)
-		if !ok {
-			return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
+		latest, available := s.currentModel(r.Provider, r.Model)
+		if latest.ContextWindow > latest.MaxOutputTokens && latest.MaxOutputTokens > 0 {
+			cfg = latest
 		}
 		if call.Output.FinishReason == "length" {
 			accepted := call.WithCompactResponse()
@@ -94,19 +94,11 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 				accepted.PendingEvents = nil
 			}
 			call = accepted
-			count, err := s.execution.ContinuationCallCount(ctx, r.RunID)
-			if err != nil {
-				if ctx.Err() != nil {
-					return call, nil
-				}
-				return call, persistenceFailure()
+			if !available {
+				return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
 			}
-			limit := cfg.MaxContinue
-			if limit <= 0 {
-				limit = 5
-			}
-			if count >= limit {
-				return call, toolError("model_continue_limit_exceeded", "已达到自动续写上限，摘要仍未完成")
+			if failure := s.continuationBudgetError(ctx, r.RunID, cfg); failure != nil || ctx.Err() != nil {
+				return call, failure
 			}
 			request := call.FollowupRequest(true)
 			request.MaxTokens = cfg.MaxOutputTokens
@@ -123,7 +115,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 		}
 		ordinary, err := s.newRequest(ctx, *r, cfg)
 		if err != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 				return call, nil
 			}
 			return call, persistenceFailure()
@@ -150,7 +142,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			if saved, readErr := s.execution.ReadCall(context.Background(), r.RunID); readErr == nil && saved != nil && (saved.ID != call.ID || saved.State == StateSucceeded) {
 				call = *saved
 			}
-			if ctx.Err() != nil {
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 				return call, nil
 			}
 			return call, persistenceFailure()
