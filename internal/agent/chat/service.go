@@ -304,7 +304,7 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 		}
 		now := time.Now()
 		r.FinishedAt = &now
-		call = s.readCancellationResults(call)
+		call = s.readCancellationResults(call, cfg)
 		s.finish(call, r)
 		return
 	}
@@ -355,7 +355,7 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 	s.finish(call, r)
 }
 
-func (s *Runtime) readCancellationResults(call ModelCall) ModelCall {
+func (s *Runtime) readCancellationResults(call ModelCall, cfg ModelConfig) ModelCall {
 	if call.ID == 0 || s.toolStore == nil {
 		return call
 	}
@@ -376,6 +376,7 @@ func (s *Runtime) readCancellationResults(call ModelCall) ModelCall {
 		if found {
 			tool.State, tool.Output, tool.Error = "succeeded", output, nil
 		}
+		tool.ModelContentLimit = cfg.ToolResultMaxTokens
 		call.PendingTools = append(call.PendingTools, tool)
 	}
 	return call

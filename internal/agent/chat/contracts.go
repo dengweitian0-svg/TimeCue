@@ -174,21 +174,22 @@ type ModelOption struct {
 
 // ModelConfig 是一次请求使用的私有配置，密钥从不进入持久化输入。
 type ModelConfig struct {
-	Provider         string
-	Model            string
-	BaseURL          string
-	Key              string
-	ContextWindow    int
-	MaxOutputTokens  int
-	MaxRetry         int
-	MaxRounds        int
-	MaxContinue      int
-	CompactThreshold float64
-	FirstTimeout     time.Duration
-	IdleTimeout      time.Duration
-	ToolConcurrency  int
-	ToolTimeout      time.Duration
-	ToolMaxRetry     *int
+	Provider            string
+	Model               string
+	BaseURL             string
+	Key                 string
+	ContextWindow       int
+	MaxOutputTokens     int
+	MaxRetry            int
+	MaxRounds           int
+	MaxContinue         int
+	CompactThreshold    float64
+	FirstTimeout        time.Duration
+	IdleTimeout         time.Duration
+	ToolConcurrency     int
+	ToolTimeout         time.Duration
+	ToolMaxRetry        *int
+	ToolResultMaxTokens int
 }
 
 // Message 保存实际模型消息，包括已收到的思考内容。
@@ -225,16 +226,18 @@ type ToolFunction struct {
 
 // ToolCall 保存工具执行身份、原始结果及版本 3 已有的重试事实。
 type ToolCall struct {
-	ID             int64
-	IdempotencyKey string
-	ModelCallID    int64
-	Request        ToolRequest
-	Output         json.RawMessage
-	Error          *RunError
-	State          string
-	MaxRetry       int
-	RetryCount     int
-	NextRetryAt    *time.Time
+	// ModelContentLimit 仅用于本次结果投影；已提交文本直接沿 checkpoint 复用。
+	ModelContentLimit int
+	ID                int64
+	IdempotencyKey    string
+	ModelCallID       int64
+	Request           ToolRequest
+	Output            json.RawMessage
+	Error             *RunError
+	State             string
+	MaxRetry          int
+	RetryCount        int
+	NextRetryAt       *time.Time
 }
 
 // ToolStartData 保存公开工具开始事件，一个开始记录包含实际处理的调用。

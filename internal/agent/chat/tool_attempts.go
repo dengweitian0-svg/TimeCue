@@ -59,10 +59,12 @@ func (s *Runtime) preserveToolRetry(ctx context.Context, runID string) bool {
 func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cfg ModelConfig) (result ModelCall, failure *RunError) {
 	// 模型密钥读取失败不改变仍有效的工具权限；从运行已有配置起保留最近有效参数。
 	limit, timeout, maxRetry := toolConfig(cfg)
+	contentLimit := cfg.ToolResultMaxTokens
 	refreshConfig := func() {
 		latest, _ := s.currentModel(r.Provider, r.Model)
 		if latest.Provider == r.Provider && latest.Model == r.Model {
 			limit, timeout, maxRetry = toolConfig(latest)
+			contentLimit = latest.ToolResultMaxTokens
 		}
 	}
 	var requests []ToolRequest
@@ -96,6 +98,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 			select {
 			case returned := <-results:
 				if attempt := active[returned.tool.Request.ID]; attempt != nil && attempt.accepts(returned) {
+					returned.tool.ModelContentLimit = contentLimit
 					result.PendingTools = append(result.PendingTools, returned.tool)
 				}
 			default:
@@ -104,6 +107,8 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 		}
 	}()
 	settle := func(tool ToolCall) *RunError {
+		refreshConfig()
+		tool.ModelContentLimit = contentLimit
 		if toolRetryable(tool.Error) && tool.RetryCount < tool.MaxRetry && s.preserveToolRetry(ctx, r.RunID) {
 			next := time.Now().Add(retryDelay(tool.RetryCount + 1))
 			if latest := time.Unix(0, 1<<63-1); next.After(latest) {

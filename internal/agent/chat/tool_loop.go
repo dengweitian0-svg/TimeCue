@@ -61,6 +61,30 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 			}
 			request := call.FollowupRequest(continuation)
 			request.MaxTokens = cfg.MaxOutputTokens
+			if call.CheckpointStage == "tool_end" && requestBudgetError(request, cfg) != nil {
+				base, err := s.newRequest(ctx, *r, cfg)
+				if err != nil {
+					if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+						return call, nil
+					}
+					return call, persistenceFailure()
+				}
+				prefix := ""
+				if r.Output != nil {
+					prefix = *r.Output
+				}
+				call = ModelCall{
+					RunID:             r.RunID,
+					SessionID:         r.SessionID,
+					Input:             runtimeCompactRequest(request, base),
+					State:             StateRunning,
+					MaxRetry:          cfg.MaxRetry,
+					CheckpointStage:   "compact",
+					CheckpointContext: request.Messages,
+					OutputPrefix:      prefix,
+				}
+				continue
+			}
 			prefix := ""
 			if continuation && r.Output != nil {
 				prefix = *r.Output
@@ -92,24 +116,9 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 					SessionID: r.SessionID,
 				}, failure
 			}
-			count, err := s.execution.OrdinaryCallCount(ctx, r.RunID)
-			if err != nil {
-				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-					return call, nil
-				}
-				return call, persistenceFailure()
-			}
-			limit := cfg.MaxRounds
-			if limit <= 0 {
-				limit = 20
-			}
-			if !call.Continuation && count >= limit {
-				return ModelCall{
-					RunID:     r.RunID,
-					SessionID: r.SessionID,
-				}, &RunError{
-					Code:    "model_round_limit_exceeded",
-					Message: "已达到普通模型轮数上限，任务仍需继续",
+			if !call.Continuation {
+				if failure := s.ordinaryRoundBudgetError(ctx, r.RunID, cfg); failure != nil || ctx.Err() != nil {
+					return call, failure
 				}
 			}
 			call.ID, err = s.execution.BeginCall(ctx, call)
@@ -151,6 +160,24 @@ func toolError(code, message string) *RunError {
 		Code:    code,
 		Message: message,
 	}
+}
+
+func (s *Runtime) ordinaryRoundBudgetError(ctx context.Context, runID string, cfg ModelConfig) *RunError {
+	count, err := s.execution.OrdinaryCallCount(ctx, runID)
+	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return nil
+		}
+		return persistenceFailure()
+	}
+	limit := cfg.MaxRounds
+	if limit <= 0 {
+		limit = 20
+	}
+	if count >= limit {
+		return toolError("model_round_limit_exceeded", "已达到普通模型轮数上限，任务仍需继续")
+	}
+	return nil
 }
 
 func (s *Runtime) continuationBudgetError(ctx context.Context, runID string, cfg ModelConfig) *RunError {

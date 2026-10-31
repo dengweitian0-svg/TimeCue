@@ -71,6 +71,10 @@ func (call ModelCall) WithCallStarted() ModelCall {
 	stage := "model_call_start"
 	if call.CheckpointStage == "compact" {
 		stage = "compact"
+		if len(call.CheckpointContext) > 0 && !call.Checkpoint().NeedsCompactBase(stage) {
+			// 运行中摘要尚未生效时保留工具完整配对，失败与退出不会丢失本 run 事实。
+			return call.WithCheckpoint(stage, call.Checkpoint())
+		}
 	}
 	return call.WithCheckpoint(stage, CheckpointState{Context: call.Input.Messages})
 }
@@ -79,6 +83,12 @@ func (call ModelCall) WithCallStarted() ModelCall {
 func (call ModelCall) FollowupRequest(continuation bool) ModelRequest {
 	request := call.Input
 	request.Messages = cloneMessages(call.CheckpointContext)
+	if call.CheckpointStage == "compact" {
+		request.Messages = cloneMessages(call.Input.Messages)
+		if call.Output != nil && hasAssistantContent(call.Output.Message) {
+			request.Messages = append(request.Messages, cloneMessages([]Message{call.Output.Message})[0])
+		}
+	}
 	if continuation && len(call.Output.Message.ToolCalls) == 0 {
 		request.Messages = append(request.Messages, Message{
 			Role:    "user",
@@ -91,7 +101,10 @@ func (call ModelCall) FollowupRequest(continuation bool) ModelRequest {
 // PresentedOutput 只拼接当前普通回复及其续写正文，不修改实际模型输出。
 func (call ModelCall) PresentedOutput() *string {
 	if call.CheckpointStage == "compact" {
-		return nil
+		if call.OutputPrefix == "" {
+			return nil
+		}
+		return &call.OutputPrefix
 	}
 	content := call.OutputPrefix
 	if call.Output != nil {
@@ -105,16 +118,25 @@ func (call ModelCall) PresentedOutput() *string {
 
 // WithContinuationBase 按实际请求的消息前缀恢复正文边界，不从事件重放或主键顺序猜测分组。
 func (call ModelCall) WithContinuationBase(base ModelRequest) (ModelCall, bool) {
-	if !call.Continuation || len(base.Messages) > len(call.Input.Messages) {
+	messages := call.Input.Messages
+	if call.CheckpointStage == "compact" {
+		if call.Checkpoint().NeedsCompactBase("compact") {
+			return call, false
+		}
+		messages = call.CheckpointContext
+	} else if !call.Continuation {
 		return call, false
 	}
-	actual, _ := json.Marshal(call.Input.Messages[:len(base.Messages)])
+	if len(base.Messages) > len(messages) {
+		return call, false
+	}
+	actual, _ := json.Marshal(messages[:len(base.Messages)])
 	start, _ := json.Marshal(base.Messages)
 	if !bytes.Equal(actual, start) {
 		return call, false
 	}
 	call.OutputPrefix = ""
-	for _, message := range call.Input.Messages[len(base.Messages):] {
+	for _, message := range messages[len(base.Messages):] {
 		if message.Role == "assistant" {
 			call.OutputPrefix += message.Content
 		}
@@ -184,6 +206,7 @@ func (call ModelCall) WithToolResult(tool ToolCall) ModelCall {
 		content = "aborted"
 	} else {
 		content = call.toolFeedback(tool, content)
+		content = trimToolContent(content, tool.ModelContentLimit)
 	}
 	call.CheckpointContext = append(call.CheckpointContext, Message{
 		Role:       "tool",
@@ -273,6 +296,9 @@ func (call ModelCall) WithRunFinished(status RunState, stored []ToolCall) (Model
 func (call ModelCall) WithCompactResponse() ModelCall {
 	call.State, call.Error = StateSucceeded, nil
 	call = call.WithCallStarted()
+	if !call.Checkpoint().NeedsCompactBase("compact") {
+		return call
+	}
 	if call.Output != nil && hasAssistantContent(call.Output.Message) {
 		call.CheckpointContext = append(call.CheckpointContext, cloneMessages([]Message{call.Output.Message})[0])
 	}

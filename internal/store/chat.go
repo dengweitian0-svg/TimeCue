@@ -486,8 +486,8 @@ func readCall(ctx context.Context, reader schemaReader, id string) (*chat.ModelC
 			return nil, err
 		}
 	}
-	if call.Continuation {
-		// 选取与实际续写 input 匹配的最长普通请求前缀；摘要调用不形成正文起点。
+	if call.Continuation || call.CheckpointStage == "compact" && !call.Checkpoint().NeedsCompactBase("compact") {
+		// 从续写请求或运行中摘要保留的原上下文恢复普通正文边界；摘要自身不形成正文起点。
 		rows, err := reader.QueryContext(ctx, `SELECT m.input FROM ai_model_calls m WHERE m.run_id=? AND m.continuation=0 AND NOT EXISTS(SELECT 1 FROM ai_events e WHERE e.model_call_id=m.id AND e.type='compact') ORDER BY json_array_length(m.input,'$.messages') DESC`, id)
 		if err != nil {
 			return nil, err
