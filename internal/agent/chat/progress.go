@@ -68,7 +68,11 @@ func (call ModelCall) WithCheckpoint(stage string, state CheckpointState) ModelC
 
 // WithCallStarted 为新调用建立请求快照并清空本次工具事实，不用于恢复同一调用。
 func (call ModelCall) WithCallStarted() ModelCall {
-	return call.WithCheckpoint("model_call_start", CheckpointState{Context: call.Input.Messages})
+	stage := "model_call_start"
+	if call.CheckpointStage == "compact" {
+		stage = "compact"
+	}
+	return call.WithCheckpoint(stage, CheckpointState{Context: call.Input.Messages})
 }
 
 // FollowupRequest 沿已接纳的完整配对快照生成后续请求，文字续写保留独立 user 边界。
@@ -86,6 +90,9 @@ func (call ModelCall) FollowupRequest(continuation bool) ModelRequest {
 
 // PresentedOutput 只拼接当前普通回复及其续写正文，不修改实际模型输出。
 func (call ModelCall) PresentedOutput() *string {
+	if call.CheckpointStage == "compact" {
+		return nil
+	}
 	content := call.OutputPrefix
 	if call.Output != nil {
 		content += call.Output.Message.Content
@@ -117,6 +124,9 @@ func (call ModelCall) WithContinuationBase(base ModelRequest) (ModelCall, bool) 
 
 // WithResponseAccepted 生成完整成功回复的待提交进度，提交成功后才可进入工具流程。
 func (call ModelCall) WithResponseAccepted() ModelCall {
+	if call.CheckpointStage == "compact" {
+		return call.WithCompactResponse()
+	}
 	call.State = StateSucceeded
 	call.Error = nil
 	// 从实际请求构造一次回复快照，不累计上次调用的工具事实。
@@ -126,6 +136,9 @@ func (call ModelCall) WithResponseAccepted() ModelCall {
 
 // WithCallEnded 生成调用结束快照，未接纳的工具片段只保留可用正文和思考。
 func (call ModelCall) WithCallEnded() ModelCall {
+	if call.CheckpointStage == "compact" {
+		return call.WithCheckpoint("compact", call.Checkpoint())
+	}
 	if call.CheckpointStage == "tool_start" || call.CheckpointStage == "tool_end" ||
 		call.CheckpointStage == "model_call_end" && call.State == StateSucceeded {
 		return call.WithCheckpoint(call.CheckpointStage, call.Checkpoint())
@@ -254,4 +267,53 @@ func (call ModelCall) WithRunFinished(status RunState, stored []ToolCall) (Model
 		results = append(results, tool)
 	}
 	return call, results, nil
+}
+
+// WithCompactResponse 接纳摘要片段，保持专用请求的消息边界和 compact 阶段。
+func (call ModelCall) WithCompactResponse() ModelCall {
+	call.State, call.Error = StateSucceeded, nil
+	call = call.WithCallStarted()
+	if call.Output != nil && hasAssistantContent(call.Output.Message) {
+		call.CheckpointContext = append(call.CheckpointContext, cloneMessages([]Message{call.Output.Message})[0])
+	}
+	return call
+}
+
+// WithCompactSucceeded 只将各已接纳片段的正文按请求中的实际接纳顺序投影为一条 user 摘要。
+func (call ModelCall) WithCompactSucceeded(ordinary ModelRequest) ModelCall {
+	content := ""
+	for _, message := range call.Input.Messages[2:] {
+		if message.Role == "assistant" {
+			content += message.Content
+		}
+	}
+	if call.Output != nil {
+		content += call.Output.Message.Content
+	}
+	messages := []Message{}
+	for _, message := range ordinary.Messages {
+		if message.Role != "system" {
+			break
+		}
+		messages = append(messages, message)
+	}
+	messages = append(messages, Message{
+		Role:    "user",
+		Content: content,
+	}, ordinary.Messages[len(ordinary.Messages)-1])
+	call.State, call.Error = StateSucceeded, nil
+	return call.WithCheckpoint("compact", CheckpointState{Context: messages})
+}
+
+// NeedsCompactBase 表示尚未生效的摘要不能作为有效历史，须沿原快照保留历史与真实输入。
+func (state CheckpointState) NeedsCompactBase(stage string) bool {
+	return stage == "compact" && len(state.Context) > 0 && state.Context[0].Role == "system" && state.Context[0].Content == compactInstructions
+}
+
+// HistoryAfterCompact 生成摘要失败或取消后的有效历史，不纳入专用提示或部分摘要。
+func (state CheckpointState) HistoryAfterCompact(base []Message, input string, status RunState) []Message {
+	return (CheckpointState{Context: append(cloneMessages(base), Message{
+		Role:    "user",
+		Content: input,
+	})}).History(status)
 }

@@ -32,6 +32,10 @@ func (b *eventBatch) append(kind EventType, content string) error {
 		b.partial.Message.ReasoningContent += content
 	}
 	b.call.Output = &b.partial
+	// 初始摘要正文不作为普通展示事件；摘要续写沿用已有增量契约。
+	if b.call.CheckpointStage == "compact" && !b.call.Continuation {
+		return nil
+	}
 	data, _ := json.Marshal(TextData{Content: content})
 	b.call.PendingEvents = append(b.call.PendingEvents, Event{
 		Type: kind,

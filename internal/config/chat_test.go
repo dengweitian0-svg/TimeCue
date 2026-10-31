@@ -7,6 +7,47 @@ import (
 	"time"
 )
 
+// TestChatCompactThresholdUsesPublishedConfig 验证摘要阈值默认值、覆盖及非法更新保留有效快照。
+func TestChatCompactThresholdUsesPublishedConfig(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	models := "chat_model:\n  - provider: test\n    base_url: https://example.test\n    models:\n      - model: model\n        context_window: 32768\n"
+	if err := os.WriteFile(path, []byte(models), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if err = manager.LoadConfig(); err != nil {
+		t.Fatal(err)
+	}
+	manager.Close()
+	configs, err := manager.ChatModels()
+	if err != nil || configs[0].CompactThreshold != 0.8 {
+		t.Fatalf("default=%+v err=%v", configs, err)
+	}
+	for _, value := range []string{"0.6", "-0.1", "1.1", ".nan", ".inf", "0"} {
+		if err = os.WriteFile(path, []byte(models+"chat:\n  compact_threshold: "+value+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		err = manager.LoadConfig()
+		invalid := value != "0.6" && value != "0"
+		if invalid && err == nil || !invalid && err != nil {
+			t.Fatalf("value=%s err=%v", value, err)
+		}
+		configs, err = manager.ChatModels()
+		want := 0.6
+		if value == "0" {
+			want = 0.8
+		}
+		if err != nil || configs[0].CompactThreshold != want {
+			t.Fatalf("value=%s config=%+v err=%v", value, configs, err)
+		}
+	}
+}
+
 // TestChatContinuationLimitUsesPublishedConfig 验证默认续写预算、用户覆盖、负数拒绝及快照保留。
 func TestChatContinuationLimitUsesPublishedConfig(t *testing.T) {
 	directory := t.TempDir()

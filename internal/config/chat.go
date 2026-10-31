@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -28,14 +29,15 @@ type ChatModel struct {
 
 // ChatRuntime 是模型请求的统一运行参数，零值使用默认值。
 type ChatRuntime struct {
-	MaxRounds           int  `mapstructure:"max_rounds"`
-	MaxContinue         int  `mapstructure:"max_continue"`
-	MaxRetry            *int `mapstructure:"max_retry"`
-	FirstTimeoutSeconds int  `mapstructure:"first_timeout_seconds"`
-	IdleTimeoutSeconds  int  `mapstructure:"idle_timeout_seconds"`
-	ToolConcurrency     int  `mapstructure:"tool_concurrency"`
-	ToolTimeoutSeconds  int  `mapstructure:"tool_timeout_seconds"`
-	ToolMaxRetry        *int `mapstructure:"tool_max_retry"`
+	CompactThreshold    float64 `mapstructure:"compact_threshold"`
+	MaxRounds           int     `mapstructure:"max_rounds"`
+	MaxContinue         int     `mapstructure:"max_continue"`
+	MaxRetry            *int    `mapstructure:"max_retry"`
+	FirstTimeoutSeconds int     `mapstructure:"first_timeout_seconds"`
+	IdleTimeoutSeconds  int     `mapstructure:"idle_timeout_seconds"`
+	ToolConcurrency     int     `mapstructure:"tool_concurrency"`
+	ToolTimeoutSeconds  int     `mapstructure:"tool_timeout_seconds"`
+	ToolMaxRetry        *int    `mapstructure:"tool_max_retry"`
 }
 
 func chatKeyName(provider, model string) string {
@@ -51,6 +53,9 @@ func chatKeyName(provider, model string) string {
 }
 
 func validateChatConfig(cfg *Config) error {
+	if math.IsNaN(cfg.Chat.CompactThreshold) || math.IsInf(cfg.Chat.CompactThreshold, 0) || cfg.Chat.CompactThreshold < 0 || cfg.Chat.CompactThreshold > 1 {
+		return fmt.Errorf("chat compact_threshold must be between 0 and 1")
+	}
 	keys := map[string]bool{}
 	for _, provider := range cfg.ChatModel {
 		for _, model := range provider.Models {
@@ -111,6 +116,10 @@ func (m *Manager) ChatModels() ([]chat.ModelConfig, error) {
 				rounds = 20
 			}
 			continues := cfg.Chat.MaxContinue
+			threshold := cfg.Chat.CompactThreshold
+			if threshold == 0 {
+				threshold = 0.8
+			}
 			if continues == 0 {
 				continues = 5
 			}
@@ -137,20 +146,21 @@ func (m *Manager) ChatModels() ([]chat.ModelConfig, error) {
 				key = ""
 			}
 			result = append(result, chat.ModelConfig{
-				Provider:        p.Provider,
-				Model:           model.Model,
-				BaseURL:         p.BaseURL,
-				Key:             key,
-				ContextWindow:   model.ContextWindow,
-				MaxOutputTokens: output,
-				MaxRetry:        retries,
-				MaxRounds:       rounds,
-				MaxContinue:     continues,
-				FirstTimeout:    time.Duration(first) * time.Second,
-				IdleTimeout:     time.Duration(idle) * time.Second,
-				ToolConcurrency: toolConcurrency,
-				ToolTimeout:     time.Duration(toolTimeout) * time.Second,
-				ToolMaxRetry:    &toolRetry,
+				Provider:         p.Provider,
+				Model:            model.Model,
+				BaseURL:          p.BaseURL,
+				Key:              key,
+				ContextWindow:    model.ContextWindow,
+				MaxOutputTokens:  output,
+				MaxRetry:         retries,
+				MaxRounds:        rounds,
+				MaxContinue:      continues,
+				CompactThreshold: threshold,
+				FirstTimeout:     time.Duration(first) * time.Second,
+				IdleTimeout:      time.Duration(idle) * time.Second,
+				ToolConcurrency:  toolConcurrency,
+				ToolTimeout:      time.Duration(toolTimeout) * time.Second,
+				ToolMaxRetry:     &toolRetry,
 			})
 		}
 	}

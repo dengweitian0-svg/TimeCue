@@ -11,3 +11,4 @@ db:
 
 chat:
   max_continue: 5
+  compact_threshold: 0.8

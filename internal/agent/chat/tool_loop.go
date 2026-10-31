@@ -11,6 +11,28 @@ func hasModelOutput(output ModelOutput) bool {
 
 func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call ModelCall) (ModelCall, *RunError) {
 	for r.Error == nil {
+		// 无 checkpoint 的恢复仍属于首次调用前，沿同一创建前阈值检查。
+		if call.ID == 0 && call.Input.Model == "" {
+			request, err := s.newRequest(ctx, *r, cfg)
+			if err != nil {
+				if ctx.Err() != nil {
+					return call, nil
+				}
+				return call, persistenceFailure()
+			}
+			call.Input = request
+			if needsCompact(request, cfg) {
+				call.Input = compactRequest(request)
+				call.CheckpointStage = "compact"
+			}
+		}
+		if call.CheckpointStage == "compact" {
+			var failure *RunError
+			call, failure = s.advanceCompact(ctx, r, cfg, call)
+			if failure != nil || ctx.Err() != nil {
+				return call, failure
+			}
+		}
 		hasTools := call.Output != nil && len(call.Output.Message.ToolCalls) > 0
 		if call.State == StateSucceeded && hasTools && (call.CheckpointStage == "model_call_end" || call.CheckpointStage == "tool_start") {
 			var failure *RunError
