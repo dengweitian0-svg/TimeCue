@@ -300,19 +300,45 @@ func (s *chatStore) History(ctx context.Context, session string) ([]chat.Message
 	if err != nil {
 		return nil, err
 	}
-	var raw, status string
-	err = db.QueryRowContext(ctx, `SELECT c.state,r.status FROM ai_runs r JOIN ai_checkpoints c ON c.run_id=r.run_id WHERE r.session_id=? AND r.status NOT IN ('running','wait_for_cancel') ORDER BY r.created_at DESC,r.id DESC LIMIT 1`, session).Scan(&raw, &status)
-	if errors.Is(err, sql.ErrNoRows) {
-		return []chat.Message{}, nil
-	}
+	rows, err := db.QueryContext(ctx, `SELECT c.state,c.status,r.status,r.input FROM ai_runs r JOIN ai_checkpoints c ON c.run_id=r.run_id WHERE r.session_id=? AND r.status NOT IN ('running','wait_for_cancel') ORDER BY r.created_at DESC,r.id DESC`, session)
 	if err != nil {
 		return nil, err
 	}
-	var state chat.CheckpointState
-	if err = json.Unmarshal([]byte(raw), &state); err != nil {
+	defer rows.Close()
+	type pendingHistory struct {
+		state  chat.CheckpointState
+		input  string
+		status chat.RunState
+	}
+	pending := []pendingHistory{}
+	history := []chat.Message{}
+	for rows.Next() {
+		var raw, stage, input string
+		var status chat.RunState
+		if err = rows.Scan(&raw, &stage, &status, &input); err != nil {
+			return nil, err
+		}
+		var state chat.CheckpointState
+		if err = json.Unmarshal([]byte(raw), &state); err != nil {
+			return nil, err
+		}
+		if !state.NeedsCompactBase(stage) {
+			history = state.History(status)
+			break
+		}
+		pending = append(pending, pendingHistory{
+			state:  state,
+			input:  input,
+			status: status,
+		})
+	}
+	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	return state.History(chat.RunState(status)), nil
+	for i := len(pending) - 1; i >= 0; i-- {
+		history = pending[i].state.HistoryAfterCompact(history, pending[i].input, pending[i].status)
+	}
+	return history, nil
 }
 
 // OrdinaryCallCount 从实际调用记录计算普通轮数，重试及摘要是否成功不影响分类。
@@ -346,18 +372,72 @@ func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall) error {
 func (s *chatStore) BeginCall(ctx context.Context, call chat.ModelCall) (int64, error) {
 	var id int64
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `INSERT INTO ai_model_calls(run_id,session_id,input,status,max_retry,continuation,created_at) VALUES(?,?,?,'running',?,?,?)`, call.RunID, call.SessionID, jsonValue(call.Input), call.MaxRetry, call.Continuation, time.Now().UnixNano())
-		if err != nil {
-			return err
-		}
-		id, err = result.LastInsertId()
-		if err != nil {
-			return err
-		}
-		call.ID = id
-		return checkpoint(ctx, tx, call.WithCallStarted())
+		var err error
+		call, err = beginChatCall(ctx, tx, call)
+		id = call.ID
+		return err
 	})
 	return id, err
+}
+
+func beginChatCall(ctx context.Context, tx *sql.Tx, call chat.ModelCall) (chat.ModelCall, error) {
+	result, err := tx.ExecContext(ctx, `INSERT INTO ai_model_calls(run_id,session_id,input,status,max_retry,continuation,created_at) VALUES(?,?,?,'running',?,?,?)`, call.RunID, call.SessionID, jsonValue(call.Input), call.MaxRetry, call.Continuation, time.Now().UnixNano())
+	if err != nil {
+		return call, err
+	}
+	call.ID, err = result.LastInsertId()
+	if err != nil {
+		return call, err
+	}
+	call = call.WithCallStarted()
+	if call.CheckpointStage == "compact" && !call.Continuation {
+		_, err = tx.ExecContext(ctx, `INSERT INTO ai_events(run_id,session_id,model_call_id,type,data,seq,compact_succeeded,created_at) SELECT ?,?,?,'compact','{}',COALESCE(MAX(seq),0)+1,0,? FROM ai_events WHERE run_id=?`, call.RunID, call.SessionID, call.ID, time.Now().UnixNano(), call.RunID)
+		if err != nil {
+			return call, err
+		}
+	}
+	return call, checkpoint(ctx, tx, call)
+}
+
+// CompleteCompact 同事务启用摘要、引用并登记下一普通请求，取消先提交时不切换有效分界。
+func (s *chatStore) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall) (chat.ModelCall, error) {
+	result := call
+	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		var status chat.RunState
+		if err := tx.QueryRowContext(ctx, `SELECT status FROM ai_runs WHERE run_id=?`, call.RunID).Scan(&status); err != nil {
+			return err
+		}
+		if status != chat.StateRunning {
+			return context.Canceled
+		}
+		if err := saveCall(ctx, tx, call, true); err != nil {
+			return err
+		}
+		if err := appendChatEvents(ctx, tx, call); err != nil {
+			return err
+		}
+		var eventID int64
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM ai_events WHERE run_id=? AND type='compact' ORDER BY seq DESC LIMIT 1`, call.RunID).Scan(&eventID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE ai_events SET compact_succeeded=1 WHERE id=?`, eventID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE ai_sessions SET compact_event_id=? WHERE session_id=?`, eventID, call.SessionID); err != nil {
+			return err
+		}
+		if next != nil {
+			var err error
+			result, err = beginChatCall(ctx, tx, *next)
+			return err
+		}
+		return checkpoint(ctx, tx, call)
+	})
+	if err != nil {
+		return call, err
+	}
+	result.PendingEvents = nil
+	return result, nil
 }
 
 // ReadCall 读取同一逻辑模型调用的原请求与部分输出；首次登记前返回 nil。

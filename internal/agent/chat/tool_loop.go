@@ -11,6 +11,28 @@ func hasModelOutput(output ModelOutput) bool {
 
 func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call ModelCall) (ModelCall, *RunError) {
 	for r.Error == nil {
+		// 无 checkpoint 的恢复仍属于首次调用前，沿同一创建前阈值检查。
+		if call.ID == 0 && call.Input.Model == "" {
+			request, err := s.newRequest(ctx, *r, cfg)
+			if err != nil {
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+					return call, nil
+				}
+				return call, persistenceFailure()
+			}
+			call.Input = request
+			if needsCompact(request, cfg) {
+				call.Input = compactRequest(request)
+				call.CheckpointStage = "compact"
+			}
+		}
+		if call.CheckpointStage == "compact" {
+			var failure *RunError
+			call, failure = s.advanceCompact(ctx, r, cfg, call)
+			if failure != nil || ctx.Err() != nil || r.State == StateWaitForCancel || call.CheckpointStage == "compact" {
+				return call, failure
+			}
+		}
 		hasTools := call.Output != nil && len(call.Output.Message.ToolCalls) > 0
 		if call.State == StateSucceeded && hasTools && (call.CheckpointStage == "model_call_end" || call.CheckpointStage == "tool_start") {
 			var failure *RunError
@@ -33,19 +55,8 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
 			}
 			if continuation {
-				count, err := s.execution.ContinuationCallCount(ctx, r.RunID)
-				if err != nil {
-					if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-						return call, nil
-					}
-					return call, persistenceFailure()
-				}
-				limit := cfg.MaxContinue
-				if limit <= 0 {
-					limit = 5
-				}
-				if count >= limit {
-					return call, toolError("model_continue_limit_exceeded", "已达到自动续写上限，输出仍未完成")
+				if failure := s.continuationBudgetError(ctx, r.RunID, cfg); failure != nil || ctx.Err() != nil {
+					return call, failure
 				}
 			}
 			request := call.FollowupRequest(continuation)
@@ -140,4 +151,22 @@ func toolError(code, message string) *RunError {
 		Code:    code,
 		Message: message,
 	}
+}
+
+func (s *Runtime) continuationBudgetError(ctx context.Context, runID string, cfg ModelConfig) *RunError {
+	count, err := s.execution.ContinuationCallCount(ctx, runID)
+	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return nil
+		}
+		return persistenceFailure()
+	}
+	limit := cfg.MaxContinue
+	if limit <= 0 {
+		limit = 5
+	}
+	if count >= limit {
+		return toolError("model_continue_limit_exceeded", "已达到自动续写上限，输出仍未完成")
+	}
+	return nil
 }

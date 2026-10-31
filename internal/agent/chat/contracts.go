@@ -56,6 +56,7 @@ const (
 	EventEnd        EventType = "end"
 	EventToolStart  EventType = "tool_start"
 	EventToolResult EventType = "tool_result"
+	EventCompact    EventType = "compact"
 )
 
 var (
@@ -173,20 +174,21 @@ type ModelOption struct {
 
 // ModelConfig 是一次请求使用的私有配置，密钥从不进入持久化输入。
 type ModelConfig struct {
-	Provider        string
-	Model           string
-	BaseURL         string
-	Key             string
-	ContextWindow   int
-	MaxOutputTokens int
-	MaxRetry        int
-	MaxRounds       int
-	MaxContinue     int
-	FirstTimeout    time.Duration
-	IdleTimeout     time.Duration
-	ToolConcurrency int
-	ToolTimeout     time.Duration
-	ToolMaxRetry    *int
+	Provider         string
+	Model            string
+	BaseURL          string
+	Key              string
+	ContextWindow    int
+	MaxOutputTokens  int
+	MaxRetry         int
+	MaxRounds        int
+	MaxContinue      int
+	CompactThreshold float64
+	FirstTimeout     time.Duration
+	IdleTimeout      time.Duration
+	ToolConcurrency  int
+	ToolTimeout      time.Duration
+	ToolMaxRetry     *int
 }
 
 // Message 保存实际模型消息，包括已收到的思考内容。
@@ -352,6 +354,8 @@ type ExecutionRepository interface {
 	ContinuationCallCount(context.Context, string) (int, error)
 	// BeginCall 原子保存请求 input、running 和 checkpoint。
 	BeginCall(context.Context, ModelCall) (int64, error)
+	// CompleteCompact 原子保存成功摘要、有效引用和下一普通调用；next 为空时保留成功摘要。
+	CompleteCompact(context.Context, ModelCall, *ModelCall) (ModelCall, error)
 	// ReadCall 读取当前逻辑调用的原请求与部分结果。
 	ReadCall(context.Context, string) (*ModelCall, error)
 	// Pause 保存正常退出时的部分响应，不推进终态。

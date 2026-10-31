@@ -47,7 +47,7 @@ ReadUnacknowledged 在同一事务读取范围完整总数、有界提醒页及�
 
 - 有效模型上下文只纳入已登记模型调用的历史；预算拒绝等未进入模型调用的输入保留在原始会话历史和事件中，不参与后续模型预算。
 - History 按 run.created_at 选择最新终态 checkpoint 后，调用聊天进度规则接续完整 context，不按 model_call.id 重建。回复接纳、调用开始/结束快照与旧格式兼容规则统一由 chat/progress.go 生成；存储只序列化三字段状态并保留事务核验、原子提交和事件编号。会话 run_ids 同样按创建时间升序，时间相同以 run 主键稳定排序。
-- 预算拒绝在 Create 事务保存失败 run 与 start/error/end，不创建模型调用、checkpoint 或 compact。OrdinaryCallCount 从已有 continuation 与 compact 关联统计普通逻辑调用；ReadCall 同时回读 checkpoint 阶段与完整消息，不新增表、列或运行计数字段。
+- 无可压缩历史的预算拒绝在 Create 事务保存失败 run 与 start/error/end，不创建模型调用、checkpoint 或 compact。OrdinaryCallCount 从已有 continuation 与 compact 关联统计普通逻辑调用；ReadCall 同时回读 checkpoint 阶段与完整消息，不新增表、列或运行计数字段。
 - 聊天调用复用版本 3 已有 retry_count/max_retry/next_retry_at/retry_history 列；调用快照、重试事实及适用尾批同事务提交，ReadCall 完整回读以支持退避恢复，不新增表、列、索引或迁移。正常退出保留 retry_wait 的原错误和期限，终态清除计划期限。
 
 聊天异常收尾同一事务复用已提交工具结果，并将已接纳但尚无确认结果的原 ID 补齐 tool_result_unconfirmed；取消未启动项补齐 skipped/aborted。开始与结果事件和完整工具配对均保留，直接保存最终处理事实，不伪造 running/tool_use；正常退出不补造终态，保留原进度供恢复。
@@ -55,3 +55,5 @@ ReadUnacknowledged 在同一事务读取范围完整总数、有界提醒页及�
 待保存工具结果仅携带实际取得的事实。Finish 在同一事务回读最新调用、checkpoint 与全部工具记录，调用聊天统一收尾操作后复用正常结果的事实及事件保存；存储不自行生成跳过或未确认结果。已终态调用不重写 output/usage/结束时间，未变化的已完成 checkpoint 保持原值；结果回执丢失时优先复用已提交事实，终态失败整体回滚，重试不重复结果或 end。不新增存储格式或迁移。
 
 - RequestCancel 原子将 running 改为 wait_for_cancel，不覆盖终态。Hide 在同一事务软删除父会话并保存其活动运行取消意图；所有子记录保留。Finish 重检已提交取消意图，取消与正常完成竞争时保存 cancelled 和唯一 end，不采用旧的成功快照。
+
+- `chat.go` 在版本 3 上为首次摘要原子保存 model_call、compact_succeeded=0 的 compact 和 compact checkpoint，重试/恢复/续写不新增 compact。CompleteCompact 保存已由聊天进度生成的成功投影、原调用结果和尾批、compact_succeeded=1、session.compact_event_id；预算允许时同事务登记下一普通调用和 checkpoint，否则保留 compact 的有效投影。事务内重检取消意图，失败不切换有效分界；History 将最新快照和未生效摘要运行的原输入交统一进度接续，不纳入部分摘要。无表、列、索引或迁移变更。
