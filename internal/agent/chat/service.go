@@ -41,10 +41,14 @@ type Runtime struct {
 	stopping    bool
 	started     bool
 	stopSignal  chan struct{}
+	shutdownCtx context.Context
+	storageCtx  context.Context
+	stopStorage context.CancelFunc
 }
 
 // NewService 装配真实聊天用例，不播种任何会话。
 func NewService(storage Storage, model ModelClient, settings func() ([]ModelConfig, error), registry *tools.Registry) *Runtime {
+	storageCtx, stopStorage := context.WithCancel(context.Background())
 	service := &Runtime{
 		runs:        storage.Runs,
 		sessions:    storage.Sessions,
@@ -58,6 +62,8 @@ func NewService(storage Storage, model ModelClient, settings func() ([]ModelConf
 		stopSignal:  make(chan struct{}),
 		toolStore:   storage.Tools,
 		tools:       registry,
+		storageCtx:  storageCtx,
+		stopStorage: stopStorage,
 	}
 	return service
 }
@@ -122,8 +128,17 @@ func (s *Runtime) Start(ctx context.Context) error {
 
 // Stop 停止准入与模型请求，等待协调器保存已收到内容后释放依赖。
 func (s *Runtime) Stop() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s.Shutdown(ctx)
+}
+
+// Shutdown 使用宿主的共享退出期限，停止准入与模型请求并等待进度保存结束。
+func (s *Runtime) Shutdown(ctx context.Context) {
 	s.mu.Lock()
 	if !s.stopping {
+		s.shutdownCtx = ctx
+		context.AfterFunc(ctx, s.stopStorage)
 		close(s.stopSignal)
 	}
 	s.stopping = true
@@ -140,6 +155,16 @@ func (s *Runtime) Stop() {
 	for _, done := range pending {
 		<-done
 	}
+	s.stopStorage()
+}
+
+func (s *Runtime) persistenceContext() context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.shutdownCtx != nil {
+		return s.shutdownCtx
+	}
+	return s.storageCtx
 }
 func available(c ModelConfig) bool {
 	return c.Key != "" && c.ContextWindow > c.MaxOutputTokens && c.MaxOutputTokens > 0
@@ -308,18 +333,16 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 		s.finish(call, r)
 		return
 	}
-	if r.Error == nil && !available(cfg) {
-		r.Error = &RunError{
-			Code:    "model_config_unavailable",
-			Message: "原运行的模型配置或密钥不可用",
-		}
-	}
 	call, r.Error = s.advance(ctx, &r, cfg, call)
 	s.mu.Lock()
 	if s.stopping && !run.requested && (r.Error == nil || r.Error.Code != "persistence_failed") {
 		s.mu.Unlock()
 		if call.ID != 0 {
-			if err = s.execution.Pause(context.Background(), call); err != nil {
+			if err = s.execution.Pause(s.persistenceContext(), call); err != nil {
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+					logger.Warn("[chat] 退出保存期限已到，保留已提交进度", "run_id", r.RunID, "error", err)
+					return
+				}
 				logger.Error("[chat] 保存退出进度失败", "run_id", r.RunID, "error", err)
 				r.State = StateFailed
 				r.Error = &RunError{
@@ -359,7 +382,7 @@ func (s *Runtime) readCancellationResults(call ModelCall, cfg ModelConfig) Model
 	if call.ID == 0 || s.toolStore == nil {
 		return call
 	}
-	stored, err := s.toolStore.ReadTools(context.Background(), call.ID)
+	stored, err := s.toolStore.ReadTools(s.persistenceContext(), call.ID)
 	if err != nil {
 		logger.Error("[chat] 取消恢复读取工具失败", "run_id", call.RunID, "model_call_id", call.ID, "error", err)
 		return call
@@ -368,7 +391,7 @@ func (s *Runtime) readCancellationResults(call ModelCall, cfg ModelConfig) Model
 		if tool.State != "running" || call.ToolCompleted(tool.Request.ID) {
 			continue
 		}
-		output, found, err := s.tools.ReadResult(tools.WithExecutionKey(context.Background(), tool.IdempotencyKey), tool.Request.Function.Name, tool.Request.Function.Arguments)
+		output, found, err := s.tools.ReadResult(tools.WithExecutionKey(s.persistenceContext(), tool.IdempotencyKey), tool.Request.Function.Name, tool.Request.Function.Arguments)
 		if err != nil {
 			logger.Warn("[chat] 取消恢复未确认业务回执", "run_id", call.RunID, "tool_call_id", tool.Request.ID, "error", err)
 		}
@@ -406,7 +429,7 @@ func (s *Runtime) finish(call ModelCall, r Record) {
 			}
 			logger.Warn("[chat] 重试保存终态", "run_id", r.RunID, "retry", attempt)
 		}
-		if err = s.execution.Finish(context.Background(), call, r); err == nil {
+		if err = s.execution.Finish(s.persistenceContext(), call, r); err == nil {
 			return
 		}
 		logger.Error("[chat] 保存终态失败", "run_id", r.RunID, "attempt", attempt+1, "error", err)

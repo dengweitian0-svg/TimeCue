@@ -170,6 +170,7 @@ func TestManagedProcess(t *testing.T) {
 		t.Skip("端口已占用；正常握手集成需空闲固定端口，占用拒绝已验证")
 	}
 	_ = probe.Close()
+	t.Run("chat-recovery", func(t *testing.T) { managedChatRecovery(t, binary, root) })
 	directory := processFixture(t, root, "valid")
 	for _, reason := range []string{"shutdown", "eof", "invalid", "oversized", "restart"} {
 		t.Run(reason, func(t *testing.T) {

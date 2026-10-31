@@ -13,6 +13,11 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 	for r.Error == nil {
 		// 无 checkpoint 的恢复仍属于首次调用前，沿同一创建前阈值检查。
 		if call.ID == 0 && call.Input.Model == "" {
+			var ok bool
+			cfg, ok = s.currentModel(r.Provider, r.Model)
+			if !ok {
+				return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
+			}
 			request, err := s.newRequest(ctx, *r, cfg)
 			if err != nil {
 				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
@@ -146,7 +151,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 			}
 		}
 		accepted := call.WithResponseAccepted()
-		if err := s.toolStore.AcceptResponse(context.Background(), accepted); err != nil {
+		if err := s.toolStore.AcceptResponse(s.persistenceContext(), accepted); err != nil {
 			return call, persistenceFailure()
 		}
 		call = accepted

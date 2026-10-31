@@ -6,6 +6,7 @@
 - `managed.go`：`--data-dir` / `--instance-id` / `--port` 校验、可执行文件目录默认值、stdout 单行 ready 编码、有界 stdin shutdown/EOF 控制及读取工作收尾。
 - `control_windows.go`：Windows 可关闭控制 Reader，只在专用匿名管道已有字节时读取，避免同步读取阻塞退出。
 - `managed_test.go` / `process_test.go`：参数和控制协议、真实匿名管道收尾、编译后二进制握手/健康/退出、启动失败及重启旧身份失效测试。
+- `process_chat_test.go`：复用编译后二进制及隔离目录，验证普通/摘要续写正常退出的部分 output、thinking、usage 和尾批、原调用/请求/预算恢复、阻塞恢复期间 ready/health 可用，以及无 Key 时取消与隐藏会话的只读收尾和终态不重执。
 - 默认监听 `127.0.0.1:10086`，可用 `--port` 指定 1–65535 的 loopback 端口；ready 地址与路由 Host 校验使用同一端口。处理退出信号、HTTP 优雅关闭及数据库和日志文件清理。
 
 # 约束

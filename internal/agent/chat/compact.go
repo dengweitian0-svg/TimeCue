@@ -121,7 +121,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 		if call.Output.FinishReason == "length" {
 			accepted := call.WithCompactResponse()
 			if call.State != StateSucceeded {
-				if err := s.toolStore.AcceptResponse(context.Background(), accepted); err != nil {
+				if err := s.toolStore.AcceptResponse(s.persistenceContext(), accepted); err != nil {
 					return call, persistenceFailure()
 				}
 				accepted.PendingEvents = nil
@@ -160,7 +160,13 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			return call, toolError("model_invalid_format", "摘要未返回有效正文")
 		}
 		ordinary.Messages = projected.CheckpointContext
-		failure := requestBudgetError(ordinary, cfg)
+		var failure *RunError
+		if cfg.ContextWindow <= cfg.MaxOutputTokens || cfg.MaxOutputTokens <= 0 {
+			// 原模型预算已移除时仍保存完整成功摘要，随后以配置不可用结束。
+			failure = toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
+		} else {
+			failure = requestBudgetError(ordinary, cfg)
+		}
 		if failure == nil {
 			failure = s.ordinaryRoundBudgetError(ctx, r.RunID, cfg)
 			if ctx.Err() != nil || failure != nil && failure.Code == "persistence_failed" {
@@ -187,12 +193,12 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 		committed, err := s.execution.CompleteCompact(ctx, projected, next, terminal)
 		if err != nil {
 			// 提交回执丢失时沿实际 checkpoint 收尾，不能重发已经登记的普通调用或丢弃有效摘要。
-			if saved, readErr := s.execution.ReadCall(context.Background(), r.RunID); readErr == nil && saved != nil && (saved.ID != call.ID || saved.State == StateSucceeded) {
+			if saved, readErr := s.execution.ReadCall(s.persistenceContext(), r.RunID); readErr == nil && saved != nil && (saved.ID != call.ID || saved.State == StateSucceeded) {
 				call = *saved
 			}
 			// 取消事务可能先于本地 context 信号完成；以已提交取消事实识别切换门禁。
 			if errors.Is(err, context.Canceled) {
-				if saved, readErr := s.runs.ReadRun(context.Background(), r.RunID, false); readErr == nil && saved.State == StateWaitForCancel {
+				if saved, readErr := s.runs.ReadRun(s.persistenceContext(), r.RunID, false); readErr == nil && saved.State == StateWaitForCancel {
 					r.State = saved.State
 					return call, nil
 				}

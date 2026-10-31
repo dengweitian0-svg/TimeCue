@@ -51,8 +51,15 @@ func persistenceFailure() *RunError {
 }
 
 func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (ModelCall, *RunError) {
+	// 正常退出可能已保存完整响应但尚未提交接纳；沿统一响应校验复用原事实。
+	if call.State == StateRunning && call.Error == nil && call.Output != nil && call.Output.FinishReason != "" {
+		return call, call.Output.ValidateResponse()
+	}
 	for ctx.Err() == nil {
 		if call.State == StateRetryWait {
+			if _, ok := s.currentModel(r.Provider, r.Model); !ok {
+				return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
+			}
 			if call.NextRetryAt != nil {
 				timer := time.NewTimer(time.Until(*call.NextRetryAt))
 				select {
@@ -91,6 +98,7 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 		previousOutput := call.Output != nil && hasModelOutput(*call.Output)
 		batch := &eventBatch{
 			repository: s.execution,
+			context:    s.persistenceContext,
 			call:       call,
 			partial: ModelOutput{
 				Message: Message{Role: "assistant"},
@@ -137,7 +145,7 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 			Result: "retry_wait",
 			Cause:  failure,
 		})
-		if err := s.execution.SaveEvents(context.Background(), call); err != nil {
+		if err := s.execution.SaveEvents(s.persistenceContext(), call); err != nil {
 			return call, persistenceFailure()
 		}
 		call.PendingEvents = nil

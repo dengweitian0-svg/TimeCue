@@ -30,8 +30,16 @@ func (*failingChatStartup) Start(context.Context) error {
 	return errors.New("injected chat startup failure")
 }
 
-// Stop 满足生命周期故障注入契约，不持有实际资源。
-func (*failingChatStartup) Stop() {}
+// Shutdown 满足生命周期故障注入契约，不持有实际资源。
+func (*failingChatStartup) Shutdown(context.Context) {}
+
+type deadlineChatShutdown struct{}
+
+// Start 在退出期限故障边界装配可控生命周期。
+func (*deadlineChatShutdown) Start(context.Context) error { return nil }
+
+// Shutdown 消耗宿主全部退出窗口，验证 HTTP 不会另获一个五秒窗口。
+func (*deadlineChatShutdown) Shutdown(ctx context.Context) { <-ctx.Done() }
 
 // TestRuntimeReservesPortBeforeChatStartup 验证端口冲突时不会先进入聊天恢复。
 func TestRuntimeReservesPortBeforeChatStartup(t *testing.T) {
@@ -183,7 +191,7 @@ func TestRuntimeReadyFailureAndCancellation(t *testing.T) {
 	}
 }
 
-// TestRuntimeShutdownTimeoutCancelsConnection 超时取消连接，但忽略取消的业务仍须结束后再关闭数据库。
+// TestRuntimeShutdownTimeoutCancelsConnection 聊天与 HTTP 共用期限，超时后仍等待已接收业务再关闭数据库。
 func TestRuntimeShutdownTimeoutCancelsConnection(t *testing.T) {
 	probe, err := net.Listen("tcp", "127.0.0.1:1145")
 	if err != nil {
@@ -191,6 +199,7 @@ func TestRuntimeShutdownTimeoutCancelsConnection(t *testing.T) {
 	}
 	_ = probe.Close()
 	app, dir := runtimeTestApp(t)
+	app.ChatRuntime = &deadlineChatShutdown{}
 	db := &drainRuntimeDB{closed: make(chan struct{})}
 	ready, entered, connectionCanceled := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	release := make(chan struct{})
