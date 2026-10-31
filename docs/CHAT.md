@@ -1,6 +1,6 @@
 # 真实文字对话
 
-正常、external 开发和 managed 发行入口共用真实 Chat Completions、SQLite 与六个正式日程工具；空库不播种会话，不保留旧内存聊天服务、固定回复或人工推进 HTTP。`TIMECUE_DEMO` 只提供传统日程的内存视觉示例，不装配聊天服务；`ChatAcceptanceGateway` 仅供 Widget 绘制和 profile 夹具使用，其人工事件与历史不构成真实模型验收证据。
+正常、external 开发和 managed 发行入口共用真实 Chat Completions、SQLite 与六个正式日程工具；空库不播种会话，不保留旧内存聊天服务、固定回复或人工推进 HTTP。`TIMECUE_DEMO` 只提供传统日程的内存视觉示例，不装配聊天服务。可执行聊天验收只连接真实 Go；合成网关限定在 `desktop/test/fixtures/chat_widget_gateway.dart`，仅供 Widget 布局、滚动与截图测试显式安排数据，构造不播种，使用 widget 专用 provider/model，不构成模型或日程验收证据。
 
 真实模型组合验收使用显式模型及当前本地密钥文件，例如在仓库根目录执行：
 

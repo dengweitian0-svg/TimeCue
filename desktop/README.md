@@ -242,20 +242,17 @@ Python 脚本自行建立并手动迁移新的测试数据库，不接收业务�
 
 房间设置、日程本、管理和添加入口共用米白底、暖棕文字及 44 高点击目标。原图猫咪增加透明入口，悬停或键盘操作聚焦时显示“和我聊聊”；点击进入同一本子的 AI 标签。热区随三时段背景一起投影和裁切，猫咪不可见时仍可从固定日程本入口访问第四标签。合本后焦点返回实际入口，原入口不可见时返回固定本子按钮；鼠标关闭后，移动鼠标会清除键盘焦点提示，重新悬停仍正常显示。
 
-当前聊天使用真实 Chat Completions、SQLite、事件分页与 SSE，支持提供方/模型选择、多会话输入、停止、历史搜索、软删除和重启恢复。应用级模型保留后台消费和各会话阅读状态，宿主隔离失效及退出期间的旧操作；显式演示模式保留无网络的欢迎框架。原始事件与最终正文分别展示，工具参数和结果当前只验证协议消费与展示，真实业务工具由后续切片交付。`gpt_markdown 1.3.4`、双页/单栏、综合测试、截图和 Windows profile 工具沿用既有入口。真实输入法、OS DPI、跨显示器及系统交互等人工平台矩阵仍需独立验收。
+当前聊天使用真实 Chat Completions、SQLite、六个正式日程工具、事件分页与 SSE，支持 provider/model 选择、多会话输入、停止、历史搜索、软删除和模型/工具/摘要恢复。应用级模型保留后台消费和各会话阅读状态，宿主隔离失效及退出期间的旧操作；显式传统日程演示模式不装配聊天服务。
 
-阶段 6 的综合自动验收工具可在 `desktop` 目录执行：
+聊天布局与截图检查在 `desktop` 目录执行：
 
 ```powershell
-flutter test test/chat_acceptance_test.dart test/chat_contrast_test.dart
+flutter test test/chat_acceptance_test.dart test/chat_message_scroll_test.dart test/chat_contrast_test.dart
 flutter test tool/capture_chat_visuals_test.dart
 $env:TIMECUE_CAPTURE_CHAT='true'; flutter test test/cat_chat_hotspot_test.dart
-flutter build windows --profile --target=tool/chat_profile_smoke.dart
-python tool/run_chat_profile.py
-flutter build windows --release --target=lib/main.dart
 ```
 
-Widget 截图写入 `build/visuals/`，profile 报告写入 `build/chat-profile/profile.json`；构建产物、PNG 与报告仅供本地检查，不纳入提交。Profile 自动检查使用 Flutter 框架指针事件和文本控制器，不覆盖 Windows 原生 IME、系统键鼠、OS DPI 与跨显示器验收。退出码表示功能、采样完整性及操作响应检查，60 FPS 帧耗时追踪目标单独查看 `performance.frame_target_met` 与诊断；退出成功不表示所有帧目标已达到。自动验收以实际测试输出和报告为准；命令列表不代表这些检查已经执行或通过。
+这些 Widget 测试使用 `test/fixtures/chat_widget_gateway.dart` 并显式安排合成数据，不用于证明真实模型、业务写入或原生性能。可执行聊天验收统一连接真实 Go，不提供固定聊天回复的 profile 程序。真实模型、Flutter HTTP 及 Windows 发行验收命令见 [聊天说明](../docs/CHAT.md)。截图和执行报告只留本地，不纳入提交；真实输入法、OS DPI、跨显示器及系统交互仍需独立验收。
 
 小高度或大字模式下，对话与历史页头采用有界滚动，历史搜索和状态可滚动访问，消息列表及固定输入、停止操作保留可用空间。
 

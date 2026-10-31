@@ -8,7 +8,7 @@ import 'package:timecue_desktop/features/notebook/notebook_spreads.dart';
 import 'package:timecue_desktop/features/notebook/notebook_view_model.dart';
 import 'package:timecue_desktop/theme/notebook_theme.dart';
 
-import '../tool/chat_acceptance_fixture.dart';
+import 'fixtures/chat_widget_gateway.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -21,7 +21,7 @@ void main() {
     for (final (width, height) in dimensions) {
       for (final deviceScale in deviceScales) {
         for (final textScale in textScales) {
-          final gateway = ChatAcceptanceGateway(historySessionCount: 2);
+          final gateway = ChatWidgetGateway()..arrangeHistory(2);
           final chat = ChatViewModel(gateway: gateway);
           final repository = DemoNotebookRepository();
           final notebook = NotebookViewModel(repository)
@@ -125,7 +125,7 @@ void main() {
   });
 
   testWidgets('长历史、Thinking 隐私、多工具同名调用和正式原文可综合复跑', (tester) async {
-    final gateway = ChatAcceptanceGateway(historySessionCount: 3);
+    final gateway = ChatWidgetGateway()..arrangeHistory(3);
     expect(gateway.longChatMarkdown.length, greaterThanOrEqualTo(20000));
     final chat = ChatViewModel(gateway: gateway);
     final repository = DemoNotebookRepository();
@@ -199,7 +199,7 @@ void main() {
   });
 
   testWidgets('640×480 大字下长正文和长工具列表可滚动访问且可停止', (tester) async {
-    final gateway = ChatAcceptanceGateway(historySessionCount: 1);
+    final gateway = ChatWidgetGateway()..arrangeHistory(1);
     final chat = ChatViewModel(gateway: gateway);
     final repository = DemoNotebookRepository();
     final notebook = NotebookViewModel(repository)..changeTab(NotebookTab.ai);

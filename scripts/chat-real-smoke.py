@@ -36,7 +36,8 @@ class Acceptance:
         self.evidence = {"provider": options.provider, "model": options.model,
                          "directory": str(self.directory), "runs": [], "checks": []}
 
-    def configure(self, max_output=2048):
+    def configure(self):
+        """只在新建隔离目录配置真实上游、固定预算及密钥副本。"""
         # 不复制用户数据库或包含路径覆盖的配置，密钥仅复制到本次新建目录。
         shutil.copyfile(self.options.env_file, self.directory / ".env")
         config = ("log:\n  level: warn\nchat:\n  max_retry: 0\n"
@@ -44,10 +45,11 @@ class Acceptance:
                   + json.dumps(self.options.provider) + "\n    base_url: "
                   + json.dumps(self.options.base_url) + "\n    models:\n      - model: "
                   + json.dumps(self.options.model)
-                  + f"\n        context_window: 65536\n        max_output_tokens: {max_output}\n")
+                  + "\n        context_window: 65536\n        max_output_tokens: 2048\n")
         (self.directory / "config.yaml").write_text(config, encoding="utf-8")
 
     def start(self):
+        """启动自有托管 Go，并核对 ready 和健康响应身份。"""
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", self.options.port))
         identity = "chat-real-" + uuid.uuid4().hex
@@ -69,6 +71,7 @@ class Acceptance:
         self.evidence["checks"].append({"ready": identity, "pid": process.pid})
 
     def stop(self):
+        """通过父端协议停止自有 Go，超时仅回收本工具持有的进程。"""
         if self.process is None:
             return
         process = self.process
@@ -88,6 +91,7 @@ class Acceptance:
         self.process = None
 
     def request(self, method, path, body=None, headers=None):
+        """经直连 loopback 请求正式业务接口并保留实际状态码。"""
         encoded = None if body is None else json.dumps(body).encode("utf-8")
         request = urllib.request.Request(self.base + path, encoded,
                                         {"Content-Type": "application/json", **(headers or {})}, method=method)
@@ -96,11 +100,13 @@ class Acceptance:
             return response.status, json.loads(raw) if raw else None
 
     def rows(self, sql, parameters=()):
+        """在运行终态或进程停止后只读核对 SQLite，并立即关闭连接。"""
         with closing(sqlite3.connect(f"file:{self.database.as_posix()}?mode=ro", uri=True)) as database:
             database.row_factory = sqlite3.Row
             return [dict(row) for row in database.execute(sql, parameters)]
 
     def wait(self, predicate, description):
+        """有界等待实际进度，提前结束或自有进程退出时立即反馈。"""
         deadline = time.monotonic() + self.options.timeout
         while time.monotonic() < deadline:
             result = predicate()
@@ -117,6 +123,7 @@ class Acceptance:
         raise AssertionError("等待超时：" + description)
 
     def create(self, text):
+        """提交真实输入并核对四字段运行回执。"""
         key = "create_session:" + str(uuid.uuid4())
         body = {"session_id": self.session, "input": text,
                 "provider": self.options.provider, "model": self.options.model}
@@ -127,6 +134,7 @@ class Acceptance:
         return receipt["run_id"]
 
     def terminal(self, run_id, expected="succeeded"):
+        """核对真实终态、完整事件分页、唯一结束及上游调用身份。"""
         run = self.wait(lambda: (r if (r := self.request("GET", "/v1/run/" + run_id)[1])["finished_at"] else None),
                         "运行终态 " + run_id)
         assert run["status"] == expected, run
@@ -153,6 +161,7 @@ class Acceptance:
         return events
 
     def stream_event(self, run_id, cursor):
+        """按已持久化游标建立 SSE，读取下一条连续事件后断开。"""
         request = urllib.request.Request(self.base + f"/v1/run/{run_id}/event",
                                         headers={"Last-Event-ID": str(cursor)})
         with self.opener.open(request, timeout=self.options.timeout) as stream:
@@ -165,10 +174,12 @@ class Acceptance:
             return frame
 
     def has_event(self, run_id, kinds):
+        """通过 HTTP 观察指定事件，避免核对连接干扰 SQLite 写入。"""
         page = self.request("GET", f"/v1/run/{run_id}/events?limit=100")[1]
         return any(event["type"] in kinds for event in page["events"])
 
     def execute(self):
+        """执行真实模型及正式日程、提醒的组合验收。"""
         self.configure()
         self.start()
         assert self.request("GET", "/v1/session")[1] == {"sessions": []}
@@ -206,6 +217,7 @@ class Acceptance:
         self.evidence["passed"] = True
 
     def cancel_and_resume(self):
+        """验证断线接续、取消及普通模型和摘要的原调用恢复。"""
         # 使用新会话避免摘要先于长输出；只按持久化进度同步，不伪造模型响应。
         history_session = self.session
         self.session = str(uuid.uuid4())
@@ -250,6 +262,7 @@ class Acceptance:
             assert self.request("GET", "/v1/run/" + entry["run_id"])[1] == entry["run"]
 
     def flutter(self):
+        """将真实记录交给生产 Flutter 网关和状态模型只读核对。"""
         if not self.options.flutter_test:
             return
         manifest = self.directory / "flutter-input.json"
@@ -264,6 +277,7 @@ class Acceptance:
         self.evidence["checks"].append({"flutter_real_http": True})
 
     def save(self):
+        """把本次实际结果写入本地证据文件，不纳入版本控制。"""
         path = self.directory / "result.json"
         path.write_text(json.dumps(self.evidence, ensure_ascii=False, indent=2), encoding="utf-8")
         print("本地证据：", path, flush=True)
