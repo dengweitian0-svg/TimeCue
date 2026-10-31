@@ -391,16 +391,20 @@ func (s *Runtime) readCancellationResults(call ModelCall, cfg ModelConfig) Model
 		return call
 	}
 	for _, tool := range stored {
-		if tool.State != "running" || call.ToolCompleted(tool.Request.ID) {
+		if tool.State != "running" && tool.State != "retry_wait" || call.ToolCompleted(tool.Request.ID) {
 			continue
 		}
 		output, found, err := s.tools.ReadResult(tools.WithExecutionKey(s.persistenceContext(), tool.IdempotencyKey), tool.Request.Function.Name, tool.Request.Function.Arguments)
 		if err != nil {
 			logger.Warn("[chat] 取消恢复未确认业务回执", "run_id", call.RunID, "tool_call_id", tool.Request.ID, "error", err)
 		}
-		tool = tool.WithResultUnconfirmed()
 		if found {
-			tool.State, tool.Output, tool.Error = "succeeded", output, nil
+			tool.State, tool.Output, tool.Error, tool.NextRetryAt = "succeeded", output, nil, nil
+		} else if tool.State == "running" {
+			tool = tool.WithResultUnconfirmed()
+		} else {
+			// 没有实际回执的退避项仍由统一进度跳过，绝不进入写入入口。
+			continue
 		}
 		tool.ModelContentLimit = cfg.ToolResultMaxTokens
 		call.PendingTools = append(call.PendingTools, tool)
