@@ -1,5 +1,7 @@
 # 视觉检查工具
 
+- `chat_real_http_smoke_test.dart`：由真实模型验收脚本传入隔离实例身份及实际运行清单，先核对 loopback health，再通过生产 HttpChatGateway/ChatViewModel 只读核对 provider/model、终态正文、原始事件分页、204 和会话历史；不创建固定模型响应，不作为原生窗口交互证明。
+
 - `capture_visuals_test.dart`：生成房间、日程本、编辑、日期/时间选择和确认弹层截图，输出到 `build/visuals/`。
 
 - `chat_markdown_smoke.dart`：引用 `gpt_markdown` 和 NotebookTheme，提供混合中文、代码及表格的 Windows 发行构建依赖验证入口。

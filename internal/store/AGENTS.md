@@ -1,5 +1,7 @@
 # SQLite 存储
 
+- `chat.go` 的 `BeginCall` 仅在包含调用和 checkpoint 的整个事务提交后返回调用 ID；任何回滚均返回 0，失败收尾不得引用未落库的临时行号。沿用数据库版本 3，不修改表结构。
+
 - `chat_usage.go`：独立只读端口 `ReadUsage` 按 run_id 和调用 ID 读取全部模型调用的原始 usage 列，不过滤状态或用途，不从 output、事件或 token 估算补值；SQL NULL 保持 nil。经 `NewChatStorage` 装配到 `Storage.Usage`，沿用版本 3，无表结构及索引变更。
 
 - `chat.go` 使用版本 3 已有 continuation 列保存/回读逻辑续写标记，ContinuationCallCount 统计 run 内全部续写，含摘要用途，不因重试/恢复重复登记。恢复续写时读取普通请求候选，由聊天进度按实际消息前缀恢复本轮正文边界；不按主键邻接或展示事件猜测分组，不新增表、列、索引或 checkpoint 字段。

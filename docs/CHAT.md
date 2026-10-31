@@ -1,5 +1,20 @@
 # 真实文字对话
 
+正常、external 开发和 managed 发行入口共用真实 Chat Completions、SQLite 与六个正式日程工具；空库不播种会话，不保留旧内存聊天服务、固定回复或人工推进 HTTP。`TIMECUE_DEMO` 只提供传统日程的内存视觉示例，不装配聊天服务；`ChatAcceptanceGateway` 仅供 Widget 绘制和 profile 夹具使用，其人工事件与历史不构成真实模型验收证据。
+
+真实模型组合验收使用显式模型及当前本地密钥文件，例如在仓库根目录执行：
+
+```powershell
+go build -o .gotmp-chat-real/timecue-core.exe ./cmd/flutter
+python scripts/chat-real-smoke.py --go .gotmp-chat-real/timecue-core.exe --env-file .env --provider deepseek --model deepseek-v4-flash --base-url https://api.deepseek.com --flutter-test
+```
+
+工具不使用用户数据库或路径配置，自动创建新的 `.gotmp-chat-real/真实模型-*/` 数据目录；复制密钥后调用实际上游，核对普通回复、六个工具及实际日程/提醒、四字段创建回执、原始事件分页/连续 seq、SSE 游标重连、取消和唯一 end、正常退出及模型/摘要原调用恢复、终态重启查询。执行中通过 HTTP 同步进度，SQLite 核对只在终态或进程停止后读取并立即关闭。低摘要阈值仅用于该隔离实例，以真实模型完成摘要；模型不按要求调用工具或返回错误时直接失败。`--flutter-test` 再以生产网关和 ViewModel 读取这些真实记录；它不替代 Windows 窗口及托盘验证。报告、数据库、日志和密钥副本只留本地，不纳入提交，不向 CI 提供真实密钥。默认使用 1145，端口占用时拒绝测试，不停止其他实例。
+
+Windows 验证单独构建正式 `lib/main.dart` 完整发行包，运行 `scripts/release-smoke.py --package <发行目录>` 和 `desktop/test/native` 的 CTest；发行 smoke 核对数据库版本 3、空聊天会话、传统日程重启持久化、重复启动和宿主崩溃后自有 Go 回收。已有正式实例应先由用户退出，不能通过验收工具结束它。各前置任务的公共服务、SQLite、故障边界及 Apifox 契约验收继续保留；没有 HTTP 契约变更时不为本验收另建接口。
+
+模型调用登记仅在调用及 checkpoint 整个事务提交后返回有效 ID。checkpoint 写入或事务提交失败返回 0，后续以真实已提交记录保存 persistence_failed 及唯一 error/end；不能把回滚前分配的临时行号当作已存在调用。回归经 chat.Service 和真实 SQLite 的 checkpoint 保存故障验证，无表结构变更。
+
 T17 提供内部公开用例 `chat.Runtime.GetRunUsage(ctx, runID)`：每次只读指定可见运行的全部 `ai_model_calls.usage`，按调用 ID 返回逐条原始 JSON，并重新计算 prompt_tokens、completion_tokens、total_tokens 三个标准字段。普通、摘要及两类续写使用同一入口，不按成功状态过滤，失败、取消或正常退出已取得的真实值沿既有原子保存路径保留。原始 usage 包括供应商扩展字段，不改写模型实际 output；统计不从 output、SSE 或 token 估算补值。
 
 各合计独立判断是否已知：全部调用均提供该字段的非负整数且相加不溢出时返回实际合计；任一调用缺失该字段、字段无效或没有模型调用时保持 nil（未知）。上游明确返回的 0 是已知值；total_tokens 只累计上游真实 total，不用 prompt 与 completion 推算。部分未知时，逐调用已知原始对象仍完整返回。SQL NULL 保持 nil，不以空对象、零或 JSON null 补齐。
