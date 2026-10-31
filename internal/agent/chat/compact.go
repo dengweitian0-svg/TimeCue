@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 )
 
 const compactInstructions = `你正在执行一次上下文检查点压缩。
@@ -167,6 +168,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			}
 		}
 		var next *ModelCall
+		var terminal *Record
 		if failure == nil {
 			next = &ModelCall{
 				RunID:     r.RunID,
@@ -175,8 +177,14 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 				State:     StateRunning,
 				MaxRetry:  cfg.MaxRetry,
 			}
+		} else {
+			finished := *r
+			finished.State, finished.Error = StateFailed, failure
+			now := time.Now()
+			finished.FinishedAt = &now
+			terminal = &finished
 		}
-		committed, err := s.execution.CompleteCompact(ctx, projected, next)
+		committed, err := s.execution.CompleteCompact(ctx, projected, next, terminal)
 		if err != nil {
 			// 提交回执丢失时沿实际 checkpoint 收尾，不能重发已经登记的普通调用或丢弃有效摘要。
 			if saved, readErr := s.execution.ReadCall(context.Background(), r.RunID); readErr == nil && saved != nil && (saved.ID != call.ID || saved.State == StateSucceeded) {

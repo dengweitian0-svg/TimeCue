@@ -59,3 +59,4 @@ ReadUnacknowledged 在同一事务读取范围完整总数、有界提醒页及�
 - `chat.go` 在版本 3 上为首次摘要原子保存 model_call、compact_succeeded=0 的 compact 和 compact checkpoint，重试/恢复/续写不新增 compact。CompleteCompact 保存已由聊天进度生成的成功投影、原调用结果和尾批、compact_succeeded=1、session.compact_event_id；预算允许时同事务登记下一普通调用和 checkpoint，否则保留 compact 的有效投影。事务内重检取消意图，失败不切换有效分界；History 将最新快照和未生效摘要运行的原输入交统一进度接续，不纳入部分摘要。无表、列、索引或迁移变更。
 
 - 工具结果事务独立保存完整原始 output/事件与统一进度生成的有界模型文本，后续读取只复用已提交 context。运行中摘要的 compact checkpoint 在成功前保留完整普通上下文，History 直接接续该有效快照；readCall 复用普通请求前缀核验恢复先前普通正文，摘要专用 input/output 不参与用户正文投影。成功切换复用既有原子事务，无结构变更。
+- CompleteCompact 在下一调用为空时，与成功摘要和 checkpoint 同事务保存协调器给出的预算失败运行及 error/end；普通终态和摘要终态共用 finishChatRun 写入。取消先提交仍不启用摘要，事务失败整体回滚，无成功摘要与 running 终态之间的恢复窗口。

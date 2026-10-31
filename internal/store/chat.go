@@ -399,8 +399,11 @@ func beginChatCall(ctx context.Context, tx *sql.Tx, call chat.ModelCall) (chat.M
 	return call, checkpoint(ctx, tx, call)
 }
 
-// CompleteCompact 同事务启用摘要、引用并登记下一普通请求，取消先提交时不切换有效分界。
-func (s *chatStore) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall) (chat.ModelCall, error) {
+// CompleteCompact 同事务启用摘要、引用及下一普通请求或失败终态，取消先提交时不切换有效分界。
+func (s *chatStore) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall, terminal *chat.Record) (chat.ModelCall, error) {
+	if (next == nil) == (terminal == nil) {
+		return call, chat.ErrInvalidRequest
+	}
 	result := call
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
 		var status chat.RunState
@@ -431,7 +434,10 @@ func (s *chatStore) CompleteCompact(ctx context.Context, call chat.ModelCall, ne
 			result, err = beginChatCall(ctx, tx, *next)
 			return err
 		}
-		return checkpoint(ctx, tx, call)
+		if err := checkpoint(ctx, tx, call); err != nil {
+			return err
+		}
+		return finishChatRun(ctx, tx, call, *terminal)
 	})
 	if err != nil {
 		return call, err
@@ -643,25 +649,28 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 		if err := appendChatEvents(ctx, tx, call); err != nil {
 			return err
 		}
+		return finishChatRun(ctx, tx, call, r)
+	})
+}
 
-		_, err := tx.ExecContext(ctx, `UPDATE ai_runs SET status=?,output=?,error=?,finished_at=? WHERE run_id=?`, r.State, stringValue(r.Output), jsonValue(r.Error), timeValue(r.FinishedAt), r.RunID)
-		if err != nil {
+func finishChatRun(ctx context.Context, tx *sql.Tx, call chat.ModelCall, r chat.Record) error {
+	_, err := tx.ExecContext(ctx, `UPDATE ai_runs SET status=?,output=?,error=?,finished_at=? WHERE run_id=?`, r.State, stringValue(r.Output), jsonValue(r.Error), timeValue(r.FinishedAt), r.RunID)
+	if err != nil {
+		return err
+	}
+	if r.Error != nil {
+		data, _ := json.Marshal(r.Error)
+		if err = appendChatEvent(ctx, tx, call, chat.Event{
+			Type: chat.EventError,
+			Data: data,
+		}); err != nil {
 			return err
 		}
-		if r.Error != nil {
-			data, _ := json.Marshal(r.Error)
-			if err = appendChatEvent(ctx, tx, call, chat.Event{
-				Type: chat.EventError,
-				Data: data,
-			}); err != nil {
-				return err
-			}
-		}
-		data, _ := json.Marshal(chat.EndData{Status: r.State.Public()})
-		return appendChatEvent(ctx, tx, call, chat.Event{
-			Type: chat.EventEnd,
-			Data: data,
-		})
+	}
+	data, _ := json.Marshal(chat.EndData{Status: r.State.Public()})
+	return appendChatEvent(ctx, tx, call, chat.Event{
+		Type: chat.EventEnd,
+		Data: data,
 	})
 }
 

@@ -87,6 +87,110 @@ func TestLargeToolContentKeepsFullOriginalEvents(t *testing.T) {
 	}
 }
 
+type compactTerminalGate struct {
+	chat.ExecutionRepository
+	committed chan struct{}
+	release   chan struct{}
+}
+
+// CompleteCompact 在真实摘要提交后暂停回执，核验公开终态已与摘要原子保存。
+func (g *compactTerminalGate) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall, terminal *chat.Record) (chat.ModelCall, error) {
+	result, err := g.ExecutionRepository.CompleteCompact(ctx, call, next, terminal)
+	if err == nil && next == nil {
+		close(g.committed)
+		<-g.release
+	}
+	return result, err
+}
+
+// TestRuntimeCompactBudgetFailureIsAtomic 验证成功摘要无下一调用时已原子保存失败、普通正文及唯一尾事件。
+func TestRuntimeCompactBudgetFailureIsAtomic(t *testing.T) {
+	for _, mode := range []string{"context", "rounds"} {
+		t.Run(mode, func(t *testing.T) {
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				var request chat.ModelRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				if len(request.Tools) == 0 {
+					text := "已查询，仍待处理"
+					if mode == "context" {
+						text = strings.Repeat("成功但仍超预算的摘要", 1500)
+					}
+					emitText(w, text)
+				} else {
+					fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"正在核对\"}}]}\n\n")
+					emitTools(w, []chat.ToolRequest{toolRequest("large", "get_schedule", `{"id":2}`)})
+				}
+			}))
+			defer upstream.Close()
+			settings := func() ([]chat.ModelConfig, error) {
+				configs, _ := compactSettings(upstream.URL, nil)()
+				if mode == "rounds" {
+					configs[0].MaxRounds = 1
+				}
+				return configs, nil
+			}
+			var gate *compactTerminalGate
+			service, ports, application := largeContentFixture(t, upstream.URL, settings, func(ports chat.Storage) chat.Storage {
+				gate = &compactTerminalGate{
+					ExecutionRepository: ports.Execution,
+					committed:           make(chan struct{}),
+					release:             make(chan struct{}),
+				}
+				ports.Execution = gate
+				return ports
+			})
+			var release sync.Once
+			defer release.Do(func() { close(gate.release) })
+			receipt, err := service.CreateRun(context.Background(), admissionInput("atomic-summary", "first"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-gate.committed:
+			case <-time.After(5 * time.Second):
+				t.Fatal("没有进入成功摘要提交边界")
+			}
+			run, err := service.GetRun(context.Background(), receipt.RunID)
+			code := "context_budget_exceeded"
+			if mode == "rounds" {
+				code = "model_round_limit_exceeded"
+			}
+			if err != nil || run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != code || run.FinishedAt == nil || run.Output == nil || *run.Output != "正在核对" {
+				t.Fatalf("摘要与终态没有原子提交：run=%+v error=%+v err=%v", run, run.Error, err)
+			}
+			ends, failures := 0, 0
+			for _, event := range eventPage(t, service, run.RunID, 0, 100).Events {
+				if event.Type == chat.EventEnd {
+					ends++
+				}
+				if event.Type == chat.EventError {
+					failures++
+				}
+			}
+			if ends != 1 || failures != 1 {
+				t.Fatalf("终态事件未原子保存：ends=%d errors=%d", ends, failures)
+			}
+			release.Do(func() { close(gate.release) })
+			service.Stop()
+			ports.Execution = gate.ExecutionRepository
+			service = chat.NewService(ports, completion.NewClient(nil), settings, queryRegistry(t, application))
+			if err := service.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			defer service.Stop()
+			run = awaitFinishedRun(t, service, receipt.RunID)
+			if calls.Load() != 2 || run.Output == nil || *run.Output != "正在核对" || run.Error.Code != code {
+				t.Fatalf("原子失败重启改变事实：run=%+v calls=%d", run, calls.Load())
+			}
+		})
+	}
+}
+
 // TestRuntimeCompactCannotBypassRoundLimit 验证摘要后的普通调用仍受既有轮次上限保护。
 func TestRuntimeCompactCannotBypassRoundLimit(t *testing.T) {
 	var normal atomic.Int32

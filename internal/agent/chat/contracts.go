@@ -357,8 +357,8 @@ type ExecutionRepository interface {
 	ContinuationCallCount(context.Context, string) (int, error)
 	// BeginCall 原子保存请求 input、running 和 checkpoint。
 	BeginCall(context.Context, ModelCall) (int64, error)
-	// CompleteCompact 原子保存成功摘要、有效引用和下一普通调用；next 为空时保留成功摘要。
-	CompleteCompact(context.Context, ModelCall, *ModelCall) (ModelCall, error)
+	// CompleteCompact 原子保存成功摘要、有效引用及下一普通调用或预算失败终态。
+	CompleteCompact(context.Context, ModelCall, *ModelCall, *Record) (ModelCall, error)
 	// ReadCall 读取当前逻辑调用的原请求与部分结果。
 	ReadCall(context.Context, string) (*ModelCall, error)
 	// Pause 保存正常退出时的部分响应，不推进终态。

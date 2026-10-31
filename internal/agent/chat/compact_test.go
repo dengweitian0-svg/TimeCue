@@ -396,25 +396,25 @@ type compactSwitchFault struct {
 }
 
 // CompleteCompact 在真实原子切换事务内注入外键失败，或模拟提交成功但回执丢失。
-func (f *compactSwitchFault) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall) (chat.ModelCall, error) {
+func (f *compactSwitchFault) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall, terminal *chat.Record) (chat.ModelCall, error) {
 	if f.mode == "committed-cancel" {
 		// 模拟取消事务已提交、协调器 context 信号尚未送达的窗口。
 		if _, err := f.runs.RequestCancel(ctx, call.RunID); err != nil {
 			return call, err
 		}
-		return f.ExecutionRepository.CompleteCompact(ctx, call, next)
+		return f.ExecutionRepository.CompleteCompact(ctx, call, next, terminal)
 	}
 	if f.mode == "cancel" {
 		close(f.entered)
 		<-f.release
-		return f.ExecutionRepository.CompleteCompact(context.Background(), call, next)
+		return f.ExecutionRepository.CompleteCompact(context.Background(), call, next, terminal)
 	}
 	if f.mode == "rollback" {
 		invalid := *next
 		invalid.SessionID = "missing-session"
-		return f.ExecutionRepository.CompleteCompact(ctx, call, &invalid)
+		return f.ExecutionRepository.CompleteCompact(ctx, call, &invalid, terminal)
 	}
-	result, err := f.ExecutionRepository.CompleteCompact(ctx, call, next)
+	result, err := f.ExecutionRepository.CompleteCompact(ctx, call, next, terminal)
 	if err == nil && f.mode == "lost-ack-cancel" {
 		if _, err := f.runs.RequestCancel(ctx, call.RunID); err != nil {
 			return result, err

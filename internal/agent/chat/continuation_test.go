@@ -504,8 +504,9 @@ func TestLengthFeedbackLongWhitespacePreservesRawFacts(t *testing.T) {
 	}
 	settings := func() ([]chat.ModelConfig, error) {
 		configs, err := toolSettings(upstream.URL)()
-		// 压力输入由可控上游构造，扩大上下文以验证工具补全而非下一轮预算拒绝。
+		// 压力输入由可控上游构造，扩大预算与投影阈值，独立验证参数补全原文。
 		configs[0].ContextWindow = 2 << 20
+		configs[0].ToolResultMaxTokens = 1 << 20
 		return configs, err
 	}
 	service := chat.NewService(storage, completion.NewClient(nil), settings, queryRegistry(t, application))
