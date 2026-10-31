@@ -6,6 +6,7 @@
 - `ci.yml`：取消过期运行后，不继续启动 Go 或 Flutter 检查 job。
 - `dev-integration.yml`：非纯文档 dev 分支 push 或手动触发时执行 Go、Flutter stable 3.47.0 的完整 Windows 发行构建和原生 CTest；手动触发始终运行；按工作流和 ref 隔离并发，每次最多 45 分钟。
 - `dev-integration.yml` 在原生 CTest 后运行 `scripts/release-smoke.py`，使用本次完整发行目录和新隔离数据目录，验证正式入口、空聊天会话、传统日程重启持久化、重复启动和自有 Go 崩溃回收；低完整性产物直接失败，不修改安全标签或跳过验收。
+- 同一 dev 集成工作流运行 `test_*smoke.py`，经正式 Go/SQLite 与模型/网络边界验证验收脚本的快速完成竞争和 cp1252 输出；这些可控模型回归不替代隔离数据目录中的真实上游证据。
 - `release-package.yml`：仅手动触发完整 Windows 发行构建和原生 CTest，并上传 ZIP 与校验值。使用缓存，按 ref 隔离并发，每次最多 60 分钟。main 合法来源由 `protect-main.yml` 管理。
 - `protect-main.yml`：main 发布 PR 只允许本仓库 dev 来源且作者为 dengweitian0-svg；不满足时留言并关闭 PR。
 - `close-linked-issues.yml`：目标为 dev 的 PR 合并后，按关闭关键词处理关联 Issue。

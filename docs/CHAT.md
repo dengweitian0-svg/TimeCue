@@ -15,6 +15,8 @@ Windows 验证单独构建正式 `lib/main.dart` 完整发行包，运行 `scrip
 
 如果工作区及其 EXE 的 `icacls` 输出包含 `Low Mandatory Level`，程序会继承低完整性级别（4096），即使从普通 PowerShell 启动也不能写常规用户注册表。发行 smoke 在启动前明确拒绝该标签；原生登记测试失败会输出 Win32 错误、令牌及完整性级别。此时应从普通 Windows 终端将发行 ZIP 解压到工作区以外的新目录进行验证，不修改注册表或工作区安全权限，不把该路径上的失败记作通过。进程采用用户与文件中较低完整性级别的规则见 [Windows 强制完整性说明](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)。
 
+真实模型可能在脚本观察到事件后、退出信号到达前正常完成。恢复验收在退出前后核对运行与实际 checkpoint 阶段，正常完成时保留真实成功并有限次另建场景；三次均未取得在途窗口时只报告“恢复场景未覆盖”。普通模型与摘要共用此检查，不以旧 text/compact 事件推断仍在执行。dev 集成通过真实 Go/SQLite 和模型/网络边界回归此竞争；两个验收 CLI 固定使用 UTF-8，避免英文 Windows 的 cp1252 管道在中文输出时误报失败。
+
 模型调用登记仅在调用及 checkpoint 整个事务提交后返回有效 ID。checkpoint 写入或事务提交失败返回 0，后续以真实已提交记录保存 persistence_failed 及唯一 error/end；不能把回滚前分配的临时行号当作已存在调用。回归经 chat.Service 和真实 SQLite 的 checkpoint 保存故障验证，无表结构变更。
 
 T17 提供内部公开用例 `chat.Runtime.GetRunUsage(ctx, runID)`：每次只读指定可见运行的全部 `ai_model_calls.usage`，按调用 ID 返回逐条原始 JSON，并重新计算 prompt_tokens、completion_tokens、total_tokens 三个标准字段。普通、摘要及两类续写使用同一入口，不按成功状态过滤，失败、取消或正常退出已取得的真实值沿既有原子保存路径保留。原始 usage 包括供应商扩展字段，不改写模型实际 output；统计不从 output、SSE 或 token 估算补值。

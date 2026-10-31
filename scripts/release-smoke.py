@@ -7,10 +7,14 @@ import json
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
 from pathlib import Path
+
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--package", type=Path, required=True)

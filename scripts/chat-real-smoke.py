@@ -10,6 +10,7 @@ import shutil
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -229,12 +230,8 @@ class Acceptance:
         status, receipt = self.request("POST", f"/v1/run/{run_id}/cancel")
         assert status == 200 and receipt == {"run_id": run_id, "status": "cancelled"}
         self.terminal(run_id, "cancelled")
-        self.session = str(uuid.uuid4())
-        run_id = self.create("请逐行输出1到120的数字，每行一个数字，不要省略，不要调用工具。")
-        self.wait(lambda: self.has_event(run_id, {"text", "thinking"}), "模型退出前真实增量")
-        self.stop()
-        assert self.rows("SELECT status FROM ai_runs WHERE run_id=?", (run_id,))[0]["status"] == "running"
-        original_model = self.rows("SELECT id,input,retry_count FROM ai_model_calls WHERE run_id=? AND status='running'", (run_id,))[0]
+        run_id, original_model = self.pause_for_recovery(
+            "请逐行输出1到120的数字，每行一个数字，不要省略，不要调用工具。", "model_call_start", fresh_session=True)
         self.start()
         self.terminal(run_id)
         recovered_model = self.rows("SELECT input,retry_count FROM ai_model_calls WHERE id=?", (original_model["id"],))[0]
@@ -242,24 +239,45 @@ class Acceptance:
         self.evidence["checks"].append({"model_recovery": run_id, "original_call": original_model["id"]})
         self.session = history_session
         # 低阈值使真实历史进入摘要；在摘要请求或部分响应阶段正常退出。
-        run_id = self.create("请简短回顾此前真实创建、修改和删除的日程，并说明当前是否还存在。")
-        self.wait(lambda: self.has_event(run_id, {"compact"}), "实际摘要请求")
-        self.stop()
-        original = self.rows(
-            "SELECT c.model_call_id,m.input,m.retry_count FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=? AND c.status='compact' AND m.status='running'", (run_id,))[0]
-        record = self.rows("SELECT status,finished_at FROM ai_runs WHERE run_id=?", (run_id,))[0]
-        assert record == {"status": "running", "finished_at": None}, record
+        run_id, original = self.pause_for_recovery(
+            "请简短回顾此前真实创建、修改和删除的日程，并说明当前是否还存在。", "compact", fresh_session=False)
         self.start()
         self.terminal(run_id)
-        restored = self.rows("SELECT input,retry_count FROM ai_model_calls WHERE id=?", (original["model_call_id"],))[0]
+        restored = self.rows("SELECT input,retry_count FROM ai_model_calls WHERE id=?", (original["id"],))[0]
         assert restored["input"] == original["input"] and restored["retry_count"] == original["retry_count"]
-        self.evidence["checks"].append({"summary_recovery": run_id, "original_call": original["model_call_id"]})
+        self.evidence["checks"].append({"summary_recovery": run_id, "original_call": original["id"]})
         saved = self.request("GET", "/v1/session/" + self.session)[1]
         self.stop()
         self.start()
         assert self.request("GET", "/v1/session/" + self.session)[1] == saved
         for entry in self.evidence["runs"]:
             assert self.request("GET", "/v1/run/" + entry["run_id"])[1] == entry["run"]
+
+    def pause_for_recovery(self, text, stage, fresh_session):
+        """确认目标仍在途并在退出后核验实际阶段；正常完成竞争最多尝试三次场景。"""
+        kinds = {"compact"} if stage == "compact" else {"text", "thinking"}
+        for attempt in range(1, 4):
+            if fresh_session:
+                self.session = str(uuid.uuid4())
+            run_id = self.create(text)
+            self.wait(lambda: self.request("GET", "/v1/run/" + run_id)[1]["finished_at"]
+                      or self.has_event(run_id, kinds), "待中断的实际进度")
+            current = self.request("GET", "/v1/run/" + run_id)[1]
+            if current["finished_at"] is None:
+                self.stop()
+                record = self.rows("SELECT status,finished_at FROM ai_runs WHERE run_id=?", (run_id,))[0]
+                if record == {"status": "running", "finished_at": None}:
+                    calls = self.rows(
+                        "SELECT m.id,m.input,m.retry_count,m.status,c.status AS stage FROM ai_checkpoints c "
+                        "JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?", (run_id,))
+                    assert calls, "在途运行退出后缺失已提交调用和 checkpoint"
+                    if calls[0]["stage"] == stage and calls[0]["status"] == "running":
+                        return run_id, calls[0]
+                self.start()
+            # 退出信号也可能晚于模型/摘要提交；先按真实结果完成该运行，再准备新的场景。
+            self.terminal(run_id)
+            self.evidence["checks"].append({"completed_before_pause": run_id, "stage": stage, "attempt": attempt})
+        raise AssertionError(f"恢复场景未覆盖：{stage} 三次均在中断前正常完成，未取得在途目标")
 
     def flutter(self):
         """将真实记录交给生产 Flutter 网关和状态模型只读核对。"""
@@ -285,6 +303,8 @@ class Acceptance:
 
 def main():
     """解析显式模型与密钥路径，在任何失败时保存证据并停止自有进程。"""
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--go", type=Path, required=True)
     parser.add_argument("--env-file", type=Path, required=True)
