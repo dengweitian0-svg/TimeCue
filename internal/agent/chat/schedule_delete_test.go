@@ -231,7 +231,13 @@ func TestDeleteCommittedBeforeAIResultRetainsOriginalIdentity(t *testing.T) {
 	}
 	gated := ports
 	gated.Tools = gate
-	service := chat.NewService(gated, completion.NewClient(nil), toolSettings(upstream.URL), deleteRegistry(t, application))
+	settings := func() ([]chat.ModelConfig, error) {
+		configs, err := toolSettings(upstream.URL)()
+		zero := 0
+		configs[0].ToolMaxRetry = &zero
+		return configs, err
+	}
+	service := chat.NewService(gated, completion.NewClient(nil), settings, deleteRegistry(t, application))
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -291,11 +297,11 @@ func TestDeleteCommittedBeforeAIResultRetainsOriginalIdentity(t *testing.T) {
 	if stored[0].ID != before[0].ID || stored[0].IdempotencyKey != before[0].IdempotencyKey || stored[0].Request != before[0].Request {
 		t.Fatalf("重开数据库改变原身份: %+v -> %+v", before[0], stored[0])
 	}
-	// 先只读核对，之后由现有工具循环携带同一键再次进入正式端口。
+	// 只读核对不消耗重试预算；即使配置禁止重执行，也必须复用已提交回执。
 	if result, err := restoredApp.ReadScheduleDeleteReceipt(ctx, 1, 1, stored[0].IdempotencyKey); err != nil || result == nil || result.Schedule.Revision != 2 {
 		t.Fatalf("重启只读核对失败: %+v %v", result, err)
 	}
-	restarted := chat.NewService(restoredPorts, completion.NewClient(nil), toolSettings(upstream.URL), deleteRegistry(t, restoredApp))
+	restarted := chat.NewService(restoredPorts, completion.NewClient(nil), settings, deleteRegistry(t, restoredApp))
 	if err := restarted.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +310,7 @@ func TestDeleteCommittedBeforeAIResultRetainsOriginalIdentity(t *testing.T) {
 		t.Fatalf("恢复未复用已接纳模型回复: %+v requests=%d", run, requests.Load())
 	}
 	after, err := restoredPorts.Tools.ReadTools(ctx, call.ID)
-	if err != nil || len(after) != 1 || after[0].ID != before[0].ID || after[0].IdempotencyKey != before[0].IdempotencyKey || after[0].Request != before[0].Request || after[0].State != "succeeded" || !strings.Contains(string(after[0].Output), `"outcome":"replayed"`) {
+	if err != nil || len(after) != 1 || after[0].ID != before[0].ID || after[0].IdempotencyKey != before[0].IdempotencyKey || after[0].Request != before[0].Request || after[0].State != "succeeded" || after[0].RetryCount != 0 || !strings.Contains(string(after[0].Output), `"outcome":"replayed"`) {
 		t.Fatalf("恢复未沿原身份复用回执: %+v %v", after, err)
 	}
 	if business, err := restoredApp.ReadScheduleDeleteReceipt(ctx, 1, 1, after[0].IdempotencyKey); err != nil || business == nil || business.Schedule.Revision != 2 {

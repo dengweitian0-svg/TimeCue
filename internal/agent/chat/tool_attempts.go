@@ -131,6 +131,23 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 		known[tool.Request.ID] = tool
 		return nil
 	}
+	// 恢复先核对原身份的只读回执；命中是已有事实，不是一次新的业务尝试。
+	// retry_wait 也可能来自业务提交后返回的暂时故障，核对不受退避或剩余预算阻挡。
+	for _, tool := range stored {
+		if call.ToolCompleted(tool.Request.ID) || tool.State != "running" && tool.State != "retry_wait" {
+			continue
+		}
+		output, found, err := s.tools.ReadResult(tools.WithExecutionKey(s.persistenceContext(), tool.IdempotencyKey), tool.Request.Function.Name, tool.Request.Function.Arguments)
+		if err != nil {
+			logger.Warn("[chat] 恢复未确认业务回执，沿原身份和剩余预算处理", "run_id", r.RunID, "tool_call_id", tool.Request.ID, "error", err)
+		}
+		if found {
+			tool.State, tool.Output, tool.Error, tool.NextRetryAt = "succeeded", output, nil, nil
+			if failure := settle(tool); failure != nil {
+				return call, failure
+			}
+		}
+	}
 	acceptResult := func(returned toolAttemptResult) *RunError {
 		attempt := active[returned.tool.Request.ID]
 		if attempt == nil || !attempt.accepts(returned) {

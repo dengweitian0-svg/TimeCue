@@ -65,7 +65,7 @@ type ResultReader interface {
 	ReadResult(context.Context, string) (string, bool, error)
 }
 
-// ReadResult 在取消恢复时只读核对原身份；不具备回执能力的工具返回未命中。
+// ReadResult 在正常或取消恢复时只读核对原身份；不具备回执能力的工具返回未命中。
 func (r *Registry) ReadResult(ctx context.Context, name, raw string) (json.RawMessage, bool, error) {
 	if r != nil {
 		for _, entry := range r.entries {
