@@ -415,6 +415,12 @@ func (f *compactSwitchFault) CompleteCompact(ctx context.Context, call chat.Mode
 		return f.ExecutionRepository.CompleteCompact(ctx, call, &invalid)
 	}
 	result, err := f.ExecutionRepository.CompleteCompact(ctx, call, next)
+	if err == nil && f.mode == "lost-ack-cancel" {
+		if _, err := f.runs.RequestCancel(ctx, call.RunID); err != nil {
+			return result, err
+		}
+		return result, fmt.Errorf("切换已提交但取消回执丢失：%w", context.Canceled)
+	}
 	if err == nil {
 		err = errors.New("丢失提交回执")
 	}
@@ -423,7 +429,7 @@ func (f *compactSwitchFault) CompleteCompact(ctx context.Context, call chat.Mode
 
 // TestCompactAtomicSwitchFailure 验证切换事务回滚保留旧历史，已提交却丢失回执时保留成功摘要且不重复请求。
 func TestCompactAtomicSwitchFailure(t *testing.T) {
-	for _, mode := range []string{"rollback", "lost-ack", "cancel", "committed-cancel"} {
+	for _, mode := range []string{"rollback", "lost-ack", "cancel", "committed-cancel", "lost-ack-cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			var expanded atomic.Bool
 			var calls atomic.Int32
@@ -470,7 +476,7 @@ func TestCompactAtomicSwitchFailure(t *testing.T) {
 				close(fault.release)
 			}
 			run := awaitFinishedRun(t, service, receipt.RunID)
-			cancelled := mode == "cancel" || mode == "committed-cancel"
+			cancelled := mode == "cancel" || mode == "committed-cancel" || mode == "lost-ack-cancel"
 			if cancelled && run.Status != chat.StatusCancelled || !cancelled && (run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "persistence_failed") {
 				t.Fatalf("run=%+v", run)
 			}
@@ -481,7 +487,8 @@ func TestCompactAtomicSwitchFailure(t *testing.T) {
 			expanded.Store(true)
 			awaitFinishedRun(t, service, createCompactRun(t, service, "third").RunID)
 			next := <-requests
-			if mode != "lost-ack" && !strings.Contains(mustJSON(next), "old-history-") || mode == "lost-ack" && (next.Messages[0].Content != "有效摘要" || strings.Contains(mustJSON(next), "old-history-")) {
+			activated := mode == "lost-ack" || mode == "lost-ack-cancel"
+			if !activated && !strings.Contains(mustJSON(next), "old-history-") || activated && (next.Messages[0].Content != "有效摘要" || strings.Contains(mustJSON(next), "old-history-")) {
 				t.Fatal("摘要原子切换被破坏")
 			}
 		})

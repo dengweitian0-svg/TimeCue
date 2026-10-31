@@ -29,7 +29,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 		if call.CheckpointStage == "compact" {
 			var failure *RunError
 			call, failure = s.advanceCompact(ctx, r, cfg, call)
-			if failure != nil || ctx.Err() != nil || call.CheckpointStage == "compact" {
+			if failure != nil || ctx.Err() != nil || r.State == StateWaitForCancel || call.CheckpointStage == "compact" {
 				return call, failure
 			}
 		}

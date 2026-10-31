@@ -145,6 +145,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			// 取消事务可能先于本地 context 信号完成；以已提交取消事实识别切换门禁。
 			if errors.Is(err, context.Canceled) {
 				if saved, readErr := s.runs.ReadRun(context.Background(), r.RunID, false); readErr == nil && saved.State == StateWaitForCancel {
+					r.State = saved.State
 					return call, nil
 				}
 			}
