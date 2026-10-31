@@ -40,7 +40,6 @@ type Runtime struct {
 	subscribers map[string]*subscriber
 	stopping    bool
 	started     bool
-	stopSignal  chan struct{}
 	shutdownCtx context.Context
 	storageCtx  context.Context
 	stopStorage context.CancelFunc
@@ -59,7 +58,6 @@ func NewService(storage Storage, model ModelClient, settings func() ([]ModelConf
 		active:      map[string]*execution{},
 		slots:       make(chan struct{}, 3),
 		subscribers: map[string]*subscriber{},
-		stopSignal:  make(chan struct{}),
 		toolStore:   storage.Tools,
 		tools:       registry,
 		storageCtx:  storageCtx,
@@ -141,7 +139,6 @@ func (s *Runtime) Shutdown(ctx context.Context) {
 	s.mu.Lock()
 	if !s.stopping {
 		s.shutdownCtx = ctx
-		close(s.stopSignal)
 	}
 	s.stopping = true
 	var pending []chan struct{}
@@ -346,12 +343,8 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 					logger.Warn("[chat] 退出保存期限已到，保留已提交进度", "run_id", r.RunID, "error", err)
 					return
 				}
-				logger.Error("[chat] 保存退出进度失败", "run_id", r.RunID, "error", err)
 				r.State = StateFailed
-				r.Error = &RunError{
-					Code:    "persistence_failed",
-					Message: "保存退出进度失败",
-				}
+				r.Error = persistenceFailure(call, "pause", err)
 				call.State = r.State
 				call.Error = r.Error
 				now := time.Now()
@@ -410,38 +403,6 @@ func (s *Runtime) readCancellationResults(call ModelCall, cfg ModelConfig) Model
 		call.PendingTools = append(call.PendingTools, tool)
 	}
 	return call
-}
-
-func (s *Runtime) finish(call ModelCall, r Record) {
-	call.NextRetryAt = nil
-	if len(call.RetryHistory) > 0 {
-		last := &call.RetryHistory[len(call.RetryHistory)-1]
-		switch last.Result {
-		case "retry_wait", "running", "interrupted":
-			last.Result = string(r.State)
-			last.Error = r.Error
-		}
-	}
-	// 终态提交失败后只重试收尾，不重新调用模型。
-	var err error
-	for attempt := 0; attempt < 4; attempt++ {
-		if attempt > 0 {
-			timer := time.NewTimer(5 * time.Second)
-			select {
-			case <-timer.C:
-			case <-s.stopSignal:
-				timer.Stop()
-				logger.Error("[chat] 退出中停止收尾重试，保留已持久化事实", "run_id", r.RunID)
-				return
-			}
-			logger.Warn("[chat] 重试保存终态", "run_id", r.RunID, "retry", attempt)
-		}
-		if err = s.execution.Finish(s.persistenceContext(), call, r); err == nil {
-			return
-		}
-		logger.Error("[chat] 保存终态失败", "run_id", r.RunID, "attempt", attempt+1, "error", err)
-	}
-	logger.Error("[chat] 终态保存重试耗尽，释放占用但不推送未保存终态", "run_id", r.RunID, "error", err)
 }
 
 // GetRun 查询可见运行的公开概况。

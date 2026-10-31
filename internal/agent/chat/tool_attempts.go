@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
@@ -73,7 +74,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 	}
 	stored, err := s.toolStore.ReadTools(s.persistenceContext(), call.ID)
 	if err != nil {
-		return call, persistenceFailure()
+		return call, persistenceFailure(call, "read_tools", err)
 	}
 	known := map[string]ToolCall{}
 	for _, tool := range stored {
@@ -86,11 +87,10 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 	var token uint64
 	defer func() {
 		close(closed)
-		defer func() {
-			for _, attempt := range active {
-				attempt.cancel()
-			}
-		}()
+		// 先撤销全部有效尝试，再只收集已返回事实；不等待忽略取消的业务。
+		for _, attempt := range active {
+			attempt.cancel()
+		}
 		if failure == nil {
 			return
 		}
@@ -98,6 +98,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 			select {
 			case returned := <-results:
 				if attempt := active[returned.tool.Request.ID]; attempt != nil && attempt.accepts(returned) {
+					delete(active, returned.tool.Request.ID)
 					returned.tool.ModelContentLimit = contentLimit
 					result.PendingTools = append(result.PendingTools, returned.tool)
 				}
@@ -116,8 +117,10 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 			}
 			tool.State, tool.NextRetryAt = "retry_wait", &next
 			if err := s.toolStore.WaitToolRetry(s.persistenceContext(), tool); err != nil {
-				// 中间故障不能冒充最终结果；失败收尾按未确认规则补齐。
-				return persistenceFailure()
+				// 保存退避失败也保留本次实际错误，不将已取得的结果改为未确认。
+				tool.State, tool.NextRetryAt = "failed", nil
+				call.PendingTools = append(call.PendingTools, tool)
+				return persistenceFailure(call, "tool_retry_wait", err)
 			}
 			known[tool.Request.ID] = tool
 			return nil
@@ -125,7 +128,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 		progress, err := s.toolStore.FinishTool(s.persistenceContext(), call, tool)
 		if err != nil {
 			call.PendingTools = append(call.PendingTools, tool)
-			return persistenceFailure()
+			return persistenceFailure(call, "tool_result", err)
 		}
 		call = progress
 		known[tool.Request.ID] = tool
@@ -227,7 +230,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 				}
 			} else {
 				if tool.State != "running" && tool.State != "retry_wait" {
-					return call, persistenceFailure()
+					return call, persistenceFailure(call, "tool_state", fmt.Errorf("工具 %s 的已提交状态 %s 缺少配对进度", tool.Request.ID, tool.State))
 				}
 				if tool.RetryCount >= tool.MaxRetry {
 					if tool.State == "running" {
@@ -252,7 +255,7 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 			started, registeredTool, err := s.toolStore.BeginTool(s.storageCtx, call, tool)
 			if err != nil {
 				s.mu.Unlock()
-				return call, persistenceFailure()
+				return call, persistenceFailure(call, "tool_start", err)
 			}
 			call, tool = started, registeredTool
 			known[request.ID] = tool
