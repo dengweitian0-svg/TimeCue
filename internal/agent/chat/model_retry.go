@@ -43,13 +43,6 @@ func retryDelay(retry int) time.Duration {
 	return delay
 }
 
-func persistenceFailure() *RunError {
-	return &RunError{
-		Code:    "persistence_failed",
-		Message: "保存模型调用进度失败",
-	}
-}
-
 func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (ModelCall, *RunError) {
 	// 正常退出可能已保存完整响应但尚未提交接纳；沿统一响应校验复用原事实。
 	if call.State == StateRunning && call.Error == nil && call.Output != nil && call.Output.FinishReason != "" {
@@ -80,7 +73,7 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 					return call, nil
 				}
-				return call, persistenceFailure()
+				return call, persistenceFailure(call, "model_retry_start", err)
 			}
 		}
 		// 密钥和超时每次实际请求前重读；逻辑调用的请求 input 与重试预算固定。
@@ -110,7 +103,7 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 		call, err = batch.close()
 		cancel()
 		if err != nil {
-			failure = persistenceFailure()
+			failure = persistenceFailure(call, "model_events", err)
 		}
 		hasOutput := hasModelOutput(output)
 		// 生命周期恢复没有新输出时保留旧快照；完整空响应仍替换旧回复。
@@ -146,7 +139,7 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 			Cause:  failure,
 		})
 		if err := s.execution.SaveEvents(s.persistenceContext(), call); err != nil {
-			return call, persistenceFailure()
+			return call, persistenceFailure(call, "model_retry_wait", err)
 		}
 		call.PendingEvents = nil
 	}

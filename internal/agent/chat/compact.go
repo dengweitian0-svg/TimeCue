@@ -99,7 +99,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 					return call, nil
 				}
-				return call, persistenceFailure()
+				return call, persistenceFailure(call, "compact_start", err)
 			}
 			call.ID = id
 			call = call.WithCallStarted()
@@ -122,7 +122,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			accepted := call.WithCompactResponse()
 			if call.State != StateSucceeded {
 				if err := s.toolStore.AcceptResponse(s.persistenceContext(), accepted); err != nil {
-					return call, persistenceFailure()
+					return call, persistenceFailure(call, "compact_response", err)
 				}
 				accepted.PendingEvents = nil
 			}
@@ -130,7 +130,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			if !available {
 				return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
 			}
-			if failure := s.continuationBudgetError(ctx, r.RunID, cfg); failure != nil || ctx.Err() != nil {
+			if failure := s.continuationBudgetError(ctx, call, cfg); failure != nil || ctx.Err() != nil {
 				return call, failure
 			}
 			request := call.FollowupRequest(true)
@@ -153,7 +153,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 				return call, nil
 			}
-			return call, persistenceFailure()
+			return call, persistenceFailure(call, "compact_history", err)
 		}
 		projected := call.WithCompactSucceeded(ordinary)
 		if strings.TrimSpace(projected.CheckpointContext[len(projected.CheckpointContext)-2].Content) == "" {
@@ -168,7 +168,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			failure = requestBudgetError(ordinary, cfg)
 		}
 		if failure == nil {
-			failure = s.ordinaryRoundBudgetError(ctx, r.RunID, cfg)
+			failure = s.ordinaryRoundBudgetError(ctx, call, cfg)
 			if ctx.Err() != nil || failure != nil && failure.Code == "persistence_failed" {
 				return call, failure
 			}
@@ -206,7 +206,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 				return call, nil
 			}
-			return call, persistenceFailure()
+			return call, persistenceFailure(call, "compact_complete", err)
 		}
 		return committed, failure
 	}

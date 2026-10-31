@@ -23,7 +23,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 					return call, nil
 				}
-				return call, persistenceFailure()
+				return call, persistenceFailure(call, "history", err)
 			}
 			call.Input = request
 			if needsCompact(request, cfg) {
@@ -60,7 +60,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
 			}
 			if continuation {
-				if failure := s.continuationBudgetError(ctx, r.RunID, cfg); failure != nil || ctx.Err() != nil {
+				if failure := s.continuationBudgetError(ctx, call, cfg); failure != nil || ctx.Err() != nil {
 					return call, failure
 				}
 			}
@@ -72,7 +72,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 					if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 						return call, nil
 					}
-					return call, persistenceFailure()
+					return call, persistenceFailure(call, "compact_history", err)
 				}
 				prefix := ""
 				if r.Output != nil {
@@ -113,7 +113,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 					return call, nil
 				}
-				return call, persistenceFailure()
+				return call, persistenceFailure(call, "history", err)
 			}
 			if failure := requestBudgetError(call.Input, cfg); failure != nil {
 				return ModelCall{
@@ -122,7 +122,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				}, failure
 			}
 			if !call.Continuation {
-				if failure := s.ordinaryRoundBudgetError(ctx, r.RunID, cfg); failure != nil || ctx.Err() != nil {
+				if failure := s.ordinaryRoundBudgetError(ctx, call, cfg); failure != nil || ctx.Err() != nil {
 					return call, failure
 				}
 			}
@@ -131,7 +131,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 					return call, nil
 				}
-				return call, persistenceFailure()
+				return call, persistenceFailure(call, "model_start", err)
 			}
 			call = call.WithCallStarted()
 		}
@@ -152,7 +152,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 		}
 		accepted := call.WithResponseAccepted()
 		if err := s.toolStore.AcceptResponse(s.persistenceContext(), accepted); err != nil {
-			return call, persistenceFailure()
+			return call, persistenceFailure(call, "model_response", err)
 		}
 		call = accepted
 		call.PendingEvents = nil
@@ -167,13 +167,13 @@ func toolError(code, message string) *RunError {
 	}
 }
 
-func (s *Runtime) ordinaryRoundBudgetError(ctx context.Context, runID string, cfg ModelConfig) *RunError {
-	count, err := s.execution.OrdinaryCallCount(ctx, runID)
+func (s *Runtime) ordinaryRoundBudgetError(ctx context.Context, call ModelCall, cfg ModelConfig) *RunError {
+	count, err := s.execution.OrdinaryCallCount(ctx, call.RunID)
 	if err != nil {
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			return nil
 		}
-		return persistenceFailure()
+		return persistenceFailure(call, "model_round_count", err)
 	}
 	limit := cfg.MaxRounds
 	if limit <= 0 {
@@ -185,13 +185,13 @@ func (s *Runtime) ordinaryRoundBudgetError(ctx context.Context, runID string, cf
 	return nil
 }
 
-func (s *Runtime) continuationBudgetError(ctx context.Context, runID string, cfg ModelConfig) *RunError {
-	count, err := s.execution.ContinuationCallCount(ctx, runID)
+func (s *Runtime) continuationBudgetError(ctx context.Context, call ModelCall, cfg ModelConfig) *RunError {
+	count, err := s.execution.ContinuationCallCount(ctx, call.RunID)
 	if err != nil {
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			return nil
 		}
-		return persistenceFailure()
+		return persistenceFailure(call, "continuation_count", err)
 	}
 	limit := cfg.MaxContinue
 	if limit <= 0 {
