@@ -18,7 +18,7 @@ import (
 // chatStore 用同一 SQLite 连接实现独立持久化端口，保持跨表事务原子性。
 type chatStore struct{ db *Sqlite }
 
-// NewChatStorage 提供运行、会话、模型执行、工具事务及事件查询端口，不打开或迁移数据库。
+// NewChatStorage 提供运行、会话、模型执行、工具事务、事件及用量查询端口，不打开或迁移数据库。
 func NewChatStorage(db *Sqlite) chat.Storage {
 	adapter := &chatStore{db: db}
 	return chat.Storage{
@@ -27,6 +27,7 @@ func NewChatStorage(db *Sqlite) chat.Storage {
 		Execution: adapter,
 		Events:    adapter,
 		Tools:     adapter,
+		Usage:     adapter,
 	}
 }
 
