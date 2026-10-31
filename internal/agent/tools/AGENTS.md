@@ -17,4 +17,4 @@
 
 写入复用正式规则校验、版本检查和提醒联动，版本冲突返回 revision_conflict、不存在返回 schedule_not_found、规则拒绝返回 invalid_schedule，不自动重试。缺信息或多目标先澄清，明确完整且唯一时直接执行；批量独立成功/失败，依赖操作分模型轮次。已保存明确时间和实际结果沿原进度复用，不承诺无键写入恰好执行一次；正常恢复的实际重执行沿原参数遵循剩余预算；只读回执命中不消耗预算。
 
-- `ResultReader` 为可选只读业务回执端口，由 Registry.ReadResult 分发；正常及取消恢复的 delete_schedule 沿原参数与 context 后台键调用 ReadScheduleDeleteReceipt，不调用删除或补写，未命中由统一聊天进度表达结果未确认。
+- `ResultReader` 为可选只读业务回执端口，由 Registry.ReadResult 分发；正常及取消恢复的 delete_schedule 沿原参数与 context 后台键调用 ReadScheduleDeleteReceipt，核对本身不调用删除或补写。正常恢复未命中时沿原身份及剩余预算重执行，预算耗尽才表达结果未确认；取消恢复不重执行，按实际在途或退避状态交统一进度补齐未确认或跳过。
