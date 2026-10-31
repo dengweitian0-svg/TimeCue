@@ -426,6 +426,7 @@ func TestCompactAtomicSwitchFailure(t *testing.T) {
 	for _, mode := range []string{"rollback", "lost-ack", "cancel", "committed-cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			var expanded atomic.Bool
+			var calls atomic.Int32
 			requests := make(chan chat.ModelRequest, 6)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request chat.ModelRequest
@@ -434,6 +435,7 @@ func TestCompactAtomicSwitchFailure(t *testing.T) {
 					return
 				}
 				requests <- request
+				calls.Add(1)
 				if request.Messages[0].Role == "system" {
 					emitText(w, "有效摘要")
 				} else if len(request.Messages) == 1 {
@@ -471,6 +473,9 @@ func TestCompactAtomicSwitchFailure(t *testing.T) {
 			cancelled := mode == "cancel" || mode == "committed-cancel"
 			if cancelled && run.Status != chat.StatusCancelled || !cancelled && (run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "persistence_failed") {
 				t.Fatalf("run=%+v", run)
+			}
+			if calls.Load() != 2 {
+				t.Fatalf("取消或故障后重发模型请求：requests=%d", calls.Load())
 			}
 			<-requests
 			expanded.Store(true)
