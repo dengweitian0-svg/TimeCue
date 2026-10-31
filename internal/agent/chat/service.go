@@ -30,6 +30,7 @@ type Runtime struct {
 	sessions    SessionRepository
 	execution   ExecutionRepository
 	events      EventRepository
+	usage       UsageRepository
 	model       ModelClient
 	tools       *tools.Registry
 	toolStore   ToolRepository
@@ -53,6 +54,7 @@ func NewService(storage Storage, model ModelClient, settings func() ([]ModelConf
 		sessions:    storage.Sessions,
 		execution:   storage.Execution,
 		events:      storage.Events,
+		usage:       storage.Usage,
 		model:       model,
 		settings:    settings,
 		active:      map[string]*execution{},

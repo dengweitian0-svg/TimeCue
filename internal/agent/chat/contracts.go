@@ -403,13 +403,14 @@ type EventRepository interface {
 	Events(context.Context, string, int64, int) (EventPage, error)
 }
 
-// Storage 分别装配运行、会话、模型执行、工具事务及事件查询端口。
+// Storage 分别装配运行、会话、模型执行、工具事务、事件及用量查询端口。
 type Storage struct {
 	Runs      RunRepository
 	Sessions  SessionRepository
 	Execution ExecutionRepository
 	Events    EventRepository
 	Tools     ToolRepository
+	Usage     UsageRepository
 }
 
 // ModelService 提供本地模型配置选项，不承担运行与会话用例。

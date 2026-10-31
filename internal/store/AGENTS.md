@@ -1,5 +1,7 @@
 # SQLite 存储
 
+- `chat_usage.go`：独立只读端口 `ReadUsage` 按 run_id 和调用 ID 读取全部模型调用的原始 usage 列，不过滤状态或用途，不从 output、事件或 token 估算补值；SQL NULL 保持 nil。经 `NewChatStorage` 装配到 `Storage.Usage`，沿用版本 3，无表结构及索引变更。
+
 - `chat.go` 使用版本 3 已有 continuation 列保存/回读逻辑续写标记，ContinuationCallCount 统计 run 内全部续写，含摘要用途，不因重试/恢复重复登记。恢复续写时读取普通请求候选，由聊天进度按实际消息前缀恢复本轮正文边界；不按主键邻接或展示事件猜测分组，不新增表、列、索引或 checkpoint 字段。
 
 - `chat_tools.go` 沿版本 3 已有 next_retry_at/status/error 保存工具 retry_wait，重启完整回读；暂时故障不写最终结果事件或完成集合。实际重试的 retry_count、running、期限清除及 tool_use checkpoint 同事务提交，沿用原身份、参数和键，不新增 tool_start。最终结果清除退避期限，重试等待的取消与故障补齐由聊天统一进度裁决。

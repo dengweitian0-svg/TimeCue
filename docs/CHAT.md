@@ -1,5 +1,11 @@
 # 真实文字对话
 
+T17 提供内部公开用例 `chat.Runtime.GetRunUsage(ctx, runID)`：每次只读指定可见运行的全部 `ai_model_calls.usage`，按调用 ID 返回逐条原始 JSON，并重新计算 prompt_tokens、completion_tokens、total_tokens 三个标准字段。普通、摘要及两类续写使用同一入口，不按成功状态过滤，失败、取消或正常退出已取得的真实值沿既有原子保存路径保留。原始 usage 包括供应商扩展字段，不改写模型实际 output；统计不从 output、SSE 或 token 估算补值。
+
+各合计独立判断是否已知：全部调用均提供该字段的非负整数且相加不溢出时返回实际合计；任一调用缺失该字段、字段无效或没有模型调用时保持 nil（未知）。上游明确返回的 0 是已知值；total_tokens 只累计上游真实 total，不用 prompt 与 completion 推算。部分未知时，逐调用已知原始对象仍完整返回。SQL NULL 保持 nil，不以空对象、零或 JSON null 补齐。
+
+入口无需模型配置或 Key，不启动模型/工具、不修改调用、checkpoint、事件或占用，也不生成 usage 事件。沿用数据库版本 3，不增加统计表、已统计标记、定时任务、四维汇总、HTTP 或页面。`usage_test.go` 经公共聊天用例、真实 SQLite 与可控 Chat Completions HTTP/SSE 验证重复读取不累计、关闭重开数据库、请求范围隔离、运行中与取消后重新读取、缺失/真实零值/无调用、失败/取消保留、普通/摘要及各自续写、供应商扩展原样保留和无效/溢出计数；查询前后公开正文及事件保持原值。
+
 T15 已接通完整工具写入恢复。协调器先读取 checkpoint 关联的模型调用及工具事实，复用 completed_tool、last_tool 和原消息，不从事件或名称猜测完成情况。正常恢复先通过 ResultReader 只读核对原删除回执；命中即按原 ID 保存成功结果，不增加 retry_count，即使 max_retry=0 或预算耗尽也可核对。未命中时，已登记的 running/retry_wait 沿原记录、input、后台键和固定剩余预算实际重执行；未登记请求按首次执行处理，不扣重试。
 
 工具错误重试与恢复重执行共用原 max_retry 和 next_retry_at。0 禁止重执行，最后一次允许尝试仍执行，耗尽的未确认 running 回填 tool_result_unconfirmed。业务提交但结果/checkpoint 未保存仍是未确认窗口：无键创建可能再次生效，不按名称或时间去重；修改仍用原 expectedRevision，按真实 revision_conflict 反馈，不覆盖新版本。
