@@ -2,23 +2,18 @@ import 'dart:async';
 
 import 'package:timecue_desktop/contracts/chat_contracts.dart';
 
-/// 阶段 6 复跑验收使用的纯 Dart 聊天服务替身。
-///
-/// 不依赖 Flutter 测试框架，可由 Widget 测试和 Windows profile 入口共用。
-class ChatAcceptanceGateway implements ChatGateway, ChatModelGateway {
+/// 仅供 Widget 布局、滚动和截图测试显式安排数据，不接入可执行应用或真实链路验收。
+class ChatWidgetGateway implements ChatGateway, ChatModelGateway {
   @override
   Future<List<ChatModelOption>> getModels() async => const [
     ChatModelOption(
-      provider: 'deepseek',
-      model: 'deepseek-flash',
+      provider: 'widget-only',
+      model: 'widget-model',
       available: true,
     ),
   ];
 
-  ChatAcceptanceGateway({int historySessionCount = 12, DateTime? now})
-    : _now = (now ?? DateTime.now()).toUtc() {
-    _seedHistory(historySessionCount);
-  }
+  ChatWidgetGateway({DateTime? now}) : _now = (now ?? DateTime.now()).toUtc();
 
   final DateTime _now;
   final Map<String, ChatSession> _sessions = {};
@@ -163,6 +158,7 @@ class ChatAcceptanceGateway implements ChatGateway, ChatModelGateway {
       runId: run.runId,
       sessionId: run.sessionId,
       model: run.model,
+      provider: run.provider,
       input: run.input,
       status: status,
       output: output ?? (status == ChatRunStatus.succeeded ? '' : null),
@@ -208,7 +204,7 @@ class ChatAcceptanceGateway implements ChatGateway, ChatModelGateway {
     required String sessionId,
     required String input,
     required String model,
-    String provider = 'deepseek',
+    String provider = 'widget-only',
     required String idempotencyKey,
   }) async {
     if (failNextCreate) {
@@ -221,6 +217,7 @@ class ChatAcceptanceGateway implements ChatGateway, ChatModelGateway {
       runId: runId,
       sessionId: sessionId,
       model: model,
+      provider: provider,
       input: input,
       status: ChatRunStatus.running,
       output: null,
@@ -292,7 +289,8 @@ class ChatAcceptanceGateway implements ChatGateway, ChatModelGateway {
     controller.add(ChatRunEventFrame(event));
   }
 
-  void _seedHistory(int count) {
+  /// 按测试指定的数量安排合成历史；构造时不创建任何会话。
+  void arrangeHistory(int count) {
     final safeCount = count.clamp(0, 80);
     for (var index = 0; index < safeCount; index++) {
       final sessionId = 'acceptance-history-${index + 1}';
@@ -321,7 +319,8 @@ class ChatAcceptanceGateway implements ChatGateway, ChatModelGateway {
         _runs[runId] = ChatRun(
           runId: runId,
           sessionId: sessionId,
-          model: 'acceptance-model',
+          model: 'widget-model',
+          provider: 'widget-only',
           input: input,
           status: ChatRunStatus.succeeded,
           output: output,
