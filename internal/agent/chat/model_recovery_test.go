@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,100 @@ import (
 type deadlinePause struct {
 	chat.ExecutionRepository
 	timedOut chan struct{}
+}
+
+type interruptedToolRegistration struct {
+	chat.ToolRepository
+	entered chan struct{}
+	abort   chan struct{}
+}
+
+// BeginTool 在存储登记边界等待调用 context，复现退出与工具启动持锁交错。
+func (f *interruptedToolRegistration) BeginTool(ctx context.Context, call chat.ModelCall, tool chat.ToolCall) (chat.ModelCall, chat.ToolCall, error) {
+	close(f.entered)
+	select {
+	case <-ctx.Done():
+		return call, tool, ctx.Err()
+	case <-f.abort:
+		return call, tool, errors.New("测试看门解除存储等待")
+	}
+}
+
+// TestShutdownDeadlineInterruptsLockedToolRegistration 验证共享退出期限能解除持锁中的工具存储登记。
+func TestShutdownDeadlineInterruptsLockedToolRegistration(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		emitTools(w, []chat.ToolRequest{toolRequest("query", "get_schedule", `{"id":1}`)})
+	}))
+	defer upstream.Close()
+	old, ports, application := newToolFixture(t, upstream.URL)
+	old.Stop()
+	fault := &interruptedToolRegistration{
+		ToolRepository: ports.Tools,
+		entered:        make(chan struct{}),
+		abort:          make(chan struct{}),
+	}
+	var unblockOnce sync.Once
+	unblock := func() { unblockOnce.Do(func() { close(fault.abort) }) }
+	defer unblock()
+	ports.Tools = fault
+	s := chat.NewService(ports, completion.NewClient(nil), toolSettings(upstream.URL), queryRegistry(t, application))
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Stop)
+	receipt, err := s.CreateRun(context.Background(), admissionInput("locked-registration", "first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-fault.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("未进入工具登记边界")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { s.Shutdown(ctx); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		unblock()
+		<-done
+		t.Fatal("共享退出期限无法解除持锁存储等待")
+	}
+	run, err := s.GetRun(context.Background(), receipt.RunID)
+	if err != nil || run.Status != chat.StatusRunning || run.FinishedAt != nil {
+		t.Fatalf("未完成工具被伪造终态: %+v err=%v", run, err)
+	}
+}
+
+type unrelatedPauseCancellation struct {
+	chat.ExecutionRepository
+	failure error
+}
+
+// Pause 返回与退出 context 无关的存储取消，验证不会被误当成宿主期限到达。
+func (f unrelatedPauseCancellation) Pause(context.Context, chat.ModelCall) error { return f.failure }
+
+// TestShutdownPreservesUnrelatedStorageCancellation 验证存储自身的取消和超时仍按真实保存故障收尾。
+func TestShutdownPreservesUnrelatedStorageCancellation(t *testing.T) {
+	for _, failure := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			s, model, _ := eventFixture(t, func(ports *chat.Storage) {
+				ports.Execution = unrelatedPauseCancellation{
+					ExecutionRepository: ports.Execution,
+					failure:             failure,
+				}
+			})
+			id := createEventRun(t, s)
+			model.emit(t, chat.EventText, "需要保存的尾批")
+			s.Stop()
+			run, err := s.GetRun(context.Background(), id)
+			if err != nil || run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "persistence_failed" || run.Output == nil || *run.Output != "需要保存的尾批" {
+				t.Fatalf("独立存储中断被退出掩盖: %+v err=%v", run, err)
+			}
+		})
+	}
 }
 
 // TestRecoveryConfigurationGateOnlyForRequests 验证缺失配置、密钥或配置读取失败时只阻断需要重发的模型请求。

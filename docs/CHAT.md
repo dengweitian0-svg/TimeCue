@@ -10,6 +10,8 @@ T14 的启动恢复先扫描未完成 run，登记全部可见及隐藏会话的
 
 正常退出立即停止后续推进并关闭在途模型连接，聊天持久化与 HTTP 共用宿主同一个五秒期限。独立调用 Runtime.Stop 同样提供五秒窗口；App 通过 Lifecycle.Shutdown 传递共享 context。窗口内原子保存已接收 output、响应身份、实际 usage 及事件尾批；未完成 run/model_call 保持 running，checkpoint 保持原阶段，不生成取消、失败或 end。原 retry_wait 保留计划，成功调用不回退。窗口耗尽时停止存储等待与工具等待，保留已提交事实供重启恢复；尚未提交的内存内容可能无法保存，日志不冒充持久化成功。窗口内独立的真实存储故障仍按 persistence_failed 收尾。
 
+退出期限在等待运行锁之前关联存储取消，避免工具登记持锁等待存储时阻塞退出。保存返回取消或超时，只有其错误匹配实际已结束的宿主 context 才按退出期限处理；存储自身的取消/超时仍按持久化故障收尾，不静默保留 running。
+
 `model_recovery_test.go` 通过公共用例、真实 SQLite 和故障边界验证上述模型配置、完整摘要及退出期限；`cmd/flutter/process_chat_test.go` 使用实际编译后二进制、控制管道和可控 Chat Completions 上游，验证普通/摘要续写退出后的部分正文、思考、usage、原请求不重复追加、原预算不重复扣次、阻塞恢复期间 ready/health 可用，以及无 Key 时可见/隐藏取消会话的只读收尾。沿用数据库版本 3、五阶段三字段和现有 HTTP/Flutter 契约；完整工具写入恢复与持久化故障增强仍由对应后续任务交付。
 
 T13 已接通工具模型消息裁剪与工具超预算后的运行中摘要。`chat.tool_result_max_tokens` 默认 8192，按 `ceil(UTF-8 字节数 / 4)` 估算；0 使用默认值，允许 64 至当前平台 `max_int/4`，非法值拒绝发布并保留原快照。可在实例 `config.yaml` 中配置：

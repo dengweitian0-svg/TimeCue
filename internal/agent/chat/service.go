@@ -135,10 +135,12 @@ func (s *Runtime) Stop() {
 
 // Shutdown 使用宿主的共享退出期限，停止准入与模型请求并等待进度保存结束。
 func (s *Runtime) Shutdown(ctx context.Context) {
+	// 工具登记可能持有运行锁等待存储，先挂接期限才能解除该等待。
+	stopDeadline := context.AfterFunc(ctx, s.stopStorage)
+	defer stopDeadline()
 	s.mu.Lock()
 	if !s.stopping {
 		s.shutdownCtx = ctx
-		context.AfterFunc(ctx, s.stopStorage)
 		close(s.stopSignal)
 	}
 	s.stopping = true
@@ -338,8 +340,9 @@ func (s *Runtime) execute(ctx context.Context, run *execution, r Record, cfg Mod
 	if s.stopping && !run.requested && (r.Error == nil || r.Error.Code != "persistence_failed") {
 		s.mu.Unlock()
 		if call.ID != 0 {
-			if err = s.execution.Pause(s.persistenceContext(), call); err != nil {
-				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			pauseCtx := s.persistenceContext()
+			if err = s.execution.Pause(pauseCtx, call); err != nil {
+				if pauseCtx.Err() != nil && errors.Is(err, pauseCtx.Err()) {
 					logger.Warn("[chat] 退出保存期限已到，保留已提交进度", "run_id", r.RunID, "error", err)
 					return
 				}
