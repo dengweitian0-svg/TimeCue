@@ -392,10 +392,18 @@ type compactSwitchFault struct {
 	mode    string
 	entered chan struct{}
 	release chan struct{}
+	runs    chat.RunRepository
 }
 
 // CompleteCompact 在真实原子切换事务内注入外键失败，或模拟提交成功但回执丢失。
 func (f *compactSwitchFault) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall) (chat.ModelCall, error) {
+	if f.mode == "committed-cancel" {
+		// 模拟取消事务已提交、协调器 context 信号尚未送达的窗口。
+		if _, err := f.runs.RequestCancel(ctx, call.RunID); err != nil {
+			return call, err
+		}
+		return f.ExecutionRepository.CompleteCompact(ctx, call, next)
+	}
 	if f.mode == "cancel" {
 		close(f.entered)
 		<-f.release
@@ -415,7 +423,7 @@ func (f *compactSwitchFault) CompleteCompact(ctx context.Context, call chat.Mode
 
 // TestCompactAtomicSwitchFailure 验证切换事务回滚保留旧历史，已提交却丢失回执时保留成功摘要且不重复请求。
 func TestCompactAtomicSwitchFailure(t *testing.T) {
-	for _, mode := range []string{"rollback", "lost-ack", "cancel"} {
+	for _, mode := range []string{"rollback", "lost-ack", "cancel", "committed-cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			var expanded atomic.Bool
 			requests := make(chan chat.ModelRequest, 6)
@@ -441,6 +449,7 @@ func TestCompactAtomicSwitchFailure(t *testing.T) {
 				mode:                mode,
 				entered:             make(chan struct{}),
 				release:             make(chan struct{}),
+				runs:                ports.Runs,
 			}
 			ports.Execution = fault
 			service := startAdmissionService(t, ports, completion.NewClient(nil), compactSettings(upstream.URL, &expanded))
@@ -459,7 +468,8 @@ func TestCompactAtomicSwitchFailure(t *testing.T) {
 				close(fault.release)
 			}
 			run := awaitFinishedRun(t, service, receipt.RunID)
-			if mode == "cancel" && run.Status != chat.StatusCancelled || mode != "cancel" && (run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "persistence_failed") {
+			cancelled := mode == "cancel" || mode == "committed-cancel"
+			if cancelled && run.Status != chat.StatusCancelled || !cancelled && (run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != "persistence_failed") {
 				t.Fatalf("run=%+v", run)
 			}
 			<-requests
