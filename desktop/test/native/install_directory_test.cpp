@@ -21,6 +21,39 @@ void Check(bool condition, const char* message) {
     }
 }
 
+// 在登记失败时补充 UTF-8 系统错误与进程安全级别，便于区分完整性限制和业务断言。
+// result：实际登记结果；成功时不输出，失败时抛出包含诊断的异常。
+void CheckFirstRegistration(const InstallDirectoryRegistrationResult& result) {
+    if (result.status == InstallDirectoryRegistrationStatus::registered) return;
+    const auto& message = result.error_message;
+    const int size = WideCharToMultiByte(
+        CP_UTF8, 0, message.data(), static_cast<int>(message.size()), nullptr, 0, nullptr, nullptr);
+    std::string diagnostic(size, '\0');
+    if (size > 0) {
+        WideCharToMultiByte(CP_UTF8, 0, message.data(), static_cast<int>(message.size()),
+            diagnostic.data(), size, nullptr, nullptr);
+    }
+    HANDLE token = nullptr;
+    std::string restricted = "unknown";
+    std::string integrity = "unknown";
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        restricted = IsTokenRestricted(token) ? "true" : "false";
+        DWORD bytes = 0;
+        GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &bytes);
+        std::vector<BYTE> buffer(bytes);
+        if (bytes > 0 && GetTokenInformation(token, TokenIntegrityLevel, buffer.data(), bytes, &bytes)) {
+            const auto sid = reinterpret_cast<TOKEN_MANDATORY_LABEL*>(buffer.data())->Label.Sid;
+            const auto count = *GetSidSubAuthorityCount(sid);
+            if (count > 0) {
+                integrity = std::to_string(*GetSidSubAuthority(sid, static_cast<DWORD>(count - 1)));
+            }
+        }
+        CloseHandle(token);
+    }
+    throw std::runtime_error("first release directory should be registered: " + diagnostic +
+        "; token_restricted=" + restricted + "; integrity_level=" + integrity);
+}
+
 // 生成本次进程专用的隔离注册表子项名称。
 // 无参数。
 // 返回不会与其他测试进程冲突的 HKCU 子项路径。
@@ -104,8 +137,7 @@ void TestRegistration(const std::filesystem::path& root, const std::wstring& sub
     const auto first_directory = root / L"安装 路径 一";
     const auto first_executable = CreateReleaseDirectory(first_directory);
     auto result = RegisterInstallDirectory(first_executable, options);
-    Check(result.status == InstallDirectoryRegistrationStatus::registered,
-        "first release directory should be registered");
+    CheckFirstRegistration(result);
     Check(ReadRegisteredPath(subkey) == first_directory.wstring(), "Unicode path registration");
     wchar_t environment_value[32768]{};
     const DWORD environment_length = GetEnvironmentVariableW(

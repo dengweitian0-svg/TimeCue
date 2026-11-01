@@ -378,7 +378,11 @@ func (s *chatStore) BeginCall(ctx context.Context, call chat.ModelCall) (int64, 
 		id = call.ID
 		return err
 	})
-	return id, err
+	if err != nil {
+		// 插入获得的行号只有整个事务提交后才是已存在的调用身份。
+		return 0, err
+	}
+	return id, nil
 }
 
 func beginChatCall(ctx context.Context, tx *sql.Tx, call chat.ModelCall) (chat.ModelCall, error) {

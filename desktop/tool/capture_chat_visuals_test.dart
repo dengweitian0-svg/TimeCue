@@ -13,13 +13,13 @@ import 'package:timecue_desktop/features/notebook/notebook_spreads.dart';
 import 'package:timecue_desktop/features/notebook/notebook_view_model.dart';
 import 'package:timecue_desktop/theme/notebook_theme.dart';
 
-import 'chat_acceptance_fixture.dart';
+import '../test/fixtures/chat_widget_gateway.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('生成阶段 6 聊天状态截图到 build/visuals/chat-phase6', (tester) async {
-    final gateway = ChatAcceptanceGateway(historySessionCount: 5);
+    final gateway = ChatWidgetGateway()..arrangeHistory(5);
     final chat = ChatViewModel(
       gateway: gateway,
       retryDelay: (_) => const Duration(seconds: 3),

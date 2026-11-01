@@ -1,5 +1,26 @@
 # 真实文字对话
 
+正常、external 开发和 managed 发行入口共用真实 Chat Completions、SQLite 与六个正式日程工具；空库不播种会话，不保留旧内存聊天服务、固定回复或人工推进 HTTP。`TIMECUE_DEMO` 只提供传统日程的内存视觉示例，不装配聊天服务。可执行聊天验收只连接真实 Go；合成网关限定在 `desktop/test/fixtures/chat_widget_gateway.dart`，仅供 Widget 布局、滚动与截图测试显式安排数据，构造不播种，使用 widget 专用 provider/model，不构成模型或日程验收证据。
+
+真实模型组合验收使用显式模型及当前本地密钥文件，例如在仓库根目录执行：
+
+```powershell
+go build -o .gotmp-chat-real/timecue-core.exe ./cmd/flutter
+python scripts/chat-real-smoke.py --go .gotmp-chat-real/timecue-core.exe --env-file .env --provider deepseek --model deepseek-v4-flash --base-url https://api.deepseek.com --flutter-test
+```
+
+工具不使用用户数据库或路径配置，自动创建新的 `.gotmp-chat-real/真实模型-*/` 数据目录；复制密钥后调用实际上游，核对普通回复、六个工具及实际日程/提醒、四字段创建回执、原始事件分页/连续 seq、SSE 游标重连、取消和唯一 end、正常退出及模型/摘要原调用恢复、终态重启查询。执行中通过 HTTP 同步进度，SQLite 核对只在终态或进程停止后读取并立即关闭。低摘要阈值仅用于该隔离实例，以真实模型完成摘要；模型不按要求调用工具或返回错误时直接失败。`--flutter-test` 再以生产网关和 ViewModel 读取这些真实记录；它不替代 Windows 窗口及托盘验证。报告、数据库、日志和密钥副本只留本地，不纳入提交，不向 CI 提供真实密钥。默认使用 1145，端口占用时拒绝测试，不停止其他实例。
+
+Windows 验证单独构建正式 `lib/main.dart` 完整发行包，运行 `scripts/release-smoke.py --package <发行目录>` 和 `desktop/test/native` 的 CTest；发行 smoke 核对数据库版本 3、空聊天会话、传统日程重启持久化、重复启动和宿主崩溃后自有 Go 回收。已有正式实例应先由用户退出，不能通过验收工具结束它。各前置任务的公共服务、SQLite、故障边界及 Apifox 契约验收继续保留；没有 HTTP 契约变更时不为本验收另建接口。
+
+如果工作区及其 EXE 的 `icacls` 输出包含 `Low Mandatory Level`，程序会继承低完整性级别（4096），即使从普通 PowerShell 启动也不能写常规用户注册表。发行 smoke 在启动前明确拒绝该标签；原生登记测试失败会输出 Win32 错误、令牌及完整性级别。此时应从普通 Windows 终端将发行 ZIP 解压到工作区以外的新目录进行验证，不修改注册表或工作区安全权限，不把该路径上的失败记作通过。进程采用用户与文件中较低完整性级别的规则见 [Windows 强制完整性说明](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)。
+
+真实模型可能在脚本观察到事件后、退出信号到达前正常完成。恢复验收在退出前后核对运行与实际 checkpoint 阶段，正常完成时保留真实成功并有限次另建场景；三次均未取得在途窗口时只报告“恢复场景未覆盖”。普通模型与摘要共用此检查，不以旧 text/compact 事件推断仍在执行。dev 集成通过真实 Go/SQLite 和模型/网络边界回归此竞争；两个验收 CLI 固定使用 UTF-8，避免英文 Windows 的 cp1252 管道在中文输出时误报失败。
+
+取消验收同样处理正常完成竞争：第一次或重连 SSE 返回 204 时立即核对已结束概况，取消接口返回 succeeded 时保留真实成功；最多尝试三次新运行取得实际取消窗口，耗尽报告“取消场景未覆盖”。两次均取得真实事件时才登记 SSE 重连证据，不把 204 当缺少帧 ID，也不把未取得窗口当作已验证取消。
+
+模型调用登记仅在调用及 checkpoint 整个事务提交后返回有效 ID。checkpoint 写入或事务提交失败返回 0，后续以真实已提交记录保存 persistence_failed 及唯一 error/end；不能把回滚前分配的临时行号当作已存在调用。回归经 chat.Service 和真实 SQLite 的 checkpoint 保存故障验证，无表结构变更。
+
 T17 提供内部公开用例 `chat.Runtime.GetRunUsage(ctx, runID)`：每次只读指定可见运行的全部 `ai_model_calls.usage`，按调用 ID 返回逐条原始 JSON，并重新计算 prompt_tokens、completion_tokens、total_tokens 三个标准字段。普通、摘要及两类续写使用同一入口，不按成功状态过滤，失败、取消或正常退出已取得的真实值沿既有原子保存路径保留。原始 usage 包括供应商扩展字段，不改写模型实际 output；统计不从 output、SSE 或 token 估算补值。
 
 各合计独立判断是否已知：全部调用均提供该字段的非负整数且相加不溢出时返回实际合计；任一调用缺失该字段、字段无效或没有模型调用时保持 nil（未知）。上游明确返回的 0 是已知值；total_tokens 只累计上游真实 total，不用 prompt 与 completion 推算。部分未知时，逐调用已知原始对象仍完整返回。SQL NULL 保持 nil，不以空对象、零或 JSON null 补齐。

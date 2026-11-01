@@ -1,5 +1,7 @@
 # Chat 模块
 
+- `call_registration_test.go`：经公共聊天用例和真实 SQLite 在调用插入后的 checkpoint 保存处注入事务故障，验证未发模型请求、运行以 persistence_failed 原子保存 start/error/end，不被回滚行号阻塞收尾。
+
 - `usage.go`：内部公开用例 `Runtime.GetRunUsage` 只读可见 run 的全部模型调用，包含普通、摘要及续写；每次从独立 usage 列重算，不缓存或累计。逐调用原始 JSON 保留供应商扩展字段；prompt/completion/total 各自仅在所有调用均有对应非负整数且合计不溢出时已知，无调用或字段缺失保持 nil，不推算 total。
 - `UsageRepository` 是独立只读端口，由 `Storage.Usage` 装配，不进入现有 HTTP 服务接口，不修改 checkpoint、事件或执行状态。`usage_test.go` 经公共用例、真实 SQLite 和 HTTP 模型边界验证重复/重启读取、范围隔离、未知与真实零值、失败/取消保留、摘要与两类续写及异常计数。
 

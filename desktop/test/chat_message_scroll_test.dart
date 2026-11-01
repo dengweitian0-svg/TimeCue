@@ -9,13 +9,13 @@ import 'package:timecue_desktop/features/notebook/notebook_spreads.dart';
 import 'package:timecue_desktop/features/notebook/notebook_view_model.dart';
 import 'package:timecue_desktop/theme/notebook_theme.dart';
 
-import '../tool/chat_acceptance_fixture.dart';
+import 'fixtures/chat_widget_gateway.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('初始跟随最新时追加多轮消息与工具后持续保持在底部', (tester) async {
-    final gateway = ChatAcceptanceGateway(historySessionCount: 2);
+    final gateway = ChatWidgetGateway()..arrangeHistory(2);
     final chat = ChatViewModel(gateway: gateway);
     final repository = DemoNotebookRepository();
     final notebook = NotebookViewModel(repository)..changeTab(NotebookTab.ai);
@@ -119,7 +119,7 @@ void main() {
   });
 
   testWidgets('用户主动上读停止跟随，回到最新后恢复跟随', (tester) async {
-    final gateway = ChatAcceptanceGateway(historySessionCount: 1);
+    final gateway = ChatWidgetGateway()..arrangeHistory(1);
     final chat = ChatViewModel(gateway: gateway);
     final repository = DemoNotebookRepository();
     final notebook = NotebookViewModel(repository)..changeTab(NotebookTab.ai);

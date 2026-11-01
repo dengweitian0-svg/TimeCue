@@ -47,6 +47,12 @@ jobs:
           channel: stable
           cache: true
 
+      - name: 验证验收脚本恢复竞争与输出编码
+        shell: pwsh
+        run: |
+          python -m unittest discover -s scripts -p 'test_*smoke.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: 构建完整 Windows 发行目录
         shell: pwsh
         run: ./scripts/build-release.ps1
@@ -64,4 +70,15 @@ jobs:
         shell: pwsh
         run: |
           ctest --test-dir desktop/build/dev-native -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 验证完整发行入口与重启持久化
+        shell: pwsh
+        run: |
+          $taskPackage = Get-ChildItem -LiteralPath build/releases -Directory |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'manifest.json') } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (!$taskPackage) { throw '未找到完整发行目录。' }
+          python scripts/release-smoke.py --package $taskPackage.FullName
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

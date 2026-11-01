@@ -5,6 +5,8 @@
 - `ci.yml`：面向 dev 和 main 的 PR 检查；Ubuntu `changes` job 通过 GitHub REST API 分页读取 PR 文件，以当前路径和重命名前路径分类；纯文档 dev PR 只运行分类。文件数达到 3000 或出现未知非文档路径时运行全部检查；分类失败会使 Go 和 Flutter job 直接失败。Go 与 Flutter job 名称分别为 Go Windows Checks 和 Flutter Windows Checks，均运行在 Windows runner。Go 使用 PowerShell 检查模块、格式、vet 和串行测试；Flutter 固定 3.47.0，检查格式、分析和测试。Python 更新脚本测试由 Flutter Windows Checks 在 Windows 上使用 Python 3.11 执行；dev 按变更路径设置 Python/Flutter，main 始终执行两类检查并继续构建 Windows Release、运行原生 CTest、打完整发行包。Go job 最多 20 分钟，Flutter job 在 dev 最多 20 分钟、main 最多 60 分钟，分类最多 5 分钟。
 - `ci.yml`：取消过期运行后，不继续启动 Go 或 Flutter 检查 job。
 - `dev-integration.yml`：非纯文档 dev 分支 push 或手动触发时执行 Go、Flutter stable 3.47.0 的完整 Windows 发行构建和原生 CTest；手动触发始终运行；按工作流和 ref 隔离并发，每次最多 45 分钟。
+- `dev-integration.yml` 在原生 CTest 后运行 `scripts/release-smoke.py`，使用本次完整发行目录和新隔离数据目录，验证正式入口、空聊天会话、传统日程重启持久化、重复启动和自有 Go 崩溃回收；低完整性产物直接失败，不修改安全标签或跳过验收。
+- 同一 dev 集成工作流运行 `test_*smoke.py`，经正式 Go/SQLite 与模型/网络边界验证验收脚本的快速完成竞争和 cp1252 输出；这些可控模型回归不替代隔离数据目录中的真实上游证据。
 - `release-package.yml`：仅手动触发完整 Windows 发行构建和原生 CTest，并上传 ZIP 与校验值。使用缓存，按 ref 隔离并发，每次最多 60 分钟。main 合法来源由 `protect-main.yml` 管理。
 - `protect-main.yml`：main 发布 PR 只允许本仓库 dev 来源且作者为 dengweitian0-svg；不满足时留言并关闭 PR。
 - `close-linked-issues.yml`：目标为 dev 的 PR 合并后，按关闭关键词处理关联 Issue。
