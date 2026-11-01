@@ -162,10 +162,13 @@ class Acceptance:
         return events
 
     def stream_event(self, run_id, cursor):
-        """按已持久化游标建立 SSE，读取下一条连续事件后断开。"""
+        """按持久化游标读取下一事件；真正终态的 204 返回空结果。"""
         request = urllib.request.Request(self.base + f"/v1/run/{run_id}/event",
                                         headers={"Last-Event-ID": str(cursor)})
         with self.opener.open(request, timeout=self.options.timeout) as stream:
+            if stream.status == 204:
+                return None
+            assert stream.status == 200, stream.status
             frame = {}
             while line := stream.readline().decode("utf-8").strip():
                 if ":" in line:
@@ -221,15 +224,7 @@ class Acceptance:
         """验证断线接续、取消及普通模型和摘要的原调用恢复。"""
         # 使用新会话避免摘要先于长输出；只按持久化进度同步，不伪造模型响应。
         history_session = self.session
-        self.session = str(uuid.uuid4())
-        run_id = self.create("请用中文连续编号写300条不同的日程管理建议，每条至少20字。不要工具，不要省略。")
-        first = self.stream_event(run_id, 0)
-        second = self.stream_event(run_id, int(first["id"]))
-        self.evidence["checks"].append({"sse_reconnect": run_id, "frames": [first, second]})
-        self.wait(lambda: self.has_event(run_id, {"text", "thinking"}), "真实流式增量")
-        status, receipt = self.request("POST", f"/v1/run/{run_id}/cancel")
-        assert status == 200 and receipt == {"run_id": run_id, "status": "cancelled"}
-        self.terminal(run_id, "cancelled")
+        self.cancel_inflight()
         run_id, original_model = self.pause_for_recovery(
             "请逐行输出1到120的数字，每行一个数字，不要省略，不要调用工具。", "model_call_start", fresh_session=True)
         self.start()
@@ -252,6 +247,31 @@ class Acceptance:
         assert self.request("GET", "/v1/session/" + self.session)[1] == saved
         for entry in self.evidence["runs"]:
             assert self.request("GET", "/v1/run/" + entry["run_id"])[1] == entry["run"]
+
+    def cancel_inflight(self):
+        """有限次取得实际取消窗口；SSE 204 或正常完成抢先时保存真实成功再尝试。"""
+        for attempt in range(1, 4):
+            self.session = str(uuid.uuid4())
+            run_id = self.create("请用中文连续编号写300条不同的日程管理建议，每条至少20字。不要工具，不要省略。")
+            first = self.stream_event(run_id, 0)
+            second = self.stream_event(run_id, int(first["id"])) if first is not None else None
+            if first is not None and second is not None:
+                self.evidence["checks"].append({"sse_reconnect": run_id, "frames": [first, second]})
+                self.wait(lambda: self.request("GET", "/v1/run/" + run_id)[1]["finished_at"]
+                          or self.has_event(run_id, {"text", "thinking"}), "待取消的实际进度")
+            current = self.request("GET", "/v1/run/" + run_id)[1]
+            if first is None or second is None:
+                assert current["finished_at"] is not None, "SSE 返回 204 后运行仍未结束"
+            if current["finished_at"] is None:
+                status, receipt = self.request("POST", f"/v1/run/{run_id}/cancel")
+                assert status == 200 and set(receipt) == {"run_id", "status"} and receipt["run_id"] == run_id, receipt
+                if receipt["status"] == "cancelled":
+                    self.terminal(run_id, "cancelled")
+                    return
+                assert receipt["status"] in {"succeeded", "failed"}, receipt
+            self.terminal(run_id)
+            self.evidence["checks"].append({"completed_before_cancel": run_id, "attempt": attempt})
+        raise AssertionError("取消场景未覆盖：三次均在取消前正常完成，未取得取消窗口")
 
     def pause_for_recovery(self, text, stage, fresh_session):
         """确认目标仍在途并在退出后核验实际阶段；正常完成竞争最多尝试三次场景。"""
