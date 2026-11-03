@@ -288,14 +288,14 @@ func awaitFinishedRunWithin(t *testing.T, service chat.RunService, id string, ti
 	defer cancel()
 	var run chat.Run
 	for ctx.Err() == nil {
-		var err error
-		run, err = service.GetRun(ctx, id)
+		current, err := service.GetRun(ctx, id)
 		if err != nil {
 			if ctx.Err() != nil {
 				break
 			}
 			t.Fatal(err)
 		}
+		run = current
 		if run.FinishedAt != nil {
 			return run
 		}
