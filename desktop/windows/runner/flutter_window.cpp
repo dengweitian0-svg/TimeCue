@@ -12,14 +12,14 @@ namespace {
 constexpr UINT kDestroyDesktop = WM_APP + 73;
 constexpr UINT kProcessEvents = WM_APP + 74;
 
-// 把原生启动请求转为 Dart 激活信封，滤除后端及路径配置选项。
+// 把原生启动请求转为 Dart 激活信封，滤除环境、后端及路径配置选项。
 // launch：经过原生校验的启动请求。
 // 返回包含版本、字符串 ID、来源和意图参数的 Flutter 可编码映射。
 flutter::EncodableValue LaunchValue(const DesktopLaunch& launch) {
     flutter::EncodableList arguments;
     for (const auto& argument : launch.arguments) {
         if (argument.rfind("--backend=", 0) == 0 || argument.rfind("--data-dir=", 0) == 0 ||
-            argument.rfind("--go-executable=", 0) == 0)
+            argument.rfind("--go-executable=", 0) == 0 || argument.rfind("--env=", 0) == 0)
             continue;
         arguments.emplace_back(argument);
     }
