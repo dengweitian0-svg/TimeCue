@@ -25,6 +25,7 @@ import (
 type toolCommitGate struct {
 	chat.ToolRepository
 	afterResults int
+	resultDelay  time.Duration
 	results      int
 	committed    chan struct{}
 	release      chan struct{}
@@ -49,6 +50,16 @@ func (g *toolCommitGate) AcceptResponse(ctx context.Context, call chat.ModelCall
 
 // FinishTool 在指定的真实逐项结果事务提交后暂停，不替换查询或结果。
 func (g *toolCommitGate) FinishTool(ctx context.Context, call chat.ModelCall, tool chat.ToolCall) (chat.ModelCall, error) {
+	if g.resultDelay > 0 && g.results == g.afterResults {
+		// 在快照边界放行后的下一次真实结果保存前注入响应延迟，不改变业务结果。
+		timer := time.NewTimer(g.resultDelay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return call, ctx.Err()
+		}
+	}
 	progress, err := g.ToolRepository.FinishTool(ctx, call, tool)
 	if err != nil {
 		return call, err
@@ -62,8 +73,31 @@ func (g *toolCommitGate) FinishTool(ctx context.Context, call chat.ModelCall, to
 
 // TestToolBatchResumesAtCommittedBoundaries 验证真实执行在回复接纳、部分结果和批次结束三个提交点恢复时保留原工具事实。
 func TestToolBatchResumesAtCommittedBoundaries(t *testing.T) {
-	for name, saved := range map[string]int{"accepted": 0, "partial": 1, "complete": 5} {
-		t.Run(name, func(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		saved       int
+		resultDelay time.Duration
+	}{
+		{
+			name:  "accepted",
+			saved: 0,
+		},
+		{
+			name:  "partial",
+			saved: 1,
+		},
+		{
+			name:  "complete",
+			saved: 5,
+		},
+		{
+			name:        "partial_slow_result",
+			saved:       1,
+			resultDelay: 4 * time.Second,
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			saved := scenario.saved
 			ctx := context.Background()
 			database, ports, path := admissionDatabase(t)
 			schedules, err := store.NewScheduleStore(database)
@@ -106,6 +140,7 @@ func TestToolBatchResumesAtCommittedBoundaries(t *testing.T) {
 			gate := &toolCommitGate{
 				ToolRepository: ports.Tools,
 				afterResults:   saved,
+				resultDelay:    scenario.resultDelay,
 				committed:      make(chan struct{}),
 				release:        make(chan struct{}),
 			}
@@ -121,6 +156,11 @@ func TestToolBatchResumesAtCommittedBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() {
+				if t.Failed() {
+					logToolBatchProgress(t, "original", service, ports, receipt.RunID, requests.Load())
+				}
+			})
 			select {
 			case <-gate.committed:
 			case <-time.After(5 * time.Second):
@@ -150,7 +190,8 @@ func TestToolBatchResumesAtCommittedBoundaries(t *testing.T) {
 				t.Fatal(err)
 			}
 			gate.once.Do(func() { close(gate.release) })
-			if run := awaitRun(t, service, receipt.RunID); run.Status != chat.StatusSucceeded {
+			// 观察期限不代表工具或存储性能契约，慢保存仍必须真实完成全部配对及终态。
+			if run := awaitFinishedRunWithin(t, service, receipt.RunID, 30*time.Second); run.Status != chat.StatusSucceeded {
 				t.Fatalf("原执行失败: %+v", run)
 			}
 			service.Stop()
@@ -173,7 +214,12 @@ func TestToolBatchResumesAtCommittedBoundaries(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(restarted.Stop)
-			if run := awaitRun(t, restarted, receipt.RunID); run.Status != chat.StatusSucceeded || requests.Load() != 3 {
+			t.Cleanup(func() {
+				if t.Failed() {
+					logToolBatchProgress(t, "restarted", restarted, restored, receipt.RunID, requests.Load())
+				}
+			})
+			if run := awaitFinishedRunWithin(t, restarted, receipt.RunID, 30*time.Second); run.Status != chat.StatusSucceeded || requests.Load() != 3 {
 				t.Fatalf("恢复重发成功模型调用或未完成: %+v requests=%d", run, requests.Load())
 			}
 			replay := awaitHistoryRequest(t, inputs)
@@ -203,6 +249,29 @@ func TestToolBatchResumesAtCommittedBoundaries(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// logToolBatchProgress 在失败清理前用共享两秒期限读取运行、调用和工具阶段，不输出原始消息或参数。
+func logToolBatchProgress(t *testing.T, phase string, service chat.RunService, ports chat.Storage, id string, requests int32) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	run, err := service.GetRun(ctx, id)
+	t.Logf("工具批次运行: phase=%s run_id=%s status=%s finished_at=%v error=%+v read_error=%v model_requests=%d", phase, id, run.Status, run.FinishedAt, run.Error, err, requests)
+	call, err := ports.Execution.ReadCall(ctx, id)
+	if err != nil || call == nil {
+		t.Logf("工具批次调用读取: phase=%s call=%v error=%v", phase, call, err)
+		return
+	}
+	t.Logf("工具批次调用: phase=%s call_id=%d state=%s checkpoint=%s completed=%v", phase, call.ID, call.State, call.CheckpointStage, call.CompletedTools)
+	stored, err := ports.Tools.ReadTools(ctx, call.ID)
+	if err != nil {
+		t.Logf("工具批次读取失败: phase=%s error=%v", phase, err)
+		return
+	}
+	for _, tool := range stored {
+		t.Logf("工具批次进度: phase=%s tool_call_id=%s state=%s retry_count=%d next_retry_at=%v error=%+v", phase, tool.Request.ID, tool.State, tool.RetryCount, tool.NextRetryAt, tool.Error)
 	}
 }
 

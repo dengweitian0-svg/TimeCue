@@ -10,9 +10,9 @@
 
 约束：二次启动不创建 Flutter 引擎、业务仓储、通知执行者或 Go。跨进程激活原样交给 D6 只读查询，不能更改正在运行的目录、连接或模式；显式 payload 参数不是实际 Windows 横幅点击证据。Windows 会话退出/进程崩溃可能直接结束运行，不承诺异步回填完成。原生测试位于 `desktop/test/native`，使用独立锁名及自有隐藏进程。
 
-- `launch_configuration.*`：统一解析 backend/data-dir/go-executable 与 Windows 路径；单实例原始快照固定，重复启动显式冲突在接纳前拒绝，省略选项表示复用。转交到 Dart 的激活信封只包含原有窗口/通知意图。
-- 主实例默认 managed；Release 使用当前用户 LocalAppData/TimeCue，Debug/Profile 使用 LocalAppData/TimeCue-Dev，Go 可执行文件默认取程序目录中的 timecue-core.exe。只在取得主实例锁后补全默认值，转交端不把省略值变成冲突选项。显式 external 不创建或停止 Go；编译启用 UTF-8，系统目录解析链接 shell32/ole32。
-- CMake 对 Debug/Profile 定义 `TIMECUE_DEVELOPMENT`：使用独立单实例后缀，并在托管 Go 启动参数传端口 1145；Release 保持单实例身份并使用端口 10086。
+- `launch_configuration.*`：统一解析 env/backend/data-dir/go-executable 与 Windows 路径；单实例原始快照固定，重复启动显式冲突在接纳前拒绝，省略选项表示复用。转交到 Dart 的激活信封只包含原有窗口/通知意图。
+- 主实例默认 managed；所有构建模式默认使用 Flutter EXE 所在目录作为数据根目录，显式相对目录按启动工作目录解析，Go 可执行文件默认取程序目录中的 timecue-core.exe。只在取得主实例锁后补全默认值，转交端不把省略值变成冲突选项。显式 external 不创建或停止 Go；编译启用 UTF-8，程序路径通过 GetModuleFileNameW 解析。
+- CMake 对 Debug/Profile 定义 `TIMECUE_DEVELOPMENT`，仅保留独立单实例后缀。`--env` 默认 release/10086，test/1145；非法、空值及重复环境拒绝。宿主沿原 process 配置通道向 Dart 传 port，并将 env 传给自有 Go；重复启动显式环境冲突拒绝，省略复用现有环境。
 - `managed_process.*`：单一所有者创建自有 Go；CreateProcessW/CREATE_NO_WINDOW、限定继承匿名管道及创建时 Job 列表，kill-on-close 且 Job 不继承；后台排空有界 stdout/stderr、观察退出。shutdown/EOF 优雅取消，Release 幂等回收管道、线程及句柄；timecue/process 通道由 FlutterWindow 接入，原生销毁也回收 Job。
 - `install_directory.*`：主实例窗口创建成功后，仅检测到同目录更新脚本、manifest 和 Go 核心文件的发行目录时，将绝对程序目录登记到用户 `Environment` 的 `TIMECUE_INSTALL_DIR`；路径通过 Unicode Win32 API 解析，仅值变化时写入并限时广播环境变化。
 

@@ -33,7 +33,11 @@ Future<void> main() async {
     runApp(_ConfigurationError(desktop: desktop, error: '$failure'));
     return;
   }
-  final repository = HttpNotebookRepository(managed: configuration.managed);
+  final apiBase = configuration.apiBase;
+  final repository = HttpNotebookRepository(
+    managed: configuration.managed,
+    base: apiBase.resolve('/api/v1/scheduler/'),
+  );
   final configFiles = configuration.configFiles;
   final views = NotificationViewModel(repository);
   final notifications = WindowsNotificationBridge(
@@ -51,6 +55,7 @@ Future<void> main() async {
     backend = ManagedBackend(
       platform: WindowsOwnedProcessPlatform(),
       health: repository.deliveryRuntime,
+      apiBase: apiBase,
       prepareStart: () async {
         await configFiles.normalizeLegacyDatabaseDirectory();
       },
@@ -65,7 +70,10 @@ Future<void> main() async {
       }
     });
   }
-  chatGateway = HttpChatGateway(beforeRequest: () => chatGuard.beforeRequest());
+  chatGateway = HttpChatGateway(
+    baseUri: apiBase,
+    beforeRequest: () => chatGuard.beforeRequest(),
+  );
   chat = ChatViewModel(gateway: chatGateway);
   chatGuard = ChatRuntimeGuard(
     managed: configuration.managed,

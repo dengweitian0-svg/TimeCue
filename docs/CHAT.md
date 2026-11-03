@@ -6,7 +6,7 @@
 
 ```powershell
 go build -o .gotmp-chat-real/timecue-core.exe ./cmd/flutter
-python scripts/chat-real-smoke.py --go .gotmp-chat-real/timecue-core.exe --env-file .env --provider deepseek --model deepseek-v4-flash --base-url https://api.deepseek.com --flutter-test
+python scripts/chat-real-smoke.py --go .gotmp-chat-real/timecue-core.exe --env=test --env-file .env --provider deepseek --model deepseek-v4-flash --base-url https://api.deepseek.com --flutter-test
 ```
 
 工具不使用用户数据库或路径配置，自动创建新的 `.gotmp-chat-real/真实模型-*/` 数据目录；复制密钥后调用实际上游，核对普通回复、六个工具及实际日程/提醒、四字段创建回执、原始事件分页/连续 seq、SSE 游标重连、取消和唯一 end、正常退出及模型/摘要原调用恢复、终态重启查询。执行中通过 HTTP 同步进度，SQLite 核对只在终态或进程停止后读取并立即关闭。低摘要阈值仅用于该隔离实例，以真实模型完成摘要；模型不按要求调用工具或返回错误时直接失败。`--flutter-test` 再以生产网关和 ViewModel 读取这些真实记录；它不替代 Windows 窗口及托盘验证。报告、数据库、日志和密钥副本只留本地，不纳入提交，不向 CI 提供真实密钥。默认使用 1145，端口占用时拒绝测试，不停止其他实例。
@@ -89,6 +89,8 @@ T11 测试通过 chat.Service 公共用例、真实 SQLite、真实模型 HTTP �
 R1 将完整回复接纳、模型调用开始/结束 checkpoint 及跨轮有效上下文集中在聊天模块的进度规则中。SQLite adapter 在原事务内调用这些规则，继续核验实际事实、保存 output/usage 与事件尾批、分配连续事件序号；协调器在提交成功后才采用新进度并启动工具。待提交快照复制消息、原始工具 JSON 和完成集合，保存失败不改写此前快照；实际已取得的工具结果独立保留，收尾事务沿已提交进度合并，不重执业务。
 
 R2 将工具开始与单项结果也统一为完整进度操作。SQLite 开始及结果事务回读当前调用已提交的 checkpoint，在原事务内合入 running/原参数/关联/开始事件或实际 output/error/结果事件/原 ID 消息，再原子保存完整进度。提交成功才向协调器返回新快照；失败不采用待提交状态，已保存结果重试直接复用已提交事实。协调器不再维护第二份完成集合，也不传入批次数量来判定结束；进度按全部原请求的 ID 配对事实表达 tool_end，下一步普通模型调用、配置、等待与调度仍由协调器选择。并行结果按实际接纳次序串行合并，不增加 FIFO。
+
+提交边界恢复测试在回复接纳、部分结果及整批完成处取得真实 SQLite 快照；部分结果放行后另覆盖一次四秒的结果保存延迟，继续严格核验原运行、恢复运行、三次实际模型请求、原工具身份/参数、重试预算及事件配对。原运行和恢复运行各使用三十秒终态观察截止，查询本身也服从该 context；失败时在服务清理前用共享两秒截止记录运行、调用、checkpoint、已完成工具及逐项状态。观察时长仅约束测试等待，不改变业务工具超时、重试退避、退出预算或运行性能契约。
 
 R3 将取消跳过、未确认结果及故障真实结果保留统一到聊天进度模块。正常单项结果与异常批次收拢共用原 ID 配对和阶段转换规则；SQLite 终态事务读取最新已提交调用、checkpoint 与工具事实，优先复用已保存或协调器实际取得的结果，再按取消 skipped/aborted 或 tool_result_unconfirmed 补齐缺失项。存储只负责事务内核验、事实及事件保存，不另行裁决消息接纳、中断说明或未确认结果。
 

@@ -7,17 +7,17 @@ AI 助手已接入真实单条日程、规则列表和日期安排查询；工�
 ```powershell
 cd D:\go_project\src\TimeCue\desktop
 flutter pub get
-flutter run -d windows --debug -a --backend=managed -a --data-dir=D:\go_project\src\TimeCue
+flutter run -d windows --debug -a --env=test -a --backend=managed -a --data-dir=D:\go_project\src\TimeCue
 ```
 
 Windows CMake 会在 Debug、Profile 和 Release 构建中编译 Go 服务并放到 runner 旁；开发前需安装 Go 并将 `go` 放入 PATH。managed 模式由 Flutter 启动自有 Go。切换 backend 前请完整退出已有实例；Go 源码更改后需退出并重新运行 Flutter，热重载不会重建 Go。
 
-Debug/Profile 的 managed 模式使用 1145；managed 宿主会自动向自有 Go 服务传入该端口。`--backend=external` 可选用于连接独立运行的 Go 服务：先在仓库根目录运行 `go run ./cmd/flutter --data-dir D:\go_project\src\TimeCue --port 1145`，再用 `flutter run -d windows --debug -a --backend=external -a --data-dir=D:\go_project\src\TimeCue` 启动桌面端。本地 loopback 请求会直连，不经过系统 HTTP 代理。服务未连接就绪时，添加日程操作不可用；房间入口仍显示，连接恢复后可继续操作。
+所有构建模式均通过运行时 `--env=test|release` 选端口：省略或 release 使用 10086，test 使用 1145；非法或空值启动失败。managed 宿主自动向自有 Go 传递环境，日程、提醒、聊天及 ready 核验共用注入地址。`--backend=external` 可选用于连接独立运行的 Go 服务：先在仓库根目录运行 `go run ./cmd/flutter --data-dir D:\go_project\src\TimeCue --env=test`，再用 `flutter run -d windows --debug -a --env=test -a --backend=external -a --data-dir=D:\go_project\src\TimeCue` 启动桌面端。本地 loopback 请求会直连，不经过系统 HTTP 代理。服务未连接就绪时，添加日程操作不可用；房间入口仍显示，连接恢复后可继续操作。
 
 ```powershell
 cd D:\go_project\src\TimeCue\desktop
 flutter pub get
-flutter run -d windows -a --backend=external -a --data-dir=D:\go_project\src\TimeCue
+flutter run -d windows -a --env=test -a --backend=external -a --data-dir=D:\go_project\src\TimeCue
 ```
 
 视觉演示仍可显式使用 `flutter run -d windows --dart-define=TIMECUE_DEMO=true`。示例业务时间固定为北京时间 **2026-10-07 14:32**，数据只在内存，环境时钟使用真实 UTC+8。
@@ -193,7 +193,7 @@ window_manager/tray_manager 均固定 0.5.2。原生 runner 在创建 Flutter �
 
 “退出 TimeCue”先停止新工作，在总计 5 秒内尽力回填已知结果，再释放共享资源并销毁窗口；开发外连的手动 Go 保持运行。运行状态、激活意图和转交去重都不落盘。窗口状态只读，插件结果及原生图标核验经生命周期正式操作更新，迟到事件不重新打开已退出的窗口。
 
-原生参数白名单为 `--start-hidden`、`--login-start`、`--activation-payload=<原 JSON>` 及首次装配的 `--backend=managed|external`、`--data-dir=<目录>`、`--go-executable=<绝对文件>`。首次隐藏/登录意图只有托盘可用才隐藏；重复普通启动唤回，重复登录意图保持当前可见性。显式 payload 只用于适配/调试，原始 instance/task/attempt/type 经同一 D6 入口核验；重复启动省略运行选项表示复用；显式目录、exe 或模式冲突在原生接纳前拒绝，不能切换当前运行。这些入口不读取自启配置、不注册启动项，也不保证系统通知可以冷启动已退出应用。
+原生参数白名单为 `--start-hidden`、`--login-start`、`--activation-payload=<原 JSON>` 及首次装配的 `--env=test|release`、`--backend=managed|external`、`--data-dir=<目录>`、`--go-executable=<绝对文件>`。首次隐藏/登录意图只有托盘可用才隐藏；重复普通启动唤回，重复登录意图保持当前可见性。显式 payload 只用于适配/调试，原始 instance/task/attempt/type 经同一 D6 入口核验；重复启动省略运行选项表示复用；显式环境、目录、exe 或模式冲突在原生接纳前拒绝，不能切换当前运行。这些入口不读取自启配置、不注册启动项，也不保证系统通知可以冷启动已退出应用。
 
 Windows C++ 每个函数仅保留一处中文用途、入参及出参说明，优先放在头文件；文件内函数及回调在定义处说明。`windows/.clang-format` 统一每级四空格缩进；Flutter 自动生成的插件注册文件重新生成后会覆盖手工注释及格式。
 
@@ -209,7 +209,7 @@ ctest --test-dir build/d7-native -C Release --output-on-failure
 
 ## 自有 Go 子进程
 
-发行包默认 managed，监听 10086，数据位于当前用户 LocalAppData/TimeCue，Go 位于程序目录的 timecue-core.exe。Debug/Profile 使用独立单实例标识，默认数据目录为当前用户 LocalAppData/TimeCue-Dev；开发仍建议显式指定仓库绝对 data-dir。可显式覆盖 data-dir/go-executable；开发连接手动 Go 必须指定 backend=external 和 data-dir。完整打包运行根目录 scripts/build-release.ps1，见[发行说明](../docs/RELEASE.md)。以下为手动构建联调示例：
+发行包默认 managed、release/10086，数据根目录与 Go 默认路径均取 Flutter EXE 所在目录，快捷方式或其他工作目录不影响默认目录。Debug/Profile 保留独立单实例标识，环境不改变身份；重复启动显式环境冲突拒绝，省略复用已有实例。所有构建模式 test 均使用 1145，环境不隔离数据。显式相对 data-dir 按启动工作目录解析，数据库、日志和配置路径规则不变；旧 LocalAppData 数据不自动迁移，可显式传入旧目录。开发建议显式指定仓库绝对 data-dir。可显式覆盖 data-dir/go-executable；开发连接手动 Go 必须指定 backend=external 和 data-dir。完整打包运行根目录 scripts/build-release.ps1，见[发行说明](../docs/RELEASE.md)。以下为手动构建联调示例：
 
 ```powershell
 $timecueDataDir = (Resolve-Path .).Path
@@ -258,7 +258,7 @@ $env:TIMECUE_CAPTURE_CHAT='true'; flutter test test/cat_chat_hotspot_test.dart
 
 生成期间的代码块继续显示原文、语言与复制入口，使用渲染库自身的代码组件暂缓语法高亮；服务端终态确认后再应用高亮。Markdown 解析仍由 `gpt_markdown` 负责，渲染状态变化不会修改累计原文。
 
-`HttpChatGateway` 与日程仓储独立，共用构建模式端口来源，实现聊天、模型选项和完整事件分页端口，支持严格 DTO、UTF-8/SSE 分片、单 run 单连接、Last-Event-ID、204 查询回退和传输取消，不自行重试创建。`ChatViewModel` 持有草稿、原始时间线、正文投影和工具实例。分页与 SSE 按 (run_id, seq) 去重、先补缺口、成功应用后推进连续消费位置，不把 next_after_seq 当作消费位置；新模型从零加载所需历史。工具实例以开始 seq 与原 ID 区分，结果与当前尚未完成的请求按原 ID 配对，后续回复复用同值 ID 不会被去重。cancelled 且 finished_at=null 继续订阅并占用名额；真正结束后停止 SSE 并补读概况与历史，run.output 不覆盖原始时间线。
+`HttpChatGateway` 与日程仓储独立，共用宿主注入的运行时环境地址，实现聊天、模型选项和完整事件分页端口，支持严格 DTO、UTF-8/SSE 分片、单 run 单连接、Last-Event-ID、204 查询回退和传输取消，不自行重试创建。`ChatViewModel` 持有草稿、原始时间线、正文投影和工具实例。分页与 SSE 按 (run_id, seq) 去重、先补缺口、成功应用后推进连续消费位置，不把 next_after_seq 当作消费位置；新模型从零加载所需历史。工具实例以开始 seq 与原 ID 区分，结果与当前尚未完成的请求按原 ID 配对，后续回复复用同值 ID 不会被去重。cancelled 且 finished_at=null 继续订阅并占用名额；真正结束后停止 SSE 并补读概况与历史，run.output 不覆盖原始时间线。
 
 取消查询先确认运行终态时，关闭 SSE 后仍通过串行事件队列补齐尾部记录；此前分页读到空页或 has_more=false 不阻止补读。补读失败保留记录重试入口，不重新订阅或占用运行名额。
 

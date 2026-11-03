@@ -75,7 +75,7 @@ func managedChatRecovery(t *testing.T, binary, root string) {
 			if err := os.WriteFile(filepath.Join(directory, ".env"), []byte("TEST_MODEL=process-fixture-only\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			p := launchProcess(t, binary, "--data-dir", directory, "--instance-id", "chat-first")
+			p := launchProcess(t, binary, "--env", "test", "--data-dir", directory, "--instance-id", "chat-first")
 			p.ready(t)
 			session := uuid.NewString()
 			if compact {
@@ -111,7 +111,7 @@ func managedChatRecovery(t *testing.T, binary, root string) {
 				t.Fatal(err)
 			}
 
-			p = launchProcess(t, binary, "--data-dir", directory, "--instance-id", "chat-restarted")
+			p = launchProcess(t, binary, "--env", "test", "--data-dir", directory, "--instance-id", "chat-restarted")
 			info := p.ready(t)
 			var health struct{ Data app.RuntimeInfo }
 			processChatHTTP(t, http.MethodGet, "/health", "", http.StatusOK, &health)
@@ -174,7 +174,7 @@ func managedChatRecovery(t *testing.T, binary, root string) {
 			if err := os.Remove(filepath.Join(directory, ".env")); err != nil {
 				t.Fatal(err)
 			}
-			p = launchProcess(t, binary, "--data-dir", directory, "--instance-id", "cancel-only")
+			p = launchProcess(t, binary, "--env", "test", "--data-dir", directory, "--instance-id", "cancel-only")
 			p.ready(t)
 			cancelled := awaitProcessChatRun(t, cancelIDs[0])
 			if cancelled.Status != chat.StatusCancelled || cancelled.Error != nil {
