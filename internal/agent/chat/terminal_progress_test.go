@@ -284,10 +284,16 @@ func awaitFinishedRun(t *testing.T, service chat.RunService, id string) chat.Run
 
 func awaitFinishedRunWithin(t *testing.T, service chat.RunService, id string, timeout time.Duration) chat.Run {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		run, err := service.GetRun(context.Background(), id)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var run chat.Run
+	for ctx.Err() == nil {
+		var err error
+		run, err = service.GetRun(ctx, id)
 		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
 			t.Fatal(err)
 		}
 		if run.FinishedAt != nil {
@@ -295,7 +301,7 @@ func awaitFinishedRunWithin(t *testing.T, service chat.RunService, id string, ti
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("运行未完成终态提交")
+	t.Fatalf("运行未完成终态提交: run_id=%s status=%s finished_at=%v error=%+v wait_error=%v", id, run.Status, run.FinishedAt, run.Error, ctx.Err())
 	return chat.Run{}
 }
 
