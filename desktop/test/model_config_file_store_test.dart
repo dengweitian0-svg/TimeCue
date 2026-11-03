@@ -14,6 +14,44 @@ void main() {
   });
   tearDown(() => directory.delete(recursive: true));
 
+  for (final value in [
+    (label: '空字段', key: 'chat_model', yaml: 'chat_model:\n'),
+    (label: '显式 null', key: 'chat_model', yaml: 'chat_model: null\n'),
+    (label: '大写字段与 ~', key: 'CHAT_MODEL', yaml: 'CHAT_MODEL: ~\n'),
+  ]) {
+    test('${value.label}可读取为空并首次保存模型，保留无关配置及原字段名', () async {
+      await File(store.configPath).writeAsString('''# 保留用户注释
+log:
+  level: warn
+unknown: keep
+${value.yaml}''');
+      expect(await store.readDeepSeekModel(), isNull);
+
+      await store.saveDeepSeekModel(
+        const DeepSeekModelSettings(model: 'chat'),
+        apiKey: 'local-null-list',
+      );
+
+      final reopened = await ConfigFileStore(
+        directory.path,
+      ).readDeepSeekModel();
+      expect(reopened!.model, 'chat');
+      expect(reopened.contextWindow, 32768);
+      expect(reopened.maxOutputTokens, 8192);
+      final contents = await File(store.configPath).readAsString();
+      final root = YamlEditor(contents).parseAt([]).value as Map;
+      expect(root.keys, ['log', 'unknown', value.key]);
+      expect(root['log']['level'], 'warn');
+      expect(root['unknown'], 'keep');
+      expect(root[value.key][0]['provider'], 'deepseek');
+      expect(contents, contains('# 保留用户注释'));
+      expect(
+        await File(p.join(directory.path, '.env')).readAsString(),
+        'DEEPSEEK_CHAT=local-null-list\n',
+      );
+    });
+  }
+
   test('更换 Key 保留 CR 和混合换行环境文件的其他变量', () async {
     final env = File(p.join(directory.path, '.env'));
     await env.writeAsString(

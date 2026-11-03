@@ -97,7 +97,7 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
     }
     final keyName = _modelKey('deepseek', settings.model);
     if (!keys.add(keyName)) throw const FormatException('模型 ID 与已有模型的密钥名称冲突');
-    if (!root.containsKey(section)) editor.update([section], <Object?>[]);
+    if (root[section] == null) editor.update([section], <Object?>[]);
     if (providerIndex == (editor.parseAt([section]).value as List).length) {
       editor.appendToList(
         [section],
