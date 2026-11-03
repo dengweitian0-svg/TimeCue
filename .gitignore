@@ -9,8 +9,7 @@ log/*
 .gocache*/
 .gotmp*/
 .npm-cache/
-build/bin/
-build/releases/
+build/*
 scripts/__pycache__/
 frontend/package.json.md5
 
