@@ -117,7 +117,7 @@ git switch -c feat/12-recurring-reminder
 
 向 `dev` 或 `main` 提交 Pull Request 时，`.github/workflows/ci.yml` 先在 Ubuntu 上通过 GitHub REST API 分类文件。dev PR 按变更运行 Go、Flutter 和 Python 检查；Go 与 Flutter 检查均在 Windows runner，与应用目标平台一致，Go 使用 PowerShell，Flutter 工程位于 `desktop/`。Python 更新脚本测试由 `Flutter Windows Checks` 在 Windows 上使用 Python 3.11 执行。纯文档 dev PR 只运行轻量分类；未知非文档路径或文件数达到 3000 时运行全部检查，分类失败时 Go 和 Flutter 检查直接失败。main PR 始终运行 Go、Flutter 和 Python 检查，并在 `Flutter Windows Checks` 中继续执行完整 Windows 发布构建与原生测试。非纯文档 dev push 后由 `dev-integration.yml` 运行完整 Windows 构建和原生测试；手动触发仍始终执行。
 
-- Go：`gofmt`、`go vet ./...`、`go test -p 1 ./...`；Go 自动化测试监听 1145，跨包测试串行运行。
+- Go：`gofmt`、`go vet ./...`、`go test -p 1 ./...`；Go 自动化测试主要监听 1145，入口环境回归另使用 10086，跨包测试串行运行。
 - Flutter：CI 固定 Flutter 3.47.0，保留本机 master SDK；运行 `flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`，通知插件及传递依赖提交 lockfile。
 - Python：`Flutter Windows Checks` 按 Python 路径条件设置 Windows Python 3.11，并在仓库根目录运行 `python -m unittest discover -s scripts -p test_update.py -v`，覆盖发行清单更新与安装路径登记逻辑及 Windows 文件共享锁/映像权限行为；纯 Python 改动不安装 Flutter。
 - Windows 构建：完整发行构建、Go 服务打包和 CMake 原生生命周期测试由 dev push 集成工作流及 main PR 的 `Flutter Windows Checks` 执行；dev 普通 PR 不构建发行包。开发默认使用 managed；独立后端联调显式指定 backend=external。原生验证覆盖单实例、IPC、自有进程、Job 清理和安装目录登记。
