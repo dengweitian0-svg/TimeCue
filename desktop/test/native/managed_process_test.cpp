@@ -140,6 +140,11 @@ void Run() {
   const auto config = ParseLaunchConfiguration({"--backend=managed", "--data-dir=.", "--go-executable=C:/中文 路径/go.exe"});
   Check(config && config->backend == "managed" && !config->data_dir.empty(), "config parse");
   Check(!ParseLaunchConfiguration({"--backend=unknown"}), "bad mode");
+  Check(!ParseLaunchConfiguration({"--env="}), "empty environment");
+  Check(!ParseLaunchConfiguration({"--env=dev"}), "unknown environment");
+  Check(!ParseLaunchConfiguration({"--env=TEST"}), "case insensitive environment");
+  Check(!ParseLaunchConfiguration({"--env=test", "--env=release"}), "duplicate environment");
+  Check(!ParseLaunchConfiguration({"--port=1145"}), "custom port accepted");
   Check(!ParseLaunchConfiguration({"--data-dir="}), "empty directory");
   Check(!ParseLaunchConfiguration({"--data-dir=.", "--data-dir=."}), "duplicate directory");
   Check(!ParseLaunchConfiguration({"--go-executable=relative.exe"}), "relative executable");

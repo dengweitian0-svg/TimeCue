@@ -14,8 +14,13 @@ class BackendConfiguration {
     required this.mode,
     required this.dataDir,
     this.executable = '',
+    this.port = 10086,
   });
   final String mode, dataDir, executable;
+  final int port;
+
+  /// 根据宿主确定的环境端口形成全应用共用的本机服务地址。
+  Uri get apiBase => Uri.parse('http://127.0.0.1:$port/');
   bool get managed => mode == 'managed';
   ConfigFileStore get configFiles => ConfigFileStore(dataDir);
 
@@ -24,13 +29,16 @@ class BackendConfiguration {
         (raw['backend'] != 'managed' && raw['backend'] != 'external') ||
         raw['dataDir'] is! String ||
         (raw['dataDir'] as String).isEmpty ||
-        raw['executable'] is! String) {
-      throw const FormatException('请显式指定运行模式和 --data-dir。');
+        raw['executable'] is! String ||
+        raw['port'] is! int ||
+        (raw['port'] != 1145 && raw['port'] != 10086)) {
+      throw const FormatException('运行模式、--data-dir 或环境端口无效。');
     }
     final result = BackendConfiguration(
       mode: raw['backend'] as String,
       dataDir: raw['dataDir'] as String,
       executable: raw['executable'] as String,
+      port: raw['port'] as int,
     );
     if (result.managed && result.executable.isEmpty) {
       throw const FormatException('托管启动需要 --go-executable 的绝对路径。');
@@ -125,9 +133,11 @@ class ManagedBackend extends ChangeNotifier {
     required this.health,
     this.prepareStart,
     this.startupBudget = const Duration(seconds: 10),
+    Uri? apiBase,
     String Function()? identity,
     Duration Function()? elapsed,
-  }) : _identity = identity ?? _newIdentity,
+  }) : apiBase = apiBase ?? defaultNotebookApiBase,
+       _identity = identity ?? _newIdentity,
        _elapsed = elapsed {
     _subscription = platform.events.listen(_event);
   }
@@ -135,6 +145,7 @@ class ManagedBackend extends ChangeNotifier {
   final Future<DeliveryRuntime> Function() health;
   final Future<void> Function()? prepareStart;
   final Duration startupBudget;
+  final Uri apiBase;
   final String Function() _identity;
   final Duration Function()? _elapsed;
   late final StreamSubscription<OwnedProcessEvent> _subscription;
@@ -264,7 +275,7 @@ class ManagedBackend extends ChangeNotifier {
 
   void _verify(Map<String, dynamic> value, {required bool readyMessage}) {
     if ((readyMessage && value['event'] != 'ready') ||
-        value['address'] != defaultNotebookApiBase.origin) {
+        value['address'] != apiBase.origin) {
       throw const FormatException('ready 地址或事件不匹配。');
     }
     DeliveryRuntime.fromJson({

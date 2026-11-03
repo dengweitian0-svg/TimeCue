@@ -32,7 +32,7 @@
 - AI 领域术语统一见 `CONTEXT.md`；`AI-BACKEND.md` 说明会话历史与有效模型上下文、模型回复内工具调用身份校验、内部运行状态与 HTTP 投影及 T01 契约迁移边界，均为目标设计，不作为真实后端已实现的证明。
 - `AI-BACKEND.md`：Agent 后端设计草案，涵盖执行、恢复、取消、持久化故障的失败终止、三次收尾重试及 warning/error 日志与耗尽释放、正常退出时模型中断及恢复、同会话旧运行的失败收尾与最新运行恢复筛选、工具与上下文契约，包含 AI 正常启动、创建 run 时的按模型 Key 存在性门禁、本地查询及模型组合未配置的 400 与本地不可用的 503 创建错误及按 DeepSeek 官方类别映射为语义 code 的上游模型错误及超时、网络故障分类、内部 parse time 函数的实时相对时间解析、跨 run 部分回复、assistant.reasoning_content、后端中断说明、部分工具参数 JSON 格式补全、默认阈值 8192 估算 token 且可配置、头尾固定各半的模型侧工具结果裁剪、统一的 UTF-8 字节 token 估算，以及固定专用 system prompt、单次任务且不分段的全部有效历史摘要、user 消息回填、跨 run 接续、摘要后预算边界及独立的十字段 run 概况与 after_seq 事件游标分页查询（默认 10、最大 100 条）及固定三字段分页响应和完整返回原始内容的 seq/type/data 事件条目；区分已确认行为和待细化规格，不作为真实后端已实现的证明。
 - `CONTRIBUTING.md`：分支、贡献、检查及正式版本发布流程。
-- `CONTRIBUTING.md` 同步说明 Debug/Profile 使用 1145、Release 使用 10086、独立后端端口联调及开发实例和默认数据目录隔离。
+- `CONTRIBUTING.md`、`RELEASE.md` 说明运行时 `--env=test|release` 的固定端口、默认 release、Flutter EXE 默认数据目录、显式目录覆盖及不随环境隔离的数据和单实例规则。
 - `../.github/workflows/AGENTS.md`：GitHub Actions 工作流组成、职责和约束；按路径选择的 PR 检查、dev 集成验证、由既有 required checks 承载的 main 发布验证及手动发行包工作流说明与此文档保持同步。
 - `DESIGN.md`：当前 Flutter 前端的视觉风格、基础参数、组件样式、信息层级、交互状态与 Windows 使用环境；包含房间猫咪入口、四标签、AI 双页/单栏、多会话历史搜索与删除、独立输入与阅读恢复、宿主失效状态、流式 Markdown 及工具名称展示，区分已实现规范和待完善建议，并同步主题颜色角色及已知对比度边界。
 - `RELEASE.md`：完整 Windows ZIP 的启动、数据目录、托盘退出、安装路径登记、Python 更新步骤、构建和人工验收边界；作为发行包 README 面向用户。

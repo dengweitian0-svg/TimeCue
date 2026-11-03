@@ -98,7 +98,7 @@ bool ValidateDesktopLaunch(const DesktopLaunch& launch) {
             if (notification) return false;
             notification = true;
         } else if (argument.rfind("--backend=", 0) != 0 && argument.rfind("--data-dir=", 0) != 0 &&
-            argument.rfind("--go-executable=", 0) != 0) {
+            argument.rfind("--go-executable=", 0) != 0 && argument.rfind("--env=", 0) != 0) {
             return false;
         }
     }

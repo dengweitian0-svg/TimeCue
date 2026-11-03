@@ -112,6 +112,7 @@ bool FlutterWindow::OnCreate() {
             result->Success(flutter::EncodableValue(flutter::EncodableMap{
                 { flutter::EncodableValue("backend"), flutter::EncodableValue(configuration.backend) },
                 { flutter::EncodableValue("dataDir"), flutter::EncodableValue(configuration.data_dir) },
+                { flutter::EncodableValue("port"), flutter::EncodableValue(configuration.Port()) },
                 { flutter::EncodableValue("executable"),
                     flutter::EncodableValue(configuration.executable) } }));
         } else if (call.method_name() == "start") {
@@ -154,12 +155,10 @@ bool FlutterWindow::OnCreate() {
                 L"--data-dir",
                 LaunchWide(configuration.data_dir),
                 L"--instance-id",
-                LaunchWide(id) };
-#ifdef TIMECUE_DEVELOPMENT
-            // 开发构建使用独立端口，避免与正式服务争用。
-            process_arguments.push_back(L"--port");
-            process_arguments.push_back(L"1145");
-#endif
+                LaunchWide(id),
+                L"--env",
+                LaunchWide(configuration.environment)
+            };
             if (!managed_process_->Start(
                     LaunchWide(configuration.executable),
                     process_arguments,

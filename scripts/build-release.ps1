@@ -69,7 +69,7 @@ try {
 # TimeCue Windows 使用说明
 
 - 请保留解压后的完整目录，其中包含 `timecue_desktop.exe`、Flutter 运行文件及 `timecue-core.exe`；不要只复制主程序。
-- 双击 `timecue_desktop.exe` 启动。默认使用托管模式，并将数据保存在当前用户的 `%LOCALAPPDATA%\TimeCue`。
+- 双击 `timecue_desktop.exe` 启动。默认使用托管模式，默认 release/10086，并将数据保存在 Flutter EXE 所在目录；`--env=test` 使用 1145。
 - 关闭窗口会隐藏到托盘；需要结束应用时，请从托盘菜单选择退出。
 - 更新时先退出 TimeCue，将新版 ZIP 解压到新目录，再在该目录运行 `python update.py`；旧版尚未登记安装位置时，先在新目录运行 `python update.py --register "D:\TimeCue"`，再运行 `python update.py`。
 - 可通过参数指定数据目录，例如：`timecue_desktop.exe --data-dir="D:\TimeCueData"`。

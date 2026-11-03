@@ -6,7 +6,7 @@
 
 ```powershell
 go build -o .gotmp-chat-real/timecue-core.exe ./cmd/flutter
-python scripts/chat-real-smoke.py --go .gotmp-chat-real/timecue-core.exe --env-file .env --provider deepseek --model deepseek-v4-flash --base-url https://api.deepseek.com --flutter-test
+python scripts/chat-real-smoke.py --go .gotmp-chat-real/timecue-core.exe --env=test --env-file .env --provider deepseek --model deepseek-v4-flash --base-url https://api.deepseek.com --flutter-test
 ```
 
 工具不使用用户数据库或路径配置，自动创建新的 `.gotmp-chat-real/真实模型-*/` 数据目录；复制密钥后调用实际上游，核对普通回复、六个工具及实际日程/提醒、四字段创建回执、原始事件分页/连续 seq、SSE 游标重连、取消和唯一 end、正常退出及模型/摘要原调用恢复、终态重启查询。执行中通过 HTTP 同步进度，SQLite 核对只在终态或进程停止后读取并立即关闭。低摘要阈值仅用于该隔离实例，以真实模型完成摘要；模型不按要求调用工具或返回错误时直接失败。`--flutter-test` 再以生产网关和 ViewModel 读取这些真实记录；它不替代 Windows 窗口及托盘验证。报告、数据库、日志和密钥副本只留本地，不纳入提交，不向 CI 提供真实密钥。默认使用 1145，端口占用时拒绝测试，不停止其他实例。

@@ -76,8 +76,11 @@ type testProcess struct {
 
 func launchProcess(t *testing.T, binary string, args ...string) *testProcess {
 	t.Helper()
-	args = append([]string{"--port", "1145"}, args...)
-	p := &testProcess{cmd: exec.Command(binary, args...), done: make(chan error, 1), lines: make(chan []byte, 1)}
+	p := &testProcess{
+		cmd:   exec.Command(binary, args...),
+		done:  make(chan error, 1),
+		lines: make(chan []byte, 1),
+	}
 	p.cmd.Dir = t.TempDir()
 	var err error
 	p.input, err = p.cmd.StdinPipe()
@@ -125,8 +128,12 @@ func (p *testProcess) wait(t *testing.T, success bool) {
 	}
 }
 
-func (p *testProcess) ready(t *testing.T) app.RuntimeInfo {
+func (p *testProcess) ready(t *testing.T, expectedPorts ...int) app.RuntimeInfo {
 	t.Helper()
+	port := 1145
+	if len(expectedPorts) != 0 {
+		port = expectedPorts[0]
+	}
 	select {
 	case b := <-p.lines:
 		var ready struct {
@@ -136,7 +143,7 @@ func (p *testProcess) ready(t *testing.T) app.RuntimeInfo {
 		if err := json.Unmarshal(b, &ready); err != nil {
 			t.Fatal("stdout 混入非协议文本", string(b), err)
 		}
-		if ready.Event != "ready" || ready.Address != "http://127.0.0.1:1145" || ready.PID != p.cmd.Process.Pid {
+		if ready.Event != "ready" || ready.Address != fmt.Sprintf("http://127.0.0.1:%d", port) || ready.PID != p.cmd.Process.Pid {
 			t.Fatal(ready)
 		}
 		return ready.RuntimeInfo
@@ -159,10 +166,35 @@ func TestManagedProcess(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatal(string(output), err)
 	}
+	for _, args := range [][]string{nil, {"--env", "release"}} {
+		t.Run("release/"+strings.Join(args, "_"), func(t *testing.T) {
+			arguments := append([]string{"--data-dir", processFixture(t, root, "valid"), "--instance-id", "release-run"}, args...)
+			p := launchProcess(t, binary, arguments...)
+			info := p.ready(t, 10086)
+			client := &http.Client{
+				Transport: &http.Transport{Proxy: nil},
+				Timeout:   time.Second,
+			}
+			defer client.CloseIdleConnections()
+			response, err := client.Get("http://127.0.0.1:10086/health")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			var health struct {
+				Data app.RuntimeInfo `json:"data"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&health); err != nil || response.StatusCode != http.StatusOK || health.Data.InstanceID != info.InstanceID || health.Data.PID != info.PID {
+				t.Fatal("发布环境健康身份不匹配", health, err)
+			}
+			_ = p.input.Close()
+			p.wait(t, true)
+		})
+	}
 	probe, err := net.Listen("tcp", "127.0.0.1:1145")
 	if err != nil {
 		// 已占用时仍验证拒绝启动，不停止占用者。
-		p := launchProcess(t, binary, "--data-dir", processFixture(t, root, "valid"), "--instance-id", "occupied")
+		p := launchProcess(t, binary, "--env", "test", "--data-dir", processFixture(t, root, "valid"), "--instance-id", "occupied")
 		p.wait(t, false)
 		if !strings.Contains(p.stderr.String(), "127.0.0.1:1145") {
 			t.Fatal(p.stderr.String())
@@ -175,7 +207,7 @@ func TestManagedProcess(t *testing.T) {
 	for _, reason := range []string{"shutdown", "eof", "invalid", "oversized", "restart"} {
 		t.Run(reason, func(t *testing.T) {
 			id := "launch-" + reason
-			p := launchProcess(t, binary, "--data-dir", directory, "--instance-id", id)
+			p := launchProcess(t, binary, "--env", "test", "--data-dir", directory, "--instance-id", id)
 			info := p.ready(t)
 			if info.InstanceID != id {
 				t.Fatal(info)
@@ -217,7 +249,7 @@ func TestManagedProcess(t *testing.T) {
 	}
 	for _, kind := range []string{"unmigrated", "old"} {
 		t.Run(kind, func(t *testing.T) {
-			p := launchProcess(t, binary, "--data-dir", processFixture(t, root, kind), "--instance-id", "initialized")
+			p := launchProcess(t, binary, "--env", "test", "--data-dir", processFixture(t, root, kind), "--instance-id", "initialized")
 			p.ready(t)
 			_, _ = io.WriteString(p.input, "{\"command\":\"shutdown\"}\n")
 			p.wait(t, true)
@@ -236,7 +268,7 @@ func TestManagedProcess(t *testing.T) {
 				}
 				defer listener.Close()
 			}
-			p := launchProcess(t, binary, "--data-dir", processFixture(t, root, fixtureKind), "--instance-id", "failure")
+			p := launchProcess(t, binary, "--env", "test", "--data-dir", processFixture(t, root, fixtureKind), "--instance-id", "failure")
 			if kind == "early-eof" {
 				_ = p.input.Close()
 			}
@@ -268,9 +300,9 @@ func TestManagedProcess(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		var p *testProcess
 		if i == 0 {
-			p = launchProcess(t, binary)
+			p = launchProcess(t, binary, "--env", "test")
 		} else {
-			p = launchProcess(t, binary, "--data-dir", directory)
+			p = launchProcess(t, binary, "--env", "test", "--data-dir", directory)
 		}
 		_ = p.input.Close()
 		client := &http.Client{Timeout: time.Second}
@@ -327,7 +359,7 @@ func TestManagedProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		client := &http.Client{Timeout: 3 * time.Second}
-		p := launchProcess(t, binary, "--data-dir", dir, "--instance-id", "old-run")
+		p := launchProcess(t, binary, "--env", "test", "--data-dir", dir, "--instance-id", "old-run")
 		p.ready(t)
 		deadline := time.Now().Add(4 * time.Second)
 		var claim notification.DeliveryClaim
@@ -366,7 +398,7 @@ func TestManagedProcess(t *testing.T) {
 		if err := db.QueryRow(`SELECT status FROM notifications WHERE schedule_id=42`).Scan(&status); err != nil || status != "loaded" {
 			t.Fatal("退出伪造了未知投递结果", status, err)
 		}
-		p = launchProcess(t, binary, "--data-dir", dir, "--instance-id", "new-run")
+		p = launchProcess(t, binary, "--env", "test", "--data-dir", dir, "--instance-id", "new-run")
 		info := p.ready(t)
 		if info.InstanceID != "new-run" {
 			t.Fatal(info)

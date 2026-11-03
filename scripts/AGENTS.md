@@ -17,3 +17,5 @@
 - `release-smoke.py --package <发行目录>`：在 `.gotmp-release-smoke/` 使用全新隔离中文路径，验证首次运行、版本 3 与无聊天种子、正式接口写入/重启保留、普通重复启动及宿主强退后的 Job 清理；通过 Windows 只读进程快照核对服务父 PID，只结束自身宿主，不操作用户实例，端口占用时拒绝测试。
 - 发行 smoke 在启动前只读核对 EXE 完整性标签；低于 Medium 时直接说明标签限制并拒绝启动，不修改文件标签、注册表权限或把失败记为通过。
 - `update.py`：发行目录中随 ZIP 一起交付；运行 `python update.py` 更新已登记安装，旧版可从新发行目录运行 `python update.py --register <绝对安装目录>` 登记当前用户安装路径。
+
+- `chat-real-smoke.py` 使用 `--env=test|release` 启动正式 Go，默认 test/1145，release/10086；既有快速完成竞争测试同步使用固定 test 环境。打包回退说明与发行说明一致，默认数据根目录为 Flutter EXE 所在目录。
