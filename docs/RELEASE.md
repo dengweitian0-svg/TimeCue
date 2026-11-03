@@ -45,4 +45,6 @@ timecue_desktop.exe --env=test --backend=external --data-dir="D:\TimeCueData"
 
 开发者可在仓库根目录使用 `scripts/build-release.ps1` 构建 Windows x64 完整 ZIP。脚本使用当前环境中的 Go、Flutter 和 Python；每次都会重新编译 Go 服务并覆盖 Flutter Release 中可能存在的旧副本。正式发布由 stable CI 验证。详细检查命令见仓库中的贡献规范：<https://github.com/dengweitian0-svg/TimeCue/blob/dev/docs/CONTRIBUTING.md>。CI 会运行更新脚本标准库测试、Flutter stable 检查和 Windows 原生 CTest。
 
+打包前会检查 Release 构建目录，发现数据库、日志、配置、隐藏 `.env` 或链接时明确失败，不创建发行暂存目录或 ZIP，也不删除源数据。直接运行构建目录中的主程序可能产生这些文件；开发验证建议显式指定独立 `--data-dir`。遇到此错误先备份并移出提示的运行数据，或使用未运行过的干净构建目录，再重新打包；`-SkipFlutterBuild` 同样执行检查。
+
 发布前请在隔离目录解压候选 ZIP，手动检查完整目录启动、托盘退出、默认数据位置、更新成功、程序占用时的失败提示和用户文件保留情况。需要真实 Windows 桌面交互的验收应在目标系统执行并单独记录；CI 结果不代表这些人工平台检查已经完成。

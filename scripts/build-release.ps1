@@ -12,7 +12,6 @@ if (!$taskVersionMatch.Success) { throw '找不到桌面版本。' }
 $taskVersion = $taskVersionMatch.Groups[1].Value
 $taskName = "TimeCue-$taskVersion-windows-x64"
 $taskStaging = Join-Path $taskOutput ($taskName + '-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fffffff'))
-New-Item -ItemType Directory -Path $taskStaging -Force | Out-Null
 
 # 每个外部命令都检查退出码，失败时不生成成功标记或压缩包。
 function Invoke-Checked {
@@ -57,7 +56,27 @@ try {
     foreach ($taskRequired in @('timecue_desktop.exe', 'flutter_windows.dll', 'data/app.so', 'data/icudtl.dat', 'data/flutter_assets/assets/tray/app_icon.ico')) {
         if (!(Test-Path -LiteralPath (Join-Path $taskFlutterOutput $taskRequired))) { throw "发行构建缺少 $taskRequired" }
     }
-    Copy-Item -Path (Join-Path $taskFlutterOutput '*') -Destination $taskStaging -Recurse
+    # 检查包含隐藏文件的构建快照，运行数据和链接在创建暂存目录前拒绝。
+    $taskRuntimeDirectories = @('db', 'database', 'databases', 'config', 'configs', 'settings', 'logs', 'log', 'user-data', 'userdata', 'user-library')
+    $taskRuntimeConfigs = @('config.yaml', 'config.yml', 'config.json', 'config.toml', 'settings.yaml', 'settings.yml', 'settings.json', 'settings.toml', 'user_config.json', 'user_settings.json')
+    $taskFlutterItems = @(Get-ChildItem -LiteralPath $taskFlutterOutput -Recurse -Force)
+    foreach ($taskItem in $taskFlutterItems) {
+        $taskRelative = $taskItem.FullName.Substring($taskFlutterOutput.Length + 1)
+        $taskParts = @($taskRelative -split '[\\/]')
+        if (($taskItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            @($taskParts | Where-Object { $taskRuntimeDirectories -contains $_ }).Count -gt 0 -or
+            ($taskParts.Count -eq 1 -and $taskRuntimeConfigs -contains $taskItem.Name) -or
+            $taskItem.Name -match '(^\.env($|\.)|\.(db|sqlite|sqlite3)(-(wal|shm|journal))?$|\.(log|jsonl)$)') {
+            throw "发行构建目录包含运行数据或链接，拒绝打包：$taskRelative。请先备份并移出这些内容，或使用未运行过的干净构建目录。"
+        }
+    }
+    New-Item -ItemType Directory -Path $taskStaging -Force | Out-Null
+    # 只复制已检查的普通文件，检查后新产生的运行数据不进入发行目录。
+    foreach ($taskFile in $taskFlutterItems | Where-Object { !$_.PSIsContainer }) {
+        $taskDestination = Join-Path $taskStaging $taskFile.FullName.Substring($taskFlutterOutput.Length + 1)
+        New-Item -ItemType Directory -Path (Split-Path -Parent $taskDestination) -Force | Out-Null
+        Copy-Item -LiteralPath $taskFile.FullName -Destination $taskDestination
+    }
     Invoke-Checked -Program 'go' -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $taskStaging 'timecue-core.exe'), './cmd/flutter')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'update.py') -Destination (Join-Path $taskStaging 'update.py')
     $taskReleaseNotes = Join-Path $taskRoot 'docs/RELEASE.md'
