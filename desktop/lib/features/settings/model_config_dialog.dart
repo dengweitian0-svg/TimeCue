@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
 import '../chat/chat_view_model.dart';
 
@@ -50,7 +51,10 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       }
       _loaded = true;
     } catch (_) {
-      if (mounted) _error = '模型设置未能读取，请检查本地配置后重试。';
+      if (mounted) {
+        _error = '模型设置未能读取，请检查本地配置后重试。';
+        OperationToast.error(context, _error!);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -66,7 +70,11 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       RegExp(r'^[0-9]+$').hasMatch(text) ? int.tryParse(text) : null;
 
   Future<void> _save() async {
-    if (_busy || !_loaded || !_form.currentState!.validate()) return;
+    if (_busy || !_loaded) return;
+    if (!_form.currentState!.validate()) {
+      OperationToast.error(context, '请检查模型 ID、API Key 和预算。');
+      return;
+    }
     final settings = DeepSeekModelSettings(
       model: _model.text.trim(),
       contextWindow: _budget(_context.text)!,
@@ -84,9 +92,15 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       _visibleKey = false;
       _pendingApplication = settings;
     } on FormatException catch (failure) {
-      if (mounted) setState(() => _error = failure.message);
+      if (mounted) {
+        setState(() => _error = failure.message);
+        OperationToast.error(context, _error!);
+      }
     } catch (_) {
-      if (mounted) setState(() => _error = '保存失败，请检查数据目录的文件权限后重试。');
+      if (mounted) {
+        setState(() => _error = '保存失败，请检查数据目录的文件权限后重试。');
+        OperationToast.error(context, _error!);
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -120,6 +134,11 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
         _message = '设置已保存，但服务尚未确认加载。可重试加载，无需再次保存。';
       }
     });
+    if (available) {
+      OperationToast.success(context, '本地模型配置已可用');
+    } else {
+      OperationToast.warning(context, '设置已保存，但服务尚未确认加载。');
+    }
   }
 
   void _close() {

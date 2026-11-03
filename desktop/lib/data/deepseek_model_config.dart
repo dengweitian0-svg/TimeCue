@@ -190,7 +190,7 @@ String _modelKey(String provider, String model) =>
 
 // 按完整赋值记录处理，保留无关注释、引号和跨行值，不匹配引号内的伪变量。
 String _updateEnv(String contents, String name, String encodedKey) {
-  final lines = contents.split(RegExp(r'(?<=\n)'));
+  final lines = contents.split(RegExp(r'(?<=\n)|(?<=\r)(?!\n)'));
   final result = StringBuffer();
   var replaced = false;
   final assignment = RegExp(

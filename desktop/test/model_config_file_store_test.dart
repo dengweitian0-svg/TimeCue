@@ -14,6 +14,21 @@ void main() {
   });
   tearDown(() => directory.delete(recursive: true));
 
+  test('更换 Key 保留 CR 和混合换行环境文件的其他变量', () async {
+    final env = File(p.join(directory.path, '.env'));
+    await env.writeAsString(
+      'DEEPSEEK_CHAT=old\rOTHER=keep\rQUOTED="one\rtwo"\r\nLAST=end\n',
+    );
+    await store.saveDeepSeekModel(
+      const DeepSeekModelSettings(model: 'chat'),
+      apiKey: 'new-key',
+    );
+    expect(
+      await env.readAsString(),
+      'DEEPSEEK_CHAT=new-key\nOTHER=keep\rQUOTED="one\rtwo"\r\nLAST=end\n',
+    );
+  });
+
   test('非法输入不改写任一文件，模型密钥规范化冲突也拒绝保存', () async {
     const original = '''chat_model:
   - provider: deepseek

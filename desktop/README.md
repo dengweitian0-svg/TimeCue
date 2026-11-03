@@ -108,6 +108,7 @@ TimeCueApp                              MaterialApp、主题、构造注入
             │     └─ EditingPage        ScheduleEditor（完整规则及 revision）
             └─ ChatSpread               第四标签，双页/单栏多会话对话
                ├─ ChatSessionList      历史分组、搜索进度、刷新与删除
+               ├─ ModelConfigDialog    官方 DeepSeek 单模型、密钥和高级预算，每次保存后自动刷新
                ├─ ChatMessageList      用户文本、过程状态、累计 Markdown 与回到最新
                │  ├─ ChatToolCallList  按开始 seq＋原 ID 显示工具、参数与原始结果
                │  ├─ ChatEventTimeline 原始事件按需分页，思考与 JSON 详情折叠
@@ -116,7 +117,6 @@ TimeCueApp                              MaterialApp、主题、构造注入
 
 RoomScreen → showDialog
 ├─ SettingsDialog                       日志级别/日志目录/数据库目录原生选择、保存与恢复默认
-├─ ModelConfigDialog                    官方 DeepSeek 单模型、密钥和高级预算，每次保存后自动刷新
 ├─ ScheduleManagementDialog             含已暂停规则、分页和详情读取
 │  └─ ScheduleEditDialog                独立修改弹窗，保存/恢复/删除后刷新列表
 └─ ScheduleCreateDialog                 草稿、关闭守卫、弹层焦点
