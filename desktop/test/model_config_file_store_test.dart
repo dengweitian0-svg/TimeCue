@@ -14,6 +14,96 @@ void main() {
   });
   tearDown(() => directory.delete(recursive: true));
 
+  for (final model in ['chat', 'renamed-chat']) {
+    test('前置空分组时保存 $model 更新当前显示模型，保留其他分组及模型', () async {
+      await File(store.configPath).writeAsString('''# 保留分组
+chat_model:
+  - provider: deepseek
+    base_url: https://api.deepseek.com
+    models: []
+    placeholder: keep
+  - provider: other
+    base_url: https://example.com
+    models:
+      - model: untouched-other
+        context_window: 16000
+  - provider: deepseek
+    base_url: https://api.deepseek.com
+    custom: keep
+    models:
+      - model: chat
+        context_window: 24000
+        max_output_tokens: 4000
+        custom_model: keep
+      - model: untouched
+        context_window: 16000
+''');
+      final before =
+          YamlEditor(
+                await File(store.configPath).readAsString(),
+              ).parseAt([]).value
+              as Map;
+      expect((await store.readDeepSeekModel())!.model, 'chat');
+
+      await store.saveDeepSeekModel(
+        DeepSeekModelSettings(
+          model: model,
+          contextWindow: 30000,
+          maxOutputTokens: 5000,
+        ),
+        apiKey: 'local-group-update',
+      );
+
+      final after =
+          YamlEditor(
+                await File(store.configPath).readAsString(),
+              ).parseAt([]).value
+              as Map;
+      final providers = after['chat_model'] as List;
+      expect(providers, hasLength(3));
+      expect(providers[0], before['chat_model'][0]);
+      expect(providers[1], before['chat_model'][1]);
+      expect(providers[2]['custom'], 'keep');
+      expect(providers[2]['models'], hasLength(2));
+      expect(providers[2]['models'][1], before['chat_model'][2]['models'][1]);
+      expect(providers[2]['models'][0]['model'], model);
+      expect(providers[2]['models'][0]['custom_model'], 'keep');
+      final reopened = await ConfigFileStore(
+        directory.path,
+      ).readDeepSeekModel();
+      expect(reopened!.model, model);
+      expect(reopened.contextWindow, 30000);
+      expect(reopened.maxOutputTokens, 5000);
+    });
+  }
+
+  test('所有 DeepSeek 分组均为空时复用第一个空分组', () async {
+    await File(store.configPath).writeAsString('''chat_model:
+  - provider: deepseek
+    models: []
+    placeholder: first
+  - provider: deepseek
+    models: []
+    placeholder: second
+''');
+    expect(await store.readDeepSeekModel(), isNull);
+    await store.saveDeepSeekModel(
+      const DeepSeekModelSettings(model: 'chat'),
+      apiKey: 'local-empty-group',
+    );
+    final providers =
+        YamlEditor(
+              await File(store.configPath).readAsString(),
+            ).parseAt(['chat_model']).value
+            as List;
+    expect(providers, hasLength(2));
+    expect(providers[0]['placeholder'], 'first');
+    expect(providers[0]['models'][0]['model'], 'chat');
+    expect(providers[1]['models'], isEmpty);
+    expect(providers[1]['placeholder'], 'second');
+    expect((await store.readDeepSeekModel())!.model, 'chat');
+  });
+
   for (final value in [
     (label: '空字段', key: 'chat_model', yaml: 'chat_model:\n'),
     (label: '显式 null', key: 'chat_model', yaml: 'chat_model: null\n'),

@@ -32,24 +32,22 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
   Future<DeepSeekModelSettings?> readDeepSeekModel() => _serialize(() async {
     final editor = ConfigFileStore._parse(await _readContents());
     final providers = _providers(editor);
-    for (final provider in providers) {
-      if (_field(provider, 'provider') != 'deepseek') continue;
-      final models = _models(provider);
-      if (models.isEmpty) continue;
-      final value = models.first;
-      final model = _field(value, 'model');
-      final context = _field(value, 'context_window');
-      final output = _field(value, 'max_output_tokens') ?? 8192;
-      if (model is! String || context is! int || output is! int) {
-        throw const FormatException('模型配置格式无效，请检查本地配置');
-      }
-      return DeepSeekModelSettings(
-        model: model,
-        contextWindow: context,
-        maxOutputTokens: output,
-      );
+    final providerIndex = _deepSeekProviderIndex(providers);
+    if (providerIndex < 0) return null;
+    final models = _models(providers[providerIndex]);
+    if (models.isEmpty) return null;
+    final value = models.first;
+    final model = _field(value, 'model');
+    final context = _field(value, 'context_window');
+    final output = _field(value, 'max_output_tokens') ?? 8192;
+    if (model is! String || context is! int || output is! int) {
+      throw const FormatException('模型配置格式无效，请检查本地配置');
     }
-    return null;
+    return DeepSeekModelSettings(
+      model: model,
+      contextWindow: context,
+      maxOutputTokens: output,
+    );
   });
 
   /// 先保存本机密钥，再发布模型配置；不覆盖其他模型、提供方或运行设置。
@@ -68,9 +66,7 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
     final root = editor.parseAt([]).value as Map;
     final section = ConfigFileStore._key(root, 'chat_model');
     final providers = _providers(editor);
-    var providerIndex = providers.indexWhere(
-      (v) => _field(v, 'provider') == 'deepseek',
-    );
+    var providerIndex = _deepSeekProviderIndex(providers);
     if (providerIndex < 0) {
       providerIndex = providers.length;
       providers.add(<String, Object?>{
@@ -160,6 +156,18 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
 
 Object? _field(Map value, String name) =>
     value[ConfigFileStore._key(value, name)];
+
+// 读写统一选择首个已有模型的分组；没有模型时才复用首个空分组。
+int _deepSeekProviderIndex(List<Map> providers) {
+  var emptyIndex = -1;
+  for (var i = 0; i < providers.length; i++) {
+    final provider = providers[i];
+    if (_field(provider, 'provider') != 'deepseek') continue;
+    if (_models(provider).isNotEmpty) return i;
+    if (emptyIndex < 0) emptyIndex = i;
+  }
+  return emptyIndex;
+}
 
 List<Map> _providers(YamlEditor editor) {
   final root = editor.parseAt([]).value as Map;
