@@ -275,3 +275,5 @@ $env:TIMECUE_CAPTURE_CHAT='true'; flutter test test/cat_chat_hotspot_test.dart
 `test/fixtures/chat_fixtures.dart` 固定正常、Thinking、多工具、同名多次调用、交错、失败、取消、重复与重连数据。`chat_contracts_test.dart` 校验 DTO 与错误边界；`http_chat_gateway_test.dart` 使用可控 HTTP 和原始 socket 验证传输及释放；`chat_view_model_test.dart` 验证幂等、并发、恢复、工具身份、终态及迟到代次；`chat_session_management_test.dart` 和 `chat_session_list_test.dart` 验证历史索引、完整名称、摘要搜索、草稿、删除和阅读恢复；`chat_host_test.dart` 与 `chat_runtime_guard_test.dart` 验证后台接收、宿主退出及身份失效；`chat_conversation_test.dart` 验证输入和回复交互；`chat_markdown_compatibility_test.dart` 验证累计文本、未闭合语法、代码与表格；`chat_spread_test.dart`、`cat_chat_hotspot_test.dart` 保留布局、入口与焦点回归。自动检查和 Widget 绘制证据不代替 Windows DPI、真实输入法、剪贴板、浏览器及系统交互验收。
 
 Windows 渲染依赖兼容性可单独使用 `flutter build windows --release --target=tool/chat_markdown_smoke.dart`，该入口实际引用 gpt_markdown 并显示固定 Markdown，不连接后端。正式应用构建继续使用默认 `lib/main.dart` 入口。
+
+`operation_feedback_test.dart` 在正式配置存储边界注入五秒慢 IO，核对恢复默认后的真实结果提示；等待使用最多十秒的真实时钟观察期限并交替推进 Widget 绘制，不把固定轮数或虚拟时间当作文件完成。该期限仅用于测试，不改变应用行为。
