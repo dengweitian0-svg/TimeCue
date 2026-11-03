@@ -6,6 +6,58 @@ import 'package:timecue_desktop/data/http_chat_gateway.dart';
 import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 
 void main() {
+  test('每次保存后都等待并刷新模型，同名更新不跳过且保留原草稿', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var available = false;
+    server.listen((request) async {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'models': [
+            {'provider': 'deepseek', 'model': 'chat', 'available': available},
+          ],
+        }),
+      );
+      await request.response.close();
+    });
+    final gateway = HttpChatGateway(
+      baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+    );
+    final model = ChatViewModel(gateway: gateway);
+    addTearDown(() async {
+      model.dispose();
+      gateway.dispose();
+      await server.close(force: true);
+    });
+    final session = model.createLocalSession();
+    model.updateDraft(session.sessionId, '保留草稿');
+    await model.loadModels();
+    available = true;
+    expect(
+      await model.applySavedModel(provider: 'deepseek', model: 'chat'),
+      isTrue,
+    );
+    expect(model.selectedModel!.model, 'chat');
+    // 原列表仍可用时，当前读取结果必须重新参与确认。
+    available = false;
+    expect(
+      await model.applySavedModel(
+        provider: 'deepseek',
+        model: 'chat',
+        timeout: const Duration(milliseconds: 800),
+      ),
+      isFalse,
+    );
+    expect(model.selectedModel, isNull);
+    available = true;
+    expect(
+      await model.applySavedModel(provider: 'deepseek', model: 'chat'),
+      isTrue,
+    );
+    expect(session.draft, '保留草稿');
+    expect(model.activeRunCount, 0);
+  });
+
   test('明确的配置 503 释放占用，补齐密钥并刷新后可以发起新对话', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     var keyPresent = false;

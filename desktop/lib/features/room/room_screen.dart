@@ -321,6 +321,7 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                     : fixedOrigin,
                 historyRequest: _historyRequest,
                 chat: widget.chat,
+                configFiles: widget.configFiles,
                 onClosed: () {
                   notebook.close();
                   setState(() => bookVisible = false);
