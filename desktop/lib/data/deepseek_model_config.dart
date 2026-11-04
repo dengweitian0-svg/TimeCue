@@ -52,7 +52,7 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
     await _saveDeepSeekModels(editor, settings, apiKey);
   });
 
-  /// 兼容单模型调用方，只编辑首个模型并保留其余模型。
+  /// 兼容首项身份和预算编辑；新 Key 及官方地址仍应用全部 DeepSeek 模型。
   Future<void> saveDeepSeekModel(
     DeepSeekModelSettings settings, {
     required String apiKey,
