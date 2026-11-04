@@ -12,6 +12,7 @@ class DeepSeekModelSettings {
     this.originalModel,
     this.contextWindow = 32768,
     this.maxOutputTokens = 8192,
+    this.hasLocalKey = false,
   });
 
   final String model;
@@ -20,6 +21,9 @@ class DeepSeekModelSettings {
   final String? originalModel;
   final int contextWindow;
   final int maxOutputTokens;
+
+  /// 只表示读取时目标身份有非空本地条目，不携带密钥或证明上游认证。
+  final bool hasLocalKey;
 
   /// 在任何文件写入前校验身份及可由后端表示的预算。
   void validate() {
@@ -38,14 +42,24 @@ class DeepSeekModelSettings {
 /// 模型设置与普通运行设置共用同一串行队列和单文件替换能力。
 extension DeepSeekConfigFileStore on ConfigFileStore {
   /// 读取全部 DeepSeek 分组的模型，不返回原始密钥。
-  Future<List<DeepSeekModelSettings>> readDeepSeekModels() =>
-      _serialize(() async {
-        final settings = _readDeepSeekModels(
-          ConfigFileStore._parse(await _readContents()),
-        );
-        _envAssignments(await _readModelEnv());
-        return settings;
-      });
+  Future<List<DeepSeekModelSettings>> readDeepSeekModels() => _serialize(
+    () async {
+      final settings = _readDeepSeekModels(
+        ConfigFileStore._parse(await _readContents()),
+      );
+      final keys = _envAssignments(await _readModelEnv());
+      return [
+        for (final value in settings)
+          DeepSeekModelSettings(
+            model: value.model,
+            originalModel: value.originalModel,
+            contextWindow: value.contextWindow,
+            maxOutputTokens: value.maxOutputTokens,
+            hasLocalKey: _hasEnvValue(keys[_modelKey('deepseek', value.model)]),
+          ),
+      ];
+    },
+  );
 
   /// 兼容单模型调用方，只读取首个已有模型。
   Future<DeepSeekModelSettings?> readDeepSeekModel() async =>

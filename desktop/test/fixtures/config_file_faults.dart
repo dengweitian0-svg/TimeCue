@@ -15,6 +15,8 @@ final class ConfigFileFaults extends IOOverrides {
   bool denyEnvWrite = false;
   bool denyConfigWrite = false;
   bool denyEnvRestore = false;
+  Future<void>? beforeRead;
+  Future<void>? beforeConfigReplace;
   bool _envPublished = false;
 
   /// 拦截系统文件访问，不替换正式配置存储或其串行队列。
@@ -33,7 +35,8 @@ class _FaultFile implements File {
 
   /// 读取故障包含敏感哨兵，确保界面不会展示系统错误原文。
   @override
-  Future<String> readAsString({Encoding encoding = utf8}) {
+  Future<String> readAsString({Encoding encoding = utf8}) async {
+    if (path == faults.configPath) await faults.beforeRead;
     if (faults.denyReads &&
         (path == faults.configPath || path == faults.envPath)) {
       throw FileSystemException('private-file-content', path);
@@ -44,6 +47,7 @@ class _FaultFile implements File {
   /// 按文件边界拒绝替换，保留失败前已完成的真实文件副作用。
   @override
   Future<File> rename(String newPath) async {
+    if (newPath == faults.configPath) await faults.beforeConfigReplace;
     if ((newPath == faults.configPath && faults.denyConfigWrite) ||
         (newPath == faults.envPath &&
             (faults.denyEnvWrite ||

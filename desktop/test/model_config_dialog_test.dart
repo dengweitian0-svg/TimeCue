@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timecue_desktop/app/operation_toast.dart';
 import 'package:timecue_desktop/data/config_file_store.dart';
@@ -16,6 +18,264 @@ import 'package:timecue_desktop/theme/notebook_theme.dart';
 import 'fixtures/config_file_faults.dart';
 
 void main() {
+  testWidgets('预算、Key 和增删操作均有草稿守卫，撤回修改可直接关闭', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    await tester.runAsync(
+      () => harness.store.saveDeepSeekModels([
+        const DeepSeekModelSettings(model: 'chat'),
+      ], apiKey: 'original'),
+    );
+    for (final edit in ['key', 'budget', 'add', 'remove']) {
+      await harness.open(tester);
+      if (edit == 'key') {
+        await tester.enterText(find.byKey(const ValueKey('model-key')), 'new');
+      } else if (edit == 'budget') {
+        await tester.tap(find.text('高级设置'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey('model-output-0')),
+          '4096',
+        );
+      } else {
+        await tester.ensureVisible(find.text('添加模型'));
+        await tester.tap(find.text('添加模型'));
+        await tester.pumpAndSettle();
+        if (edit == 'remove') {
+          await tester.ensureVisible(find.byTooltip('移除模型 1'));
+          await tester.tap(find.byTooltip('移除模型 1'));
+          await tester.pumpAndSettle();
+        }
+      }
+      await tester.tap(find.text('关闭'));
+      await tester.pumpAndSettle();
+      expect(find.text('舍弃未保存的修改？'), findsOneWidget, reason: edit);
+      await tester.tap(find.text('舍弃修改'));
+      await tester.pumpAndSettle();
+    }
+    await harness.open(tester);
+    await tester.enterText(find.byKey(const ValueKey('model-id')), 'changed');
+    await tester.enterText(find.byKey(const ValueKey('model-id')), 'chat');
+    await tester.enterText(find.byKey(const ValueKey('model-key')), 'new');
+    await tester.enterText(find.byKey(const ValueKey('model-key')), '');
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ModelConfigDialog), findsNothing);
+    expect(find.text('舍弃未保存的修改？'), findsNothing);
+    await harness.close(tester);
+  });
+
+  testWidgets('已有模型缺少 Key 时明确提示，空 Key 保存不覆盖原文件', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    await tester.runAsync(
+      () => harness.store.saveDeepSeekModels([
+        const DeepSeekModelSettings(model: 'chat'),
+      ], apiKey: 'original'),
+    );
+    final env = File('${harness.directory.path}/.env');
+    await tester.runAsync(() => env.writeAsString('OTHER=keep\n'));
+    final config = File(harness.store.configPath);
+    final original = await tester.runAsync(config.readAsString);
+    await harness.open(tester);
+    expect(find.text('未配置本地密钥，请填写新 Key。'), findsOneWidget);
+    await tester.tap(find.text('保存并应用'));
+    await _waitForDialog(tester);
+    expect(find.textContaining('目标模型缺少本地密钥'), findsWidgets);
+    expect(await tester.runAsync(config.readAsString), original);
+    expect(await tester.runAsync(env.readAsString), 'OTHER=keep\n');
+    await harness.close(tester);
+  });
+
+  testWidgets('小窗口大字模式可滚动增删、预算、错误重试、保存和关闭', (tester) async {
+    tester.view.physicalSize = const Size(480, 400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final harness = await _DialogHarness.create(tester);
+    await harness.open(tester, textScale: 2);
+    await tester.ensureVisible(find.byKey(const ValueKey('model-id')));
+    await tester.enterText(find.byKey(const ValueKey('model-id')), 'chat');
+    await tester.ensureVisible(find.text('高级设置'));
+    await tester.tap(find.text('高级设置'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('model-output-0')));
+    await tester.enterText(
+      find.byKey(const ValueKey('model-output-0')),
+      '1024',
+    );
+    await tester.ensureVisible(find.text('添加模型'));
+    await tester.tap(find.text('添加模型'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byTooltip('移除模型 2'));
+    await tester.tap(find.byTooltip('移除模型 2'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('保存并应用'));
+    await tester.tap(find.text('保存并应用'));
+    await _waitForDialog(tester);
+    await _dismissToasts(tester);
+    await tester.ensureVisible(find.text('目标模型缺少本地密钥，请填写 API Key'));
+    await tester.ensureVisible(find.byKey(const ValueKey('model-key')));
+    await tester.enterText(find.byKey(const ValueKey('model-key')), 'new-key');
+    await tester.ensureVisible(find.text('保存并应用'));
+    await tester.tap(find.text('保存并应用'));
+    await _waitForDialog(tester);
+    await _dismissToasts(tester);
+    expect(
+      (await tester.runAsync(
+        harness.store.readDeepSeekModels,
+      ))!.single.maxOutputTokens,
+      1024,
+    );
+    await tester.ensureVisible(find.text('关闭'));
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ModelConfigDialog), findsNothing);
+    expect(tester.takeException(), isNull);
+    await harness.close(tester);
+  });
+
+  for (final phase in ['read', 'save', 'apply']) {
+    testWidgets('$phase 等待期间禁止编辑和关闭，页面卸载后忽略迟到结果', (tester) async {
+      final harness = await _DialogHarness.create(tester);
+      final gate = Completer<void>();
+      final faults = ConfigFileFaults(harness.directory.path);
+      if (phase == 'read') faults.beforeRead = gate.future;
+      if (phase == 'save') faults.beforeConfigReplace = gate.future;
+      if (phase == 'apply') harness.modelsGate = gate.future;
+      await IOOverrides.runWithIOOverrides(() async {
+        await harness.open(tester, wait: phase != 'read');
+        if (phase != 'read') {
+          await tester.enterText(
+            find.byKey(const ValueKey('model-id')),
+            'chat',
+          );
+          await tester.enterText(
+            find.byKey(const ValueKey('model-key')),
+            'new-key',
+          );
+          await tester.tap(find.text('保存并应用'));
+          for (var i = 0; i < 20; i++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 20)),
+            );
+            await tester.pump(const Duration(milliseconds: 50));
+          }
+        }
+        expect(find.byType(LinearProgressIndicator), findsOneWidget);
+        for (final field in tester.widgetList<TextFormField>(
+          find.byType(TextFormField),
+        )) {
+          expect(field.enabled, isFalse);
+        }
+        expect(
+          tester
+              .widget<TextButton>(find.widgetWithText(TextButton, '关闭'))
+              .onPressed,
+          isNull,
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        expect(find.text('舍弃未保存的修改？'), findsNothing);
+        expect(find.byType(ModelConfigDialog), findsOneWidget);
+        await tester.pumpWidget(
+          const MaterialApp(
+            key: ValueKey('replacement'),
+            home: Scaffold(body: Text('新页面')),
+          ),
+        );
+        gate.complete();
+        for (var i = 0; i < 20; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+      }, faults);
+      expect(find.text('新页面'), findsOneWidget);
+      expect(find.text('本地模型配置已可用'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await harness.close(tester);
+    });
+  }
+
+  testWidgets('应用等待中运行身份失效，迟到列表不提示成功或重复保存', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    final gate = Completer<void>();
+    harness.modelsGate = gate.future;
+    await harness.open(tester);
+    await tester.enterText(find.byKey(const ValueKey('model-id')), 'chat');
+    await tester.enterText(
+      find.byKey(const ValueKey('model-key')),
+      'saved-key',
+    );
+    await tester.tap(find.text('保存并应用'));
+    await tester.pump();
+    final env = File('${harness.directory.path}/.env');
+    for (var i = 0; i < 30 && !harness.chat.modelsLoading; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(harness.chat.modelsLoading, isTrue);
+    final savedEnv = await tester.runAsync(env.readAsString);
+    harness.chat.invalidateRuntime();
+    gate.complete();
+    await _waitForDialog(tester);
+    expect(find.text('本地模型配置已可用'), findsNothing);
+    expect(find.text('重试加载'), findsOneWidget);
+    expect(await tester.runAsync(env.readAsString), savedEnv);
+    await _dismissToasts(tester);
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ModelConfigDialog), findsNothing);
+    expect(find.text('舍弃未保存的修改？'), findsNothing);
+    await harness.close(tester);
+  });
+
+  testWidgets('重开配置只显示密钥状态，关闭和 Escape 共用草稿舍弃确认', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    await tester.runAsync(
+      () => harness.store.saveDeepSeekModels([
+        const DeepSeekModelSettings(model: 'chat'),
+      ], apiKey: 'never-display-original-key'),
+    );
+    final config = File(harness.store.configPath);
+    final env = File('${harness.directory.path}/.env');
+    final originalConfig = await tester.runAsync(config.readAsString);
+    final originalEnv = await tester.runAsync(env.readAsString);
+    await harness.open(tester);
+    expect(find.text('已配置本地密钥'), findsOneWidget);
+    expect(find.textContaining('never-display-original-key'), findsNothing);
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const ValueKey('model-key')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ModelConfigDialog), findsNothing);
+    await tester.tap(find.text('打开配置'));
+    await _waitForDialog(tester);
+    await tester.enterText(find.byKey(const ValueKey('model-id')), 'changed');
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    expect(find.text('舍弃未保存的修改？'), findsOneWidget);
+    await tester.tap(find.text('继续编辑'));
+    await tester.pumpAndSettle();
+    expect(find.text('changed'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.text('舍弃未保存的修改？'), findsOneWidget);
+    await tester.tap(find.text('舍弃修改'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ModelConfigDialog), findsNothing);
+    expect(await tester.runAsync(config.readAsString), originalConfig);
+    expect(await tester.runAsync(env.readAsString), originalEnv);
+    await harness.close(tester);
+  });
+
   for (final damagedFile in ['config.yaml', '.env', 'unreadable']) {
     testWidgets('$damagedFile 读取失败不展示原文，修复后从读取按钮恢复', (tester) async {
       final harness = await _DialogHarness.create(tester);
@@ -440,6 +700,7 @@ class _DialogHarness {
   final ChatViewModel chat;
   final HttpClient client;
   bool hangModels = false;
+  Future<void>? modelsGate;
 
   static Future<_DialogHarness> create(WidgetTester tester) async {
     final directory = (await tester.runAsync(
@@ -464,6 +725,7 @@ class _DialogHarness {
     await tester.runAsync(() async {
       server.listen((request) async {
         if (harness.hangModels) return;
+        await harness.modelsGate;
         // 此夹具仅确认加载交互；真实 Go 热加载由 model_config_go_test 验证。
         request.response.headers.contentType = ContentType.json;
         request.response.write(
@@ -488,11 +750,20 @@ class _DialogHarness {
     await tester.pumpAndSettle();
   }
 
-  Future<void> open(WidgetTester tester) async {
+  Future<void> open(
+    WidgetTester tester, {
+    double textScale = 1,
+    bool wait = true,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: NotebookTheme.data,
-        builder: (context, child) => OperationToastHost(child: child!),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: OperationToastHost(child: child!),
+        ),
         home: Builder(
           builder: (context) => Scaffold(
             body: TextButton(
@@ -507,6 +778,10 @@ class _DialogHarness {
       ),
     );
     await tester.tap(find.text('打开配置'));
-    await _waitForDialog(tester);
+    if (wait) {
+      await _waitForDialog(tester);
+    } else {
+      await tester.pump();
+    }
   }
 }
