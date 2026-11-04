@@ -6,6 +6,58 @@ import 'package:timecue_desktop/data/http_chat_gateway.dart';
 import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 
 void main() {
+  test('加载请求挂起时共用总期限，迟到结果不发布，服务恢复后可再次刷新', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final pending = <HttpRequest>[];
+    var restored = false;
+    const body =
+        '{"models":[{"provider":"deepseek","model":"chat","available":true}]}';
+    server.listen((request) async {
+      if (!restored) {
+        pending.add(request);
+        return;
+      }
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(body);
+      await request.response.close();
+    });
+    final gateway = HttpChatGateway(
+      baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+    );
+    final chat = ChatViewModel(gateway: gateway);
+    addTearDown(() async {
+      chat.dispose();
+      gateway.dispose();
+      await server.close(force: true);
+    });
+    final clock = Stopwatch()..start();
+    expect(
+      await chat.applySavedModel(
+        provider: 'deepseek',
+        model: 'chat',
+        timeout: const Duration(milliseconds: 650),
+      ),
+      isFalse,
+    );
+    expect(clock.elapsed, lessThan(const Duration(seconds: 2)));
+    expect(chat.modelsLoading, isFalse);
+    expect(chat.selectedModel, isNull);
+    for (final request in pending) {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(body);
+      await request.response.close();
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(chat.models, isEmpty, reason: '超时请求的迟到结果不能确认应用成功');
+    restored = true;
+    expect(
+      await chat.applySavedModel(provider: 'deepseek', model: 'chat'),
+      isTrue,
+    );
+    expect(chat.selectedModel?.model, 'chat');
+    expect(chat.activeRunCount, 0);
+  });
+
   test('完整集合加载才成功，移除旧项且新增齐全后保留选择或回退到保存模型', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     var names = ['chat', 'removed'];

@@ -100,14 +100,14 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       _key.clear();
       _visibleKey = false;
       _pendingApplication = settings;
-    } on FormatException catch (failure) {
+    } on ModelConfigException catch (failure) {
       if (mounted) {
         setState(() => _error = failure.message);
         OperationToast.error(context, _error!);
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _error = '保存失败，请检查数据目录的文件权限后重试。');
+        setState(() => _error = '模型配置未保存，请检查本地文件格式与读写权限后重试。');
         OperationToast.error(context, _error!);
       }
     } finally {
