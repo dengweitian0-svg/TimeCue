@@ -1,6 +1,5 @@
 #include "launch_configuration.h"
 #include <windows.h>
-#include <shlobj.h>
 #include <filesystem>
 
 std::wstring LaunchWide(const std::string& value) {
@@ -85,6 +84,11 @@ std::optional<LaunchConfiguration> ParseLaunchConfiguration(
             result.backend_explicit = true;
             result.backend = argument.substr(10);
             if (result.backend != "managed" && result.backend != "external") return std::nullopt;
+        } else if (argument.rfind("--env=", 0) == 0) {
+            if (result.environment_explicit) return std::nullopt;
+            result.environment_explicit = true;
+            result.environment = argument.substr(6);
+            if (result.environment != "test" && result.environment != "release") return std::nullopt;
         } else if (argument.rfind("--data-dir=", 0) == 0) {
             if (result.data_explicit) return std::nullopt;
             result.data_explicit = true;
@@ -107,6 +111,7 @@ std::optional<LaunchConfiguration> ParseLaunchConfiguration(
 bool CompatibleLaunchConfiguration(
     const LaunchConfiguration& current, const LaunchConfiguration& requested) {
     return (!requested.backend_explicit || requested.backend == current.backend) &&
+        (!requested.environment_explicit || requested.environment == current.environment) &&
         (!requested.data_explicit || SamePath(requested.data_dir, current.data_dir)) &&
         (!requested.executable_explicit || SamePath(requested.executable, current.executable));
 }
@@ -114,26 +119,20 @@ bool CompatibleLaunchConfiguration(
 bool ResolveLaunchDefaults(LaunchConfiguration& configuration) {
     if (!configuration.backend_explicit) configuration.backend = "managed";
     if (configuration.backend == "external") return true;
-    if (!configuration.data_explicit) {
-        PWSTR directory = nullptr;
-        const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &directory);
-        if (FAILED(result)) return false;
-#ifdef TIMECUE_DEVELOPMENT
-        // 开发构建使用隔离数据目录，显式 data-dir 仍优先保留。
-        configuration.data_dir = Utf8((std::filesystem::path(directory) / L"TimeCue-Dev").wstring());
-#else
-        configuration.data_dir = Utf8((std::filesystem::path(directory) / L"TimeCue").wstring());
-#endif
-        CoTaskMemFree(directory);
-        if (configuration.data_dir.empty()) return false;
-    }
-    if (!configuration.executable_explicit) {
+    if (!configuration.data_explicit || !configuration.executable_explicit) {
         std::wstring executable(32768, L'\0');
         const DWORD count = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
         if (!count || count >= executable.size()) return false;
         executable.resize(count);
-        configuration.executable = Utf8((std::filesystem::path(executable).parent_path() / L"timecue-core.exe").wstring());
-        if (configuration.executable.empty()) return false;
+        const auto directory = std::filesystem::path(executable).parent_path();
+        if (!configuration.data_explicit) {
+            configuration.data_dir = Utf8(directory.wstring());
+            if (configuration.data_dir.empty()) return false;
+        }
+        if (!configuration.executable_explicit) {
+            configuration.executable = Utf8((directory / L"timecue-core.exe").wstring());
+            if (configuration.executable.empty()) return false;
+        }
     }
     return true;
 }

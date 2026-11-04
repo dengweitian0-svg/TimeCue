@@ -1,4 +1,5 @@
 import 'dart:ui';
+import '../../data/config_file_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../theme/notebook_theme.dart';
@@ -19,12 +20,14 @@ class NotebookOverlay extends StatefulWidget {
     required this.onClosed,
     this.historyRequest = 0,
     this.chat,
+    this.configFiles,
   });
   final NotebookViewModel model;
   final Offset origin;
   final VoidCallback onClosed;
   final int historyRequest;
   final ChatViewModel? chat;
+  final ConfigFileStore? configFiles;
   @override
   State<NotebookOverlay> createState() => _NotebookOverlayState();
 }
@@ -238,6 +241,7 @@ class _NotebookOverlayState extends State<NotebookOverlay>
                                             NotebookTab.ai => ChatSpread(
                                               model: widget.model,
                                               chat: widget.chat,
+                                              configFiles: widget.configFiles,
                                             ),
                                           },
                                         ),

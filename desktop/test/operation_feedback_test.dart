@@ -303,7 +303,14 @@ void main() {
       () => Directory.systemTemp.createTemp('timecue-toast-'),
     ))!;
     addTearDown(() => tester.runAsync(() => directory.delete(recursive: true)));
-    final store = ConfigFileStore(directory.path);
+    final store = (await tester.runAsync(
+      () async => _SlowConfigFileStore(directory.path),
+    ))!;
+    addTearDown(
+      () => tester.runAsync(() async {
+        await store.pendingRestore;
+      }),
+    );
     await tester.runAsync(
       () => File(store.configPath).writeAsString('log:\n  level: info\n'),
     );
@@ -328,17 +335,16 @@ void main() {
         of: find.byType(SettingsDialog),
         matching: find.byType(LinearProgressIndicator),
       );
-      for (
-        var attempt = 0;
-        attempt < 100 && progress.evaluate().isNotEmpty;
-        attempt++
-      ) {
+      // 文件 IO 使用真实时钟截止，Widget 虚拟时钟只用于推进绘制。
+      final clock = Stopwatch()..start();
+      while (progress.evaluate().isNotEmpty &&
+          clock.elapsed < const Duration(seconds: 10)) {
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 10)),
         );
         await tester.pump(const Duration(milliseconds: 20));
       }
-      expect(progress, findsNothing);
+      expect(progress, findsNothing, reason: '设置文件操作应在十秒观察期限内完成');
       await tester.pumpAndSettle();
     }
 
@@ -401,6 +407,22 @@ void main() {
 }
 
 BuildContext? _feedbackContext;
+
+// 在真实时钟中模拟 CI 的慢文件 IO，恢复仍通过正式存储执行。
+class _SlowConfigFileStore extends ConfigFileStore {
+  _SlowConfigFileStore(super.dataDir) : _ioZone = Zone.current;
+
+  final Zone _ioZone;
+  Future<ConfigSaveResult>? pendingRestore;
+
+  /// 模拟真实文件恢复超过原测试等待时间，保留正式存储及返回结果。
+  @override
+  Future<ConfigSaveResult> restoreRuntimeDefaults() =>
+      pendingRestore = _ioZone.run<Future<ConfigSaveResult>>(() async {
+        await Future<void>.delayed(const Duration(seconds: 5));
+        return super.restoreRuntimeDefaults();
+      });
+}
 
 class _FeedbackRepository extends DemoNotebookRepository {
   bool failConfirm = false;

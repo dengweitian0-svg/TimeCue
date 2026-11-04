@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// TestStartupParameters 验证环境固定映射、非法参数和目录解析规则。
 func TestStartupParameters(t *testing.T) {
 	t.Chdir(t.TempDir())
 	for _, args := range [][]string{
@@ -19,7 +20,8 @@ func TestStartupParameters(t *testing.T) {
 		{"--data-dir="}, {"--data-dir", ".", "--instance-id", "a b"},
 		{"--data-dir", ".", "--instance-id", strings.Repeat("a", 129)},
 		{"--data-dir", ".", "--instance-id", "中文"}, {"unexpected"}, {"--unknown"},
-		{"--port", "0"}, {"--port", "65536"}, {"--port", "-1"}, {"--port", "abc"},
+		{"--env="}, {"--env", ""}, {"--env", "dev"}, {"--env", "TEST"},
+		{"--port", "1145"},
 	} {
 		if _, err := parseStartup(args); err == nil {
 			t.Fatal("非法参数被接受", args)
@@ -52,9 +54,11 @@ func TestStartupParameters(t *testing.T) {
 	if err != nil || !managed.managed || managed.instanceID != "launch_A-123" {
 		t.Fatal(managed, err)
 	}
-	customPort, err := parseStartup([]string{"--port", "1145"})
-	if err != nil || customPort.port != 1145 {
-		t.Fatal(customPort, err)
+	for environment, port := range map[string]int{"test": 1145, "release": 10086} {
+		selected, err := parseStartup([]string{"--env", environment})
+		if err != nil || selected.port != port || selected.dataDir != one.dataDir {
+			t.Fatal("环境端口或默认目录错误", selected, err)
+		}
 	}
 }
 

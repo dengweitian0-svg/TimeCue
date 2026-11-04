@@ -30,7 +30,8 @@ class Acceptance:
         self.directory = Path(tempfile.mkdtemp(prefix="真实模型-", dir=output))
         self.database = self.directory / "db" / "timecue.db"
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        self.base = f"http://127.0.0.1:{options.port}"
+        self.port = 1145 if options.env == "test" else 10086
+        self.base = f"http://127.0.0.1:{self.port}"
         self.process = None
         self.log = None
         self.session = str(uuid.uuid4())
@@ -52,12 +53,12 @@ class Acceptance:
     def start(self):
         """启动自有托管 Go，并核对 ready 和健康响应身份。"""
         with socket.socket() as probe:
-            probe.bind(("127.0.0.1", self.options.port))
+            probe.bind(("127.0.0.1", self.port))
         identity = "chat-real-" + uuid.uuid4().hex
         self.log = (self.directory / (identity + ".log")).open("w", encoding="utf-8")
         self.process = subprocess.Popen(
             [str(self.options.go.resolve()), "--data-dir", str(self.directory),
-             "--instance-id", identity, "--port", str(self.options.port)],
+             "--instance-id", identity, "--env", self.options.env],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
             text=True, encoding="utf-8", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         lines = queue.Queue()
@@ -331,7 +332,7 @@ def main():
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--provider", required=True)
     parser.add_argument("--model", required=True)
-    parser.add_argument("--port", type=int, default=1145)
+    parser.add_argument("--env", choices=("test", "release"), default="test")
     parser.add_argument("--timeout", type=int, default=240)
     parser.add_argument("--flutter-test", action="store_true")
     acceptance = Acceptance(parser.parse_args())

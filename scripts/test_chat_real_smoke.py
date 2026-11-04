@@ -2,7 +2,6 @@
 import importlib.util
 import json
 from pathlib import Path
-import socket
 import subprocess
 import tempfile
 import threading
@@ -96,12 +95,9 @@ class RecoveryScriptTests(unittest.TestCase):
         self.addCleanup(server.finish_first.set)
         key = self.directory / (fast_kind + ".env")
         key.write_text("TEST_MODEL=fixture-only\n", encoding="utf-8")
-        with socket.socket() as port:
-            port.bind(("127.0.0.1", 0))
-            number = port.getsockname()[1]
         acceptance = smoke.Acceptance(SimpleNamespace(
             go=self.binary, env_file=key, provider="test", model="model",
-            base_url=f"http://127.0.0.1:{server.server_port}", port=number,
+            base_url=f"http://127.0.0.1:{server.server_port}", env="test",
             timeout=15, flutter_test=False))
         self.addCleanup(acceptance.stop)
         acceptance.configure()

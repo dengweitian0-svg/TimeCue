@@ -2,7 +2,9 @@
 
 ## 启动
 
-请将 ZIP 解压到一个完整目录，并保留其中所有文件。双击 `timecue_desktop.exe` 启动，发行包默认使用托管模式，由应用管理同目录的 `timecue-core.exe`。默认数据目录是当前 Windows 用户的 `%LOCALAPPDATA%\TimeCue`。
+请将 ZIP 解压到一个完整目录，并保留其中所有文件。双击 `timecue_desktop.exe` 启动，发行包默认使用托管模式，由应用管理同目录的 `timecue-core.exe`。默认数据根目录是 Flutter EXE 所在目录，从快捷方式或其他工作目录启动也相同。显式 `--data-dir` 优先，相对目录按启动工作目录解析；配置文件、数据库及日志路径规则保持一致。不会自动迁移或搜索旧 LocalAppData 数据，如需继续使用旧目录，请显式传入。
+
+所有 Debug、Profile、Release 构建均接受运行时 `--env=test|release`：省略或 release 连接 `127.0.0.1:10086`，test 连接 `127.0.0.1:1145`。托管宿主自动向 Go 传递环境，非法或空值启动失败。环境只影响端口，相同目录共用数据；需要隔离时显式指定不同数据目录。环境不改变单实例身份，重复启动的显式冲突会被拒绝，切换环境需先从托盘完整退出。
 
 关闭窗口会将 TimeCue 隐藏到系统托盘。需要结束应用时，请在托盘图标菜单中选择“退出”。更新前也必须先从托盘退出，确保程序文件不再使用。
 
@@ -33,13 +35,16 @@ python update.py
 发行包默认使用 managed。开发或联调时，可以显式指定数据目录，并连接手动启动的 Go 服务：
 
 ```powershell
-timecue_desktop.exe --backend=external --data-dir="D:\TimeCueData"
+timecue-core.exe --env=test --data-dir="D:\TimeCueData"
+timecue_desktop.exe --env=test --backend=external --data-dir="D:\TimeCueData"
 ```
 
-退出应用不会停止手动启动的 Go 服务。若固定端口 `127.0.0.1:10086` 已被其他程序占用，TimeCue 会报告启动失败；请先处理端口占用，不要依赖应用结束其他程序。
+退出应用不会停止手动启动的 Go 服务。手动 Go 省略数据目录仍使用 Go EXE 所在目录；前后端需声明同一环境，不会自动探测其他端口。若所选固定端口 `127.0.0.1:10086` 或测试端口 `127.0.0.1:1145` 已被其他程序占用，TimeCue 会报告启动失败；请先处理端口占用，不要依赖应用结束其他程序。
 
 ## 构建与检查
 
 开发者可在仓库根目录使用 `scripts/build-release.ps1` 构建 Windows x64 完整 ZIP。脚本使用当前环境中的 Go、Flutter 和 Python；每次都会重新编译 Go 服务并覆盖 Flutter Release 中可能存在的旧副本。正式发布由 stable CI 验证。详细检查命令见仓库中的贡献规范：<https://github.com/dengweitian0-svg/TimeCue/blob/dev/docs/CONTRIBUTING.md>。CI 会运行更新脚本标准库测试、Flutter stable 检查和 Windows 原生 CTest。
+
+打包前会检查 Release 构建目录，发现数据库、日志、配置、隐藏 `.env` 或链接时明确失败，不创建发行暂存目录或 ZIP，也不删除源数据。直接运行构建目录中的主程序可能产生这些文件；开发验证建议显式指定独立 `--data-dir`。遇到此错误先备份并移出提示的运行数据，或使用未运行过的干净构建目录，再重新打包；`-SkipFlutterBuild` 同样执行检查。
 
 发布前请在隔离目录解压候选 ZIP，手动检查完整目录启动、托盘退出、默认数据位置、更新成功、程序占用时的失败提示和用户文件保留情况。需要真实 Windows 桌面交互的验收应在目标系统执行并单独记录；CI 结果不代表这些人工平台检查已经完成。

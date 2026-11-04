@@ -2,6 +2,7 @@
 #include "desktop_window.h"
 #include <shellapi.h>
 #include <cstdio>
+#include <filesystem>
 #include <stdexcept>
 
 namespace {
@@ -129,7 +130,7 @@ void WindowVisibility() {
 void Forwarding(const std::wstring& key) {
   SingleInstance primary(key);
   Require(primary.Start({}) == SingleInstance::Result::primary, "initial primary");
-  auto options = EncodeDesktopLaunch({991, 2, {"--login-start", "--backend=managed"}});
+  auto options = EncodeDesktopLaunch({991, 2, {"--login-start", "--backend=managed", "--env=release"}});
   COPYDATASTRUCT configuration_copy{kMagic, static_cast<DWORD>(options.size()), options.data()};
   Require(SendMessageW(primary.handle(), WM_COPYDATA, reinterpret_cast<WPARAM>(primary.handle()),
       reinterpret_cast<LPARAM>(&configuration_copy)) == 1, "compatible configuration rejected");
@@ -137,6 +138,11 @@ void Forwarding(const std::wstring& key) {
   configuration_copy.cbData = static_cast<DWORD>(options.size()); configuration_copy.lpData = options.data();
   Require(SendMessageW(primary.handle(), WM_COPYDATA, reinterpret_cast<WPARAM>(primary.handle()),
       reinterpret_cast<LPARAM>(&configuration_copy)) == 0, "conflicting configuration accepted");
+  options = EncodeDesktopLaunch({993, 0, {"--env=test"}});
+  configuration_copy.cbData = static_cast<DWORD>(options.size()); configuration_copy.lpData = options.data();
+  Require(SendMessageW(primary.handle(), WM_COPYDATA, reinterpret_cast<WPARAM>(primary.handle()),
+      reinterpret_cast<LPARAM>(&configuration_copy)) == 0, "conflicting environment accepted");
+  Require(primary.configuration().environment == "release", "reopen changed active environment");
   Require(WaitChild(Spawn(L"client", key)) == 0, "pre-ready forwarding");
   int calls = 0;
   auto pending = primary.Ready([&](const DesktopLaunch& launch) {
@@ -217,7 +223,20 @@ int wmain(int argc, wchar_t** argv) {
     // 默认值只在主实例补全，转交省略值复用当前配置。
     auto defaults = ParseLaunchConfiguration({});
     Require(defaults.has_value() && ResolveLaunchDefaults(*defaults), "release defaults unresolved");
-    Require(defaults->backend == "managed" && !defaults->data_dir.empty(), "release defaults missing");
+    Require(defaults->backend == "managed" && defaults->Port() == 10086, "release defaults missing");
+    wchar_t self[32768]{};
+    Require(GetModuleFileNameW(nullptr, self, 32768) != 0, "self path");
+    Require(std::filesystem::path(LaunchWide(defaults->data_dir)) == std::filesystem::path(self).parent_path(), "default directory is not Flutter executable directory");
+    const auto working = std::filesystem::current_path();
+    std::filesystem::current_path(working.root_path());
+    auto test = ParseLaunchConfiguration({"--env=test"});
+    Require(test && ResolveLaunchDefaults(*test) && test->Port() == 1145, "test environment unresolved");
+    Require(test->data_dir == defaults->data_dir && test->executable == defaults->executable, "environment or working directory changed defaults");
+    auto relative = ParseLaunchConfiguration({"--data-dir=relative-data"});
+    Require(relative && ResolveLaunchDefaults(*relative) && std::filesystem::path(LaunchWide(relative->data_dir)) == working.root_path() / L"relative-data", "explicit relative directory ignored working directory");
+    std::filesystem::current_path(working);
+    Require(CompatibleLaunchConfiguration(*test, *ParseLaunchConfiguration({})), "omitted environment changed test instance");
+    Require(!CompatibleLaunchConfiguration(*test, *ParseLaunchConfiguration({"--env=release"})), "test instance accepted environment change");
     Require(defaults->executable.find("timecue-core.exe") != std::string::npos, "bundled Go path missing");
     auto external = ParseLaunchConfiguration({"--backend=external", "--data-dir=."});
     Require(external.has_value() && ResolveLaunchDefaults(*external) && external->executable.empty(), "external mode changed");

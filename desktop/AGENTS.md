@@ -16,7 +16,7 @@
 - `lib/app/operation_toast.dart`：应用级操作结果 Toast 宿主及成功、失败、警告入口。
 - [lib/contracts](lib/contracts/AGENTS.md)：日程 DTO、草稿和仓储操作契约。
 - [lib/data](lib/data/AGENTS.md)：HTTP 快照、分页、确认与内存示例数据。
-- `lib/data/config_file_store.dart`：用户配置文件的 Flutter 写入入口，保留注释及其他字段，只管理运行配置覆盖值。
+- `lib/data/config_file_store.dart`：用户配置与本机密钥的 Flutter 写入入口，保留注释及其他字段，管理运行覆盖值和单个官方 DeepSeek 模型；模型与普通设置共用 data-dir 和串行队列。
 - [lib/features/room](lib/features/room/AGENTS.md)：房间背景、时钟、桌面入口与本子显隐。
 - [lib/features/notebook](lib/features/notebook/AGENTS.md)：本子开合、今日/日历页面、跨页选择与查询状态。
 - [lib/features/chat](lib/features/chat/AGENTS.md)：聊天运行状态、累计 Markdown、多工具名称、消息阅读与输入/停止组件。
@@ -36,10 +36,10 @@
 
 日程本提供“今天｜历史待确认｜日历｜AI 对话”四标签，今日安排与两类待确认分开读取。今日/历史各自分页与选择，房间总数继续包含全部到期未确认。跨北京日期废弃旧分页、重读两范围并清理旧范围选择；查询和标签切换只读，不调用平台投递。
 
-- 真实启动默认 managed、同目录 timecue-core.exe，可显式覆盖路径；Release 默认使用当前用户 LocalAppData/TimeCue，Debug/Profile 默认使用 LocalAppData/TimeCue-Dev。开发外连显式指定 backend=external 和 data-dir。主实例握手前不挂载业务房间或执行通知，失败保留可见错误/重试/退出；隐藏不停止自有 Go，退出回填与 Go 协作共用 5 秒预算，零预算仍最终关闭 Job。
+- 真实启动默认 managed、同目录 timecue-core.exe，可显式覆盖路径；默认数据根目录为 Flutter EXE 所在目录，独立于构建模式和环境，显式相对 data-dir 按启动工作目录解析。开发外连显式指定 backend=external 和 data-dir。主实例握手前不挂载业务房间或执行通知，失败保留可见错误/重试/退出；隐藏不停止自有 Go，退出回填与 Go 协作共用 5 秒预算，零预算仍最终关闭 Job。
 - Windows Flutter 构建要求 Go 已安装并位于 PATH；平台构建每次编译 Go 服务并安装到 runner 同目录，使默认 managed 开发启动可直接创建自有服务。切换 managed/external 前需完整退出旧实例，Go 源码更改需退出并重新运行 Flutter，热重载不重建 Go。
 - 托管启动在创建 Go 前修正旧设置保存的数据库目录值，自动追加 timecue.db；设置只读视图显示原目录，不误取父目录。配置修正失败走启动错误/重试，不创建 Go 或迁移数据库。
-- Debug/Profile 的托管 Go 与 HTTP 服务使用端口 1145 和独立单实例身份；Release 使用端口 10086。显式数据目录不改写，external 模式不创建或停止手动 Go。
+- `--env=test|release` 在所有构建模式固定选择 1145/10086，省略为 release；托管 Go、日程、提醒、聊天及 ready 核验使用同一端口。Debug/Profile 保留独立于 Release 的单实例身份，环境不参与身份。显式数据目录不改写，external 模式不创建或停止手动 Go。
 
 - 聊天契约位于 `lib/contracts/chat_contracts.dart`，独立于日程仓储；真实模式将应用级 ChatViewModel 和 HttpChatGateway 注入房间、本子及 AI 多会话页面，演示模式保留未接线框架。模型负责有界历史索引、服务端名称、正式回复摘要、搜索进度、独立草稿与阅读位置、三会话并发及删除隔离；宿主身份守卫在健康检查前后核验操作资格，退出释放不等待回复自然结束。Go 聊天使用真实模型与 SQLite；页面选择 provider/model，缺 Key 时保持历史查询并禁用新建。
 - 房间猫咪透明热区与背景共用 cover 投影，悬停/键盘焦点提示可进入 AI 标签；关闭回到原入口，裁切后回固定本子按钮。AI 内容窄于 840 或大字模式使用单栏，其他日程标签保留双页横向访问；书签可横向访问且关闭始终固定。

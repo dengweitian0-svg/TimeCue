@@ -86,8 +86,31 @@ DeliveryRuntime runtime(
 }) => DeliveryRuntime(id ?? process.instance, pid: pid, capabilities: caps);
 
 void main() {
-  test('Debug/Profile 默认服务端口为 1145', () {
-    expect(defaultNotebookApiBase.port, 1145);
+  test('未声明环境时默认发布端口为 10086', () {
+    expect(defaultNotebookApiBase.port, 10086);
+  });
+
+  test('宿主端口用于服务地址及 ready 核验，配置目录不随端口变化', () async {
+    for (final port in [1145, 10086]) {
+      final configuration = BackendConfiguration.fromNative({
+        'backend': 'managed',
+        'dataDir': 'C:/数据',
+        'executable': 'C:/go.exe',
+        'port': port,
+      });
+      expect(configuration.apiBase.origin, 'http://127.0.0.1:$port');
+      expect(configuration.dataDir, 'C:/数据');
+      final process = FakeProcess()
+        ..readyOverrides = {'address': 'http://127.0.0.1:$port'};
+      final backend = ManagedBackend(
+        platform: process,
+        health: () async => runtime(process),
+        apiBase: configuration.apiBase,
+      );
+      addTearDown(backend.dispose);
+      await backend.start();
+      expect(backend.ready, true);
+    }
   });
 
   test('启动准备完成后才创建 Go，准备失败可见且重试重新准备', () async {
@@ -263,7 +286,7 @@ void main() {
     expect(backend.ready, false);
     expect(backend.state, BackendState.failed);
   });
-  test('ready 拒绝非当前构建端口并回收自有进程', () async {
+  test('ready 拒绝非本次运行端口并回收自有进程', () async {
     final wrongPort = defaultNotebookApiBase.port == 1145 ? 10086 : 1145;
     final process = FakeProcess()
       ..readyOverrides = {'address': 'http://127.0.0.1:$wrongPort'};
@@ -445,6 +468,7 @@ void main() {
         'backend': 'managed',
         'dataDir': 'C:/数据',
         'executable': '',
+        'port': 10086,
       }),
       throwsFormatException,
     );
@@ -453,6 +477,7 @@ void main() {
         'backend': 'external',
         'dataDir': 'C:/数据',
         'executable': 'C:/go.exe',
+        'port': 10086,
       }),
       throwsFormatException,
     );
@@ -461,6 +486,7 @@ void main() {
         'backend': 'unknown',
         'dataDir': 'C:/数据',
         'executable': '',
+        'port': 10086,
       }),
       throwsFormatException,
     );
@@ -469,6 +495,7 @@ void main() {
         'backend': 'managed',
         'dataDir': 'C:/数据',
         'executable': 'C:/go.exe',
+        'port': 1145,
       }).dataDir,
       'C:/数据',
     );

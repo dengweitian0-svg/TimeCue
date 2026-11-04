@@ -34,15 +34,20 @@ func parseStartup(args []string) (startupOptions, error) {
 	flags.SetOutput(io.Discard)
 	dataDir := flags.String("data-dir", "", "配置和运行文件目录，默认使用可执行文件目录")
 	instanceID := flags.String("instance-id", "", "父进程为本次启动提供的身份")
-	port := flags.Int("port", 10086, "本机 HTTP 服务端口")
+	environment := flags.String("env", "release", "启动环境：test 或 release")
 	if err := flags.Parse(args); err != nil {
 		return startupOptions{}, err
 	}
 	if flags.NArg() != 0 {
 		return startupOptions{}, fmt.Errorf("unexpected positional arguments")
 	}
-	if *port < 1 || *port > 65535 {
-		return startupOptions{}, fmt.Errorf("port must be between 1 and 65535")
+	port := 10086
+	switch *environment {
+	case "test":
+		port = 1145
+	case "release":
+	default:
+		return startupOptions{}, fmt.Errorf("env must be test or release")
 	}
 	var hasDir, managed bool
 	flags.Visit(func(f *flag.Flag) {
@@ -83,7 +88,12 @@ func parseStartup(args []string) (startupOptions, error) {
 	if err != nil {
 		return startupOptions{}, fmt.Errorf("resolve data-dir: %w", err)
 	}
-	return startupOptions{dataDir: abs, instanceID: *instanceID, port: *port, managed: managed}, nil
+	return startupOptions{
+		dataDir:    abs,
+		instanceID: *instanceID,
+		port:       port,
+		managed:    managed,
+	}, nil
 }
 
 func writeReady(output io.Writer, info app.RuntimeInfo, port int) error {

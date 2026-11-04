@@ -1,12 +1,24 @@
 # 真实文字对话
 
+用户配置中的 `chat_model` 缺省、留空或为 `null` 时，均允许从 AI 页首次添加模型；保存保留已有字段名大小写及无关设置。
+
+已有多个 DeepSeek 分组时，单模型弹窗读取与保存统一选择首个包含模型的分组；仅在所有 DeepSeek 分组都没有模型时复用首个空分组。修改 Key、预算或模型 ID 都更新当前显示模型，保留其他分组和模型。
+
+AI 页在无可用模型的提示位置提供“添加 DeepSeek 模型”，选择器旁持续提供“管理模型”。当前弹窗维护第一个 DeepSeek 模型，固定 `provider=deepseek` 和 `https://api.deepseek.com`；填写模型 ID 和 API Key，高级设置提供本地预算初值 32768/8192。预算必须为正整数，输出小于上下文，非法输入不写文件。Key 默认隐藏且可显隐，重开不回显；当前每次保存均需填写 Key，多模型及留空保留等维护体验由后续任务交付。
+
+Flutter 使用宿主传给 Go 的同一 data-dir 保存 `config.yaml` 与 `.env`，与普通设置共用串行队列及单文件替换。模型设置保留其他提供方、其他模型、未知字段和注释，密钥按原有 PROVIDER_MODEL 规则定位并保留无关环境变量及合法跨行值。先更新密钥再发布模型配置，后者失败尝试恢复密钥；不承诺两个文件跨崩溃原子提交。Go 仍只读加载，不增加 HTTP 或数据库结构。
+
+每次保存（包括模型 ID 不变时换 Key、调预算）都自动通过既有 `GET /v1/model` 有界刷新，最多等待十秒，保留有效选择或选择已保存模型。文件已保存但本地服务未确认加载时可“重试加载”，不重复写文件、不自动发送消息或重启。读取、保存及加载期间禁止重复提交和关闭。模型列表只证明本地可用性，不是预算回读，也不证明认证、余额或网络正常；实际调用错误继续沿原聊天语义显示。
+
+`desktop/test/model_config_go_test.dart` 使用正式 Flutter 存储、HTTP 网关和编译后的 Go/SQLite，核对同一 health PID/运行身份下首次配置、连续换 Key/调输出预算的实际上游请求、缩小上下文后的正式门禁，以及重启读取。测试只在隔离配置中把保存后的官方 base_url 转到可控上游，不访问真实 DeepSeek；弹窗测试补充两入口与自动刷新交互，不能替代 #168 的 Windows 发行版人工操作与真实 DeepSeek 验收。临时数据、密钥和执行记录不纳入提交。
+
 正常、external 开发和 managed 发行入口共用真实 Chat Completions、SQLite 与六个正式日程工具；空库不播种会话，不保留旧内存聊天服务、固定回复或人工推进 HTTP。`TIMECUE_DEMO` 只提供传统日程的内存视觉示例，不装配聊天服务。可执行聊天验收只连接真实 Go；合成网关限定在 `desktop/test/fixtures/chat_widget_gateway.dart`，仅供 Widget 布局、滚动与截图测试显式安排数据，构造不播种，使用 widget 专用 provider/model，不构成模型或日程验收证据。
 
 真实模型组合验收使用显式模型及当前本地密钥文件，例如在仓库根目录执行：
 
 ```powershell
 go build -o .gotmp-chat-real/timecue-core.exe ./cmd/flutter
-python scripts/chat-real-smoke.py --go .gotmp-chat-real/timecue-core.exe --env-file .env --provider deepseek --model deepseek-v4-flash --base-url https://api.deepseek.com --flutter-test
+python scripts/chat-real-smoke.py --go .gotmp-chat-real/timecue-core.exe --env=test --env-file .env --provider deepseek --model deepseek-v4-flash --base-url https://api.deepseek.com --flutter-test
 ```
 
 工具不使用用户数据库或路径配置，自动创建新的 `.gotmp-chat-real/真实模型-*/` 数据目录；复制密钥后调用实际上游，核对普通回复、六个工具及实际日程/提醒、四字段创建回执、原始事件分页/连续 seq、SSE 游标重连、取消和唯一 end、正常退出及模型/摘要原调用恢复、终态重启查询。执行中通过 HTTP 同步进度，SQLite 核对只在终态或进程停止后读取并立即关闭。低摘要阈值仅用于该隔离实例，以真实模型完成摘要；模型不按要求调用工具或返回错误时直接失败。`--flutter-test` 再以生产网关和 ViewModel 读取这些真实记录；它不替代 Windows 窗口及托盘验证。报告、数据库、日志和密钥副本只留本地，不纳入提交，不向 CI 提供真实密钥。默认使用 1145，端口占用时拒绝测试，不停止其他实例。
@@ -89,6 +101,8 @@ T11 测试通过 chat.Service 公共用例、真实 SQLite、真实模型 HTTP �
 R1 将完整回复接纳、模型调用开始/结束 checkpoint 及跨轮有效上下文集中在聊天模块的进度规则中。SQLite adapter 在原事务内调用这些规则，继续核验实际事实、保存 output/usage 与事件尾批、分配连续事件序号；协调器在提交成功后才采用新进度并启动工具。待提交快照复制消息、原始工具 JSON 和完成集合，保存失败不改写此前快照；实际已取得的工具结果独立保留，收尾事务沿已提交进度合并，不重执业务。
 
 R2 将工具开始与单项结果也统一为完整进度操作。SQLite 开始及结果事务回读当前调用已提交的 checkpoint，在原事务内合入 running/原参数/关联/开始事件或实际 output/error/结果事件/原 ID 消息，再原子保存完整进度。提交成功才向协调器返回新快照；失败不采用待提交状态，已保存结果重试直接复用已提交事实。协调器不再维护第二份完成集合，也不传入批次数量来判定结束；进度按全部原请求的 ID 配对事实表达 tool_end，下一步普通模型调用、配置、等待与调度仍由协调器选择。并行结果按实际接纳次序串行合并，不增加 FIFO。
+
+提交边界恢复测试在回复接纳、部分结果及整批完成处取得真实 SQLite 快照；部分结果放行后另覆盖一次四秒的结果保存延迟，继续严格核验原运行、恢复运行、三次实际模型请求、原工具身份/参数、重试预算及事件配对。原运行和恢复运行各使用三十秒终态观察截止，查询本身也服从该 context；失败时在服务清理前用共享两秒截止记录运行、调用、checkpoint、已完成工具及逐项状态。观察时长仅约束测试等待，不改变业务工具超时、重试退避、退出预算或运行性能契约。
 
 R3 将取消跳过、未确认结果及故障真实结果保留统一到聊天进度模块。正常单项结果与异常批次收拢共用原 ID 配对和阶段转换规则；SQLite 终态事务读取最新已提交调用、checkpoint 与工具事实，优先复用已保存或协调器实际取得的结果，再按取消 skipped/aborted 或 tool_result_unconfirmed 补齐缺失项。存储只负责事务内核验、事实及事件保存，不另行裁决消息接纳、中断说明或未确认结果。
 
