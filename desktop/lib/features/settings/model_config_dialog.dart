@@ -5,7 +5,7 @@ import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
 import '../chat/chat_view_model.dart';
 
-/// 配置单个官方 DeepSeek 模型，保存后在当前聊天运行中刷新本地可用性。
+/// 管理多个官方 DeepSeek 模型，保存后在当前聊天运行中刷新本地可用性。
 class ModelConfigDialog extends StatefulWidget {
   const ModelConfigDialog({super.key, required this.store, required this.chat});
 
@@ -18,17 +18,16 @@ class ModelConfigDialog extends StatefulWidget {
 
 class _ModelConfigDialogState extends State<ModelConfigDialog> {
   final _form = GlobalKey<FormState>();
-  final _model = TextEditingController();
+  final _models = <_ModelDraft>[];
+  int _nextModelId = 0;
   final _key = TextEditingController();
-  final _context = TextEditingController(text: '32768');
-  final _output = TextEditingController(text: '8192');
   bool _busy = true;
   bool _loaded = false;
   bool _visibleKey = false;
   bool _allowClose = false;
   String? _error;
   String? _message;
-  DeepSeekModelSettings? _pendingApplication;
+  List<DeepSeekModelSettings>? _pendingApplication;
 
   @override
   void initState() {
@@ -42,13 +41,16 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       _error = null;
     });
     try {
-      final settings = await widget.store.readDeepSeekModel();
+      final settings = await widget.store.readDeepSeekModels();
       if (!mounted) return;
-      if (settings != null) {
-        _model.text = settings.model;
-        _context.text = settings.contextWindow.toString();
-        _output.text = settings.maxOutputTokens.toString();
+      for (final draft in _models) {
+        draft.dispose();
       }
+      _models.clear();
+      for (final value in settings) {
+        _models.add(_ModelDraft(_nextModelId++, value));
+      }
+      if (_models.isEmpty) _models.add(_ModelDraft(_nextModelId++));
       _loaded = true;
     } catch (_) {
       if (mounted) {
@@ -75,19 +77,26 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       OperationToast.error(context, '请检查模型 ID、API Key 和预算。');
       return;
     }
-    final settings = DeepSeekModelSettings(
-      model: _model.text.trim(),
-      contextWindow: _budget(_context.text)!,
-      maxOutputTokens: _budget(_output.text)!,
-    );
+    final settings = [
+      for (final draft in _models)
+        DeepSeekModelSettings(
+          model: draft.model.text.trim(),
+          originalModel: draft.originalModel,
+          contextWindow: _budget(draft.context.text)!,
+          maxOutputTokens: _budget(draft.output.text)!,
+        ),
+    ];
     setState(() {
       _busy = true;
       _error = null;
       _message = '正在保存模型设置…';
     });
     try {
-      await widget.store.saveDeepSeekModel(settings, apiKey: _key.text);
+      await widget.store.saveDeepSeekModels(settings, apiKey: _key.text);
       if (!mounted) return;
+      for (final draft in _models) {
+        draft.originalModel = draft.model.text.trim();
+      }
       _key.clear();
       _visibleKey = false;
       _pendingApplication = settings;
@@ -120,9 +129,9 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       _error = null;
       _message = '设置已保存，正在等待本地服务加载…';
     });
-    final available = await widget.chat.applySavedModel(
+    final available = await widget.chat.applySavedModels(
       provider: 'deepseek',
-      model: settings.model,
+      models: settings.map((v) => v.model),
     );
     if (!mounted) return;
     setState(() {
@@ -151,12 +160,83 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
 
   @override
   void dispose() {
-    _model.dispose();
+    for (final draft in _models) {
+      draft.dispose();
+    }
     _key.dispose();
-    _context.dispose();
-    _output.dispose();
     super.dispose();
   }
+
+  Widget _modelFields(_ModelDraft draft, int index) => Column(
+    key: ValueKey('model-row-${draft.id}'),
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          Expanded(child: Text('模型 ${index + 1}')),
+          IconButton(
+            tooltip: '移除模型 ${index + 1}',
+            onPressed: _busy || _models.length == 1
+                ? null
+                : () {
+                    setState(() => _models.remove(draft));
+                    draft.dispose();
+                    _edited('');
+                  },
+            icon: const Icon(Icons.remove_circle_outline),
+          ),
+        ],
+      ),
+      TextFormField(
+        key: ValueKey(draft.id == 0 ? 'model-id' : 'model-id-${draft.id}'),
+        controller: draft.model,
+        enabled: !_busy,
+        onChanged: _edited,
+        decoration: const InputDecoration(labelText: '模型 ID'),
+        validator: (v) => v == null || v.trim().isEmpty ? '请填写模型 ID' : null,
+      ),
+      ExpansionTile(
+        key: ValueKey('model-advanced-${draft.id}'),
+        title: const Text('高级设置'),
+        tilePadding: EdgeInsets.zero,
+        maintainState: true,
+        children: [
+          const Text('这是本地预算初值，请按所用模型的实际容量调整。'),
+          TextFormField(
+            key: ValueKey('model-context-${draft.id}'),
+            controller: draft.context,
+            enabled: !_busy,
+            onChanged: _edited,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: '上下文预算'),
+            validator: (v) {
+              final n = _budget(v ?? '');
+              return n == null || n <= 0 || n > 2147483647
+                  ? '请填写正整数，最多 2147483647'
+                  : null;
+            },
+          ),
+          TextFormField(
+            key: ValueKey('model-output-${draft.id}'),
+            controller: draft.output,
+            enabled: !_busy,
+            onChanged: _edited,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: '最大输出 token'),
+            validator: (v) {
+              final n = _budget(v ?? '');
+              return n == null ||
+                      n <= 0 ||
+                      n >= (_budget(draft.context.text) ?? 0)
+                  ? '请填写小于上下文预算的正整数'
+                  : null;
+            },
+          ),
+        ],
+      ),
+      const SizedBox(height: 16),
+    ],
+  );
 
   @override
   Widget build(BuildContext context) => PopScope<void>(
@@ -183,16 +263,6 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                   const SizedBox(height: 20),
                   if (_loaded) ...[
                     TextFormField(
-                      key: const ValueKey('model-id'),
-                      controller: _model,
-                      enabled: !_busy,
-                      onChanged: _edited,
-                      decoration: const InputDecoration(labelText: '模型 ID'),
-                      validator: (v) =>
-                          v == null || v.trim().isEmpty ? '请填写模型 ID' : null,
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
                       key: const ValueKey('model-key'),
                       controller: _key,
                       enabled: !_busy,
@@ -202,7 +272,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                       onChanged: _edited,
                       decoration: InputDecoration(
                         labelText: 'API Key',
-                        helperText: '本次保存需填写 Key，仅保存在当前设备。',
+                        helperText: '新 Key 用于全部模型；留空保留各模型已有本地密钥。',
                         suffixIcon: IconButton(
                           tooltip: _visibleKey ? '隐藏密钥' : '显示密钥',
                           onPressed: _busy
@@ -216,49 +286,21 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                           ),
                         ),
                       ),
-                      validator: (v) =>
-                          v == null || v.trim().isEmpty ? '请填写 API Key' : null,
                     ),
                     const SizedBox(height: 16),
-                    ExpansionTile(
-                      title: const Text('高级设置'),
-                      tilePadding: EdgeInsets.zero,
-                      maintainState: true,
-                      children: [
-                        const Text('这是本地预算初值，请按所用模型的实际容量调整。'),
-                        TextFormField(
-                          key: const ValueKey('model-context'),
-                          controller: _context,
-                          enabled: !_busy,
-                          onChanged: _edited,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: '上下文预算'),
-                          validator: (v) {
-                            final n = _budget(v ?? '');
-                            return n == null || n <= 0 || n > 2147483647
-                                ? '请填写正整数，最多 2147483647'
-                                : null;
-                          },
-                        ),
-                        TextFormField(
-                          key: const ValueKey('model-output'),
-                          controller: _output,
-                          enabled: !_busy,
-                          onChanged: _edited,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: '最大输出 token',
-                          ),
-                          validator: (v) {
-                            final n = _budget(v ?? '');
-                            return n == null ||
-                                    n <= 0 ||
-                                    n >= (_budget(_context.text) ?? 0)
-                                ? '请填写小于上下文预算的正整数'
-                                : null;
-                          },
-                        ),
-                      ],
+                    for (var i = 0; i < _models.length; i++)
+                      _modelFields(_models[i], i),
+                    TextButton.icon(
+                      onPressed: _busy
+                          ? null
+                          : () {
+                              setState(() {
+                                _models.add(_ModelDraft(_nextModelId++));
+                              });
+                              _edited('');
+                            },
+                      icon: const Icon(Icons.add),
+                      label: const Text('添加模型'),
                     ),
                   ],
                   if (_error != null)
@@ -292,4 +334,29 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       ),
     ),
   );
+}
+
+// 每行独立持有草稿和原身份，增删行不改变其他模型的输入。
+class _ModelDraft {
+  _ModelDraft(this.id, [DeepSeekModelSettings? settings])
+    : originalModel = settings?.originalModel,
+      model = TextEditingController(text: settings?.model ?? ''),
+      context = TextEditingController(
+        text: '${settings?.contextWindow ?? 32768}',
+      ),
+      output = TextEditingController(
+        text: '${settings?.maxOutputTokens ?? 8192}',
+      );
+
+  final int id;
+  String? originalModel;
+  final TextEditingController model;
+  final TextEditingController context;
+  final TextEditingController output;
+
+  void dispose() {
+    model.dispose();
+    context.dispose();
+    output.dispose();
+  }
 }
