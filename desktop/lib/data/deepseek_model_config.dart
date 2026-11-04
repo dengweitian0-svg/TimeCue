@@ -1,5 +1,10 @@
 part of 'config_file_store.dart';
 
+/// 可直接展示的模型配置错误，不携带文件原文、路径或密钥。
+class ModelConfigException extends FormatException {
+  const ModelConfigException(super.message);
+}
+
 /// 单个 DeepSeek 模型的本地设置，不包含原始密钥。
 class DeepSeekModelSettings {
   const DeepSeekModelSettings({
@@ -19,13 +24,13 @@ class DeepSeekModelSettings {
   /// 在任何文件写入前校验身份及可由后端表示的预算。
   void validate() {
     if (model.trim().isEmpty || model.runes.any((c) => c < 32 || c == 127)) {
-      throw const FormatException('请填写有效的模型 ID');
+      throw const ModelConfigException('请填写有效的模型 ID');
     }
     if (contextWindow <= 0 ||
         contextWindow > 2147483647 ||
         maxOutputTokens <= 0 ||
         maxOutputTokens >= contextWindow) {
-      throw const FormatException('预算必须为正整数，最大输出量须小于上下文预算（最多 2147483647）');
+      throw const ModelConfigException('预算必须为正整数，最大输出量须小于上下文预算（最多 2147483647）');
     }
   }
 }
@@ -33,11 +38,14 @@ class DeepSeekModelSettings {
 /// 模型设置与普通运行设置共用同一串行队列和单文件替换能力。
 extension DeepSeekConfigFileStore on ConfigFileStore {
   /// 读取全部 DeepSeek 分组的模型，不返回原始密钥。
-  Future<List<DeepSeekModelSettings>> readDeepSeekModels() => _serialize(
-    () async {
-      return _readDeepSeekModels(ConfigFileStore._parse(await _readContents()));
-    },
-  );
+  Future<List<DeepSeekModelSettings>> readDeepSeekModels() =>
+      _serialize(() async {
+        final settings = _readDeepSeekModels(
+          ConfigFileStore._parse(await _readContents()),
+        );
+        _envAssignments(await _readModelEnv());
+        return settings;
+      });
 
   /// 兼容单模型调用方，只读取首个已有模型。
   Future<DeepSeekModelSettings?> readDeepSeekModel() async =>
@@ -57,7 +65,7 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
     DeepSeekModelSettings settings, {
     required String apiKey,
   }) => _serialize(() async {
-    if (apiKey.trim().isEmpty) throw const FormatException('请填写 API Key');
+    if (apiKey.trim().isEmpty) throw const ModelConfigException('请填写 API Key');
     final editor = ConfigFileStore._parse(await _readContents());
     final current = _readDeepSeekModels(editor);
     await _saveDeepSeekModels(editor, [
@@ -76,14 +84,14 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
     List<DeepSeekModelSettings> settings,
     String apiKey,
   ) async {
-    if (settings.isEmpty) throw const FormatException('至少保留一个模型');
+    if (settings.isEmpty) throw const ModelConfigException('至少保留一个模型');
     for (final value in settings) {
       value.validate();
     }
     final key = apiKey.trim();
     // 使用单引号禁止变量展开；拒绝控制字符及不能无损表示的引号、反斜杠。
     if (apiKey.runes.any((c) => c < 32 || c > 126 || c == 39 || c == 92)) {
-      throw const FormatException('API Key 含不支持的字符，请检查后重试');
+      throw const ModelConfigException('API Key 含不支持的字符，请检查后重试');
     }
     final root = editor.parseAt([]).value as Map;
     final section = ConfigFileStore._key(root, 'chat_model');
@@ -99,31 +107,31 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
             model is! String ||
             identity.trim().isEmpty ||
             model.trim().isEmpty) {
-          throw const FormatException('已有模型身份无效，请先修复配置');
+          throw const ModelConfigException('已有模型身份无效，请先修复配置');
         }
         if (identity == 'deepseek') {
           if (originals.contains(model)) {
-            throw const FormatException('已有 DeepSeek 模型身份重复，请先修复配置');
+            throw const ModelConfigException('已有 DeepSeek 模型身份重复，请先修复配置');
           }
           originals.add(model);
         } else if (!keys.add(_modelKey(identity, model))) {
-          throw const FormatException('已有模型密钥名称冲突，请先修复配置');
+          throw const ModelConfigException('已有模型密钥名称冲突，请先修复配置');
         }
       }
     }
     final usedOriginals = <String>{};
     for (final value in settings) {
       if (!keys.add(_modelKey('deepseek', value.model))) {
-        throw const FormatException('模型身份重复或密钥名称与已有模型冲突');
+        throw const ModelConfigException('模型身份重复或密钥名称与已有模型冲突');
       }
       final original = value.originalModel ?? value.model;
       if (originals.contains(original) && !usedOriginals.add(original)) {
-        throw const FormatException('同一原模型不能重复编辑');
+        throw const ModelConfigException('同一原模型不能重复编辑');
       }
     }
     final envPath = p.join(p.dirname(configPath), '.env');
+    final before = await _readModelEnv();
     final existed = await File(envPath).exists();
-    final before = existed ? await File(envPath).readAsString() : '';
     var after = before;
     if (key.isNotEmpty) {
       final encoded = RegExp(r'^[A-Za-z0-9_.-]+$').hasMatch(key)
@@ -136,7 +144,7 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
       final existingKeys = _envAssignments(before);
       for (final value in settings) {
         if (!_hasEnvValue(existingKeys[_modelKey('deepseek', value.model)])) {
-          throw const FormatException('目标模型缺少本地密钥，请填写 API Key');
+          throw const ModelConfigException('目标模型缺少本地密钥，请填写 API Key');
         }
       }
     }
@@ -205,10 +213,20 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
           await File(envPath).delete();
         }
       } catch (_) {
-        throw const FormatException('模型配置未保存，密钥恢复失败，请检查本地文件后重试');
+        throw const ModelConfigException('模型配置未保存，密钥恢复失败，请检查本地文件后重试');
       }
-      throw const FormatException('模型配置未保存，密钥已恢复，请重试');
+      throw const ModelConfigException('模型配置未保存，密钥已恢复，请重试');
     }
+  }
+
+  Future<String> _readModelEnv() async {
+    final path = p.join(p.dirname(configPath), '.env');
+    final type = await FileSystemEntity.type(path);
+    if (type == FileSystemEntityType.notFound) return '';
+    if (type != FileSystemEntityType.file) {
+      throw const ModelConfigException('密钥文件无法读取，请检查本地文件后重试');
+    }
+    return File(path).readAsString();
   }
 }
 
@@ -221,7 +239,7 @@ List<DeepSeekModelSettings> _readDeepSeekModels(YamlEditor editor) {
       final context = _field(value, 'context_window');
       final output = _field(value, 'max_output_tokens') ?? 8192;
       if (model is! String || context is! int || output is! int) {
-        throw const FormatException('模型配置格式无效，请检查本地配置');
+        throw const ModelConfigException('模型配置格式无效，请检查本地配置');
       }
       result.add(
         DeepSeekModelSettings(
@@ -282,7 +300,7 @@ List<Map> _providers(YamlEditor editor) {
   final value = _field(root, 'chat_model');
   if (value == null) return <Map>[];
   if (value is! List || value.any((v) => v is! Map)) {
-    throw const FormatException('chat_model 必须是提供方列表');
+    throw const ModelConfigException('chat_model 必须是提供方列表');
   }
   return value.cast<Map>().toList();
 }
@@ -291,7 +309,7 @@ List<Map> _models(Map provider) {
   final value = _field(provider, 'models');
   if (value == null) return <Map>[];
   if (value is! List || value.any((v) => v is! Map)) {
-    throw const FormatException('models 必须是模型列表');
+    throw const ModelConfigException('models 必须是模型列表');
   }
   return value.cast<Map>().toList();
 }
@@ -348,7 +366,7 @@ String _updateEnv(
       continue;
     }
     final match = assignment.firstMatch(record);
-    if (match == null) throw const FormatException('密钥文件格式无效，请检查本地文件');
+    if (match == null) throw const ModelConfigException('密钥文件格式无效，请检查本地文件');
     final value = match.group(2)!.trimLeft();
     if (value.startsWith('"') || value.startsWith("'")) {
       final quote = value[0];
@@ -369,7 +387,7 @@ String _updateEnv(
         record += next;
         quoted += next;
       }
-      if (!closed()) throw const FormatException('密钥文件引号未闭合，请检查本地文件');
+      if (!closed()) throw const ModelConfigException('密钥文件引号未闭合，请检查本地文件');
     }
     assignments?[match.group(1)!] = assignment
         .firstMatch(record)!

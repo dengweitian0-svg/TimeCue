@@ -30,6 +30,7 @@ void main() {
     final store = ConfigFileStore(data.path);
     final observed =
         <({String? authorization, Map<String, dynamic> request})>[];
+    var upstreamStatus = 200;
     final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     upstream.listen((request) async {
       observed.add((
@@ -38,6 +39,15 @@ void main() {
             jsonDecode(await utf8.decoder.bind(request).join())
                 as Map<String, dynamic>,
       ));
+      if (upstreamStatus != 200) {
+        request.response.statusCode = upstreamStatus;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          '{"error":{"message":"controlled upstream rejection"}}',
+        );
+        await request.response.close();
+        return;
+      }
       request.response.headers.contentType = ContentType(
         'text',
         'event-stream',
@@ -241,6 +251,83 @@ void main() {
       contains('DEEPSEEK_CHAT=controlled-shared'),
     );
     expect(await gateway.listSessions(), hasLength(6));
+    // 真实文件损坏不覆盖旧内容；修复后沿原 Go 身份重新保存并热加载。
+    final config = File(store.configPath);
+    final env = File(p.join(data.path, '.env'));
+    final validConfig = await config.readAsString();
+    final validEnv = await env.readAsString();
+    await config.writeAsString('private-original: [broken', flush: true);
+    await expectLater(store.readDeepSeekModels(), throwsA(anything));
+    await expectLater(
+      store.saveDeepSeekModels([
+        const DeepSeekModelSettings(model: 'repaired'),
+      ], apiKey: 'repair-key'),
+      throwsA(anything),
+    );
+    expect(await config.readAsString(), 'private-original: [broken');
+    expect(await env.readAsString(), validEnv);
+    await config.writeAsString(validConfig, flush: true);
+    await env.writeAsString('OTHER="private-original-unclosed', flush: true);
+    expect(
+      await chat.applySavedModel(
+        provider: 'deepseek',
+        model: 'reasoner-v2',
+        timeout: const Duration(seconds: 1),
+      ),
+      isFalse,
+    );
+    expect(chat.modelsLoading, isFalse);
+    await expectLater(store.readDeepSeekModels(), throwsFormatException);
+    await expectLater(
+      store.saveDeepSeekModels([
+        const DeepSeekModelSettings(model: 'repaired'),
+      ], apiKey: 'repair-key'),
+      throwsFormatException,
+    );
+    expect(await env.readAsString(), 'OTHER="private-original-unclosed');
+    await env.writeAsString(validEnv, flush: true);
+    await store.saveDeepSeekModel(
+      const DeepSeekModelSettings(
+        model: 'reasoner-v2',
+        contextWindow: 28000,
+        maxOutputTokens: 1024,
+      ),
+      apiKey: r'literal$UNSET # suffix',
+    );
+    await routeUpstream();
+    expect(
+      await chat.applySavedModel(provider: 'deepseek', model: 'reasoner-v2'),
+      isTrue,
+    );
+    await sendSelected(r'literal$UNSET # suffix', 1024);
+    // 本地配置可用与实际上游认证/余额分别反馈，不把调用失败当成保存失败。
+    for (final failure in [
+      (status: 401, code: 'model_auth_failed'),
+      (status: 402, code: 'model_insufficient_balance'),
+    ]) {
+      upstreamStatus = failure.status;
+      final session = chat.createLocalSession();
+      chat.updateDraft(session.sessionId, '真实上游错误映射');
+      await chat.send(
+        session.sessionId,
+        provider: 'deepseek',
+        model: 'reasoner-v2',
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 15));
+      while (!session.runs.single.isTerminal &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      expect(session.runs.single.phase, ChatRunPhase.failed);
+      expect(
+        (await gateway.getRun(session.runs.single.runId!)).error?.code,
+        failure.code,
+      );
+      expect(chat.selectedModel?.available, isTrue);
+      expect(await config.readAsString(), isNot(contains('literal')));
+      await checkIdentity();
+    }
+    upstreamStatus = 200;
     // 缩小上下文预算后，原本可发送的输入由正式预算门禁拒绝，不访问上游。
     await store.saveDeepSeekModel(
       const DeepSeekModelSettings(
@@ -262,7 +349,7 @@ void main() {
       model: 'reasoner-v2',
     );
     expect(rejected.runs.single.phase, ChatRunPhase.failed);
-    expect(observed, hasLength(6));
+    expect(observed, hasLength(9));
     await stop(process);
     process = await start();
     expect(process.pid, isNot(firstPid));

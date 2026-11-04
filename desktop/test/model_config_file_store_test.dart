@@ -5,7 +5,40 @@ import 'package:path/path.dart' as p;
 import 'package:timecue_desktop/data/config_file_store.dart';
 import 'package:yaml_edit/yaml_edit.dart';
 
+import 'fixtures/config_file_faults.dart';
+
 void main() {
+  test('首次缺文件正常读取，损坏密钥文件阻止读取与覆盖，修复后可重试', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'model-read-fault-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final store = ConfigFileStore(directory.path);
+    expect(await store.readDeepSeekModels(), isEmpty);
+    final env = File(p.join(directory.path, '.env'));
+    const damaged = 'OTHER="private-original-without-closing-quote';
+    await env.writeAsString(damaged);
+    await expectLater(store.readDeepSeekModels(), throwsFormatException);
+    await expectLater(
+      store.saveDeepSeekModels([
+        const DeepSeekModelSettings(model: 'chat'),
+      ], apiKey: 'replacement'),
+      throwsFormatException,
+    );
+    expect(await env.readAsString(), damaged);
+    expect(await File(store.configPath).exists(), isFalse);
+    await env.writeAsString('OTHER="repaired\nmultiline"\n');
+    expect(await store.readDeepSeekModels(), isEmpty);
+    await store.saveDeepSeekModels([
+      const DeepSeekModelSettings(model: 'chat'),
+    ], apiKey: 'replacement');
+    expect((await store.readDeepSeekModels()).single.model, 'chat');
+    expect(
+      await env.readAsString(),
+      'OTHER="repaired\nmultiline"\nDEEPSEEK_CHAT=replacement\n',
+    );
+  });
+
   late Directory directory;
   late ConfigFileStore store;
   setUp(() async {
@@ -13,6 +46,98 @@ void main() {
     store = ConfigFileStore(directory.path);
   });
   tearDown(() => directory.delete(recursive: true));
+
+  test('数据目录无法创建时不覆盖原内容，修复目录后重试保存', () async {
+    final blocked = File(p.join(directory.path, 'blocked'));
+    await blocked.writeAsString('original-file');
+    final blockedStore = ConfigFileStore(blocked.path);
+    await expectLater(
+      blockedStore.saveDeepSeekModels([
+        const DeepSeekModelSettings(model: 'chat'),
+      ], apiKey: 'replacement'),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(await blocked.readAsString(), 'original-file');
+    await blocked.delete();
+    await Directory(blocked.path).create();
+    await blockedStore.saveDeepSeekModels([
+      const DeepSeekModelSettings(model: 'chat'),
+    ], apiKey: 'replacement');
+    expect((await blockedStore.readDeepSeekModels()).single.model, 'chat');
+  });
+
+  for (final existingEnv in [false, true]) {
+    for (final restoreFails in [false, true]) {
+      test('模型发布失败恢复密钥：原文件存在=$existingEnv，恢复失败=$restoreFails', () async {
+        const original = '# 原设置\nlog: {level: warn}\nunknown: keep\n';
+        final config = File(store.configPath);
+        final env = File(p.join(directory.path, '.env'));
+        await config.writeAsString(original);
+        if (existingEnv) await env.writeAsString('OTHER="keep\nquoted"\n');
+        final faults = ConfigFileFaults(directory.path)
+          ..denyConfigWrite = true
+          ..denyEnvRestore = restoreFails;
+        await IOOverrides.runWithIOOverrides(() async {
+          await expectLater(
+            store.saveDeepSeekModels([
+              const DeepSeekModelSettings(model: 'chat'),
+            ], apiKey: 'replacement'),
+            throwsA(
+              isA<ModelConfigException>().having(
+                (e) => e.message,
+                '明确密钥恢复结果',
+                contains(restoreFails ? '密钥恢复失败' : '密钥已恢复'),
+              ),
+            ),
+          );
+        }, faults);
+        expect(await config.readAsString(), original);
+        if (restoreFails) {
+          expect(
+            await env.readAsString(),
+            contains('DEEPSEEK_CHAT=replacement'),
+          );
+        } else if (existingEnv) {
+          expect(await env.readAsString(), 'OTHER="keep\nquoted"\n');
+        } else {
+          expect(await env.exists(), isFalse);
+        }
+        // 失败释放同目录串行队列；普通设置和模型重试不会互相覆盖。
+        await Future.wait([
+          ConfigFileStore(directory.path).update(logLevel: 'debug'),
+          store.saveDeepSeekModels([
+            const DeepSeekModelSettings(model: 'chat'),
+          ], apiKey: 'retry-key'),
+        ]);
+        expect((await store.readDeepSeekModels()).single.model, 'chat');
+        expect((await store.read()).logLevel, 'debug');
+        expect(await config.readAsString(), contains('unknown: keep'));
+        expect(await env.readAsString(), contains('DEEPSEEK_CHAT=retry-key'));
+      });
+    }
+  }
+
+  test('密钥无法替换时两文件保持原值，恢复权限后公开保存可重试', () async {
+    final config = File(store.configPath);
+    final env = File(p.join(directory.path, '.env'));
+    await config.writeAsString('unknown: keep\n');
+    await env.writeAsString('OTHER=keep\n');
+    final faults = ConfigFileFaults(directory.path)..denyEnvWrite = true;
+    await IOOverrides.runWithIOOverrides(() async {
+      await expectLater(
+        store.saveDeepSeekModels([
+          const DeepSeekModelSettings(model: 'chat'),
+        ], apiKey: 'replacement'),
+        throwsA(isA<FileSystemException>()),
+      );
+    }, faults);
+    expect(await config.readAsString(), 'unknown: keep\n');
+    expect(await env.readAsString(), 'OTHER=keep\n');
+    await store.saveDeepSeekModels([
+      const DeepSeekModelSettings(model: 'chat'),
+    ], apiKey: 'replacement');
+    expect((await store.readDeepSeekModels()).single.model, 'chat');
+  });
 
   test('多模型增删改保留原字段与注释，一次 Key 写入全部目标并保留旧 Key', () async {
     await File(store.configPath).writeAsString('''# 用户配置
