@@ -1,6 +1,6 @@
 # TimeCue Flutter 桌面端
 
-AI 对话的明确配置拒绝会显示检查模型预算和实例 `.env` 的提示，并释放本地运行占用；补齐密钥后点击“刷新模型”即可开始新一轮。已提交运行的有限重试由 Go 执行，界面保留上游具体语义错误及部分正文。结果不明的创建请求仍复用原幂等键。配置与后端边界见 [真实文字对话](../docs/CHAT.md)。
+AI 对话提供“添加 DeepSeek 模型”和持续可用的“管理模型”入口，配置一个官方模型及本机 Key，高级设置提供 32768/8192 本地预算初值。每次有效保存后自动刷新模型，同名模型换 Key 或调预算亦无需重启；已保存但服务尚未确认加载时可单独重试加载。Key 默认隐藏且重开不回显，当前每次保存均需填写。明确的配置拒绝释放本地运行占用，上游调用仍按实际认证、余额与网络结果反馈。已提交运行的有限重试由 Go 执行，界面保留具体语义错误及部分正文；结果不明的创建请求仍复用原幂等键。配置与后端边界见 [真实文字对话](../docs/CHAT.md)。
 
 AI 助手已接入真实单条日程、规则列表和日期安排查询；工具详情按原调用 ID 展示参数、原始 JSON 结果及错误，默认折叠，点击工具名称展开。工具失败可由模型继续处理，最终回复依据真实查询结果。
 
@@ -108,6 +108,7 @@ TimeCueApp                              MaterialApp、主题、构造注入
             │     └─ EditingPage        ScheduleEditor（完整规则及 revision）
             └─ ChatSpread               第四标签，双页/单栏多会话对话
                ├─ ChatSessionList      历史分组、搜索进度、刷新与删除
+               ├─ ModelConfigDialog    官方 DeepSeek 单模型、密钥和高级预算，每次保存后自动刷新
                ├─ ChatMessageList      用户文本、过程状态、累计 Markdown 与回到最新
                │  ├─ ChatToolCallList  按开始 seq＋原 ID 显示工具、参数与原始结果
                │  ├─ ChatEventTimeline 原始事件按需分页，思考与 JSON 详情折叠
@@ -162,6 +163,7 @@ flowchart LR
 | 场景已解码图片 | RoomBackdrop | 解码成功再淡入，失败保留旧图 |
 | 入口焦点、本子显隐 | RoomScreen | 合上后回到实际入口；热区裁切后回固定入口 |
 | 配置覆盖草稿、读取/保存状态及关闭守卫 | SettingsDialog | 通过注入的 ConfigFileStore 读写，保留未知字段；路径下次启动生效 |
+| 单模型设置、隐藏 Key、保存与应用状态 | ModelConfigDialog / ChatViewModel | 共用实例 data-dir；每次保存后有界刷新本地可用性，失败可只重试加载 |
 
 业务快照不与表单共享可变对象。每次确认针对触发 ID；失败投递也可确认，确认不会将失败改成成功。全选只选择点击时本页记录，跨页保留，确认没有撤销。删除与未来编辑保留历史。
 
@@ -273,3 +275,5 @@ $env:TIMECUE_CAPTURE_CHAT='true'; flutter test test/cat_chat_hotspot_test.dart
 `test/fixtures/chat_fixtures.dart` 固定正常、Thinking、多工具、同名多次调用、交错、失败、取消、重复与重连数据。`chat_contracts_test.dart` 校验 DTO 与错误边界；`http_chat_gateway_test.dart` 使用可控 HTTP 和原始 socket 验证传输及释放；`chat_view_model_test.dart` 验证幂等、并发、恢复、工具身份、终态及迟到代次；`chat_session_management_test.dart` 和 `chat_session_list_test.dart` 验证历史索引、完整名称、摘要搜索、草稿、删除和阅读恢复；`chat_host_test.dart` 与 `chat_runtime_guard_test.dart` 验证后台接收、宿主退出及身份失效；`chat_conversation_test.dart` 验证输入和回复交互；`chat_markdown_compatibility_test.dart` 验证累计文本、未闭合语法、代码与表格；`chat_spread_test.dart`、`cat_chat_hotspot_test.dart` 保留布局、入口与焦点回归。自动检查和 Widget 绘制证据不代替 Windows DPI、真实输入法、剪贴板、浏览器及系统交互验收。
 
 Windows 渲染依赖兼容性可单独使用 `flutter build windows --release --target=tool/chat_markdown_smoke.dart`，该入口实际引用 gpt_markdown 并显示固定 Markdown，不连接后端。正式应用构建继续使用默认 `lib/main.dart` 入口。
+
+`operation_feedback_test.dart` 在正式配置存储边界注入五秒慢 IO，核对恢复默认后的真实结果提示；等待使用最多十秒的真实时钟观察期限并交替推进 Widget 绘制，不把固定轮数或虚拟时间当作文件完成。该期限仅用于测试，不改变应用行为。

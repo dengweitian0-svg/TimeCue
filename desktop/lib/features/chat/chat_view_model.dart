@@ -22,6 +22,7 @@ class ChatViewModel extends ChangeNotifier {
   ChatModelOption? _selectedModel;
   String? _modelsError;
   bool _modelsLoading = false;
+  int _modelLoadGeneration = 0;
 
   /// 当前配置模型列表及可用性。
   List<ChatModelOption> get models => List.unmodifiable(_models);
@@ -41,27 +42,102 @@ class ChatViewModel extends ChangeNotifier {
     final gateway = _gateway;
     if (gateway is! ChatModelGateway) return;
     _modelsLoading = true;
+    final request = ++_modelLoadGeneration;
     final generation = _runtimeGeneration;
     try {
       final values = await (gateway as ChatModelGateway).getModels();
-      if (_disposed || generation != _runtimeGeneration) return;
-      _models = values;
-      final previous = _selectedModel?.identity;
-      _selectedModel =
-          values
-              .where((m) => m.available && m.identity == previous)
-              .firstOrNull ??
-          values.where((m) => m.available).firstOrNull;
-      _modelsError = null;
+      if (!_modelReadCurrent(generation, request)) return;
+      _publishModels(values);
     } catch (error) {
-      if (_disposed || generation != _runtimeGeneration) return;
+      if (!_modelReadCurrent(generation, request)) return;
       _models = const [];
       _selectedModel = null;
       _modelsError = _errorMessage(error);
     } finally {
-      _modelsLoading = false;
-      if (!_disposed) notifyListeners();
+      if (request == _modelLoadGeneration) {
+        _modelsLoading = false;
+        if (!_disposed) notifyListeners();
+      }
     }
+  }
+
+  /// 每次保存后有界刷新本地可用性；列表不证明上游认证或预算回读。
+  Future<bool> applySavedModel({
+    required String provider,
+    required String model,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final gateway = _gateway;
+    if (!_acceptingOperations || _disposed || gateway is! ChatModelGateway) {
+      return false;
+    }
+    final generation = _runtimeGeneration;
+    final request = ++_modelLoadGeneration;
+    final clock = Stopwatch()..start();
+    final previous = _selectedModel?.identity;
+    _modelsLoading = true;
+    notifyListeners();
+    try {
+      // 给目录监听处理原子替换的时间，同名模型也必须执行新的读取。
+      while (clock.elapsed < timeout) {
+        final remaining = timeout - clock.elapsed;
+        await Future<void>.delayed(
+          remaining < const Duration(milliseconds: 250)
+              ? remaining
+              : const Duration(milliseconds: 250),
+        );
+        if (!_modelReadCurrent(generation, request) || !_acceptingOperations) {
+          return false;
+        }
+        final budget = timeout - clock.elapsed;
+        if (budget <= Duration.zero) break;
+        final values = await (gateway as ChatModelGateway).getModels().timeout(
+          budget,
+        );
+        if (!_modelReadCurrent(generation, request) || !_acceptingOperations) {
+          return false;
+        }
+        _publishModels(values);
+        final target = values
+            .where(
+              (v) => v.provider == provider && v.model == model && v.available,
+            )
+            .firstOrNull;
+        if (target != null &&
+            clock.elapsed >= const Duration(milliseconds: 500)) {
+          _selectedModel =
+              values
+                  .where((v) => v.available && v.identity == previous)
+                  .firstOrNull ??
+              target;
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    } finally {
+      if (request == _modelLoadGeneration) {
+        _modelsLoading = false;
+        if (!_disposed) notifyListeners();
+      }
+    }
+  }
+
+  bool _modelReadCurrent(int generation, int request) =>
+      !_disposed &&
+      generation == _runtimeGeneration &&
+      request == _modelLoadGeneration;
+
+  void _publishModels(List<ChatModelOption> values) {
+    final previous = _selectedModel?.identity;
+    _models = values;
+    _selectedModel =
+        values
+            .where((v) => v.available && v.identity == previous)
+            .firstOrNull ??
+        values.where((v) => v.available).firstOrNull;
+    _modelsError = null;
   }
 
   /// 只选择本地可用的模型。

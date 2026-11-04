@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:yaml_edit/yaml_edit.dart';
 
+part 'deepseek_model_config.dart';
+
 /// 用户文件中的覆盖值；null 表示交由 Go 的内嵌默认配置决定。
 class ConfigOverrides {
   const ConfigOverrides({this.logLevel, this.logPath, this.databasePath});
@@ -277,14 +279,16 @@ class ConfigFileStore {
     return found ?? name;
   }
 
-  Future<void> _save(String contents) async {
-    final directory = Directory(p.dirname(configPath));
+  Future<void> _save(String contents) => _replace(configPath, contents);
+
+  Future<void> _replace(String target, String contents) async {
+    final directory = Directory(p.dirname(target));
     await directory.create(recursive: true);
     final staging = await directory.createTemp('.config-write-');
     final temporary = File(p.join(staging.path, 'config.yaml'));
     try {
       await temporary.writeAsString(contents, flush: true);
-      await temporary.rename(configPath);
+      await temporary.rename(target);
     } finally {
       // 清理失败不覆盖已提交结果或原始写入错误。
       try {

@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../data/config_file_store.dart';
+import '../settings/model_config_dialog.dart';
+
 import '../chat/chat_composer.dart';
 import '../chat/chat_message_list.dart';
 import '../chat/chat_session_list.dart';
@@ -11,10 +14,16 @@ import 'notebook_view_model.dart';
 
 /// 展示 AI 对话的双页与单栏页面，聊天模型由宿主持有。
 class ChatSpread extends StatefulWidget {
-  const ChatSpread({super.key, required this.model, this.chat});
+  const ChatSpread({
+    super.key,
+    required this.model,
+    this.chat,
+    this.configFiles,
+  });
 
   final NotebookViewModel model;
   final ChatViewModel? chat;
+  final ConfigFileStore? configFiles;
 
   @override
   State<ChatSpread> createState() => _ChatSpreadState();
@@ -23,6 +32,24 @@ class ChatSpread extends StatefulWidget {
 class _ChatSpreadState extends State<ChatSpread> {
   late final TextEditingController _draftController;
   String? _chatSessionId;
+  bool _configOpen = false;
+
+  Future<void> _configureModel() async {
+    if (_configOpen || widget.configFiles == null || widget.chat == null) {
+      return;
+    }
+    _configOpen = true;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) =>
+            ModelConfigDialog(store: widget.configFiles!, chat: widget.chat!),
+      );
+    } finally {
+      _configOpen = false;
+    }
+  }
 
   @override
   void initState() {
@@ -358,6 +385,11 @@ class _ChatSpreadState extends State<ChatSpread> {
               ),
             ),
             IconButton(
+              tooltip: '管理模型',
+              onPressed: widget.configFiles == null ? null : _configureModel,
+              icon: const Icon(Icons.tune, size: 18),
+            ),
+            IconButton(
               tooltip: '刷新模型',
               onPressed: chat.modelsLoading ? null : chat.loadModels,
               icon: const Icon(Icons.refresh, size: 18),
@@ -437,10 +469,19 @@ class _ChatSpreadState extends State<ChatSpread> {
       final disabledHint = !canSend && activeRun == null
           ? Padding(
               padding: const EdgeInsets.only(top: 3),
-              child: Text(
-                disabledReason,
-                style: const TextStyle(fontSize: 11, color: NotebookTheme.ink),
-              ),
+              child: chat.selectedModel == null && widget.configFiles != null
+                  ? TextButton.icon(
+                      onPressed: _configureModel,
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('添加 DeepSeek 模型'),
+                    )
+                  : Text(
+                      disabledReason,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: NotebookTheme.ink,
+                      ),
+                    ),
             )
           : null;
 
