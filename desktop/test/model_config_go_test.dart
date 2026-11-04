@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:timecue_desktop/data/config_file_store.dart';
 import 'package:timecue_desktop/data/http_chat_gateway.dart';
 import 'package:timecue_desktop/features/chat/chat_view_model.dart';
+import 'package:timecue_desktop/features/settings/model_config_dialog.dart';
 import 'package:yaml_edit/yaml_edit.dart';
 
 void main() {
@@ -109,7 +112,8 @@ void main() {
 
     var process = await start();
     final firstPid = process.pid;
-    final healthClient = HttpClient()..findProxy = (_) => 'DIRECT';
+    final healthClient = _RealHttpOverrides().createHttpClient(null)
+      ..findProxy = (_) => 'DIRECT';
     addTearDown(() => healthClient.close(force: true));
     Future<void> checkIdentity() async {
       final request = await healthClient.getUrl(
@@ -124,6 +128,7 @@ void main() {
 
     final gateway = HttpChatGateway(
       baseUri: Uri.parse('http://127.0.0.1:1145'),
+      client: healthClient,
     );
     final chat = ChatViewModel(gateway: gateway);
     addTearDown(() {
@@ -358,4 +363,343 @@ void main() {
     expect(chat.selectedModel!.model, 'reasoner-v2');
     await stop(process);
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  testWidgets('真实 Go 在运行中重开弹窗保留或更换 Key，移除原模型不切换运行身份', (tester) async {
+    final directory = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('model-maintenance-'),
+    ))!;
+    final client = _RealHttpOverrides().createHttpClient(null)
+      ..findProxy = (_) => 'DIRECT';
+    final transport = _ObservedClient(client);
+    final store = ConfigFileStore(directory.path);
+    late Process process;
+    late HttpServer upstream;
+    final observed = <({String? key, Map<String, dynamic> body})>[];
+    Completer<void>? release;
+    var finish = 'stop';
+    await tester.runAsync(() async {
+      final port = await ServerSocket.bind(InternetAddress.loopbackIPv4, 1145);
+      await port.close();
+      final binary = p.join(directory.path, 'timecue-core.exe');
+      final build = await Process.run('go', [
+        'build',
+        '-o',
+        binary,
+        './cmd/flutter',
+      ], workingDirectory: '..');
+      expect(build.exitCode, 0, reason: '${build.stderr}');
+      await store.saveDeepSeekModels([
+        const DeepSeekModelSettings(model: 'chat'),
+        const DeepSeekModelSettings(model: 'reasoner'),
+      ], apiKey: 'seed');
+      await File(p.join(directory.path, '.env')).writeAsString(
+        'DEEPSEEK_CHAT=chat-original\nDEEPSEEK_REASONER=reasoner-original\n',
+      );
+      upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      upstream.listen((request) async {
+        final gate = release;
+        final finishReason = finish;
+        observed.add((
+          key: request.headers.value('Authorization'),
+          body:
+              jsonDecode(await utf8.decoder.bind(request).join())
+                  as Map<String, dynamic>,
+        ));
+        await gate?.future;
+        request.response.headers.contentType = ContentType(
+          'text',
+          'event-stream',
+          charset: 'utf-8',
+        );
+        request.response.write(
+          'data: ${jsonEncode({
+            'id': 'maintenance-upstream',
+            'choices': [
+              {
+                'delta': {'content': '保留已有回复'},
+                'finish_reason': finishReason,
+              },
+            ],
+          })}\n\ndata: [DONE]\n\n',
+        );
+        await request.response.close();
+      });
+      await _routeMaintenanceUpstream(store, upstream.port);
+      process = await Process.start(binary, [
+        '--data-dir',
+        directory.path,
+        '--instance-id',
+        'maintenance-test',
+        '--env',
+        'test',
+      ]);
+      process.stderr.drain<void>();
+      final ready =
+          jsonDecode(
+                await process.stdout
+                    .transform(utf8.decoder)
+                    .transform(const LineSplitter())
+                    .first
+                    .timeout(const Duration(seconds: 20)),
+              )
+              as Map;
+      expect(ready['pid'], process.pid);
+      expect(ready['instanceId'], 'maintenance-test');
+    });
+    final gateway = HttpChatGateway(
+      baseUri: Uri.parse('http://127.0.0.1:1145'),
+      client: transport,
+    );
+    final chat = ChatViewModel(gateway: gateway);
+    addTearDown(() async {
+      if (release?.isCompleted == false) release!.complete();
+      chat.dispose();
+      gateway.dispose();
+      client.close(force: true);
+      process.kill();
+      await process.exitCode;
+      await upstream.close(force: true);
+      await directory.delete(recursive: true);
+    });
+    await tester.runAsync(() async {
+      await chat.loadModels();
+      await chat.loadHistory();
+    });
+    final session = chat.createLocalSession();
+    Future<void> send(String model) async {
+      await tester.runAsync(() async {
+        chat.updateDraft(session.sessionId, '现有会话继续对话');
+        await chat.send(session.sessionId, provider: 'deepseek', model: model);
+      });
+    }
+
+    Future<void> waitFor(bool Function() condition) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 15));
+      while (!condition() && DateTime.now().isBefore(deadline)) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 25)),
+        );
+        await tester.pump(const Duration(milliseconds: 25));
+      }
+      expect(condition(), isTrue);
+    }
+
+    Future<void> open() async {
+      await tester.tap(find.text('管理模型'));
+      await tester.pump();
+      await waitFor(
+        () => find.byType(LinearProgressIndicator).evaluate().isEmpty,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('已配置本地密钥'), findsNWidgets(2));
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const ValueKey('model-key')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+    }
+
+    Future<void> save() async {
+      await tester.tap(find.text('保存并应用'));
+      await tester.pump();
+      await waitFor(
+        () => find.byType(LinearProgressIndicator).evaluate().isEmpty,
+      );
+      expect(find.textContaining('本地模型已可用，可以继续对话'), findsOneWidget);
+      await tester.runAsync(() async {
+        await _routeMaintenanceUpstream(store, upstream.port);
+        expect(
+          await chat.applySavedModels(
+            provider: 'deepseek',
+            models: (await store.readDeepSeekModels()).map((v) => v.model),
+          ),
+          isTrue,
+        );
+      });
+    }
+
+    Future<void> close() async {
+      await tester.tap(find.text('关闭'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ModelConfigDialog), findsNothing);
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => showDialog<void>(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => ModelConfigDialog(store: store, chat: chat),
+              ),
+              child: const Text('管理模型'),
+            ),
+          ),
+        ),
+      ),
+    );
+    // 原会话已有历史，再保持第二个正式模型请求在途。
+    await send('chat');
+    await waitFor(() => session.runs.last.isTerminal);
+    final historyRun = session.runs.single;
+    release = Completer<void>();
+    await send('chat');
+    await waitFor(() => observed.length == 2);
+    final active = session.runs.last;
+    chat.updateDraft(session.sessionId, '下一条未发送草稿');
+    final oldEnv = await tester.runAsync(
+      () => File(p.join(directory.path, '.env')).readAsString(),
+    );
+    final sseBefore = transport.paths.where((v) => v.endsWith('/event')).length;
+    await open();
+    await close();
+    await open();
+    // 留空只改预算，两份不同的原 Key 都必须保留。
+    final settings = (await tester.runAsync(store.readDeepSeekModels))!;
+    final chatIndex = settings.indexWhere((v) => v.model == 'chat');
+    final advanced = find.byKey(ValueKey('model-advanced-$chatIndex'));
+    await tester.ensureVisible(advanced);
+    await tester.tap(advanced);
+    await tester.pumpAndSettle();
+    final output = find.byKey(ValueKey('model-output-$chatIndex'));
+    await tester.ensureVisible(output);
+    await tester.enterText(output, '1024');
+    await save();
+    expect(
+      await tester.runAsync(
+        () => File(p.join(directory.path, '.env')).readAsString(),
+      ),
+      oldEnv,
+    );
+    await close();
+    await open();
+    await tester.enterText(
+      find.byKey(const ValueKey('model-key')),
+      'shared-replacement',
+    );
+    await save();
+    expect(session.draft, '下一条未发送草稿');
+    expect(session.runs, [historyRun, active]);
+    expect(chat.selectedSessionId, session.sessionId);
+    expect(chat.activeRunCount, 1);
+    expect(active.isTerminal, isFalse);
+    expect(active.model, 'chat');
+    expect(active.provider, 'deepseek');
+    expect(observed, hasLength(2));
+    expect(observed.last.key, 'Bearer chat-original');
+    expect(observed.last.body['max_tokens'], 8192);
+    expect(
+      transport.paths.where((v) => v.endsWith('/event')),
+      hasLength(sseBefore),
+    );
+    final snapshot = (await tester.runAsync(
+      () => gateway.getRun(active.runId!),
+    ))!;
+    expect(snapshot.model, 'chat');
+    expect(snapshot.provider, 'deepseek');
+    await close();
+    release.complete();
+    release = null;
+    await waitFor(() => active.isTerminal);
+    expect(active.phase, ChatRunPhase.succeeded);
+    expect(chat.activeRunCount, 0);
+    expect(session.draft, '下一条未发送草稿');
+    await send('chat');
+    await waitFor(() => session.runs.last.isTerminal);
+    expect(observed.last.key, 'Bearer shared-replacement');
+    expect(observed.last.body['max_tokens'], 1024);
+    expect(observed.last.body['messages'].toString(), contains('保留已有回复'));
+    await send('reasoner');
+    await waitFor(() => session.runs.last.isTerminal);
+    expect(observed.last.key, 'Bearer shared-replacement');
+    expect(observed.last.body['model'], 'reasoner');
+    // 移除在途模型后，已有响应保留；需要续写时按原配置不可用失败。
+    release = Completer<void>();
+    finish = 'length';
+    await send('chat');
+    await waitFor(() => observed.length == 5);
+    final removedRun = session.runs.last;
+    chat.updateDraft(session.sessionId, '移除模型后仍保留草稿');
+    await open();
+    final remove = find.byTooltip('移除模型 ${chatIndex + 1}');
+    await tester.ensureVisible(remove);
+    await tester.tap(remove);
+    await tester.pumpAndSettle();
+    await save();
+    expect(chat.selectedModel!.model, 'reasoner');
+    expect(removedRun.model, 'chat');
+    expect(chat.activeRunCount, 1);
+    await close();
+    release.complete();
+    release = null;
+    await waitFor(() => removedRun.isTerminal);
+    expect(removedRun.phase, ChatRunPhase.failed);
+    final failed = (await tester.runAsync(
+      () => gateway.getRun(removedRun.runId!),
+    ))!;
+    expect(failed.error?.code, 'model_config_unavailable');
+    expect(failed.model, 'chat');
+    expect(removedRun.rawText, '保留已有回复');
+    expect(observed, hasLength(5));
+    expect(session.runs, hasLength(5));
+    expect(session.draft, '移除模型后仍保留草稿');
+    expect(chat.activeRunCount, 0);
+    final history = (await tester.runAsync(
+      () => gateway.getSession(session.sessionId),
+    ))!;
+    expect(history.runIds, hasLength(5));
+    final healthRequest = (await tester.runAsync(
+      () => client.getUrl(Uri.parse('http://127.0.0.1:1145/health')),
+    ))!;
+    final health = (await tester.runAsync(
+      () async =>
+          jsonDecode(
+                await utf8.decoder.bind(await healthRequest.close()).join(),
+              )
+              as Map,
+    ))!;
+    expect(health['data']['pid'], process.pid);
+    expect(health['data']['instanceId'], 'maintenance-test');
+    await tester.pumpWidget(const SizedBox());
+    expect(tester.takeException(), isNull);
+  }, timeout: const Timeout(Duration(minutes: 3)));
+}
+
+// 正式保存仍只接受官方地址，仅在测试网络边界改接可控上游。
+Future<void> _routeMaintenanceUpstream(ConfigFileStore store, int port) async {
+  final editor = YamlEditor(await File(store.configPath).readAsString());
+  editor.update(['chat_model', 0, 'base_url'], 'http://127.0.0.1:$port');
+  final staging = File('${store.configPath}.upstream');
+  await staging.writeAsString(editor.toString(), flush: true);
+  await staging.rename(store.configPath);
+}
+
+class _RealHttpOverrides extends HttpOverrides {}
+
+// 仅记录真实 HTTP 边界的路径，验证配置操作没有另建聊天或 SSE。
+class _ObservedClient implements HttpClient {
+  _ObservedClient(this.client);
+  final HttpClient client;
+  final paths = <String>[];
+
+  /// JSON 请求完整转交真实客户端。
+  @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) {
+    paths.add(url.path);
+    return client.openUrl(method, url);
+  }
+
+  /// SSE 请求完整转交真实客户端。
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) {
+    paths.add(url.path);
+    return client.getUrl(url);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

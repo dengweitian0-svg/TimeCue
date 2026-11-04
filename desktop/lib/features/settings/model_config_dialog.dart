@@ -25,9 +25,32 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
   bool _loaded = false;
   bool _visibleKey = false;
   bool _allowClose = false;
+  bool _confirming = false;
+  final _keyStatus = <String, bool>{};
+  List<(String?, String, String, String)> _savedDrafts = [];
   String? _error;
   String? _message;
   List<DeepSeekModelSettings>? _pendingApplication;
+
+  List<(String?, String, String, String)> get _drafts => [
+    for (final draft in _models)
+      (
+        draft.originalModel,
+        draft.model.text,
+        draft.context.text,
+        draft.output.text,
+      ),
+  ];
+
+  bool get _dirty =>
+      _loaded && (_key.text.isNotEmpty || !_sameDrafts(_drafts, _savedDrafts));
+
+  bool _sameDrafts(
+    List<(String?, String, String, String)> left,
+    List<(String?, String, String, String)> right,
+  ) =>
+      left.length == right.length &&
+      Iterable<int>.generate(left.length).every((i) => left[i] == right[i]);
 
   @override
   void initState() {
@@ -47,10 +70,13 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
         draft.dispose();
       }
       _models.clear();
+      _keyStatus.clear();
       for (final value in settings) {
         _models.add(_ModelDraft(_nextModelId++, value));
+        _keyStatus[value.model] = value.hasLocalKey;
       }
       if (_models.isEmpty) _models.add(_ModelDraft(_nextModelId++));
+      _savedDrafts = _drafts;
       _loaded = true;
     } catch (_) {
       if (mounted) {
@@ -72,7 +98,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       RegExp(r'^[0-9]+$').hasMatch(text) ? int.tryParse(text) : null;
 
   Future<void> _save() async {
-    if (_busy || !_loaded) return;
+    if (_busy || _confirming || _allowClose || !_loaded) return;
     if (!_form.currentState!.validate()) {
       OperationToast.error(context, '请检查模型 ID、API Key 和预算。');
       return;
@@ -96,7 +122,9 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       if (!mounted) return;
       for (final draft in _models) {
         draft.originalModel = draft.model.text.trim();
+        _keyStatus[draft.originalModel!] = true;
       }
+      _savedDrafts = _drafts;
       _key.clear();
       _visibleKey = false;
       _pendingApplication = settings;
@@ -123,17 +151,18 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
 
   Future<void> _apply() async {
     final settings = _pendingApplication;
-    if (_busy || settings == null) return;
+    if (_busy || _confirming || _allowClose || settings == null) return;
     setState(() {
       _busy = true;
       _error = null;
       _message = '设置已保存，正在等待本地服务加载…';
     });
-    final available = await widget.chat.applySavedModels(
+    final applied = await widget.chat.applySavedModels(
       provider: 'deepseek',
       models: settings.map((v) => v.model),
     );
     if (!mounted) return;
+    final available = applied && widget.chat.acceptingOperations;
     setState(() {
       _busy = false;
       if (available) {
@@ -150,11 +179,41 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
     }
   }
 
-  void _close() {
-    if (_busy || _allowClose) return;
+  Future<void> _close() async {
+    if (_busy || _confirming || _allowClose) return;
+    if (_dirty) {
+      _confirming = true;
+      bool discard;
+      try {
+        discard =
+            await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                scrollable: true,
+                title: const Text('舍弃未保存的修改？'),
+                content: const Text('模型设置尚未保存，关闭后将保留原有配置。'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('继续编辑'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('舍弃修改'),
+                  ),
+                ],
+              ),
+            ) ==
+            true;
+      } finally {
+        _confirming = false;
+      }
+      if (!mounted || !discard) return;
+    }
     setState(() => _allowClose = true);
+    final route = ModalRoute.of(context);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) Navigator.of(context).pop();
+      if (mounted && route?.isCurrent == true) Navigator.of(context).pop();
     });
   }
 
@@ -195,11 +254,19 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
         decoration: const InputDecoration(labelText: '模型 ID'),
         validator: (v) => v == null || v.trim().isEmpty ? '请填写模型 ID' : null,
       ),
+      Text(
+        _keyStatus[draft.model.text.trim()] == true
+            ? '已配置本地密钥'
+            : _keyStatus[draft.model.text.trim()] == false
+            ? '未配置本地密钥，请填写新 Key。'
+            : '目标模型需有本地密钥，否则请填写新 Key。',
+      ),
       ExpansionTile(
         key: ValueKey('model-advanced-${draft.id}'),
         title: const Text('高级设置'),
         tilePadding: EdgeInsets.zero,
         maintainState: true,
+        enabled: !_busy,
         children: [
           const Text('这是本地预算初值，请按所用模型的实际容量调整。'),
           TextFormField(
@@ -246,11 +313,13 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
     },
     child: CallbackShortcuts(
       bindings: {const SingleActivator(LogicalKeyboardKey.escape): _close},
-      child: AlertDialog(
-        title: const Text('DeepSeek 模型设置'),
-        content: SizedBox(
-          width: 480,
-          child: SingleChildScrollView(
+      child: Focus(
+        autofocus: true,
+        child: AlertDialog(
+          scrollable: true,
+          title: const Text('DeepSeek 模型设置'),
+          content: SizedBox(
+            width: 480,
             child: Form(
               key: _form,
               child: Column(
@@ -273,6 +342,8 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                       decoration: InputDecoration(
                         labelText: 'API Key',
                         helperText: '新 Key 用于全部模型；留空保留各模型已有本地密钥。',
+                        helperMaxLines: 4,
+                        errorMaxLines: 3,
                         suffixIcon: IconButton(
                           tooltip: _visibleKey ? '隐藏密钥' : '显示密钥',
                           onPressed: _busy
@@ -317,20 +388,23 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
               ),
             ),
           ),
-        ),
-        actions: [
-          TextButton(onPressed: _busy ? null : _close, child: const Text('关闭')),
-          if (_pendingApplication != null)
-            FilledButton(
-              onPressed: _busy ? null : _apply,
-              child: const Text('重试加载'),
-            )
-          else
-            FilledButton(
-              onPressed: _busy || !_loaded ? null : _save,
-              child: const Text('保存并应用'),
+          actions: [
+            TextButton(
+              onPressed: _busy ? null : _close,
+              child: const Text('关闭'),
             ),
-        ],
+            if (_pendingApplication != null)
+              FilledButton(
+                onPressed: _busy ? null : _apply,
+                child: const Text('重试加载'),
+              )
+            else
+              FilledButton(
+                onPressed: _busy || !_loaded ? null : _save,
+                child: const Text('保存并应用'),
+              ),
+          ],
+        ),
       ),
     ),
   );
