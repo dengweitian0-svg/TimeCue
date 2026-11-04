@@ -66,7 +66,16 @@ class ChatViewModel extends ChangeNotifier {
     required String provider,
     required String model,
     Duration timeout = const Duration(seconds: 10),
+  }) => applySavedModels(provider: provider, models: [model], timeout: timeout);
+
+  /// 等待提供方的完整目标集合均可用，确认新增及移除后恢复有效选择。
+  Future<bool> applySavedModels({
+    required String provider,
+    required Iterable<String> models,
+    Duration timeout = const Duration(seconds: 10),
   }) async {
+    final expected = models.toSet();
+    if (expected.isEmpty) return false;
     final gateway = _gateway;
     if (!_acceptingOperations || _disposed || gateway is! ChatModelGateway) {
       return false;
@@ -98,18 +107,16 @@ class ChatViewModel extends ChangeNotifier {
           return false;
         }
         _publishModels(values);
-        final target = values
-            .where(
-              (v) => v.provider == provider && v.model == model && v.available,
-            )
-            .firstOrNull;
-        if (target != null &&
+        final targets = values.where((v) => v.provider == provider).toList();
+        if (targets.length == expected.length &&
+            targets.map((v) => v.model).toSet().containsAll(expected) &&
+            targets.every((v) => v.available) &&
             clock.elapsed >= const Duration(milliseconds: 500)) {
           _selectedModel =
               values
                   .where((v) => v.available && v.identity == previous)
                   .firstOrNull ??
-              target;
+              targets.first;
           return true;
         }
       }

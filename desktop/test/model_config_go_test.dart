@@ -124,19 +124,7 @@ void main() {
     await chat.loadHistory();
     expect(chat.models, isEmpty);
     expect(chat.historyLoaded, isTrue);
-    for (final value in [
-      (key: 'controlled-first', context: 32768, output: 8192),
-      (key: 'controlled-second', context: 32768, output: 8192),
-      (key: 'controlled-second', context: 36000, output: 4096),
-    ]) {
-      await store.saveDeepSeekModel(
-        DeepSeekModelSettings(
-          model: 'chat',
-          contextWindow: value.context,
-          maxOutputTokens: value.output,
-        ),
-        apiKey: value.key,
-      );
+    Future<void> routeUpstream() async {
       final editor = YamlEditor(await File(store.configPath).readAsString());
       expect(
         editor.parseAt(['chat_model', 0, 'base_url']).value,
@@ -151,6 +139,43 @@ void main() {
       final staging = File(p.join(data.path, 'test-upstream.yaml'));
       await staging.writeAsString(editor.toString(), flush: true);
       await staging.rename(store.configPath);
+    }
+
+    Future<void> sendSelected(String key, int output) async {
+      final selected = chat.selectedModel!;
+      final session = chat.createLocalSession();
+      chat.updateDraft(session.sessionId, '多模型正式网关验证');
+      await chat.send(
+        session.sessionId,
+        provider: selected.provider,
+        model: selected.model,
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 15));
+      while (!session.runs.single.isTerminal &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      expect(session.runs.single.phase, ChatRunPhase.succeeded);
+      expect(observed.last.request['model'], selected.model);
+      expect(observed.last.request['max_tokens'], output);
+      expect(observed.last.authorization, 'Bearer $key');
+      await checkIdentity();
+    }
+
+    for (final value in [
+      (key: 'controlled-first', context: 32768, output: 8192),
+      (key: 'controlled-second', context: 32768, output: 8192),
+      (key: 'controlled-second', context: 36000, output: 4096),
+    ]) {
+      await store.saveDeepSeekModel(
+        DeepSeekModelSettings(
+          model: 'chat',
+          contextWindow: value.context,
+          maxOutputTokens: value.output,
+        ),
+        apiKey: value.key,
+      );
+      await routeUpstream();
       expect(
         await chat.applySavedModel(provider: 'deepseek', model: 'chat'),
         isTrue,
@@ -170,30 +195,80 @@ void main() {
       await checkIdentity();
     }
     expect(observed, hasLength(3));
+    await store.saveDeepSeekModels([
+      (await store.readDeepSeekModels()).single,
+      const DeepSeekModelSettings(
+        model: 'reasoner',
+        contextWindow: 24000,
+        maxOutputTokens: 2048,
+      ),
+    ], apiKey: 'controlled-shared');
+    await routeUpstream();
+    expect(
+      await chat.applySavedModels(
+        provider: 'deepseek',
+        models: ['chat', 'reasoner'],
+      ),
+      isTrue,
+    );
+    expect(chat.selectedModel!.model, 'chat');
+    await sendSelected('controlled-shared', 4096);
+    chat.selectModel(
+      chat.models.firstWhere((v) => v.model == 'reasoner').identity,
+    );
+    await sendSelected('controlled-shared', 2048);
+    await store.saveDeepSeekModels([
+      const DeepSeekModelSettings(
+        model: 'reasoner-v2',
+        originalModel: 'reasoner',
+        contextWindow: 28000,
+        maxOutputTokens: 1024,
+      ),
+    ], apiKey: 'controlled-renamed');
+    await routeUpstream();
+    expect(
+      await chat.applySavedModels(
+        provider: 'deepseek',
+        models: ['reasoner-v2'],
+      ),
+      isTrue,
+    );
+    expect(chat.models.single.model, 'reasoner-v2');
+    expect(chat.selectedModel!.model, 'reasoner-v2');
+    await sendSelected('controlled-renamed', 1024);
+    expect(
+      await File(p.join(data.path, '.env')).readAsString(),
+      contains('DEEPSEEK_CHAT=controlled-shared'),
+    );
+    expect(await gateway.listSessions(), hasLength(6));
     // 缩小上下文预算后，原本可发送的输入由正式预算门禁拒绝，不访问上游。
     await store.saveDeepSeekModel(
       const DeepSeekModelSettings(
-        model: 'chat',
+        model: 'reasoner-v2',
         contextWindow: 64,
         maxOutputTokens: 32,
       ),
-      apiKey: 'controlled-second',
+      apiKey: 'controlled-renamed',
     );
     expect(
-      await chat.applySavedModel(provider: 'deepseek', model: 'chat'),
+      await chat.applySavedModel(provider: 'deepseek', model: 'reasoner-v2'),
       isTrue,
     );
     final rejected = chat.createLocalSession();
     chat.updateDraft(rejected.sessionId, '较长输入' * 2000);
-    await chat.send(rejected.sessionId, provider: 'deepseek', model: 'chat');
+    await chat.send(
+      rejected.sessionId,
+      provider: 'deepseek',
+      model: 'reasoner-v2',
+    );
     expect(rejected.runs.single.phase, ChatRunPhase.failed);
-    expect(observed, hasLength(3));
+    expect(observed, hasLength(6));
     await stop(process);
     process = await start();
     expect(process.pid, isNot(firstPid));
     expect((await store.readDeepSeekModel())!.contextWindow, 64);
     await chat.loadModels();
-    expect(chat.selectedModel!.model, 'chat');
+    expect(chat.selectedModel!.model, 'reasoner-v2');
     await stop(process);
   }, timeout: const Timeout(Duration(minutes: 3)));
 }

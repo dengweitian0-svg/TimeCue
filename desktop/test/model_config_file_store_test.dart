@@ -14,6 +14,131 @@ void main() {
   });
   tearDown(() => directory.delete(recursive: true));
 
+  test('多模型增删改保留原字段与注释，一次 Key 写入全部目标并保留旧 Key', () async {
+    await File(store.configPath).writeAsString('''# 用户配置
+unknown: keep
+log: {level: warn}
+chat_model:
+  - provider: other
+    models: [{model: preserved, context_window: 20000}]
+  - provider: deepseek
+    custom: keep
+    models:
+      - model: chat # 模型注释
+        context_window: 32768
+        custom_model: keep
+      - model: removed
+        context_window: 32768
+  - provider: deepseek
+    models:
+      - model: reasoner
+        context_window: 32768
+''');
+    final env = File(p.join(directory.path, '.env'));
+    await env.writeAsString('OTHER=keep\nDEEPSEEK_REMOVED=old\n');
+    final original = await store.readDeepSeekModels();
+    expect(original.map((v) => v.model), ['chat', 'removed', 'reasoner']);
+    await store.saveDeepSeekModels([
+      const DeepSeekModelSettings(
+        model: 'renamed',
+        originalModel: 'chat',
+        contextWindow: 24000,
+        maxOutputTokens: 4000,
+      ),
+      original.last,
+      const DeepSeekModelSettings(model: 'new-model'),
+    ], apiKey: 'shared-key');
+    final reopened = await ConfigFileStore(directory.path).readDeepSeekModels();
+    expect(reopened.map((v) => v.model).toSet(), {
+      'renamed',
+      'reasoner',
+      'new-model',
+    });
+    final text = await File(store.configPath).readAsString();
+    final root = YamlEditor(text).parseAt([]).value as Map;
+    expect(text, contains('# 模型注释'));
+    expect(root['unknown'], 'keep');
+    expect(root['log']['level'], 'warn');
+    expect(root['chat_model'][0]['models'][0]['model'], 'preserved');
+    final renamed = (root['chat_model'][1]['models'] as List).singleWhere(
+      (v) => v['model'] == 'renamed',
+    );
+    expect(renamed['custom_model'], 'keep');
+    expect(renamed['max_output_tokens'], 4000);
+    expect(await env.readAsString(), contains('DEEPSEEK_REMOVED=old'));
+    for (final name in ['RENAMED', 'REASONER', 'NEW_MODEL']) {
+      expect(await env.readAsString(), contains('DEEPSEEK_$name=shared-key'));
+    }
+  });
+
+  test('完整集合冲突和缺 Key 不写入，已有 Key 可留空保留', () async {
+    await File(store.configPath).writeAsString('''chat_model:
+  - provider: deepseek
+    models: [{model: chat, context_window: 32768}]
+  - provider: deepseek_new
+    models: [{model: model, context_window: 32768}]
+''');
+    final env = File(p.join(directory.path, '.env'));
+    await env.writeAsString(
+      'DEEPSEEK_CHAT=old\nOTHER="one\nDEEPSEEK_MISSING=fake\nlast"\n',
+    );
+    final before = await File(store.configPath).readAsString();
+    final beforeEnv = await env.readAsString();
+    for (final settings in <List<DeepSeekModelSettings>>[
+      [],
+      [
+        const DeepSeekModelSettings(model: 'chat'),
+        const DeepSeekModelSettings(model: 'chat'),
+      ],
+      [
+        const DeepSeekModelSettings(model: 'a.b'),
+        const DeepSeekModelSettings(model: 'a-b'),
+      ],
+      [const DeepSeekModelSettings(model: 'new-model')],
+      [const DeepSeekModelSettings(model: 'chat', maxOutputTokens: 32768)],
+    ]) {
+      await expectLater(
+        store.saveDeepSeekModels(settings, apiKey: 'replacement'),
+        throwsFormatException,
+      );
+      expect(await File(store.configPath).readAsString(), before);
+      expect(await env.readAsString(), beforeEnv);
+    }
+    await expectLater(
+      store.saveDeepSeekModels([
+        const DeepSeekModelSettings(model: 'chat'),
+        const DeepSeekModelSettings(model: 'missing'),
+      ], apiKey: ''),
+      throwsFormatException,
+    );
+    expect(await File(store.configPath).readAsString(), before);
+    expect(await env.readAsString(), beforeEnv);
+    await store.saveDeepSeekModels([
+      const DeepSeekModelSettings(
+        model: 'chat',
+        contextWindow: 24000,
+        maxOutputTokens: 4000,
+      ),
+    ], apiKey: '');
+    expect(await env.readAsString(), beforeEnv);
+    expect((await store.readDeepSeekModels()).single.contextWindow, 24000);
+  });
+
+  test('注释前的空密钥和纯空白密钥不能用于新增目标模型', () async {
+    final env = File(p.join(directory.path, '.env'));
+    for (final value in ["'' # empty", '"" # empty', "'   '"]) {
+      await env.writeAsString('DEEPSEEK_CHAT=$value\n');
+      await expectLater(
+        store.saveDeepSeekModels([
+          const DeepSeekModelSettings(model: 'chat'),
+        ], apiKey: ''),
+        throwsFormatException,
+      );
+      expect(await File(store.configPath).exists(), isFalse);
+      expect(await env.readAsString(), 'DEEPSEEK_CHAT=$value\n');
+    }
+  });
+
   for (final model in ['chat', 'renamed-chat']) {
     test('前置空分组时保存 $model 更新当前显示模型，保留其他分组及模型', () async {
       await File(store.configPath).writeAsString('''# 保留分组
