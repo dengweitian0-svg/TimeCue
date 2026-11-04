@@ -25,14 +25,14 @@ void main() {
       server.listen((request) async {
         request.response.headers.contentType = ContentType.json;
         if (request.uri.path == '/v1/model') {
-          final saved = await store.readDeepSeekModel();
+          final saved = await store.readDeepSeekModels();
           request.response.write(
             jsonEncode({
               'models': [
-                if (saved != null)
+                for (final value in saved)
                   {
                     'provider': 'deepseek',
-                    'model': saved.model,
+                    'model': value.model,
                     'available': true,
                   },
               ],
@@ -148,6 +148,42 @@ void main() {
     );
     expect(chat.selectedModel!.model, 'chat');
     expect(find.textContaining('本地模型已可用'), findsOneWidget);
+    await tester.ensureVisible(find.text('添加模型'));
+    await tester.tap(find.text('添加模型'));
+    await tester.pumpAndSettle();
+    final secondId = find.byKey(const ValueKey('model-id-1'));
+    await tester.ensureVisible(secondId);
+    await tester.enterText(secondId, 'reasoner');
+    final keyField = find.byKey(const ValueKey('model-key'));
+    await tester.ensureVisible(keyField);
+    await tester.enterText(keyField, 'shared-multiple');
+    await tester.tap(find.text('保存并应用'));
+    await flush();
+    expect(chat.models.map((v) => v.model).toSet(), {'chat', 'reasoner'});
+    expect(chat.selectedModel!.model, 'chat');
+    final env = (await tester.runAsync(
+      () => File('${directory.path}/.env').readAsString(),
+    ))!;
+    expect(env, contains('DEEPSEEK_CHAT=shared-multiple'));
+    expect(env, contains('DEEPSEEK_REASONER=shared-multiple'));
+    final remove = find.byTooltip('移除模型 1');
+    await tester.ensureVisible(remove);
+    await tester.tap(remove);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byWidgetPredicate(
+              (v) => v is IconButton && v.tooltip == '移除模型 1',
+            ),
+          )
+          .onPressed,
+      isNull,
+    );
+    await tester.tap(find.text('保存并应用'));
+    await flush();
+    expect(chat.models.single.model, 'reasoner');
+    expect(chat.selectedModel!.model, 'reasoner');
     await tester.pumpWidget(const SizedBox());
     client.close(force: true);
     await tester.pumpAndSettle();
