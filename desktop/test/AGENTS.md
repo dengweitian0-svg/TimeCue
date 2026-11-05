@@ -70,10 +70,11 @@
 - `chat_conversation_test.dart`：验证单会话发送、独立下一条草稿、多工具名称、停止与最终正文、单双栏阅读位置、Enter/Shift+Enter/输入法组合保护及代码复制；闭合代码块在流式期间暂缓高亮，终态恢复高亮并保留原文和文字缩放。广播流取消涉及真实异步 Future，测试显式推进真实与假时钟。
 - `chat_markdown_compatibility_test.dart`：固定 gpt_markdown 在累计完整文本、未闭合语法、代码、宽表格及文字缩放下的渲染兼容性，不实现运行连接或逐增量 Markdown 解析。
 - `chat_spread_test.dart`：AI 第四标签的双页/单栏、历史导航、本地草稿保留与清空前确认；既有 Widget 回归继续检查日程编辑草稿守卫。验证 640×480、1280×800、1440×900 与文字缩放布局。
-- `chat_acceptance_test.dart`：使用 `fixtures/chat_widget_gateway.dart` 的 Widget 专用 provider/model，由每个测试显式 arrangeHistory，构造时不播种；保留尺寸、DPR、文字缩放、长历史、Thinking 隐私、多工具及 Markdown 原文的布局覆盖，不作为真实聊天验收。
+- `chat_acceptance_test.dart`：使用 `fixtures/chat_widget_gateway.dart` 的 Widget 专用 provider/model，由每个测试显式 arrangeHistory，构造时不播种；保留尺寸、DPR、文字缩放、长历史、生成期间真实思考内容、多工具及 Markdown 原文的布局覆盖，不作为真实聊天验收。
 - `tool/capture_chat_visuals_test.dart`：复用同一网关夹具生成欢迎、历史搜索、单双栏、Thinking、多工具、代码表格、停止、重连和失败状态截图到 `build/visuals/chat-phase6/`；截图为本地验收产物，不作为真机平台证据。
 - `chat_contrast_test.dart`：验证纸面正文、主要操作、输入控件、书封入口、恢复入口和页码小字的前景与背景对比度。
 - `chat_message_scroll_test.dart`：验证多轮回复与工具到达时跟随最新、用户上读后保留阅读位置，以及回到最新入口恢复跟随。
+- `chat_ordered_content_test.dart`：使用合成事件夹具验证思考、中间正文、工具、后续思考和最终答案按事件顺序排列；思考生成时展开、完成后折叠，手动选择不被后续更新覆盖；终态概况不覆盖中间正文或重复追加；新到达正文逐步显示并在确认结束时立即补齐；历史运行直接显示完整正文，不重播动画。夹具不代表真实模型或工具执行。
 - `cat_chat_hotspot_test.dart`：三时段资源与 cover 几何、透明猫咪热区、裁切、鼠标/键盘入口、关闭焦点返回和鼠标关闭后的提示/焦点框清理，猫咪悬停提示与房间入口共用的颜色，以及房间四入口的半透明颜色、胶囊形状和添加入口禁用状态。可选 `TIMECUE_CAPTURE_CHAT=true` 输出本地 Widget PNG；截图与替身键盘操作不替代 Windows 真机、DPI、输入法及跨显示器验收。
 
 - `chat_t01_contract_test.dart` 与迁移后的聊天测试验证四字段创建回执、provider、独立 error/end、content-only 增量、失败部分回复、模型选择器及终态回执直接恢复；HTTP/SSE 替身只用于前端隔离测试，不作为实际模型验收。

@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../theme/notebook_theme.dart';
 import '../../contracts/chat_contracts.dart';
-import 'chat_markdown_body.dart';
-import 'chat_tool_call_list.dart';
+import 'chat_content_segments.dart';
 import 'chat_view_model.dart';
 import 'chat_event_timeline.dart';
 
@@ -19,6 +18,7 @@ class ChatMessageList extends StatefulWidget {
     required this.onRetryCreate,
     required this.onRetryConnection,
     this.onLoadMoreEvents,
+    this.onToggleReasoning,
   });
 
   final String sessionId;
@@ -29,6 +29,8 @@ class ChatMessageList extends StatefulWidget {
   final ValueChanged<String> onRetryCreate;
   final ValueChanged<String> onRetryConnection;
   final ValueChanged<String>? onLoadMoreEvents;
+  final void Function(String runId, String segmentId, bool expanded)?
+  onToggleReasoning;
 
   @override
   State<ChatMessageList> createState() => _ChatMessageListState();
@@ -131,6 +133,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
                     onRetryCreate: widget.onRetryCreate,
                     onRetryConnection: widget.onRetryConnection,
                     onLoadMoreEvents: widget.onLoadMoreEvents,
+                    onToggleReasoning: widget.onToggleReasoning,
                   ),
           ),
         ),
@@ -187,6 +190,7 @@ class _ChatTurn extends StatelessWidget {
     required this.onRetryCreate,
     required this.onRetryConnection,
     this.onLoadMoreEvents,
+    this.onToggleReasoning,
   });
 
   final String sessionId;
@@ -194,6 +198,8 @@ class _ChatTurn extends StatelessWidget {
   final ValueChanged<String> onRetryCreate;
   final ValueChanged<String> onRetryConnection;
   final ValueChanged<String>? onLoadMoreEvents;
+  final void Function(String runId, String segmentId, bool expanded)?
+  onToggleReasoning;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -245,24 +251,16 @@ class _ChatTurn extends StatelessWidget {
                         ),
                       ],
                     ),
-                    if (run.toolCalls.isNotEmpty)
-                      ChatToolCallList(calls: run.toolCalls),
-                    if (run.rawText.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: ChatMarkdownBody(
-                          key: ValueKey('chat-assistant-${run.messageId}'),
-                          data: run.rawText,
-                          isStreaming: !run.isTerminal,
-                        ),
-                      )
-                    else if (run.phase == ChatRunPhase.creating ||
-                        run.phase == ChatRunPhase.connecting ||
-                        run.phase == ChatRunPhase.thinking)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 5),
-                        child: LinearProgressIndicator(minHeight: 2),
-                      ),
+                    ChatContentSegments(
+                      run: run,
+                      onToggleReasoning: onToggleReasoning == null
+                          ? null
+                          : (segment, expanded) => onToggleReasoning!(
+                              run.runId ?? run.messageId,
+                              segment.id,
+                              expanded,
+                            ),
+                    ),
                     if (run.timeline.isNotEmpty || onLoadMoreEvents != null)
                       ChatEventTimeline(run: run, onLoadMore: onLoadMoreEvents),
                     if (run.error != null)

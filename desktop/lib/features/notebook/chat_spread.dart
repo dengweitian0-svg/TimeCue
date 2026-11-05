@@ -442,6 +442,12 @@ class _ChatSpreadState extends State<ChatSpread> {
               },
               onRetryCreate: (id) => chat.retryCreate(id),
               onRetryConnection: (id) => chat.retryConnection(id),
+              onToggleReasoning: (runId, segmentId, expanded) =>
+                  chat.setSegmentExpanded(
+                    runId: runId,
+                    segmentId: segmentId,
+                    expanded: expanded,
+                  ),
               onLoadMoreEvents: chat.supportsEventHistory
                   ? (id) => chat.loadMoreEvents(id)
                   : null,
