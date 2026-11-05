@@ -147,6 +147,18 @@ class ChatViewModel extends ChangeNotifier {
     _modelsError = null;
   }
 
+  /// 记录用户对某段思考展开状态的手动选择，供当前保留的会话展示状态复用。
+  void setSegmentExpanded({
+    required String runId,
+    required String segmentId,
+    required bool expanded,
+  }) {
+    final run = _runsById[runId] ?? _deletedRuns[runId];
+    if (run == null) return;
+    run.setSegmentExpanded(segmentId, expanded);
+    _scheduleNotify();
+  }
+
   /// 只选择本地可用的模型。
   void selectModel(String identity) {
     _selectedModel = _models
@@ -965,6 +977,7 @@ class ChatViewModel extends ChangeNotifier {
     if (signal is ChatRunEventsNoContent) {
       run._sseFinished = true;
       run._terminalConfirmed = true;
+      run._completeOpenReasoning();
       run._status = null;
       run._cancelPending = false;
       run._phase = ChatRunPhase.recovering;
@@ -1009,7 +1022,11 @@ class ChatViewModel extends ChangeNotifier {
     if (subscription != null) await subscription.cancel();
   }
 
-  void _applyEvent(ChatRunState run, ChatSseEvent event) {
+  void _applyEvent(
+    ChatRunState run,
+    ChatSseEvent event, {
+    bool backfill = false,
+  }) {
     if (event.eventId <= run.lastEventId) return;
     if (event.eventId != run.lastEventId + 1) throw StateError('事件序号存在缺口');
     final previousPhase = run._phase;
@@ -1022,11 +1039,16 @@ class ChatViewModel extends ChangeNotifier {
       case ChatEventType.compact:
         break;
       case ChatEventType.thinking:
+        run._appendReasoning(
+          (event.data as ChatContentEventData).content,
+          event.eventId,
+        );
         if (!run.isTerminal && !run._cancelPending) {
           run._phase = ChatRunPhase.thinking;
         }
       case ChatEventType.text:
         final data = event.data as ChatContentEventData;
+        run._appendText(data.content, event.eventId);
         if (!run.isTerminal) {
           if (!run._cancelPending) run._phase = ChatRunPhase.replying;
           run._rawText += data.content;
@@ -1067,17 +1089,29 @@ class ChatViewModel extends ChangeNotifier {
             ),
           );
         }
+        run._appendTools(
+          event.eventId,
+          tools.map((tool) => '${event.eventId}:${tool.id}'),
+        );
         if (!run.isTerminal && !run._cancelPending) {
           run._phase = ChatRunPhase.toolCalling;
         }
       case ChatEventType.end:
         final end = event.data as ChatEndEventData;
+        run._completeOpenReasoning();
         if (!run.isTerminal) run._needsSnapshot = true;
         run._status = end.status;
         run._terminalConfirmed = true;
         run._sseFinished = true;
         run._cancelPending = false;
         run._phase = run._statusPhase;
+    }
+    if (backfill) {
+      for (final segment in run._segments) {
+        if (segment.content.length > segment.instantLength) {
+          segment.instantLength = segment.content.length;
+        }
+      }
     }
     run._timeline.add(event);
     run._lastEventId = event.eventId;
@@ -1116,7 +1150,7 @@ class ChatViewModel extends ChangeNotifier {
       }
       final before = run.lastEventId;
       for (final saved in page.events) {
-        _applyEvent(run, saved);
+        _applyEvent(run, saved, backfill: true);
       }
       if (run.lastEventId == before) throw StateError('事件分页未前进');
       run._hasMoreEvents = page.hasMore;
@@ -1190,6 +1224,7 @@ class ChatViewModel extends ChangeNotifier {
     }
     run._terminalConfirmed = true;
     run._sseFinished = true;
+    run._completeOpenReasoning();
     run._needsSnapshot = false;
     run._rawText = snapshot.output ?? '';
     run._error = snapshot.error?.message;
@@ -1555,6 +1590,88 @@ class ChatRunState {
   /// 已连续应用的原始事件，与最终正文投影分别保留。
   List<ChatSseEvent> get timeline => List.unmodifiable(_timeline);
 
+  final List<ChatContentSegment> _segments = [];
+  int _segmentSeq = 0;
+
+  /// 按事件发生顺序累积的思考、正文和工具内容段。
+  List<ChatContentSegment> get segments => List.unmodifiable(_segments);
+
+  /// 追加思考增量；连续思考事件合并为同一段。
+  void _appendReasoning(String content, int seq) {
+    if (content.isEmpty) return;
+    final last = _segments.isEmpty ? null : _segments.last;
+    // 历史分页中的连续思考仍属同段；终态完成标记不拆分后续已存增量。
+    if (last != null && last.kind == ChatSegmentKind.reasoning) {
+      last.addContent(content);
+      return;
+    }
+    _segments.add(
+      ChatContentSegment(
+          id: 'reasoning-${++_segmentSeq}',
+          kind: ChatSegmentKind.reasoning,
+          startSeq: seq,
+        )
+        ..completed = isTerminal
+        ..addContent(content),
+    );
+  }
+
+  /// 追加正文增量；正文开始即结束前一段尚未完成的思考。
+  void _appendText(String content, int seq) {
+    if (content.isEmpty) return;
+    _completeOpenReasoning();
+    final last = _segments.isEmpty ? null : _segments.last;
+    if (last != null && last.kind == ChatSegmentKind.text) {
+      last.addContent(content);
+      return;
+    }
+    _segments.add(
+      ChatContentSegment(
+        id: 'text-${++_segmentSeq}',
+        kind: ChatSegmentKind.text,
+        startSeq: seq,
+      )..addContent(content),
+    );
+  }
+
+  /// 记录同一开始事件中的工具请求，供按顺序内联展示。
+  void _appendTools(int seq, Iterable<String> instanceIds) {
+    _completeOpenReasoning();
+    final last = _segments.isEmpty ? null : _segments.last;
+    final segment =
+        last != null &&
+            last.kind == ChatSegmentKind.tool &&
+            last.startSeq == seq
+        ? last
+        : ChatContentSegment(
+            id: 'tool-${++_segmentSeq}',
+            kind: ChatSegmentKind.tool,
+            startSeq: seq,
+          );
+    if (!identical(segment, last)) _segments.add(segment);
+    segment.toolIds.addAll(instanceIds);
+  }
+
+  /// 本段思考后出现正文、工具或终态时完成该段，默认折叠。
+  void _completeOpenReasoning() {
+    final last = _segments.isEmpty ? null : _segments.last;
+    if (last != null &&
+        last.kind == ChatSegmentKind.reasoning &&
+        !last.completed) {
+      last.completed = true;
+    }
+  }
+
+  /// 用户手动选择某段思考的展开状态，后续自动更新不再覆盖。
+  void setSegmentExpanded(String segmentId, bool expanded) {
+    for (final segment in _segments) {
+      if (segment.id == segmentId) {
+        segment.expandedOverride = expanded;
+        return;
+      }
+    }
+  }
+
   bool _terminalConfirmed = false;
   bool _sseFinished = false;
   bool _needsSnapshot = false;
@@ -1604,6 +1721,48 @@ class ChatRunState {
     ChatRunStatus.cancelled => ChatRunPhase.cancelled,
     ChatRunStatus.running || null => ChatRunPhase.running,
   };
+}
+
+/// 可观察内容段的种类，只描述展示顺序，不表达模型逻辑调用分组。
+enum ChatSegmentKind { reasoning, text, tool }
+
+/// 运行中按事件顺序累积的一段思考、正文或工具请求。
+class ChatContentSegment {
+  ChatContentSegment({
+    required this.id,
+    required this.kind,
+    required this.startSeq,
+  });
+
+  /// 段在本次运行内的稳定身份，用户折叠选择按此保存。
+  final String id;
+
+  /// 段的展示种类，不通过请求序号或文本推断模型轮次。
+  final ChatSegmentKind kind;
+
+  /// 段开始的事件序号。
+  final int startSeq;
+  final StringBuffer _content = StringBuffer();
+
+  /// 段累积的原始文本；工具段为空。
+  String get content => _content.toString();
+
+  /// 工具请求的实例身份，与运行内的工具调用实例配对。
+  final List<String> toolIds = [];
+
+  /// 是否已因后续正文、工具或终态完成。
+  bool completed = false;
+
+  /// 用户手动展开或折叠的选择；null 表示使用自动规则。
+  bool? expandedOverride;
+
+  /// 补读、历史等既有内容长度；界面直接显示到该位置，不重播动画。
+  int instantLength = 0;
+
+  /// 思考生成期间默认展开，本段完成后默认折叠。
+  bool get expanded => expandedOverride ?? !completed;
+
+  void addContent(String value) => _content.write(value);
 }
 
 /// 助手回复的阶段提示。

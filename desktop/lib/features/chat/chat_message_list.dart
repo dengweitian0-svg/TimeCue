@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../theme/notebook_theme.dart';
 import '../../contracts/chat_contracts.dart';
-import 'chat_markdown_body.dart';
-import 'chat_tool_call_list.dart';
+import 'chat_content_segments.dart';
 import 'chat_view_model.dart';
 import 'chat_event_timeline.dart';
 
@@ -19,6 +18,7 @@ class ChatMessageList extends StatefulWidget {
     required this.onRetryCreate,
     required this.onRetryConnection,
     this.onLoadMoreEvents,
+    this.onToggleReasoning,
   });
 
   final String sessionId;
@@ -29,6 +29,8 @@ class ChatMessageList extends StatefulWidget {
   final ValueChanged<String> onRetryCreate;
   final ValueChanged<String> onRetryConnection;
   final ValueChanged<String>? onLoadMoreEvents;
+  final void Function(String runId, String segmentId, bool expanded)?
+  onToggleReasoning;
 
   @override
   State<ChatMessageList> createState() => _ChatMessageListState();
@@ -39,6 +41,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
   late bool _followLatest;
   bool _restorePending = true;
   double _lastSavedOffset = -1;
+  bool _followFramePending = false;
 
   @override
   void initState() {
@@ -51,14 +54,22 @@ class _ChatMessageListState extends State<ChatMessageList> {
   void didUpdateWidget(covariant ChatMessageList oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_followLatest) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _scrollController.hasClients) {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-        }
-      });
+      _scheduleFollowLatest();
     } else if (_restorePending) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _restorePosition());
     }
+  }
+
+  void _scheduleFollowLatest() {
+    if (!_followLatest || _followFramePending) return;
+    _followFramePending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _followFramePending = false;
+      // 布局期间用户可能已经上读，执行前再次核对跟随意图。
+      if (!mounted || !_followLatest || !_scrollController.hasClients) return;
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      _savePosition();
+    });
   }
 
   void _restorePosition() {
@@ -98,40 +109,51 @@ class _ChatMessageListState extends State<ChatMessageList> {
   Widget build(BuildContext context) => Stack(
     children: [
       Positioned.fill(
-        child: NotificationListener<ScrollNotification>(
+        child: NotificationListener<ScrollMetricsNotification>(
           onNotification: (notification) {
             if (notification.depth == 0 &&
-                notification.metrics.axis == Axis.vertical &&
-                (notification is UserScrollNotification ||
-                    notification is ScrollUpdateNotification)) {
-              final distance = _scrollController.hasClients
-                  ? _scrollController.position.maxScrollExtent -
-                        _scrollController.position.pixels
-                  : 0.0;
-              final following = distance < 48;
-              if (following != _followLatest) {
-                setState(() => _followLatest = following);
-              }
-              _savePosition();
+                notification.metrics.axis == Axis.vertical) {
+              _scheduleFollowLatest();
             }
             return false;
           },
-          child: ListView.builder(
-            controller: _scrollController,
-            padding: const EdgeInsets.fromLTRB(2, 10, 10, 14),
-            itemCount: widget.runs.isEmpty ? 1 : widget.runs.length,
-            itemBuilder: (context, index) => widget.runs.isEmpty
-                ? const _WelcomeMessage()
-                : _ChatTurn(
-                    key: ValueKey(
-                      'chat-message-${widget.runs[index].messageId}',
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification.depth == 0 &&
+                  notification.metrics.axis == Axis.vertical &&
+                  (notification is UserScrollNotification ||
+                      notification is ScrollUpdateNotification &&
+                          notification.dragDetails != null)) {
+                final distance = _scrollController.hasClients
+                    ? _scrollController.position.maxScrollExtent -
+                          _scrollController.position.pixels
+                    : 0.0;
+                final following = distance < 48;
+                if (following != _followLatest) {
+                  setState(() => _followLatest = following);
+                }
+                _savePosition();
+              }
+              return false;
+            },
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.fromLTRB(2, 10, 10, 14),
+              itemCount: widget.runs.isEmpty ? 1 : widget.runs.length,
+              itemBuilder: (context, index) => widget.runs.isEmpty
+                  ? const _WelcomeMessage()
+                  : _ChatTurn(
+                      key: ValueKey(
+                        'chat-message-${widget.runs[index].messageId}',
+                      ),
+                      sessionId: widget.sessionId,
+                      run: widget.runs[index],
+                      onRetryCreate: widget.onRetryCreate,
+                      onRetryConnection: widget.onRetryConnection,
+                      onLoadMoreEvents: widget.onLoadMoreEvents,
+                      onToggleReasoning: widget.onToggleReasoning,
                     ),
-                    sessionId: widget.sessionId,
-                    run: widget.runs[index],
-                    onRetryCreate: widget.onRetryCreate,
-                    onRetryConnection: widget.onRetryConnection,
-                    onLoadMoreEvents: widget.onLoadMoreEvents,
-                  ),
+            ),
           ),
         ),
       ),
@@ -187,6 +209,7 @@ class _ChatTurn extends StatelessWidget {
     required this.onRetryCreate,
     required this.onRetryConnection,
     this.onLoadMoreEvents,
+    this.onToggleReasoning,
   });
 
   final String sessionId;
@@ -194,6 +217,8 @@ class _ChatTurn extends StatelessWidget {
   final ValueChanged<String> onRetryCreate;
   final ValueChanged<String> onRetryConnection;
   final ValueChanged<String>? onLoadMoreEvents;
+  final void Function(String runId, String segmentId, bool expanded)?
+  onToggleReasoning;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -245,24 +270,16 @@ class _ChatTurn extends StatelessWidget {
                         ),
                       ],
                     ),
-                    if (run.toolCalls.isNotEmpty)
-                      ChatToolCallList(calls: run.toolCalls),
-                    if (run.rawText.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: ChatMarkdownBody(
-                          key: ValueKey('chat-assistant-${run.messageId}'),
-                          data: run.rawText,
-                          isStreaming: !run.isTerminal,
-                        ),
-                      )
-                    else if (run.phase == ChatRunPhase.creating ||
-                        run.phase == ChatRunPhase.connecting ||
-                        run.phase == ChatRunPhase.thinking)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 5),
-                        child: LinearProgressIndicator(minHeight: 2),
-                      ),
+                    ChatContentSegments(
+                      run: run,
+                      onToggleReasoning: onToggleReasoning == null
+                          ? null
+                          : (segment, expanded) => onToggleReasoning!(
+                              run.runId ?? run.messageId,
+                              segment.id,
+                              expanded,
+                            ),
+                    ),
                     if (run.timeline.isNotEmpty || onLoadMoreEvents != null)
                       ChatEventTimeline(run: run, onLoadMore: onLoadMoreEvents),
                     if (run.error != null)

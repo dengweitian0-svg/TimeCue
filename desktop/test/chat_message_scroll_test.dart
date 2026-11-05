@@ -4,6 +4,7 @@ import 'package:timecue_desktop/contracts/chat_contracts.dart';
 import 'package:timecue_desktop/data/demo_notebook_repository.dart';
 import 'package:timecue_desktop/features/chat/chat_message_list.dart';
 import 'package:timecue_desktop/features/chat/chat_view_model.dart';
+import 'package:timecue_desktop/features/chat/chat_markdown_body.dart';
 import 'package:timecue_desktop/features/notebook/chat_spread.dart';
 import 'package:timecue_desktop/features/notebook/notebook_spreads.dart';
 import 'package:timecue_desktop/features/notebook/notebook_view_model.dart';
@@ -13,6 +14,86 @@ import 'fixtures/chat_widget_gateway.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  for (final thinking in [false, true]) {
+    testWidgets('${thinking ? '思考' : '正文'}动画换行时持续跟随，上读后动画不抢位置', (tester) async {
+      final gateway = ChatWidgetGateway();
+      final chat = ChatViewModel(gateway: gateway);
+      addTearDown(() async {
+        chat.dispose();
+        await gateway.dispose();
+      });
+      final session = chat.createLocalSession();
+      chat.updateDraft(session.sessionId, '检查动画滚动');
+      await chat.send(session.sessionId, model: 'widget-model');
+      await tester.pump();
+      final runId = gateway.createdRunIds.single;
+      void emit(int seq, String value) => thinking
+          ? gateway.emitThinking(runId, seq, value)
+          : gateway.emitText(runId, seq, value);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 340,
+                height: 260,
+                child: ListenableBuilder(
+                  listenable: chat,
+                  builder: (context, _) => ChatMessageList(
+                    key: const ValueKey('animation-scroll'),
+                    sessionId: session.sessionId,
+                    runs: session.runs,
+                    initialOffset: 0,
+                    initiallyFollowLatest: true,
+                    onReadingPosition: (offset, followLatest) =>
+                        chat.updateReadingPosition(
+                          session.sessionId,
+                          offset: offset,
+                          followLatest: followLatest,
+                        ),
+                    onRetryCreate: (_) {},
+                    onRetryConnection: (_) {},
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      emit(1, '开始');
+      await _pumpUntil(tester, () => session.runs.single.lastEventId == 1);
+      await _pumpFrames(tester, 3);
+      final viewport = find.byKey(const ValueKey('animation-scroll'));
+      final scroll = _verticalScroll(tester, viewport);
+      final increment = List.filled(160, '换行内容，动画应持续保持最新。').join();
+      emit(2, increment);
+      await _pumpUntil(tester, () => session.runs.single.lastEventId == 2);
+      await _pumpFrames(tester, 20);
+      // 没有新 SSE 或父 Widget 更新，只有动画定时器在推进。
+      expect(
+        tester
+            .widget<ChatMarkdownBody>(find.byType(ChatMarkdownBody).last)
+            .data
+            .length,
+        lessThan(increment.length + 2),
+      );
+      expect(_distanceToLatest(scroll), lessThan(1));
+      expect(session.followLatest, isTrue);
+      await tester.drag(viewport, const Offset(0, 160));
+      await tester.pump();
+      expect(session.followLatest, isFalse);
+      final offset = scroll.position.pixels;
+      await _pumpFrames(tester, 8);
+      expect(scroll.position.pixels, closeTo(offset, 1));
+      expect(find.text('回到最新'), findsOneWidget);
+      await tester.tap(find.text('回到最新'));
+      await _pumpFrames(tester, 20);
+      expect(session.followLatest, isTrue);
+      expect(_distanceToLatest(scroll), lessThan(1));
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
 
   testWidgets('初始跟随最新时追加多轮消息与工具后持续保持在底部', (tester) async {
     final gateway = ChatWidgetGateway()..arrangeHistory(2);
@@ -91,7 +172,17 @@ void main() {
       lessThan(48),
       reason: '最新消息应继续保持在实际滚动范围末尾',
     );
-    expect(find.text('Tool calling · 已发起 3 次调用'), findsWidgets);
+    expect(find.text('Tool calling · 已发起 1 次调用'), findsNWidgets(3));
+    final toolPositions = [
+      for (var index = 0; index < 3; index++)
+        tester
+            .getTopLeft(
+              find.byKey(ValueKey('chat-tool-${index + 2}:scroll-tool-$index')),
+            )
+            .dy,
+    ];
+    expect(toolPositions[0], lessThan(toolPositions[1]));
+    expect(toolPositions[1], lessThan(toolPositions[2]));
     final lastTool = find.byKey(const ValueKey('chat-tool-4:scroll-tool-2'));
     expect(lastTool, findsOneWidget, reason: '最新多工具消息应自动滚动到视口内，不能停留在旧历史尾部');
     expect(_distanceToLatest(_verticalScroll(tester, viewport)), lessThan(48));

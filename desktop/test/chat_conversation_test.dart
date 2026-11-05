@@ -132,7 +132,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(chat.selectedConversation?.activeRun?.toolCalls, hasLength(3));
-    expect(find.text('Tool calling · 已发起 3 次调用'), findsOneWidget);
+    expect(find.text('Tool calling · 已发起 1 次调用'), findsNWidgets(3));
+    final toolPositions = [
+      for (final key in ['2:call-one', '3:call-two', '4:call-three'])
+        tester.getTopLeft(find.byKey(ValueKey('chat-tool-$key'))).dy,
+    ];
+    expect(toolPositions[0], lessThan(toolPositions[1]));
+    expect(toolPositions[1], lessThan(toolPositions[2]));
     expect(find.text('search_schedules'), findsNWidgets(2));
     expect(find.text('get_calendar'), findsOneWidget);
     expect(find.text('private reasoning'), findsNothing);

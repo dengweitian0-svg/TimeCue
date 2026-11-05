@@ -124,7 +124,7 @@ void main() {
     tester.view.resetDevicePixelRatio();
   });
 
-  testWidgets('长历史、Thinking 隐私、多工具同名调用和正式原文可综合复跑', (tester) async {
+  testWidgets('长历史、思考内容顺序、多工具同名调用和正式原文可综合复跑', (tester) async {
     final gateway = ChatWidgetGateway()..arrangeHistory(3);
     expect(gateway.longChatMarkdown.length, greaterThanOrEqualTo(20000));
     final chat = ChatViewModel(gateway: gateway);
@@ -152,7 +152,8 @@ void main() {
           chat.selectedConversation!.activeRun!.phase == ChatRunPhase.thinking,
     );
     expect(chat.selectedConversation!.activeRun!.phase, ChatRunPhase.thinking);
-    expect(find.text('私密思考原文不得显示'), findsNothing);
+    // 生成期间直接显示真实思考内容，完成后随本段结束折叠。
+    expect(find.text('私密思考原文不得显示'), findsOneWidget);
 
     gateway.emitTool(runId, 2, 'tool-a', 'search_schedules');
     gateway.emitTool(runId, 3, 'tool-b', 'search_schedules');

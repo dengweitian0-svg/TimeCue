@@ -36,13 +36,18 @@ class ChatToolCallList extends StatelessWidget {
               style: const TextStyle(color: NotebookTheme.ink, fontSize: 13),
             ),
             subtitle: Text(
-              !calls[i].hasResult
-                  ? '已发起'
-                  : calls[i].error?.code == 'tool_skipped'
-                  ? '已跳过'
-                  : calls[i].error != null
-                  ? '处理失败'
-                  : '已返回',
+              [
+                !calls[i].hasResult
+                    ? '已发起'
+                    : calls[i].error?.code == 'tool_skipped'
+                    ? '已跳过'
+                    : calls[i].error != null
+                    ? '处理失败'
+                    : '已返回',
+                if (calls[i].hasResult) _resultPreview(calls[i].output),
+              ].where((value) => value.isNotEmpty).join(' · '),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 11),
             ),
             childrenPadding: const EdgeInsets.only(left: 8, bottom: 12),
@@ -64,6 +69,21 @@ class ChatToolCallList extends StatelessWidget {
       ],
     );
   }
+}
+
+// 界面直接截取真实结果的文本预览，不额外调用模型生成摘要。
+String _resultPreview(Object? value) {
+  final text = value is String
+      ? value
+      : value == null
+      ? 'null'
+      : const JsonEncoder().convert(value);
+  final plain = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (plain.isEmpty) return '';
+  final characters = plain.runes.toList(growable: false);
+  return characters.length <= 48
+      ? plain
+      : '${String.fromCharCodes(characters.take(47))}…';
 }
 
 class _JsonDetail extends StatelessWidget {
