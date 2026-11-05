@@ -29,7 +29,7 @@ class ChatViewModel extends ChangeNotifier {
   Map<String, String> _connectionNames = const {};
   int _namesGeneration = 0;
 
-  /// 更新本地展示名称，不更改模型选择、历史、草稿或运行身份。
+  /// 按 provider/model 更新本地展示名称，不更改选择、历史、草稿或运行身份。
   void setConnectionNames(Map<String, String> names) {
     if (_disposed) return;
     _namesGeneration++;
@@ -37,23 +37,18 @@ class ChatViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 重名连接补充稳定身份，未配置名称的旧连接显示原 provider。
-  String connectionLabel(String provider) {
-    final name = _connectionNames[provider] ?? provider;
-    return {
-          ..._connectionNames.keys,
-          for (final model in _models) model.provider,
-        }.any(
-          (other) =>
-              other != provider && (_connectionNames[other] ?? other) == name,
-        )
-        ? '$name ($provider)'
-        : name;
+  /// 按完整身份展示连接名称；重名时统一加序号和 provider，保证选项可区分。
+  String modelLabel(ChatModelOption option) {
+    String label(ChatModelOption value) =>
+        '${_connectionNames[value.identity] ?? value.provider} / ${value.model}';
+    final labels = _models.map(label).toList();
+    final index = _models.indexWhere(
+      (value) => value.identity == option.identity,
+    );
+    return index >= 0 && labels.toSet().length != labels.length
+        ? '${index + 1}. ${label(option)} (${option.provider})'
+        : label(option);
   }
-
-  /// 选择器展示本地连接名称，实际值仍为 provider/model。
-  String modelLabel(ChatModelOption option) =>
-      '${connectionLabel(option.provider)} / ${option.model}';
 
   /// 当前配置模型列表及可用性。
   List<ChatModelOption> get models => List.unmodifiable(_models);

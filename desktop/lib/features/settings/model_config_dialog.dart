@@ -84,7 +84,8 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       _connections = connections;
       widget.chat.setConnectionNames({
         for (final connection in connections)
-          connection.provider: connection.displayName,
+          for (final model in connection.models)
+            '${connection.provider}/${model.model}': connection.displayName,
       });
       final selected = widget.chat.selectedModel;
       final index = connections.indexWhere(
@@ -149,6 +150,14 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       candidate = '${base}_$ordinal';
     }
     return candidate;
+  }
+
+  String _connectionLabel(int index) {
+    final connection = _connections[index];
+    final names = _connections.map((value) => value.displayName).toSet();
+    return names.length == _connections.length && !names.contains('新建连接')
+        ? connection.displayName
+        : '${index + 1}. ${connection.displayName} (${connection.provider})';
   }
 
   Future<void> _selectConnection(int? index) async {
@@ -233,7 +242,8 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       _selectedConnection = index;
       widget.chat.setConnectionNames({
         for (final connection in _connections)
-          connection.provider: connection.displayName,
+          for (final model in connection.models)
+            '${connection.provider}/${model.model}': connection.displayName,
       });
       _savedConnection = (_name.text, _provider.text, _baseUrl.text);
       _savedDrafts = _drafts;
@@ -463,11 +473,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                               for (var i = 0; i < _connections.length; i++)
                                 DropdownMenuItem(
                                   value: i,
-                                  child: Text(
-                                    widget.chat.connectionLabel(
-                                      _connections[i].provider,
-                                    ),
-                                  ),
+                                  child: Text(_connectionLabel(i)),
                                 ),
                               const DropdownMenuItem(
                                 value: -1,

@@ -1,6 +1,6 @@
 # 界面数据接入
 
-- 通用连接的 `display_name` 独立保存，旧配置缺省时显示原 provider；已有连接 provider 固定且存储层拒绝替换。名称不参与密钥定位、冲突校验或模型身份，单份连接的保存不修改其他连接；`readConnectionNames` 只向聊天层提供本地名称映射。
+- 通用连接的 `display_name` 独立保存，旧配置缺省时显示原 provider；已有连接 provider 固定且存储层拒绝替换。名称不参与密钥定位、冲突校验或模型身份，单份连接的保存不修改其他连接；`readConnectionNames` 按完整 provider/model 向聊天层提供名称映射，兼容同 provider 的旧多分组。
 
 - Chat Completions 模型只读设置包含 `hasLocalKey` 布尔状态，依据同目录 `.env` 的目标条目是否非空计算，不包含原始密钥。保存不信任此前读取的状态，空 Key 仍在串行写入期间重新核对全部目标条目。
 

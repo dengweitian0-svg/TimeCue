@@ -54,7 +54,8 @@ extension ModelConnectionConfigFileStore on ConfigFileStore {
   /// 为聊天选择器读取本地名称；不扩展服务端模型身份和响应。
   Future<Map<String, String>> readConnectionNames() async => {
     for (final connection in await readModelConnections())
-      connection.provider: connection.displayName,
+      for (final model in connection.models)
+        '${connection.provider}/${model.model}': connection.displayName,
   };
 
   /// 读取已有连接和逐模型密钥状态，不返回原始 Key。
