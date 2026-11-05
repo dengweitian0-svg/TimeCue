@@ -1,6 +1,6 @@
 # 日程本
 
-- `chat_spread.dart` 接收宿主同目录 ConfigFileStore，空态提示处提供“添加 DeepSeek 模型”，选择器旁持续提供“管理模型”；两入口打开同一配置弹窗，原发送与历史门禁保持有效。`notebook_overlay.dart` 只转交存储与聊天模型，未注入真实存储时不写文件。
+- `chat_spread.dart` 接收宿主同目录 ConfigFileStore，空态提示处提供“添加模型连接”，选择器旁持续提供“管理模型”；两入口打开同一配置弹窗，原发送与历史门禁保持有效。`notebook_overlay.dart` 只转交存储与聊天模型，未注入真实存储时不写文件。
 
 提供双页日程浏览、提醒确认、日历导航和 AI 对话页面。
 

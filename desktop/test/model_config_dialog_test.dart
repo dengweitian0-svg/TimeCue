@@ -18,6 +18,37 @@ import 'package:timecue_desktop/theme/notebook_theme.dart';
 import 'fixtures/config_file_faults.dart';
 
 void main() {
+  testWidgets('保留草稿时切换连接不会错显另一份连接', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    await tester.runAsync(
+      () => harness.store.saveDeepSeekModels([
+        const DeepSeekModelSettings(model: 'chat'),
+      ], apiKey: 'controlled-old'),
+    );
+    await harness.open(tester);
+    await tester.enterText(
+      find.byKey(const ValueKey('model-provider')),
+      'draft-provider',
+    );
+    await tester.ensureVisible(find.text('deepseek'));
+    await tester.tap(find.text('deepseek'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('新建连接').last);
+    await tester.pumpAndSettle();
+    expect(find.text('舍弃未保存的修改？'), findsOneWidget);
+    await tester.tap(find.text('继续编辑'));
+    await tester.pumpAndSettle();
+    expect(find.text('新建连接'), findsNothing);
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const ValueKey('model-provider')))
+          .controller!
+          .text,
+      'draft-provider',
+    );
+    await harness.close(tester);
+  });
+
   testWidgets('预算、Key 和增删操作均有草稿守卫，撤回修改可直接关闭', (tester) async {
     final harness = await _DialogHarness.create(tester);
     await tester.runAsync(
@@ -30,6 +61,7 @@ void main() {
       if (edit == 'key') {
         await tester.enterText(find.byKey(const ValueKey('model-key')), 'new');
       } else if (edit == 'budget') {
+        await tester.ensureVisible(find.text('高级设置'));
         await tester.tap(find.text('高级设置'));
         await tester.pumpAndSettle();
         await tester.enterText(
@@ -92,6 +124,11 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final harness = await _DialogHarness.create(tester);
     await harness.open(tester, textScale: 2);
+    await tester.ensureVisible(find.byKey(const ValueKey('model-base-url')));
+    await tester.enterText(
+      find.byKey(const ValueKey('model-base-url')),
+      'http://127.0.0.1:43210/v1',
+    );
     await tester.ensureVisible(find.byKey(const ValueKey('model-id')));
     await tester.enterText(find.byKey(const ValueKey('model-id')), 'chat');
     await tester.ensureVisible(find.text('高级设置'));
@@ -562,10 +599,16 @@ void main() {
     }
 
     await flush();
-    await tester.tap(find.text('添加 DeepSeek 模型'));
+    await tester.tap(find.text('添加模型连接'));
     await flush();
     expect(find.byType(ModelConfigDialog), findsOneWidget);
-    expect(find.text('https://api.deepseek.com'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const ValueKey('model-base-url')))
+          .controller!
+          .text,
+      'https://api.deepseek.com',
+    );
     expect(
       tester
           .widget<TextField>(

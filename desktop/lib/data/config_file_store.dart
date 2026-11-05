@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml_edit/yaml_edit.dart';
 
 part 'deepseek_model_config.dart';
+part 'model_connection_config.dart';
 
 /// 用户文件中的覆盖值；null 表示交由 Go 的内嵌默认配置决定。
 class ConfigOverrides {

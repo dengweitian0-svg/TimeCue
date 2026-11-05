@@ -5,9 +5,9 @@ class ModelConfigException extends FormatException {
   const ModelConfigException(super.message);
 }
 
-/// 单个 DeepSeek 模型的本地设置，不包含原始密钥。
-class DeepSeekModelSettings {
-  const DeepSeekModelSettings({
+/// 单个 Chat Completions 模型的本地设置，不包含原始密钥。
+class ChatModelSettings {
+  const ChatModelSettings({
     required this.model,
     this.originalModel,
     this.contextWindow = 32768,
@@ -38,6 +38,9 @@ class DeepSeekModelSettings {
     }
   }
 }
+
+/// 兼容已有 DeepSeek 配置调用方的模型设置名称。
+typedef DeepSeekModelSettings = ChatModelSettings;
 
 /// 模型设置与普通运行设置共用同一串行队列和单文件替换能力。
 extension DeepSeekConfigFileStore on ConfigFileStore {
@@ -103,10 +106,7 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
       value.validate();
     }
     final key = apiKey.trim();
-    // 使用单引号禁止变量展开；拒绝控制字符及不能无损表示的引号、反斜杠。
-    if (apiKey.runes.any((c) => c < 32 || c > 126 || c == 39 || c == 92)) {
-      throw const ModelConfigException('API Key 含不支持的字符，请检查后重试');
-    }
+    _validateModelApiKey(apiKey);
     final root = editor.parseAt([]).value as Map;
     final section = ConfigFileStore._key(root, 'chat_model');
     final providers = _providers(editor);
@@ -143,14 +143,10 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
         throw const ModelConfigException('同一原模型不能重复编辑');
       }
     }
-    final envPath = p.join(p.dirname(configPath), '.env');
     final before = await _readModelEnv();
-    final existed = await File(envPath).exists();
     var after = before;
     if (key.isNotEmpty) {
-      final encoded = RegExp(r'^[A-Za-z0-9_.-]+$').hasMatch(key)
-          ? key
-          : "'$key'";
+      final encoded = _encodeModelApiKey(key);
       for (final value in settings) {
         after = _updateEnv(after, _modelKey('deepseek', value.model), encoded);
       }
@@ -215,22 +211,7 @@ extension DeepSeekConfigFileStore on ConfigFileStore {
       editor.insertIntoList(modelsPath, 0, <String, Object?>{});
       _writeModel(editor, [...modelsPath, 0], const {}, value);
     }
-    if (key.isNotEmpty) await _replace(envPath, after);
-    try {
-      await _save(editor.toString());
-    } catch (_) {
-      if (key.isEmpty) rethrow;
-      try {
-        if (existed) {
-          await _replace(envPath, before);
-        } else {
-          await File(envPath).delete();
-        }
-      } catch (_) {
-        throw const ModelConfigException('模型配置未保存，密钥恢复失败，请检查本地文件后重试');
-      }
-      throw const ModelConfigException('模型配置未保存，密钥已恢复，请重试');
-    }
+    await _publishModelFiles(editor, before, after, writeKey: key.isNotEmpty);
   }
 
   Future<String> _readModelEnv() async {
@@ -272,7 +253,7 @@ void _writeModel(
   YamlEditor editor,
   List<Object> path,
   Map original,
-  DeepSeekModelSettings settings,
+  ChatModelSettings settings,
 ) {
   for (final entry in <String, Object>{
     'model': settings.model,
