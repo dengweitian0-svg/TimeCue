@@ -479,7 +479,7 @@ class _ChatSpreadState extends State<ChatSpread> {
                   ? TextButton.icon(
                       onPressed: _configureModel,
                       icon: const Icon(Icons.add, size: 16),
-                      label: const Text('添加 DeepSeek 模型'),
+                      label: const Text('添加模型连接'),
                     )
                   : Text(
                       disabledReason,

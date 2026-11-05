@@ -5,7 +5,7 @@ import '../../app/operation_toast.dart';
 import '../../data/config_file_store.dart';
 import '../chat/chat_view_model.dart';
 
-/// 管理多个官方 DeepSeek 模型，保存后在当前聊天运行中刷新本地可用性。
+/// 编辑 Chat Completions 连接，保存后在当前进程刷新本地模型可用性。
 class ModelConfigDialog extends StatefulWidget {
   const ModelConfigDialog({super.key, required this.store, required this.chat});
 
@@ -21,6 +21,13 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
   final _models = <_ModelDraft>[];
   int _nextModelId = 0;
   final _key = TextEditingController();
+  final _provider = TextEditingController(text: 'deepseek');
+  final _baseUrl = TextEditingController(text: 'https://api.deepseek.com');
+  List<ModelConnectionSettings> _connections = [];
+  ModelConnectionSettings? _source;
+  int _selectedConnection = -1;
+  String _preset = 'deepseek';
+  (String, String) _savedConnection = ('deepseek', 'https://api.deepseek.com');
   bool _busy = true;
   bool _loaded = false;
   bool _visibleKey = false;
@@ -30,7 +37,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
   List<(String?, String, String, String)> _savedDrafts = [];
   String? _error;
   String? _message;
-  List<DeepSeekModelSettings>? _pendingApplication;
+  ({String provider, Set<String> models})? _pendingApplication;
 
   List<(String?, String, String, String)> get _drafts => [
     for (final draft in _models)
@@ -43,7 +50,10 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
   ];
 
   bool get _dirty =>
-      _loaded && (_key.text.isNotEmpty || !_sameDrafts(_drafts, _savedDrafts));
+      _loaded &&
+      (_key.text.isNotEmpty ||
+          (_provider.text, _baseUrl.text) != _savedConnection ||
+          !_sameDrafts(_drafts, _savedDrafts));
 
   bool _sameDrafts(
     List<(String?, String, String, String)> left,
@@ -64,19 +74,22 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       _error = null;
     });
     try {
-      final settings = await widget.store.readDeepSeekModels();
+      final connections = await widget.store.readModelConnections();
       if (!mounted) return;
-      for (final draft in _models) {
-        draft.dispose();
-      }
-      _models.clear();
-      _keyStatus.clear();
-      for (final value in settings) {
-        _models.add(_ModelDraft(_nextModelId++, value));
-        _keyStatus[value.model] = value.hasLocalKey;
-      }
-      if (_models.isEmpty) _models.add(_ModelDraft(_nextModelId++));
-      _savedDrafts = _drafts;
+      _connections = connections;
+      final selected = widget.chat.selectedModel;
+      final index = connections.indexWhere(
+        (v) =>
+            v.provider == selected?.provider &&
+            v.models.any((m) => m.model == selected?.model),
+      );
+      _setConnection(
+        index >= 0
+            ? index
+            : connections.isEmpty
+            ? -1
+            : 0,
+      );
       _loaded = true;
     } catch (_) {
       if (mounted) {
@@ -86,6 +99,45 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  void _setConnection(int index) {
+    _selectedConnection = index;
+    _source = index < 0 ? null : _connections[index];
+    _provider.text = _source?.provider ?? 'deepseek';
+    _baseUrl.text = _source?.baseUrl ?? 'https://api.deepseek.com';
+    _preset =
+        _provider.text == 'deepseek' &&
+            _baseUrl.text == 'https://api.deepseek.com'
+        ? 'deepseek'
+        : 'custom';
+    for (final draft in _models) {
+      draft.dispose();
+    }
+    _models.clear();
+    _nextModelId = 0;
+    _keyStatus.clear();
+    for (final model in _source?.models ?? <ChatModelSettings>[]) {
+      _models.add(_ModelDraft(_nextModelId++, model));
+      _keyStatus['${_source!.provider}\u0000${model.model}'] =
+          model.hasLocalKey;
+    }
+    if (_models.isEmpty) _models.add(_ModelDraft(_nextModelId++));
+    _key.clear();
+    _visibleKey = false;
+    _savedConnection = (_provider.text, _baseUrl.text);
+    _savedDrafts = _drafts;
+    _pendingApplication = null;
+    _error = null;
+    _message = null;
+  }
+
+  Future<void> _selectConnection(int? index) async {
+    if (_busy || _confirming || index == null || index == _selectedConnection) {
+      return;
+    }
+    if (!await _confirmDiscard() || !mounted) return;
+    setState(() => _setConnection(index));
   }
 
   void _edited(String _) => setState(() {
@@ -103,31 +155,66 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       OperationToast.error(context, '请检查模型 ID、API Key 和预算。');
       return;
     }
-    final settings = [
+    final models = [
       for (final draft in _models)
-        DeepSeekModelSettings(
+        ChatModelSettings(
           model: draft.model.text.trim(),
           originalModel: draft.originalModel,
           contextWindow: _budget(draft.context.text)!,
           maxOutputTokens: _budget(draft.output.text)!,
         ),
     ];
+    final settings = ModelConnectionSettings(
+      provider: _provider.text.trim(),
+      baseUrl: _baseUrl.text.trim(),
+      models: models,
+      sourceIndex: _source?.sourceIndex,
+      sourceProvider: _source?.sourceProvider,
+    );
     setState(() {
       _busy = true;
       _error = null;
       _message = '正在保存模型设置…';
     });
     try {
-      await widget.store.saveDeepSeekModels(settings, apiKey: _key.text);
+      final expected = await widget.store.saveModelConnection(
+        settings,
+        apiKey: _key.text,
+      );
       if (!mounted) return;
       for (final draft in _models) {
         draft.originalModel = draft.model.text.trim();
-        _keyStatus[draft.originalModel!] = true;
+        _keyStatus['${settings.provider}\u0000${draft.originalModel}'] = true;
       }
+      final index = _source?.sourceIndex ?? _connections.length;
+      _source = ModelConnectionSettings(
+        provider: settings.provider,
+        baseUrl: settings.baseUrl,
+        sourceIndex: index,
+        sourceProvider: settings.provider,
+        models: [
+          for (final model in models)
+            ChatModelSettings(
+              model: model.model,
+              originalModel: model.model,
+              contextWindow: model.contextWindow,
+              maxOutputTokens: model.maxOutputTokens,
+              hasLocalKey: true,
+            ),
+        ],
+      );
+      _connections = [..._connections];
+      if (index == _connections.length) {
+        _connections.add(_source!);
+      } else {
+        _connections[index] = _source!;
+      }
+      _selectedConnection = index;
+      _savedConnection = (_provider.text, _baseUrl.text);
       _savedDrafts = _drafts;
       _key.clear();
       _visibleKey = false;
-      _pendingApplication = settings;
+      _pendingApplication = (provider: settings.provider, models: expected);
     } on ModelConfigException catch (failure) {
       if (mounted) {
         setState(() => _error = failure.message);
@@ -158,8 +245,8 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       _message = '设置已保存，正在等待本地服务加载…';
     });
     final applied = await widget.chat.applySavedModels(
-      provider: 'deepseek',
-      models: settings.map((v) => v.model),
+      provider: settings.provider,
+      models: settings.models,
     );
     if (!mounted) return;
     final available = applied && widget.chat.acceptingOperations;
@@ -181,6 +268,15 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
 
   Future<void> _close() async {
     if (_busy || _confirming || _allowClose) return;
+    if (!await _confirmDiscard() || !mounted) return;
+    setState(() => _allowClose = true);
+    final route = ModalRoute.of(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && route?.isCurrent == true) Navigator.of(context).pop();
+    });
+  }
+
+  Future<bool> _confirmDiscard() async {
     if (_dirty) {
       _confirming = true;
       bool discard;
@@ -208,13 +304,9 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       } finally {
         _confirming = false;
       }
-      if (!mounted || !discard) return;
+      if (!mounted || !discard) return false;
     }
-    setState(() => _allowClose = true);
-    final route = ModalRoute.of(context);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && route?.isCurrent == true) Navigator.of(context).pop();
-    });
+    return true;
   }
 
   @override
@@ -223,6 +315,8 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       draft.dispose();
     }
     _key.dispose();
+    _provider.dispose();
+    _baseUrl.dispose();
     super.dispose();
   }
 
@@ -255,9 +349,11 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
         validator: (v) => v == null || v.trim().isEmpty ? '请填写模型 ID' : null,
       ),
       Text(
-        _keyStatus[draft.model.text.trim()] == true
+        _keyStatus['${_provider.text.trim()}\u0000${draft.model.text.trim()}'] ==
+                true
             ? '已配置本地密钥'
-            : _keyStatus[draft.model.text.trim()] == false
+            : _keyStatus['${_provider.text.trim()}\u0000${draft.model.text.trim()}'] ==
+                  false
             ? '未配置本地密钥，请填写新 Key。'
             : '目标模型需有本地密钥，否则请填写新 Key。',
       ),
@@ -317,7 +413,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
         autofocus: true,
         child: AlertDialog(
           scrollable: true,
-          title: const Text('DeepSeek 模型设置'),
+          title: const Text('模型连接设置'),
           content: SizedBox(
             width: 480,
             child: Form(
@@ -327,10 +423,80 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (_busy) const LinearProgressIndicator(),
-                  const Text('提供方：DeepSeek'),
-                  const Text('https://api.deepseek.com'),
-                  const SizedBox(height: 20),
                   if (_loaded) ...[
+                    if (_connections.isNotEmpty)
+                      InputDecorator(
+                        decoration: const InputDecoration(labelText: '当前连接'),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            value: _selectedConnection,
+                            isExpanded: true,
+                            isDense: true,
+                            items: [
+                              for (var i = 0; i < _connections.length; i++)
+                                DropdownMenuItem(
+                                  value: i,
+                                  child: Text(_connections[i].provider),
+                                ),
+                              const DropdownMenuItem(
+                                value: -1,
+                                child: Text('新建连接'),
+                              ),
+                            ],
+                            onChanged: _busy ? null : _selectConnection,
+                          ),
+                        ),
+                      ),
+                    DropdownButtonFormField<String>(
+                      key: ValueKey(
+                        'connection-preset-$_selectedConnection-$_preset',
+                      ),
+                      initialValue: _preset,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: '服务商预设'),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'deepseek',
+                          child: Text('DeepSeek'),
+                        ),
+                        DropdownMenuItem(value: 'custom', child: Text('自定义')),
+                      ],
+                      onChanged: _busy
+                          ? null
+                          : (value) {
+                              if (value == null) return;
+                              _preset = value;
+                              if (value == 'deepseek') {
+                                _provider.text = 'deepseek';
+                                _baseUrl.text = 'https://api.deepseek.com';
+                              }
+                              _edited('');
+                            },
+                    ),
+                    const Text('仅支持 Chat Completions；预设可修改，模型 ID 手动填写。'),
+                    TextFormField(
+                      key: const ValueKey('model-provider'),
+                      controller: _provider,
+                      enabled: !_busy,
+                      onChanged: _edited,
+                      decoration: const InputDecoration(
+                        labelText: 'provider（连接身份）',
+                      ),
+                      validator: (v) =>
+                          v == null || v.trim().isEmpty ? '请填写 provider' : null,
+                    ),
+                    TextFormField(
+                      key: const ValueKey('model-base-url'),
+                      controller: _baseUrl,
+                      enabled: !_busy,
+                      onChanged: _edited,
+                      decoration: const InputDecoration(
+                        labelText: '服务地址（Base URL）',
+                        helperText: '填写服务根地址（含所需路径前缀），不要加 /chat/completions。',
+                        helperMaxLines: 4,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
                     TextFormField(
                       key: const ValueKey('model-key'),
                       controller: _key,

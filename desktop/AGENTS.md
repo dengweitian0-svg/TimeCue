@@ -16,7 +16,7 @@
 - `lib/app/operation_toast.dart`：应用级操作结果 Toast 宿主及成功、失败、警告入口。
 - [lib/contracts](lib/contracts/AGENTS.md)：日程 DTO、草稿和仓储操作契约。
 - [lib/data](lib/data/AGENTS.md)：HTTP 快照、分页、确认与内存示例数据。
-- `lib/data/config_file_store.dart`：用户配置与本机密钥的 Flutter 写入入口，保留注释及其他字段，管理运行覆盖值和多个官方 DeepSeek 模型；模型与普通设置共用 data-dir 和串行队列。
+- `lib/data/config_file_store.dart`：用户配置与本机密钥的 Flutter 写入入口，保留注释及其他字段，管理运行覆盖值及通用 Chat Completions 连接；模型与普通设置共用 data-dir 和串行队列。
 - [lib/features/room](lib/features/room/AGENTS.md)：房间背景、时钟、桌面入口与本子显隐。
 - [lib/features/notebook](lib/features/notebook/AGENTS.md)：本子开合、今日/日历页面、跨页选择与查询状态。
 - [lib/features/chat](lib/features/chat/AGENTS.md)：聊天运行状态、按事件顺序的思考/正文/工具内容段、累计 Markdown、多工具名称、消息阅读与输入/停止组件。
