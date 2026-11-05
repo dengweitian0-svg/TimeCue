@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "65f8b42b-076b-4074-8354-75263b343529",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "D:\\go_project\\src\\TimeCue\\.worktrees\\reminder-workflow\\docs\\archify\\workflow-reminder-20261105-122427\\candidate.json",
+  "output": "D:\\go_project\\src\\TimeCue\\.worktrees\\reminder-workflow\\docs\\archify\\workflow-reminder-20261105-122427\\reminder.html",
+  "specification": {
+    "sha256": "fd086669515cbb657da888be496785a8c8d5e51e13c43cd292b48d5428d08b9e",
+    "bytes": 21075
+  },
+  "artifact": {
+    "sha256": "0f618cf8ae39521395c316ba881e5ae6cee070b21ee755f1ffa2a7210f1571e5",
+    "bytes": 799696
+  }
+}

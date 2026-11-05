@@ -1,0 +1,783 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "TimeCue 提醒全流程",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/archify/workflow-reminder-20261105-122427/reminder.html",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "6a0afbcdbfca5659d87c3b4137ab788fc8b36058",
+      "provider": "github",
+      "link_mode": "web"
+    },
+    "legend": {
+      "entries": {
+        "database": {
+          "label": "SQLite 持久化"
+        },
+        "external": {
+          "label": "Windows 平台"
+        },
+        "backend": {
+          "label": "Go 业务处理"
+        },
+        "frontend": {
+          "label": "Flutter 界面与桥"
+        },
+        "messagebus": {
+          "label": "任务与退避"
+        },
+        "security": {
+          "label": "核验与未知"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "schedule",
+      "label": "Go · 实时调度"
+    },
+    {
+      "id": "recovery",
+      "label": "Go · 恢复与分支"
+    },
+    {
+      "id": "delivery",
+      "label": "Flutter · 投递"
+    },
+    {
+      "id": "reading",
+      "label": "查看与确认"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "rules",
+      "lane": "schedule",
+      "col": 0,
+      "type": "backend",
+      "label": "提交日程规则",
+      "sublabel": "创建、修改、暂停或删除",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "internal/app/schedule.go",
+          "line": 33,
+          "end_line": 81,
+          "label": "正式写入与提交后调度"
+        },
+        {
+          "path": "internal/store/schedule_change.go",
+          "line": 14,
+          "end_line": 145,
+          "label": "规则及提醒事务"
+        }
+      ]
+    },
+    {
+      "id": "load",
+      "lane": "schedule",
+      "col": 1,
+      "type": "database",
+      "label": "预加载提醒",
+      "sublabel": "每 30 秒扫描前后 30 秒",
+      "width": 140,
+      "height": 76,
+      "sources": [
+        {
+          "path": "internal/service/notification/scheduler.go",
+          "line": 149,
+          "end_line": 164,
+          "label": "扫描窗口"
+        },
+        {
+          "path": "internal/store/notification_loading.go",
+          "line": 60,
+          "end_line": 129,
+          "label": "幂等生成与 loaded"
+        }
+      ],
+      "tag": "pending → loaded"
+    },
+    {
+      "id": "due",
+      "lane": "schedule",
+      "col": 2,
+      "type": "backend",
+      "label": "核验完整分钟",
+      "sublabel": "到期冻结历史文本与候选",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "internal/service/notification/scheduler.go",
+          "line": 98,
+          "end_line": 141,
+          "label": "整分钟完成后开放"
+        },
+        {
+          "path": "internal/store/notification_loading.go",
+          "line": 64,
+          "end_line": 106,
+          "label": "冻结快照与资格"
+        }
+      ]
+    },
+    {
+      "id": "claim",
+      "lane": "schedule",
+      "col": 3,
+      "type": "backend",
+      "label": "领取投递任务",
+      "sublabel": "minute / recovery",
+      "width": 140,
+      "height": 76,
+      "sources": [
+        {
+          "path": "internal/service/notification/notification_delivery.go",
+          "line": 318,
+          "end_line": 410,
+          "label": "完整任务、预算与幂等领取"
+        },
+        {
+          "path": "desktop/lib/app/windows_notification_bridge.dart",
+          "line": 134,
+          "end_line": 179,
+          "label": "串行轮询与身份检查"
+        },
+        {
+          "path": "desktop/lib/app/windows_notification_bridge.dart",
+          "line": 194,
+          "end_line": 219,
+          "label": "运行身份核验与旧代次失效"
+        }
+      ],
+      "tag": "Flutter 每秒领取 ≤20"
+    },
+    {
+      "id": "start",
+      "lane": "schedule",
+      "col": 4,
+      "type": "security",
+      "label": "开始前再次核验",
+      "sublabel": "冻结成员与文案；有效才计次",
+      "width": 140,
+      "height": 76,
+      "sources": [
+        {
+          "path": "internal/service/notification/notification_delivery.go",
+          "line": 413,
+          "end_line": 454,
+          "label": "start 冻结及幂等"
+        },
+        {
+          "path": "internal/store/notification_delivery.go",
+          "line": 38,
+          "end_line": 64,
+          "label": "事务核验真实成员"
+        }
+      ],
+      "tag": "每任务最多 4 次"
+    },
+    {
+      "id": "skip",
+      "lane": "recovery",
+      "col": 4,
+      "type": "backend",
+      "label": "结束本次尝试",
+      "sublabel": "shouldDisplay=false；不展示",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "internal/service/notification/notification_delivery.go",
+          "line": 432,
+          "end_line": 453,
+          "label": "空成员不计次"
+        },
+        {
+          "path": "desktop/lib/app/windows_notification_bridge.dart",
+          "line": 234,
+          "end_line": 243,
+          "label": "停止平台操作"
+        }
+      ]
+    },
+    {
+      "id": "missing",
+      "lane": "recovery",
+      "col": 0,
+      "type": "backend",
+      "label": "接管历史遗漏",
+      "sublabel": "重启 / 前跳 / 旧分钟未开始",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "internal/service/recovery/notification_recovery.go",
+          "line": 121,
+          "end_line": 168,
+          "label": "启动历史边界与轮次"
+        },
+        {
+          "path": "internal/service/notification/notification_delivery.go",
+          "line": 93,
+          "end_line": 115,
+          "label": "只封存未开始分钟"
+        },
+        {
+          "path": "internal/service/notification/scheduler.go",
+          "line": 277,
+          "end_line": 307,
+          "label": "遗漏窗口交接"
+        }
+      ]
+    },
+    {
+      "id": "recover",
+      "lane": "recovery",
+      "col": 1,
+      "type": "database",
+      "label": "按历史版本补齐",
+      "sublabel": "每批最多 500 条；暂停段不补",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "internal/store/notification_recovery.go",
+          "line": 16,
+          "end_line": 130,
+          "label": "有界事务、去重与快照"
+        },
+        {
+          "path": "internal/service/recovery/recovery_candidates.go",
+          "line": 13,
+          "end_line": 43,
+          "label": "按可证明版本展开"
+        }
+      ]
+    },
+    {
+      "id": "summary",
+      "lane": "recovery",
+      "col": 2,
+      "type": "backend",
+      "label": "汇总恢复轮次",
+      "sublabel": "全部整理完成才开放投递",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "internal/service/recovery/notification_recovery.go",
+          "line": 70,
+          "end_line": 113,
+          "label": "批次与完成门禁"
+        },
+        {
+          "path": "internal/service/notification/notification_delivery.go",
+          "line": 196,
+          "end_line": 213,
+          "label": "核验可投递成员"
+        }
+      ]
+    },
+    {
+      "id": "ready",
+      "lane": "recovery",
+      "col": 3,
+      "type": "messagebus",
+      "label": "恢复汇总任务",
+      "sublabel": "与实时任务共用投递协议",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "internal/service/notification/notification_delivery.go",
+          "line": 366,
+          "end_line": 410,
+          "label": "统一领取与 recovery 类型"
+        }
+      ]
+    },
+    {
+      "id": "retry",
+      "lane": "delivery",
+      "col": 0,
+      "type": "messagebus",
+      "label": "等待后重新领取",
+      "sublabel": "failed：5 / 30 / 120 秒",
+      "width": 140,
+      "height": 76,
+      "sources": [
+        {
+          "path": "internal/service/notification/notification_delivery.go",
+          "line": 380,
+          "end_line": 405,
+          "label": "预算与重试门禁"
+        },
+        {
+          "path": "internal/service/notification/notification_delivery.go",
+          "line": 487,
+          "end_line": 506,
+          "label": "失败退避"
+        }
+      ],
+      "tag": "第 4 次失败后停止",
+      "yOffset": 0.0
+    },
+    {
+      "id": "persist",
+      "lane": "delivery",
+      "col": 1,
+      "type": "database",
+      "label": "Go 原子回填事实",
+      "sublabel": "sent / failed；不改确认时间",
+      "width": 140,
+      "height": 76,
+      "sources": [
+        {
+          "path": "internal/service/notification/notification_delivery.go",
+          "line": 457,
+          "end_line": 495,
+          "label": "先持久化再接纳结果"
+        },
+        {
+          "path": "internal/store/notification_delivery.go",
+          "line": 70,
+          "end_line": 102,
+          "label": "冻结成员整组回填"
+        }
+      ],
+      "tag": "sent 不降级"
+    },
+    {
+      "id": "report",
+      "lane": "delivery",
+      "col": 2,
+      "type": "frontend",
+      "label": "回报已知平台结果",
+      "sublabel": "传 attemptId 与原 outcome",
+      "width": 140,
+      "height": 76,
+      "sources": [
+        {
+          "path": "desktop/lib/app/windows_notification_bridge.dart",
+          "line": 258,
+          "end_line": 299,
+          "label": "保存结果与回填重传"
+        },
+        {
+          "path": "desktop/lib/data/http_notebook_repository.dart",
+          "line": 336,
+          "end_line": 351,
+          "label": "结果接口调用"
+        }
+      ],
+      "tag": "网络失败只重传回执"
+    },
+    {
+      "id": "show",
+      "lane": "delivery",
+      "col": 4,
+      "type": "external",
+      "label": "Windows 即时通知",
+      "sublabel": "使用 Go 冻结的标题和正文",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "desktop/lib/app/windows_notification_bridge.dart",
+          "line": 47,
+          "end_line": 65,
+          "label": "平台接受或明确失败"
+        },
+        {
+          "path": "desktop/lib/app/windows_notification_bridge.dart",
+          "line": 245,
+          "end_line": 264,
+          "label": "运行内去重与整数 ID"
+        }
+      ]
+    },
+    {
+      "id": "unknown",
+      "lane": "delivery",
+      "col": 3,
+      "type": "security",
+      "label": "平台结果不明",
+      "sublabel": "保留未知；不自行重复展示",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "desktop/lib/app/windows_notification_bridge.dart",
+          "line": 258,
+          "end_line": 276,
+          "label": "未知分支不回报 failed"
+        }
+      ],
+      "yOffset": 96.0
+    },
+    {
+      "id": "pending",
+      "lane": "reading",
+      "col": 0,
+      "type": "frontend",
+      "label": "查看到期未确认",
+      "sublabel": "今天 / 历史；按原计划时间",
+      "width": 140,
+      "height": 76,
+      "sources": [
+        {
+          "path": "internal/service/notification/notification.go",
+          "line": 74,
+          "end_line": 109,
+          "label": "独立于投递成功查询"
+        },
+        {
+          "path": "desktop/lib/features/notebook/notebook_view_model.dart",
+          "line": 1,
+          "end_line": 90,
+          "label": "日程本模型"
+        }
+      ],
+      "tag": "无需先成功投递",
+      "yOffset": -46.0
+    },
+    {
+      "id": "ack",
+      "lane": "reading",
+      "col": 1,
+      "type": "frontend",
+      "label": "用户明确确认",
+      "sublabel": "单次提交明确 ID；最多 500 条",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "internal/store/notification.go",
+          "line": 251,
+          "end_line": 300,
+          "label": "整批验证与首次确认"
+        },
+        {
+          "path": "desktop/lib/data/http_notebook_repository.dart",
+          "line": 610,
+          "end_line": 650,
+          "label": "确认请求"
+        }
+      ],
+      "yOffset": -46.0
+    },
+    {
+      "id": "ackSave",
+      "lane": "reading",
+      "col": 2,
+      "type": "database",
+      "label": "保存首次确认时间",
+      "sublabel": "退出候选；保留投递与历史",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "internal/store/notification.go",
+          "line": 251,
+          "end_line": 300,
+          "label": "原子确认不改投递"
+        },
+        {
+          "path": "internal/service/notification/notification.go",
+          "line": 129,
+          "end_line": 135,
+          "label": "确认后移除调度候选"
+        }
+      ],
+      "yOffset": -46.0
+    },
+    {
+      "id": "reader",
+      "lane": "reading",
+      "col": 3,
+      "type": "frontend",
+      "label": "只读定位与详情",
+      "sublabel": "原展示成员 / 恢复历史分页",
+      "width": 140,
+      "height": 76,
+      "sources": [
+        {
+          "path": "desktop/lib/features/notebook/notification_view_model.dart",
+          "line": 104,
+          "end_line": 170,
+          "label": "运行核验与原任务成员"
+        },
+        {
+          "path": "desktop/lib/features/notebook/notification_reader_dialog.dart",
+          "line": 1,
+          "end_line": 150,
+          "label": "只读弹窗"
+        }
+      ],
+      "tag": "点击与查看不确认",
+      "yOffset": -46.0
+    },
+    {
+      "id": "click",
+      "lane": "reading",
+      "col": 4,
+      "type": "frontend",
+      "label": "点击系统通知",
+      "sublabel": "携带运行、任务、attempt 身份",
+      "width": 140,
+      "height": 62,
+      "sources": [
+        {
+          "path": "desktop/lib/app/windows_notification_bridge.dart",
+          "line": 32,
+          "end_line": 41,
+          "label": "通知激活回调"
+        },
+        {
+          "path": "desktop/lib/app/windows_notification_bridge.dart",
+          "line": 252,
+          "end_line": 257,
+          "label": "通知定位载荷"
+        },
+        {
+          "path": "desktop/lib/features/notebook/notification_view_model.dart",
+          "line": 31,
+          "end_line": 57,
+          "label": "激活或恢复入口"
+        }
+      ],
+      "yOffset": -46.0
+    },
+    {
+      "id": "history",
+      "lane": "reading",
+      "col": 2,
+      "type": "database",
+      "label": "保留提醒历史",
+      "sublabel": "确认不删除事实或恢复历史",
+      "width": 140,
+      "height": 62,
+      "yOffset": 46.0,
+      "sources": [
+        {
+          "path": "internal/store/notification.go",
+          "line": 251,
+          "end_line": 302,
+          "label": "只写确认时间，保留原记录"
+        },
+        {
+          "path": "internal/service/recovery/notification_recovery.go",
+          "line": 181,
+          "end_line": 200,
+          "label": "历史与当前未确认独立统计"
+        }
+      ]
+    },
+    {
+      "id": "reclaim",
+      "lane": "delivery",
+      "col": 0,
+      "type": "backend",
+      "label": "返回 claim / start",
+      "sublabel": "同一任务沿原预算重新投递",
+      "width": 140,
+      "height": 62,
+      "yOffset": -100.0,
+      "sources": [
+        {
+          "path": "internal/service/notification/notification_delivery.go",
+          "line": 375,
+          "end_line": 408,
+          "label": "重新领取与固定预算"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "rules-load",
+      "from": "rules",
+      "to": "load",
+      "label": "提交后"
+    },
+    {
+      "id": "load-due",
+      "from": "load",
+      "to": "due",
+      "label": "到期"
+    },
+    {
+      "id": "due-claim",
+      "from": "due",
+      "to": "claim",
+      "label": "核验后"
+    },
+    {
+      "id": "claim-start",
+      "from": "claim",
+      "to": "start",
+      "label": "POST start"
+    },
+    {
+      "id": "start-skip",
+      "from": "start",
+      "to": "skip",
+      "label": "无有效成员",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "due-missing",
+      "from": "due",
+      "to": "missing",
+      "label": "遗漏窗口",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "missing-recover",
+      "from": "missing",
+      "to": "recover"
+    },
+    {
+      "id": "recover-summary",
+      "from": "recover",
+      "to": "summary"
+    },
+    {
+      "id": "summary-ready",
+      "from": "summary",
+      "to": "ready"
+    },
+    {
+      "id": "ready-claim",
+      "from": "ready",
+      "to": "claim",
+      "label": "整理完成",
+      "role": "async"
+    },
+    {
+      "id": "start-show",
+      "from": "start",
+      "to": "show",
+      "label": "允许展示",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "show-report",
+      "from": "show",
+      "to": "report",
+      "label": "sent / failed"
+    },
+    {
+      "id": "show-unknown",
+      "from": "show",
+      "to": "unknown",
+      "label": "未知",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "id": "report-persist",
+      "from": "report",
+      "to": "persist",
+      "label": "POST results"
+    },
+    {
+      "id": "persist-retry",
+      "from": "persist",
+      "to": "retry",
+      "label": "failed",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "retry-claim",
+      "from": "retry",
+      "to": "reclaim",
+      "label": "退避到期",
+      "variant": "dashed",
+      "role": "return",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "show-click",
+      "from": "show",
+      "to": "click",
+      "label": "用户点击",
+      "variant": "dashed",
+      "role": "async"
+    },
+    {
+      "id": "click-reader",
+      "from": "click",
+      "to": "reader"
+    },
+    {
+      "id": "pending-ack",
+      "from": "pending",
+      "to": "ack",
+      "label": "用户选择"
+    },
+    {
+      "id": "ack-save",
+      "from": "ack",
+      "to": "ackSave",
+      "label": "POST 确认"
+    },
+    {
+      "id": "ack-history",
+      "from": "ackSave",
+      "to": "history"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "投递与确认分别记录",
+      "items": [
+        "loaded 仅表示等待执行；sent 仅表示 Windows 接受展示，不证明用户已看到。",
+        "确认写 acknowledged_at；点击、阅读、分页、刷新均不确认，也不重新展示。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "运行内身份与恢复边界",
+      "items": [
+        "初始化与领取先核验 Go 运行身份；新批次、断线及 404 再核验，身份变化作废旧尝试。",
+        "任务、attempt、冻结决定和展示预算只存内存；重启按持久提醒与规则重建，旧身份失效。",
+        "未知结果不设租约或心跳自动重展；明确执行者退出才整理指定 attempt，可信迟到 sent 仍可回填。",
+        "新遗漏合并未开始的恢复任务；已开始任务保留成员、身份和原预算。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "历史、待确认与可投递不是同一数量",
+      "items": [
+        "恢复从可证明的最早边界扫描到固定整分钟上界；未知早期规则不猜测。",
+        "完整历史、当前未确认和可投递分别统计；整理未完成时遗漏总数为 null。",
+        "今日与历史待确认按北京时间零点划分；任务和 attempt 成员每页 50 条。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "正式操作与宿主退出",
+      "items": [
+        "日程写入、确认、claim、start、results 共用 App.operations；存储在事务内再核验资格。",
+        "暂停、取消、删除会停止后续投递；已经开始的真实结果仍可回填，成功不被失败覆盖。",
+        "窗口隐藏后提醒继续运行；明确退出先停新任务，已知回执在宿主共享 5 秒预算内尽力回填。"
+      ]
+    }
+  ]
+}
