@@ -1,5 +1,7 @@
 # Flutter 桌面端
 
+- 连接内模型可手动增删改并分别设置预算；新 Key 只用于当前连接的目标模型，空 Key 保留各目标已有条目。每次保存按完整提供方集合及逐模型 `config_revision` 确认生效；旧版本、超时和失败保持待加载，可单独重试。
+
 - `main.dart` 为应用级聊天模型注入同目录连接名称读取入口；连接名称只影响本地展示，正式请求、历史及密钥继续使用稳定 provider/model。
 
 - 聊天可执行入口及组合验收只使用真实 Go。`test/fixtures/chat_widget_gateway.dart` 仅供 Widget 布局、滚动与截图测试显式安排合成历史，构造时不播种，使用 widget 专用 provider/model；不装配为可执行 profile 聊天程序。

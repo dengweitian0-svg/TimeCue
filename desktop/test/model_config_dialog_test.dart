@@ -18,6 +18,54 @@ import 'package:timecue_desktop/theme/notebook_theme.dart';
 import 'fixtures/config_file_faults.dart';
 
 void main() {
+  testWidgets('同名预算保存遇到旧版本时不误报成功，重试加载保留完整集合与草稿', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    await tester.runAsync(
+      () => harness.store.saveModelConnection(
+        const ModelConnectionSettings(
+          provider: 'deepseek',
+          baseUrl: 'https://api.deepseek.com',
+          models: [ChatModelSettings(model: 'chat')],
+        ),
+        apiKey: 'controlled-existing',
+      ),
+    );
+    final session = harness.chat.createLocalSession();
+    harness.chat.updateDraft(session.sessionId, '下一条草稿');
+    await harness.open(tester);
+    await tester.ensureVisible(find.text('高级设置'));
+    await tester.tap(find.text('高级设置'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('model-output-0')));
+    await tester.enterText(
+      find.byKey(const ValueKey('model-output-0')),
+      '1024',
+    );
+    harness.forcedRevision = 'previous-version';
+    await tester.tap(find.text('保存并应用'));
+    await _waitForDialog(tester);
+    expect(find.text('本地模型配置已可用'), findsNothing);
+    expect(find.text('重试加载'), findsOneWidget);
+    final contents = await tester.runAsync(
+      () => File(harness.store.configPath).readAsString(),
+    );
+    expect(contents, contains('max_output_tokens: 1024'));
+    harness.forcedRevision = null;
+    await _dismissToasts(tester);
+    await tester.tap(find.text('重试加载'));
+    await _waitForDialog(tester);
+    expect(find.text('本地模型配置已可用'), findsOneWidget);
+    expect(
+      await tester.runAsync(
+        () => File(harness.store.configPath).readAsString(),
+      ),
+      contents,
+    );
+    expect(session.draft, '下一条草稿');
+    expect(session.runs, isEmpty);
+    await harness.close(tester);
+  });
+
   testWidgets('旧同 provider 分组改名分别显示，重开及名称读取保留原模型身份和 Key', (tester) async {
     final harness = await _DialogHarness.create(tester);
     harness.models = [
@@ -681,16 +729,19 @@ void main() {
       server.listen((request) async {
         request.response.headers.contentType = ContentType.json;
         if (request.uri.path == '/v1/model') {
-          final saved = await store.readDeepSeekModels();
+          final connections = await store.readModelConnections();
           request.response.write(
             jsonEncode({
               'models': [
-                for (final value in saved)
-                  {
-                    'provider': 'deepseek',
-                    'model': value.model,
-                    'available': true,
-                  },
+                for (final connection in connections)
+                  for (final value in connection.models)
+                    {
+                      'provider': connection.provider,
+                      'model': value.model,
+                      'available': true,
+                      if (connection.configRevision.isNotEmpty)
+                        'config_revision': connection.configRevision,
+                    },
               ],
             }),
           );
@@ -886,6 +937,7 @@ class _DialogHarness {
   final ChatViewModel chat;
   final HttpClient client;
   bool hangModels = false;
+  String? forcedRevision;
   Future<void>? modelsGate;
   List<({String provider, String model})> models = [
     (provider: 'deepseek', model: 'chat'),
@@ -915,6 +967,12 @@ class _DialogHarness {
       server.listen((request) async {
         if (harness.hangModels) return;
         await harness.modelsGate;
+        final revisions = {
+          for (final connection in await harness.store.readModelConnections())
+            for (final model in connection.models)
+              '${connection.provider}/${model.model}':
+                  connection.configRevision,
+        };
         // 此夹具仅确认加载交互；真实 Go 热加载由 model_config_go_test 验证。
         request.response.headers.contentType = ContentType.json;
         request.response.write(
@@ -925,6 +983,13 @@ class _DialogHarness {
                   'provider': model.provider,
                   'model': model.model,
                   'available': true,
+                  if ((harness.forcedRevision ??
+                          revisions['${model.provider}/${model.model}'] ??
+                          '')
+                      .isNotEmpty)
+                    'config_revision':
+                        harness.forcedRevision ??
+                        revisions['${model.provider}/${model.model}'],
                 },
             ],
           }),

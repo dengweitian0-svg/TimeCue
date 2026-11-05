@@ -2,8 +2,64 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timecue_desktop/data/config_file_store.dart';
+import 'package:yaml_edit/yaml_edit.dart';
 
 void main() {
+  test('连接每次保存发布新版本，预算及 Key 更新不影响其他连接', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'connection-revision-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final store = ConfigFileStore(directory.path);
+    await store.saveModelConnection(
+      const ModelConnectionSettings(
+        provider: 'other',
+        baseUrl: 'https://other.example.test',
+        models: [ChatModelSettings(model: 'chat')],
+      ),
+      apiKey: 'untouched-key',
+    );
+    final revisions = <String>{};
+    for (final output in [8192, 4096, 4096]) {
+      final current = (await store.readModelConnections())
+          .where((v) => v.provider == 'target')
+          .firstOrNull;
+      await store.saveModelConnection(
+        ModelConnectionSettings(
+          provider: 'target',
+          baseUrl: 'https://target.example.test',
+          sourceIndex: current?.sourceIndex,
+          sourceProvider: current?.sourceProvider,
+          models: [
+            ChatModelSettings(model: 'chat', maxOutputTokens: output),
+            ChatModelSettings(model: 'reasoner'),
+          ],
+        ),
+        apiKey: 'shared-key',
+      );
+      final yaml = YamlEditor(await File(store.configPath).readAsString());
+      final revision = yaml.parseAt([
+        'chat_model',
+        1,
+        'config_revision',
+      ], orElse: () => wrapAsYamlNode(null)).value;
+      expect(revision, isA<String>());
+      expect((revision as String).isNotEmpty, isTrue);
+      expect(revisions.add(revision), isTrue, reason: '同名和重复保存不能复用旧版本');
+      final connections = await ConfigFileStore(
+        directory.path,
+      ).readModelConnections();
+      expect(connections.last.models.map((m) => m.maxOutputTokens), [
+        output,
+        8192,
+      ]);
+      final env = await File('${directory.path}/.env').readAsString();
+      expect(env, contains('OTHER_CHAT=untouched-key'));
+      expect(env, contains('TARGET_CHAT=shared-key'));
+      expect(env, contains('TARGET_REASONER=shared-key'));
+    }
+  });
+
   test('同模型三份连接独立保存，显示名称可改而稳定身份和密钥保持不变', () async {
     final directory = await Directory.systemTemp.createTemp(
       'connection-names-',

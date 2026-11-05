@@ -167,14 +167,16 @@ type Subscription struct {
 
 // ModelOption 是模型列表的公开条目。
 type ModelOption struct {
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	Available bool   `json:"available"`
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	Available      bool   `json:"available"`
+	ConfigRevision string `json:"config_revision,omitempty"`
 }
 
 // ModelConfig 是一次请求使用的私有配置，密钥从不进入持久化输入。
 type ModelConfig struct {
 	Provider            string
+	ConfigRevision      string
 	Model               string
 	BaseURL             string
 	Key                 string

@@ -16,6 +16,11 @@ import 'package:yaml_edit/yaml_edit.dart';
 
 void main() {
   testWidgets(
+    '连接内多模型经真实 Go 维护预算密钥，保留在途请求并验证重启和原身份失效',
+    (tester) => _customConnectionGoFlow(tester, maintenance: true),
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+  testWidgets(
     '同模型三份连接经真实 Go 隔离请求，运行中改名切换保留原身份与订阅，重启可区分',
     (tester) => _customConnectionGoFlow(tester, multiple: true),
     timeout: const Timeout(Duration(minutes: 3)),
@@ -696,6 +701,7 @@ class _RealHttpOverrides extends HttpOverrides {}
 Future<void> _customConnectionGoFlow(
   WidgetTester tester, {
   bool multiple = false,
+  bool maintenance = false,
 }) async {
   final directory = (await tester.runAsync(
     () => Directory.systemTemp.createTemp('custom-connection-go-'),
@@ -721,6 +727,7 @@ Future<void> _customConnectionGoFlow(
   final binary = p.join(directory.path, 'timecue-core.exe');
   var ordinal = 0;
   Completer<void>? release;
+  var finish = 'stop';
   addTearDown(() async {
     if (release?.isCompleted == false) release!.complete();
     chat.dispose();
@@ -780,6 +787,7 @@ Future<void> _customConnectionGoFlow(
       upstreams.add(server);
       server.listen((request) async {
         final gate = release;
+        final finishReason = finish;
         observed.add((
           port: server.port,
           path: request.uri.path,
@@ -800,7 +808,7 @@ Future<void> _customConnectionGoFlow(
             'choices': [
               {
                 'delta': {'content': '自定义本地链路回复'},
-                'finish_reason': 'stop',
+                'finish_reason': finishReason,
               },
             ],
           })}\n\ndata: [DONE]\n\n',
@@ -857,6 +865,7 @@ Future<void> _customConnectionGoFlow(
     int output,
     int upstream, {
     String provider = 'local_gateway',
+    String model = 'manual-chat-id',
   }) async {
     await edit('chat-draft-input', '通过正式聊天入口验证 $index');
     await tester.pump(const Duration(milliseconds: 50));
@@ -879,13 +888,13 @@ Future<void> _customConnectionGoFlow(
     final run = chat.selectedConversation!.runs.last;
     expect(run.phase, ChatRunPhase.succeeded);
     expect(run.provider, provider);
-    expect(run.model, 'manual-chat-id');
+    expect(run.model, model);
     expect(run.rawText, '自定义本地链路回复');
     expect(observed, hasLength(index));
     expect(observed.last.port, upstreams[upstream].port);
     expect(observed.last.path, '/compatible/v1/chat/completions');
     expect(observed.last.key, 'Bearer $key');
-    expect(observed.last.body['model'], 'manual-chat-id');
+    expect(observed.last.body['model'], model);
     expect(observed.last.body['max_tokens'], output);
     await tester.runAsync(() async {
       final inspection = _RealHttpOverrides().createHttpClient(null)
@@ -938,6 +947,213 @@ Future<void> _customConnectionGoFlow(
     0,
     provider: multiple ? 'deepseek' : 'local_gateway',
   );
+
+  if (maintenance) {
+    Future<void> open() async {
+      await tester.tap(find.byTooltip('管理模型'));
+      await tester.pump();
+      await waitFor(
+        () => find.byType(LinearProgressIndicator).evaluate().isEmpty,
+      );
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const ValueKey('model-key')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+    }
+
+    Future<void> budget(int row, String context, String output) async {
+      final advanced = find.byKey(ValueKey('model-advanced-$row'));
+      await tester.ensureVisible(advanced);
+      await tester.tap(advanced);
+      await pumpUi();
+      await edit('model-context-$row', context);
+      await edit('model-output-$row', output);
+    }
+
+    await tester.runAsync(
+      () => store.saveModelConnection(
+        ModelConnectionSettings(
+          provider: 'other',
+          baseUrl: 'http://127.0.0.1:${upstreams[1].port}/compatible/v1',
+          models: const [ChatModelSettings(model: 'manual-chat-id')],
+        ),
+        apiKey: 'controlled-other',
+      ),
+    );
+    await open();
+    await tester.ensureVisible(find.text('添加模型'));
+    await tester.tap(find.text('添加模型'));
+    await pumpUi();
+    await edit('model-id-1', 'manual-reasoner');
+    await budget(1, '65536', '2048');
+    await edit('model-key', 'controlled-shared');
+    await save();
+    expect(chat.models.map((v) => v.identity).toSet(), {
+      'local_gateway/manual-chat-id',
+      'local_gateway/manual-reasoner',
+      'other/manual-chat-id',
+    });
+    expect(chat.selectedModel!.identity, 'local_gateway/manual-chat-id');
+    await send(2, 'controlled-shared', 8192, 0);
+    chat.selectModel('local_gateway/manual-reasoner');
+    await send(3, 'controlled-shared', 2048, 0, model: 'manual-reasoner');
+    final session = chat.selectedConversation!;
+    chat.selectModel('local_gateway/manual-chat-id');
+    release = Completer<void>();
+    await edit('chat-draft-input', '在途固定配置');
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byKey(const ValueKey('chat-send-button')));
+    await tester.pump();
+    await waitFor(() => observed.length == 4);
+    final active = session.runs.last;
+    chat.updateDraft(session.sessionId, '保留下一条草稿');
+    await open();
+    await budget(0, '40000', '1024');
+    await edit('model-key', 'controlled-rotated');
+    await save();
+    expect(active.isTerminal, isFalse);
+    expect(chat.activeRunCount, 1);
+    expect(observed.last.key, 'Bearer controlled-shared');
+    expect(observed.last.body['max_tokens'], 8192);
+    release.complete();
+    release = null;
+    await waitFor(() => active.isTerminal);
+    expect(active.phase, ChatRunPhase.succeeded);
+    expect(session.draft, '保留下一条草稿');
+    await send(5, 'controlled-rotated', 1024, 0);
+    // 仅调整预算且重复保存，保留各目标 Key；另一连接仍使用自己的 Key。
+    await open();
+    await budget(1, '70000', '3072');
+    await save();
+    await open();
+    await save();
+    chat.selectModel('other/manual-chat-id');
+    await send(6, 'controlled-other', 8192, 1, provider: 'other');
+    chat.selectModel('local_gateway/manual-reasoner');
+    await send(7, 'controlled-rotated', 3072, 0, model: 'manual-reasoner');
+    chat.selectModel('local_gateway/manual-chat-id');
+    release = Completer<void>();
+    finish = 'length';
+    await edit('chat-draft-input', '移除正在请求的原身份');
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byKey(const ValueKey('chat-send-button')));
+    await tester.pump();
+    await waitFor(() => observed.length == 8);
+    final removed = session.runs.last;
+    await open();
+    await edit('model-id-1', 'renamed-reasoner');
+    await tester.ensureVisible(find.byTooltip('移除模型 1'));
+    await tester.tap(find.byTooltip('移除模型 1'));
+    await pumpUi();
+    final before = await tester.runAsync(
+      () => File(store.configPath).readAsString(),
+    );
+    await tester.tap(find.text('保存并应用'));
+    await tester.pump();
+    await waitFor(
+      () => find.byType(LinearProgressIndicator).evaluate().isEmpty,
+    );
+    expect(find.textContaining('目标模型缺少本地密钥'), findsWidgets);
+    expect(
+      await tester.runAsync(() => File(store.configPath).readAsString()),
+      before,
+    );
+    await edit('model-key', 'controlled-renamed');
+    await save();
+    expect(chat.selectedModel!.identity, 'local_gateway/renamed-reasoner');
+    expect(removed.model, 'manual-chat-id');
+    release.complete();
+    release = null;
+    finish = 'stop';
+    await waitFor(() => removed.isTerminal);
+    expect(removed.phase, ChatRunPhase.failed);
+    final snapshot = await tester.runAsync(() async {
+      final inspectionClient = _RealHttpOverrides().createHttpClient(null)
+        ..findProxy = (_) => 'DIRECT';
+      final inspection = HttpChatGateway(
+        baseUri: Uri.parse('http://127.0.0.1:1145'),
+        client: inspectionClient,
+      );
+      try {
+        return await inspection.getRun(removed.runId!);
+      } finally {
+        inspection.dispose();
+        inspectionClient.close(force: true);
+      }
+    });
+    expect(snapshot!.error!.code, 'model_config_unavailable');
+    expect(observed, hasLength(8));
+    expect(removed.rawText, '自定义本地链路回复');
+    await send(9, 'controlled-renamed', 3072, 0, model: 'renamed-reasoner');
+    final sessionId = session.sessionId;
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(() async {
+      final reopened = await ConfigFileStore(
+        directory.path,
+      ).readModelConnections();
+      expect(reopened.first.models.single.model, 'renamed-reasoner');
+      expect(reopened.first.models.single.contextWindow, 70000);
+      expect(reopened.first.models.single.maxOutputTokens, 3072);
+      expect(
+        reopened.every((v) => v.models.every((m) => m.hasLocalKey)),
+        isTrue,
+      );
+      await stop();
+      await start();
+      final restarted = await gateway.getModels();
+      expect(restarted.map((v) => v.identity), [
+        'local_gateway/renamed-reasoner',
+        'other/manual-chat-id',
+      ]);
+      expect(restarted.first.configRevision, reopened.first.configRevision);
+      expect((await gateway.getSession(sessionId)).runIds, hasLength(9));
+      final fresh = ChatViewModel(gateway: gateway);
+      final next = fresh.createLocalSession();
+      fresh.updateDraft(next.sessionId, '重启后的正式请求');
+      await fresh.send(
+        next.sessionId,
+        provider: 'local_gateway',
+        model: 'renamed-reasoner',
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 15));
+      while (!next.runs.single.isTerminal &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(next.runs.single.phase, ChatRunPhase.succeeded);
+      expect(observed.last.key, 'Bearer controlled-renamed');
+      expect(observed.last.body['max_tokens'], 3072);
+      fresh.dispose();
+      await stop();
+      await for (final entity in directory.list(recursive: true)) {
+        if (entity is! File ||
+            p.basename(entity.path) == '.env' ||
+            entity.path == binary) {
+          continue;
+        }
+        final contents = latin1.decode(await entity.readAsBytes());
+        for (final key in [
+          'controlled-custom-first',
+          'controlled-other',
+          'controlled-shared',
+          'controlled-rotated',
+          'controlled-renamed',
+        ]) {
+          expect(
+            contents,
+            isNot(contains(key)),
+            reason: p.basename(entity.path),
+          );
+        }
+      }
+    });
+    await pumpUi();
+    expect(tester.takeException(), isNull);
+    return;
+  }
 
   if (multiple) {
     Future<void> open() async {

@@ -180,9 +180,10 @@ func (s *Runtime) GetModels(context.Context) ([]ModelOption, error) {
 	models := []ModelOption{}
 	for _, cfg := range configs {
 		models = append(models, ModelOption{
-			Provider:  cfg.Provider,
-			Model:     cfg.Model,
-			Available: available(cfg),
+			Provider:       cfg.Provider,
+			Model:          cfg.Model,
+			Available:      available(cfg),
+			ConfigRevision: cfg.ConfigRevision,
 		})
 	}
 	return models, nil

@@ -1,5 +1,7 @@
 # Chat 模块
 
+- ModelOption 可选 `config_revision` 来自当前已发布的 ModelConfig；旧配置省略该字段。列表不返回 Key、预算或上游认证结果，版本不进入 run/checkpoint/模型请求及数据库。
+
 - `call_registration_test.go`：经公共聊天用例和真实 SQLite 在调用插入后的 checkpoint 保存处注入事务故障，验证未发模型请求、运行以 persistence_failed 原子保存 start/error/end，不被回滚行号阻塞收尾。
 
 - `usage.go`：内部公开用例 `Runtime.GetRunUsage` 只读可见 run 的全部模型调用，包含普通、摘要及续写；每次从独立 usage 列重算，不缓存或累计。逐调用原始 JSON 保留供应商扩展字段；prompt/completion/total 各自仅在所有调用均有对应非负整数且合计不溢出时已知，无调用或字段缺失保持 nil，不推算 total。
