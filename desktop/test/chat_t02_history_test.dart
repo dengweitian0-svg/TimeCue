@@ -8,8 +8,143 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:timecue_desktop/data/http_chat_gateway.dart';
 import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 import 'package:timecue_desktop/features/chat/chat_message_list.dart';
+import 'package:timecue_desktop/features/chat/chat_content_segments.dart';
+import 'package:timecue_desktop/features/chat/chat_markdown_body.dart';
 
 void main() {
+  for (final prefix in ['Hello ', '中间正文\n\nHello ', '中间正文', 'Hello world']) {
+    testWidgets('历史分页补齐最终正文且不重复已读前缀：$prefix', (tester) async {
+      final fixture = (await tester.runAsync(_HistoryServer.open))!;
+      addTearDown(fixture.close);
+      fixture
+        ..finished = true
+        ..status = 'succeeded'
+        ..output = 'Hello world';
+      fixture.events.addAll([
+        _event(1, 'start', {}),
+        _event(2, 'text', {'content': prefix}),
+        _event(3, 'text', {
+          'content': prefix.endsWith('Hello ') ? 'world' : '',
+        }),
+        _event(4, 'end', {'status': 'succeeded'}),
+      ]);
+      await tester.runAsync(() async {
+        await fixture.model.loadHistory();
+        await fixture.model.loadMoreEvents('r');
+      });
+      final run = fixture.model.conversations.single.runs.single;
+      final expected = prefix.endsWith('Hello ')
+          ? '${prefix}world'
+          : prefix.endsWith('Hello world')
+          ? prefix
+          : '${prefix}Hello world';
+      Future<void> verify() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(body: ChatContentSegments(run: run)),
+          ),
+        );
+        final shown = tester
+            .widgetList<ChatMarkdownBody>(find.byType(ChatMarkdownBody))
+            .map((body) => body.data)
+            .join();
+        expect(shown, expected);
+        expect(run.rawText, 'Hello world');
+      }
+
+      await verify();
+      expect(run.segments.single.content, prefix, reason: '补齐只影响展示，不修改已读事实');
+      await tester.runAsync(() => fixture.model.loadMoreEvents('r'));
+      await verify();
+    });
+  }
+
+  testWidgets('历史思考分页已确认终态时折叠，续页合并且保留手动展开', (tester) async {
+    final fixture = (await tester.runAsync(_HistoryServer.open))!;
+    addTearDown(fixture.close);
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '答案';
+    fixture.events.addAll([
+      _event(1, 'thinking', {'content': '第一段'}),
+      _event(2, 'thinking', {'content': '第二段'}),
+      _event(3, 'thinking', {'content': '第三段'}),
+      _event(4, 'text', {'content': '答案'}),
+      _event(5, 'end', {'status': 'succeeded'}),
+    ]);
+    await tester.runAsync(() async {
+      await fixture.model.loadHistory();
+      await fixture.model.loadMoreEvents('r');
+    });
+    final run = fixture.model.conversations.single.runs.single;
+    expect(run.segments, hasLength(1));
+    expect(run.segments.single.completed, isTrue);
+    expect(run.segments.single.expanded, isFalse);
+    Widget content() => MaterialApp(
+      home: Scaffold(
+        body: ListenableBuilder(
+          listenable: fixture.model,
+          builder: (context, _) => ChatContentSegments(
+            run: run,
+            onToggleReasoning: (segment, expanded) =>
+                fixture.model.setSegmentExpanded(
+                  runId: 'r',
+                  segmentId: segment.id,
+                  expanded: expanded,
+                ),
+          ),
+        ),
+      ),
+    );
+    // HTTP 读取在真实异步区触发的通知先完成，再进入 Widget 假时钟。
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 30)),
+    );
+    await tester.pumpWidget(content());
+    expect(find.text('正在思考…'), findsNothing);
+    expect(find.text('思考过程（已完成）'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('chat-reasoning-toggle-reasoning-1')),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('第一段第二段'), findsOneWidget);
+    expect(find.text('正在思考…'), findsNothing);
+    await tester.runAsync(() => fixture.model.loadMoreEvents('r'));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 30)),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(run.segments.first.content, '第一段第二段第三段');
+    expect(run.segments.first.expanded, isTrue);
+    expect(find.text('第一段第二段第三段'), findsOneWidget);
+  });
+
+  test('终态概况先到且尾部补读失败时仍完成思考并保留手动选择', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    await fixture.model.loadHistory();
+    await _until(() => fixture.connections.isNotEmpty);
+    await fixture.send(_event(1, 'thinking', {'content': '已收到的思考'}));
+    final run = fixture.model.conversations.single.runs.single;
+    await _until(() => run.lastEventId == 1);
+    fixture.model.setSegmentExpanded(
+      runId: 'r',
+      segmentId: run.segments.single.id,
+      expanded: true,
+    );
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '答案'
+      ..pageFailures = 1;
+    await fixture.model.loadHistory(refresh: true);
+    expect(run.isTerminal, isTrue);
+    expect(run.eventsError, isNotNull);
+    expect(run.segments.single.completed, isTrue);
+    expect(run.segments.single.expanded, isTrue);
+  });
+
   test('活动删除回执丢失后，刷新确认父会话不存在即隐藏并接续原 SSE 收尾', () async {
     final fixture = await _HistoryServer.open();
     addTearDown(fixture.close);
@@ -125,7 +260,11 @@ void main() {
         ),
       ),
     );
-    expect(find.textContaining('"revision"'), findsNothing);
+    expect(
+      find.text('已返回 · {"id":1,"name":"真实会议","revision":1}'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('原始结果：'), findsNothing);
     expect(find.textContaining('tool_argument_parse_error'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('chat-tool-2:lookup')));
     await tester.pumpAndSettle();
@@ -455,7 +594,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chat-tool-3:original-id')));
     await tester.pumpAndSettle();
     expect(find.textContaining('original-id'), findsWidgets);
-    expect(find.textContaining('原始结果'), findsOneWidget);
+    expect(find.text('已返回 · ["原始结果",7]'), findsOneWidget);
+    expect(find.textContaining('原始结果：\n'), findsOneWidget);
     expect(find.textContaining('今天'), findsOneWidget);
     await tester.ensureVisible(find.text('运行记录'));
     await tester.tap(find.text('运行记录'));

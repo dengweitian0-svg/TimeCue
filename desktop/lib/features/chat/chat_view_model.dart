@@ -977,6 +977,7 @@ class ChatViewModel extends ChangeNotifier {
     if (signal is ChatRunEventsNoContent) {
       run._sseFinished = true;
       run._terminalConfirmed = true;
+      run._completeOpenReasoning();
       run._status = null;
       run._cancelPending = false;
       run._phase = ChatRunPhase.recovering;
@@ -1223,6 +1224,7 @@ class ChatViewModel extends ChangeNotifier {
     }
     run._terminalConfirmed = true;
     run._sseFinished = true;
+    run._completeOpenReasoning();
     run._needsSnapshot = false;
     run._rawText = snapshot.output ?? '';
     run._error = snapshot.error?.message;
@@ -1598,18 +1600,19 @@ class ChatRunState {
   void _appendReasoning(String content, int seq) {
     if (content.isEmpty) return;
     final last = _segments.isEmpty ? null : _segments.last;
-    if (last != null &&
-        last.kind == ChatSegmentKind.reasoning &&
-        !last.completed) {
+    // 历史分页中的连续思考仍属同段；终态完成标记不拆分后续已存增量。
+    if (last != null && last.kind == ChatSegmentKind.reasoning) {
       last.addContent(content);
       return;
     }
     _segments.add(
       ChatContentSegment(
-        id: 'reasoning-${++_segmentSeq}',
-        kind: ChatSegmentKind.reasoning,
-        startSeq: seq,
-      )..addContent(content),
+          id: 'reasoning-${++_segmentSeq}',
+          kind: ChatSegmentKind.reasoning,
+          startSeq: seq,
+        )
+        ..completed = isTerminal
+        ..addContent(content),
     );
   }
 

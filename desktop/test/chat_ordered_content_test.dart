@@ -41,7 +41,7 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey('chat-reasoning-toggle-reasoning-1')),
     );
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('先确认可用时间，再检查冲突'), findsNothing);
     gateway.emitThinking(runId, 3, '，继续核对');
     await _pumpUntil(
@@ -70,8 +70,10 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey('chat-reasoning-toggle-reasoning-1')),
     );
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('先确认可用时间，再检查冲突，继续核对'), findsOneWidget);
+    expect(find.text('思考过程（已完成）'), findsOneWidget);
+    expect(find.text('正在思考…'), findsNothing);
 
     gateway.emitText(runId, 5, '我查一下');
     gateway.emitTool(

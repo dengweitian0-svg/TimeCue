@@ -31,18 +31,31 @@ class ChatContentSegments extends StatelessWidget {
         .map((segment) => segment.content)
         .join();
     // 只用终态概况补齐事件流中缺少的最终正文，不覆盖也不重复过程内容。
-    final needsFinal =
-        run.rawText.isNotEmpty && !streamed.endsWith(run.rawText);
+    final overlap = _finalOverlap(streamed, run.rawText);
+    final missing = run.rawText.substring(overlap);
+    final extendLastText =
+        overlap > 0 &&
+        missing.isNotEmpty &&
+        segments.isNotEmpty &&
+        segments.last.kind == ChatSegmentKind.text;
+    final needsFinal = missing.isNotEmpty && !extendLastText;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final segment in segments) _segment(context, segment),
+        for (final segment in segments)
+          _segment(
+            context,
+            segment,
+            suffix: extendLastText && identical(segment, segments.last)
+                ? missing
+                : '',
+          ),
         if (needsFinal)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: ChatMarkdownBody(
               key: ValueKey('chat-assistant-${run.messageId}'),
-              data: run.rawText,
+              data: missing,
             ),
           ),
         if (segments.isEmpty &&
@@ -58,34 +71,65 @@ class ChatContentSegments extends StatelessWidget {
     );
   }
 
-  Widget _segment(BuildContext context, ChatContentSegment segment) =>
-      switch (segment.kind) {
-        ChatSegmentKind.reasoning => _ReasoningSection(
-          segment: segment,
-          isStreaming: !run.isTerminal,
-          onToggle: onToggleReasoning == null
-              ? null
-              : (expanded) => onToggleReasoning!(segment, expanded),
-        ),
-        ChatSegmentKind.text => Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: ChatAnimatedMarkdown(
-            key: ValueKey('chat-text-${segment.id}'),
-            data: segment.content,
-            instantLength: segment.instantLength,
-            isStreaming: !run.isTerminal,
-          ),
-        ),
-        ChatSegmentKind.tool => Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: ChatToolCallList(
-            calls: [
-              for (final call in run.toolCalls)
-                if (segment.toolIds.contains(call.instanceId)) call,
-            ],
-          ),
-        ),
-      };
+  Widget _segment(
+    BuildContext context,
+    ChatContentSegment segment, {
+    String suffix = '',
+  }) => switch (segment.kind) {
+    ChatSegmentKind.reasoning => _ReasoningSection(
+      segment: segment,
+      isStreaming: !run.isTerminal && !segment.completed,
+      onToggle: onToggleReasoning == null
+          ? null
+          : (expanded) => onToggleReasoning!(segment, expanded),
+    ),
+    ChatSegmentKind.text => Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: ChatAnimatedMarkdown(
+        key: ValueKey('chat-text-${segment.id}'),
+        data: segment.content + suffix,
+        instantLength: segment.instantLength,
+        isStreaming: !run.isTerminal,
+      ),
+    ),
+    ChatSegmentKind.tool => Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: ChatToolCallList(
+        calls: [
+          for (final call in run.toolCalls)
+            if (segment.toolIds.contains(call.instanceId)) call,
+        ],
+      ),
+    ),
+  };
+}
+
+// 线性核对事件正文的后缀与概况正文的前缀，只补缺失文字，不推断模型轮次。
+int _finalOverlap(String streamed, String output) {
+  if (streamed.isEmpty || output.isEmpty) return 0;
+  if (streamed.endsWith(output)) return output.length;
+  final prefixes = List<int>.filled(output.length, 0);
+  for (var i = 1, matched = 0; i < output.length; i++) {
+    while (matched > 0 && output.codeUnitAt(i) != output.codeUnitAt(matched)) {
+      matched = prefixes[matched - 1];
+    }
+    if (output.codeUnitAt(i) == output.codeUnitAt(matched)) matched++;
+    prefixes[i] = matched;
+  }
+  var matched = 0;
+  for (
+    var i = math.max(0, streamed.length - output.length);
+    i < streamed.length;
+    i++
+  ) {
+    while (matched > 0 &&
+        (matched == output.length ||
+            streamed.codeUnitAt(i) != output.codeUnitAt(matched))) {
+      matched = prefixes[matched - 1];
+    }
+    if (streamed.codeUnitAt(i) == output.codeUnitAt(matched)) matched++;
+  }
+  return matched;
 }
 
 /// 思考段落：生成期间展开并逐步追加，本段完成后自动折叠。
@@ -123,10 +167,10 @@ class _ReasoningSection extends StatelessWidget {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    expanded
-                        ? '正在思考…'
-                        : segment.completed
+                    segment.completed
                         ? '思考过程（已完成）'
+                        : expanded
+                        ? '正在思考…'
                         : '思考过程',
                     style: const TextStyle(
                       fontSize: 12,
