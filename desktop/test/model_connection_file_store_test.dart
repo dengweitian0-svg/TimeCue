@@ -4,6 +4,67 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:timecue_desktop/data/config_file_store.dart';
 
 void main() {
+  test('同模型三份连接独立保存，显示名称可改而稳定身份和密钥保持不变', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'connection-names-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final store = ConfigFileStore(directory.path);
+    for (final provider in ['deepseek', 'deepseek_2', 'deepseek_3']) {
+      await store.saveModelConnection(
+        ModelConnectionSettings(
+          provider: provider,
+          displayName: '连接 $provider',
+          baseUrl: 'https://$provider.example.test/v1',
+          models: const [ChatModelSettings(model: 'chat')],
+        ),
+        apiKey: 'controlled-$provider',
+      );
+    }
+    final beforeEnv = await File('${directory.path}/.env').readAsString();
+    final second = (await store.readModelConnections())[1];
+    await store.saveModelConnection(
+      ModelConnectionSettings(
+        provider: second.provider,
+        displayName: '代理新名称',
+        baseUrl: second.baseUrl,
+        models: second.models,
+        sourceIndex: second.sourceIndex,
+        sourceProvider: second.sourceProvider,
+      ),
+      apiKey: '',
+    );
+    final reopened = await ConfigFileStore(
+      directory.path,
+    ).readModelConnections();
+    expect(reopened.map((v) => v.provider), [
+      'deepseek',
+      'deepseek_2',
+      'deepseek_3',
+    ]);
+    expect(reopened.map((v) => v.displayName), [
+      '连接 deepseek',
+      '代理新名称',
+      '连接 deepseek_3',
+    ]);
+    expect(reopened.every((v) => v.models.single.hasLocalKey), isTrue);
+    expect(await File('${directory.path}/.env').readAsString(), beforeEnv);
+    await expectLater(
+      store.saveModelConnection(
+        ModelConnectionSettings(
+          provider: 'renamed_identity',
+          displayName: '不允许替换身份',
+          baseUrl: second.baseUrl,
+          models: second.models,
+          sourceIndex: second.sourceIndex,
+          sourceProvider: second.sourceProvider,
+        ),
+        apiKey: 'replacement',
+      ),
+      throwsA(isA<ModelConfigException>()),
+    );
+  });
+
   test('旧 DeepSeek 空分组缺少地址时仍可首次配置且不覆盖其他分组', () async {
     final directory = await Directory.systemTemp.createTemp(
       'connection-empty-',

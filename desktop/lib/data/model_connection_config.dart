@@ -6,11 +6,13 @@ class ModelConnectionSettings {
     required this.provider,
     required this.baseUrl,
     required this.models,
+    String? displayName,
     this.sourceIndex,
     this.sourceProvider,
-  });
+  }) : displayName = displayName ?? provider;
 
   final String provider;
+  final String displayName;
   final String baseUrl;
   final List<ChatModelSettings> models;
   final int? sourceIndex;
@@ -18,6 +20,10 @@ class ModelConnectionSettings {
 
   /// 写入前校验服务身份、地址及每个模型的预算。
   void validate() {
+    if (displayName.trim().isEmpty ||
+        displayName.runes.any((c) => c < 32 || c == 127)) {
+      throw const ModelConfigException('请填写有效的连接名称');
+    }
     if (provider.trim().isEmpty ||
         provider != provider.trim() ||
         provider.runes.any((c) => c < 32 || c == 127)) {
@@ -45,6 +51,13 @@ class ModelConnectionSettings {
 
 /// 通用连接与旧模型设置使用相同的文件、串行队列及密钥规则。
 extension ModelConnectionConfigFileStore on ConfigFileStore {
+  /// 为聊天选择器读取本地名称；不扩展服务端模型身份和响应。
+  Future<Map<String, String>> readConnectionNames() async => {
+    for (final connection in await readModelConnections())
+      for (final model in connection.models)
+        '${connection.provider}/${model.model}': connection.displayName,
+  };
+
   /// 读取已有连接和逐模型密钥状态，不返回原始 Key。
   Future<List<ModelConnectionSettings>> readModelConnections() =>
       _serialize(() async {
@@ -75,7 +88,11 @@ extension ModelConnectionConfigFileStore on ConfigFileStore {
             _field(providers[index], 'provider') != settings.sourceProvider)) {
       throw const ModelConfigException('原连接已变化，请重新打开设置后重试');
     }
-    // 新连接及 provider 改名不能借用其他分组的身份。
+    if (settings.sourceIndex != null &&
+        settings.provider != settings.sourceProvider) {
+      throw const ModelConfigException('已有连接身份不可修改，请修改连接名称或新建连接');
+    }
+    // 新连接不能借用其他分组的身份，显示名称不参与身份校验。
     if (settings.provider != settings.sourceProvider &&
         providers.any((v) => _field(v, 'provider') == settings.provider)) {
       throw const ModelConfigException('provider 已存在，请编辑已有连接或使用其他身份');
@@ -131,6 +148,10 @@ extension ModelConnectionConfigFileStore on ConfigFileStore {
       ...path,
       ConfigFileStore._key(original, 'provider'),
     ], settings.provider);
+    editor.update([
+      ...path,
+      ConfigFileStore._key(original, 'display_name'),
+    ], settings.displayName.trim());
     editor.update([
       ...path,
       ConfigFileStore._key(original, 'base_url'),
@@ -206,15 +227,17 @@ ModelConnectionSettings _readConnection(
   Map<String, String> keys,
 ) {
   final name = _field(provider, 'provider');
+  final displayName = _field(provider, 'display_name') ?? name;
   // 旧空分组允许省略地址，DeepSeek 沿用原首次配置的官方初值。
   final address =
       _field(provider, 'base_url') ??
       (name == 'deepseek' ? 'https://api.deepseek.com' : '');
-  if (name is! String || address is! String) {
+  if (name is! String || address is! String || displayName is! String) {
     throw const ModelConfigException('连接配置格式无效，请检查本地配置');
   }
   return ModelConnectionSettings(
     provider: name,
+    displayName: displayName,
     baseUrl: address,
     sourceIndex: index,
     sourceProvider: name,

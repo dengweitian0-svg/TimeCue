@@ -21,13 +21,18 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
   final _models = <_ModelDraft>[];
   int _nextModelId = 0;
   final _key = TextEditingController();
+  final _name = TextEditingController();
   final _provider = TextEditingController(text: 'deepseek');
   final _baseUrl = TextEditingController(text: 'https://api.deepseek.com');
   List<ModelConnectionSettings> _connections = [];
   ModelConnectionSettings? _source;
   int _selectedConnection = -1;
   String _preset = 'deepseek';
-  (String, String) _savedConnection = ('deepseek', 'https://api.deepseek.com');
+  (String, String, String) _savedConnection = (
+    '',
+    'deepseek',
+    'https://api.deepseek.com',
+  );
   bool _busy = true;
   bool _loaded = false;
   bool _visibleKey = false;
@@ -52,7 +57,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
   bool get _dirty =>
       _loaded &&
       (_key.text.isNotEmpty ||
-          (_provider.text, _baseUrl.text) != _savedConnection ||
+          (_name.text, _provider.text, _baseUrl.text) != _savedConnection ||
           !_sameDrafts(_drafts, _savedDrafts));
 
   bool _sameDrafts(
@@ -77,6 +82,11 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       final connections = await widget.store.readModelConnections();
       if (!mounted) return;
       _connections = connections;
+      widget.chat.setConnectionNames({
+        for (final connection in connections)
+          for (final model in connection.models)
+            '${connection.provider}/${model.model}': connection.displayName,
+      });
       final selected = widget.chat.selectedModel;
       final index = connections.indexWhere(
         (v) =>
@@ -104,11 +114,10 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
   void _setConnection(int index) {
     _selectedConnection = index;
     _source = index < 0 ? null : _connections[index];
-    _provider.text = _source?.provider ?? 'deepseek';
+    _provider.text = _source?.provider ?? _newProvider('deepseek');
+    _name.text = _source?.displayName ?? _provider.text;
     _baseUrl.text = _source?.baseUrl ?? 'https://api.deepseek.com';
-    _preset =
-        _provider.text == 'deepseek' &&
-            _baseUrl.text == 'https://api.deepseek.com'
+    _preset = _baseUrl.text == 'https://api.deepseek.com'
         ? 'deepseek'
         : 'custom';
     for (final draft in _models) {
@@ -125,11 +134,30 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
     if (_models.isEmpty) _models.add(_ModelDraft(_nextModelId++));
     _key.clear();
     _visibleKey = false;
-    _savedConnection = (_provider.text, _baseUrl.text);
+    _savedConnection = (_name.text, _provider.text, _baseUrl.text);
     _savedDrafts = _drafts;
     _pendingApplication = null;
     _error = null;
     _message = null;
+  }
+
+  String _newProvider(String base) {
+    String normalized(String value) =>
+        value.toUpperCase().replaceAll(RegExp('[^A-Z0-9]'), '_');
+    final existing = _connections.map((v) => normalized(v.provider)).toSet();
+    var candidate = base;
+    for (var ordinal = 2; existing.contains(normalized(candidate)); ordinal++) {
+      candidate = '${base}_$ordinal';
+    }
+    return candidate;
+  }
+
+  String _connectionLabel(int index) {
+    final connection = _connections[index];
+    final names = _connections.map((value) => value.displayName).toSet();
+    return names.length == _connections.length && !names.contains('新建连接')
+        ? connection.displayName
+        : '${index + 1}. ${connection.displayName} (${connection.provider})';
   }
 
   Future<void> _selectConnection(int? index) async {
@@ -166,6 +194,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
     ];
     final settings = ModelConnectionSettings(
       provider: _provider.text.trim(),
+      displayName: _name.text.trim(),
       baseUrl: _baseUrl.text.trim(),
       models: models,
       sourceIndex: _source?.sourceIndex,
@@ -189,6 +218,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       final index = _source?.sourceIndex ?? _connections.length;
       _source = ModelConnectionSettings(
         provider: settings.provider,
+        displayName: settings.displayName,
         baseUrl: settings.baseUrl,
         sourceIndex: index,
         sourceProvider: settings.provider,
@@ -210,7 +240,12 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
         _connections[index] = _source!;
       }
       _selectedConnection = index;
-      _savedConnection = (_provider.text, _baseUrl.text);
+      widget.chat.setConnectionNames({
+        for (final connection in _connections)
+          for (final model in connection.models)
+            '${connection.provider}/${model.model}': connection.displayName,
+      });
+      _savedConnection = (_name.text, _provider.text, _baseUrl.text);
       _savedDrafts = _drafts;
       _key.clear();
       _visibleKey = false;
@@ -316,6 +351,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
     }
     _key.dispose();
     _provider.dispose();
+    _name.dispose();
     _baseUrl.dispose();
     super.dispose();
   }
@@ -429,6 +465,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                         decoration: const InputDecoration(labelText: '当前连接'),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<int>(
+                            key: const ValueKey('connection-selector'),
                             value: _selectedConnection,
                             isExpanded: true,
                             isDense: true,
@@ -436,7 +473,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                               for (var i = 0; i < _connections.length; i++)
                                 DropdownMenuItem(
                                   value: i,
-                                  child: Text(_connections[i].provider),
+                                  child: Text(_connectionLabel(i)),
                                 ),
                               const DropdownMenuItem(
                                 value: -1,
@@ -467,7 +504,9 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                               if (value == null) return;
                               _preset = value;
                               if (value == 'deepseek') {
-                                _provider.text = 'deepseek';
+                                if (_source == null) {
+                                  _provider.text = _newProvider('deepseek');
+                                }
                                 _baseUrl.text = 'https://api.deepseek.com';
                               }
                               _edited('');
@@ -475,12 +514,23 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                     ),
                     const Text('仅支持 Chat Completions；预设可修改，模型 ID 手动填写。'),
                     TextFormField(
+                      key: const ValueKey('model-name'),
+                      controller: _name,
+                      enabled: !_busy,
+                      onChanged: _edited,
+                      decoration: const InputDecoration(labelText: '连接名称'),
+                      validator: (v) =>
+                          v == null || v.trim().isEmpty ? '请填写连接名称' : null,
+                    ),
+                    TextFormField(
                       key: const ValueKey('model-provider'),
                       controller: _provider,
+                      readOnly: _source != null,
                       enabled: !_busy,
                       onChanged: _edited,
                       decoration: const InputDecoration(
                         labelText: 'provider（连接身份）',
+                        helperText: '保存后身份固定；更名请修改连接名称。',
                       ),
                       validator: (v) =>
                           v == null || v.trim().isEmpty ? '请填写 provider' : null,

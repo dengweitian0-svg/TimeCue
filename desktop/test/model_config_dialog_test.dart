@@ -18,6 +18,102 @@ import 'package:timecue_desktop/theme/notebook_theme.dart';
 import 'fixtures/config_file_faults.dart';
 
 void main() {
+  testWidgets('旧同 provider 分组改名分别显示，重开及名称读取保留原模型身份和 Key', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    harness.models = [
+      (provider: 'deepseek', model: 'chat'),
+      (provider: 'deepseek', model: 'reasoner'),
+    ];
+    await tester.runAsync(() async {
+      await File(harness.store.configPath).writeAsString('''chat_model:
+  - provider: deepseek
+    base_url: https://api.deepseek.com
+    models:
+      - model: chat
+        context_window: 32768
+  - provider: deepseek
+    base_url: https://api.deepseek.com
+    models:
+      - model: reasoner
+        context_window: 32768
+''');
+      await File('${harness.directory.path}/.env').writeAsString(
+        'DEEPSEEK_CHAT=controlled-chat\nDEEPSEEK_REASONER=controlled-reasoner\n',
+      );
+    });
+    await harness.open(tester);
+    await tester.enterText(find.byKey(const ValueKey('model-name')), '官方');
+    await tester.tap(find.text('保存并应用'));
+    await _waitForDialog(tester);
+    expect(harness.chat.models.map(harness.chat.modelLabel), [
+      '官方 / chat',
+      'deepseek / reasoner',
+    ]);
+    final dropdown = tester.widget<DropdownButton<int>>(
+      find.byKey(const ValueKey('connection-selector')),
+    );
+    expect(dropdown.items!.take(2).map((v) => (v.child as Text).data), [
+      '官方',
+      'deepseek',
+    ]);
+    await _dismissToasts(tester);
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('打开配置'));
+    await _waitForDialog(tester);
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const ValueKey('model-name')))
+          .controller!
+          .text,
+      '官方',
+    );
+    await tester.runAsync(() async {
+      expect(
+        await ConfigFileStore(harness.directory.path).readConnectionNames(),
+        {'deepseek/chat': '官方', 'deepseek/reasoner': 'deepseek'},
+      );
+      expect(
+        await File('${harness.directory.path}/.env').readAsString(),
+        'DEEPSEEK_CHAT=controlled-chat\nDEEPSEEK_REASONER=controlled-reasoner\n',
+      );
+    });
+    await harness.close(tester);
+  });
+
+  testWidgets('连接名称包含消歧文案时最终选项仍可区分', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    harness.models = [
+      for (final provider in ['deepseek', 'deepseek_2', 'deepseek_3'])
+        (provider: provider, model: 'chat'),
+    ];
+    await tester.runAsync(() async {
+      for (var i = 0; i < 3; i++) {
+        await harness.store.saveModelConnection(
+          ModelConnectionSettings(
+            provider: harness.models[i].provider,
+            displayName: ['代理', '代理', '代理 (deepseek)'][i],
+            baseUrl: 'https://example.test',
+            models: const [ChatModelSettings(model: 'chat')],
+          ),
+          apiKey: 'controlled-$i',
+        );
+      }
+      await harness.chat.loadModels();
+    });
+    await harness.open(tester);
+    final labels = harness.chat.models.map(harness.chat.modelLabel).toList();
+    expect(labels.toSet(), hasLength(3));
+    final dropdown = tester.widget<DropdownButton<int>>(
+      find.byKey(const ValueKey('connection-selector')),
+    );
+    expect(
+      dropdown.items!.map((v) => (v.child as Text).data).toSet(),
+      hasLength(4),
+    );
+    await harness.close(tester);
+  });
+
   testWidgets('保留草稿时切换连接不会错显另一份连接', (tester) async {
     final harness = await _DialogHarness.create(tester);
     await tester.runAsync(
@@ -27,11 +123,13 @@ void main() {
     );
     await harness.open(tester);
     await tester.enterText(
-      find.byKey(const ValueKey('model-provider')),
+      find.byKey(const ValueKey('model-name')),
       'draft-provider',
     );
-    await tester.ensureVisible(find.text('deepseek'));
-    await tester.tap(find.text('deepseek'));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('connection-selector')),
+    );
+    await tester.tap(find.byKey(const ValueKey('connection-selector')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('新建连接').last);
     await tester.pumpAndSettle();
@@ -41,10 +139,55 @@ void main() {
     expect(find.text('新建连接'), findsNothing);
     expect(
       tester
-          .widget<TextFormField>(find.byKey(const ValueKey('model-provider')))
+          .widget<TextFormField>(find.byKey(const ValueKey('model-name')))
           .controller!
           .text,
       'draft-provider',
+    );
+    await harness.close(tester);
+  });
+
+  testWidgets('修改连接名称后重开仍保留身份，预设不能重写旧身份', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    await tester.runAsync(
+      () => harness.store.saveModelConnection(
+        const ModelConnectionSettings(
+          provider: 'deepseek',
+          baseUrl: 'https://api.deepseek.com',
+          models: [ChatModelSettings(model: 'chat')],
+        ),
+        apiKey: 'controlled-old',
+      ),
+    );
+    await harness.open(tester);
+    final provider = find.byKey(const ValueKey('model-provider'));
+    expect(
+      tester
+          .widget<TextField>(
+            find.descendant(of: provider, matching: find.byType(TextField)),
+          )
+          .readOnly,
+      isTrue,
+    );
+    final name = find.byKey(const ValueKey('model-name'));
+    await tester.enterText(name, '官方连接');
+    await tester.tap(find.text('保存并应用'));
+    await _waitForDialog(tester);
+    expect(harness.chat.selectedModel!.identity, 'deepseek/chat');
+    expect(harness.chat.modelLabel(harness.chat.selectedModel!), '官方连接 / chat');
+    await _dismissToasts(tester);
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('打开配置'));
+    await _waitForDialog(tester);
+    expect(tester.widget<TextFormField>(name).controller!.text, '官方连接');
+    expect(tester.widget<TextFormField>(provider).controller!.text, 'deepseek');
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const ValueKey('model-key')))
+          .controller!
+          .text,
+      isEmpty,
     );
     await harness.close(tester);
   });
@@ -744,6 +887,9 @@ class _DialogHarness {
   final HttpClient client;
   bool hangModels = false;
   Future<void>? modelsGate;
+  List<({String provider, String model})> models = [
+    (provider: 'deepseek', model: 'chat'),
+  ];
 
   static Future<_DialogHarness> create(WidgetTester tester) async {
     final directory = (await tester.runAsync(
@@ -772,7 +918,16 @@ class _DialogHarness {
         // 此夹具仅确认加载交互；真实 Go 热加载由 model_config_go_test 验证。
         request.response.headers.contentType = ContentType.json;
         request.response.write(
-          '{"models":[{"provider":"deepseek","model":"chat","available":true}]}',
+          jsonEncode({
+            'models': [
+              for (final model in harness.models)
+                {
+                  'provider': model.provider,
+                  'model': model.model,
+                  'available': true,
+                },
+            ],
+          }),
         );
         await request.response.close();
       });
