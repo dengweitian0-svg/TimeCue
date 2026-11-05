@@ -1,5 +1,7 @@
 # Chat 模块
 
+- `tools_test.go` 的正式工具集成入口使用三十秒有界终态读取，覆盖多工具及多模型轮的真实 SQLite 提交；超时保留运行身份和状态诊断，观察期限不作为业务性能契约。
+
 - ModelOption 可选 `config_revision` 来自当前已发布的 ModelConfig；旧配置省略该字段。列表不返回 Key、预算或上游认证结果，版本不进入 run/checkpoint/模型请求及数据库。
 
 - `call_registration_test.go`：经公共聊天用例和真实 SQLite 在调用插入后的 checkpoint 保存处注入事务故障，验证未发模型请求、运行以 persistence_failed 原子保存 start/error/end，不被回滚行号阻塞收尾。

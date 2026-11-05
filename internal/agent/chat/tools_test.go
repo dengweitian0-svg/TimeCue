@@ -401,7 +401,8 @@ func startToolRun(t *testing.T, service *chat.Runtime, session string) chat.Run 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return awaitRun(t, service, receipt.RunID)
+	// 多工具批次包含多次真实 SQLite 提交，观察期限不作为业务性能契约。
+	return awaitFinishedRunWithin(t, service, receipt.RunID, 30*time.Second)
 }
 
 func toolSettings(base string) func() ([]chat.ModelConfig, error) {
