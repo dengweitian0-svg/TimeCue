@@ -16,6 +16,11 @@ import 'package:yaml_edit/yaml_edit.dart';
 
 void main() {
   testWidgets(
+    '同模型三份连接经真实 Go 隔离请求，运行中改名切换保留原身份与订阅，重启可区分',
+    (tester) => _customConnectionGoFlow(tester, multiple: true),
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+  testWidgets(
     '自定义连接经正式页面保存，真实 Go 同进程使用新地址模型密钥预算并在重启后读取',
     _customConnectionGoFlow,
     timeout: const Timeout(Duration(minutes: 3)),
@@ -688,18 +693,25 @@ Future<void> _routeMaintenanceUpstream(ConfigFileStore store, int port) async {
 
 class _RealHttpOverrides extends HttpOverrides {}
 
-Future<void> _customConnectionGoFlow(WidgetTester tester) async {
+Future<void> _customConnectionGoFlow(
+  WidgetTester tester, {
+  bool multiple = false,
+}) async {
   final directory = (await tester.runAsync(
     () => Directory.systemTemp.createTemp('custom-connection-go-'),
   ))!;
   final store = ConfigFileStore(directory.path);
   final client = _RealHttpOverrides().createHttpClient(null)
     ..findProxy = (_) => 'DIRECT';
+  final transport = _ObservedClient(client);
   final gateway = HttpChatGateway(
     baseUri: Uri.parse('http://127.0.0.1:1145'),
-    client: client,
+    client: transport,
   );
-  final chat = ChatViewModel(gateway: gateway);
+  final chat = ChatViewModel(
+    gateway: gateway,
+    readConnectionNames: store.readConnectionNames,
+  );
   final repository = DemoNotebookRepository();
   final notebook = NotebookViewModel(repository);
   final observed =
@@ -708,7 +720,9 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
   Process? process;
   final binary = p.join(directory.path, 'timecue-core.exe');
   var ordinal = 0;
+  Completer<void>? release;
   addTearDown(() async {
+    if (release?.isCompleted == false) release!.complete();
     chat.dispose();
     gateway.dispose();
     notebook.dispose();
@@ -761,10 +775,11 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
       './cmd/flutter',
     ], workingDirectory: '..');
     expect(build.exitCode, 0, reason: '${build.stderr}');
-    for (var i = 0; i < 2; i++) {
+    for (var i = 0; i < (multiple ? 3 : 2); i++) {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       upstreams.add(server);
       server.listen((request) async {
+        final gate = release;
         observed.add((
           port: server.port,
           path: request.uri.path,
@@ -773,6 +788,7 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
               jsonDecode(await utf8.decoder.bind(request).join())
                   as Map<String, dynamic>,
         ));
+        await gate?.future;
         request.response.headers.contentType = ContentType(
           'text',
           'event-stream',
@@ -800,6 +816,12 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
   expect(chat.models, isEmpty);
   expect(chat.historyLoaded, isTrue);
 
+  // 运行中持续动画不会静止，只推进弹窗和菜单的过渡帧。
+  Future<void> pumpUi() async {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+  }
+
   Future<void> waitFor(bool Function() condition) async {
     final deadline = DateTime.now().add(const Duration(seconds: 15));
     while (!condition() && DateTime.now().isBefore(deadline)) {
@@ -809,7 +831,7 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
       await tester.pump(const Duration(milliseconds: 25));
     }
     expect(condition(), isTrue);
-    await tester.pumpAndSettle();
+    await pumpUi();
   }
 
   Future<void> edit(String key, String value) async {
@@ -826,10 +848,16 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
     );
     expect(find.textContaining('本地模型已可用，可以继续对话'), findsOneWidget);
     await tester.tap(find.text('关闭'));
-    await tester.pumpAndSettle();
+    await waitFor(() => find.byType(ModelConfigDialog).evaluate().isEmpty);
   }
 
-  Future<void> send(int index, String key, int output, int upstream) async {
+  Future<void> send(
+    int index,
+    String key,
+    int output,
+    int upstream, {
+    String provider = 'local_gateway',
+  }) async {
     await edit('chat-draft-input', '通过正式聊天入口验证 $index');
     await tester.pump(const Duration(milliseconds: 50));
     expect(
@@ -850,7 +878,7 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
     );
     final run = chat.selectedConversation!.runs.last;
     expect(run.phase, ChatRunPhase.succeeded);
-    expect(run.provider, 'local_gateway');
+    expect(run.provider, provider);
     expect(run.model, 'manual-chat-id');
     expect(run.rawText, '自定义本地链路回复');
     expect(observed, hasLength(index));
@@ -891,10 +919,11 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
   await tester.pump();
   await waitFor(() => find.byType(LinearProgressIndicator).evaluate().isEmpty);
   await tester.tap(find.text('DeepSeek'));
-  await tester.pumpAndSettle();
+  await pumpUi();
   await tester.tap(find.text('自定义').last);
-  await tester.pumpAndSettle();
-  await edit('model-provider', 'local_gateway');
+  await pumpUi();
+  await edit('model-provider', multiple ? 'deepseek' : 'local_gateway');
+  if (multiple) await edit('model-name', '官方');
   await edit(
     'model-base-url',
     'http://127.0.0.1:${upstreams[0].port}/compatible/v1',
@@ -902,7 +931,242 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
   await edit('model-id', 'manual-chat-id');
   await edit('model-key', 'controlled-custom-first');
   await save();
-  await send(1, 'controlled-custom-first', 8192, 0);
+  await send(
+    1,
+    'controlled-custom-first',
+    8192,
+    0,
+    provider: multiple ? 'deepseek' : 'local_gateway',
+  );
+
+  if (multiple) {
+    Future<void> open() async {
+      await tester.tap(find.byTooltip('管理模型'));
+      await tester.pump();
+      await waitFor(
+        () => find.byType(LinearProgressIndicator).evaluate().isEmpty,
+      );
+    }
+
+    Future<void> choose(String identity) async {
+      final selector = find.byKey(const ValueKey('chat-model-selector'));
+      final dropdown = tester.widget<DropdownButton<String>>(selector);
+      final item = dropdown.items!.singleWhere((v) => v.value == identity);
+      final label = (item.child as Text).data!;
+      await tester.tap(selector);
+      await pumpUi();
+      await tester.tap(find.text(label).last);
+      await pumpUi();
+      expect(chat.selectedModel!.identity, identity);
+    }
+
+    for (var i = 1; i < 3; i++) {
+      await open();
+      final selector = find.byKey(const ValueKey('connection-selector'));
+      await tester.ensureVisible(selector);
+      await tester.tap(selector);
+      await pumpUi();
+      await tester.tap(find.text('新建连接').last);
+      await pumpUi();
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const ValueKey('model-provider')))
+            .controller!
+            .text,
+        'deepseek_${i + 1}',
+      );
+      await edit('model-name', '代理 $i');
+      await edit(
+        'model-base-url',
+        'http://127.0.0.1:${upstreams[i].port}/compatible/v1',
+      );
+      await edit('model-id', 'manual-chat-id');
+      await edit('model-key', 'controlled-proxy-$i');
+      await save();
+      await choose('deepseek_${i + 1}/manual-chat-id');
+      await send(
+        i + 1,
+        'controlled-proxy-$i',
+        8192,
+        i,
+        provider: 'deepseek_${i + 1}',
+      );
+    }
+    expect(chat.models, hasLength(3));
+    final session = chat.selectedConversation!;
+    final sessionId = session.sessionId;
+    release = Completer<void>();
+    await edit('chat-draft-input', '挂起请求后管理连接');
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byKey(const ValueKey('chat-send-button')));
+    await tester.pump();
+    await waitFor(() => observed.length == 4 && session.runs.length == 4);
+    final original = session.runs.last;
+    await edit('chat-draft-input', '下一条草稿保留');
+    await choose('deepseek_2/manual-chat-id');
+    final subscriptions = transport.paths
+        .where((v) => v.endsWith('/events'))
+        .length;
+    final envBefore = (await tester.runAsync(
+      () => File(p.join(directory.path, '.env')).readAsString(),
+    ))!;
+    await open();
+    await edit('model-name', '改名后的代理');
+    await save();
+    expect(
+      (await tester.runAsync(
+        () => File(p.join(directory.path, '.env')).readAsString(),
+      )),
+      envBefore,
+    );
+    await open();
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const ValueKey('model-name')))
+          .controller!
+          .text,
+      '改名后的代理',
+    );
+    await edit('model-key', 'controlled-proxy-1-new');
+    await edit(
+      'model-base-url',
+      'http://127.0.0.1:${upstreams[1].port}/updated/v1',
+    );
+    await save();
+    expect(chat.selectedSessionId, sessionId);
+    expect(chat.selectedConversation, same(session));
+    expect(session.draft, '下一条草稿保留');
+    expect(session.runs.last, same(original));
+    expect(original.provider, 'deepseek_3');
+    expect(original.isTerminal, isFalse);
+    expect(chat.activeRunCount, 1);
+    expect(
+      transport.paths.where((v) => v.endsWith('/events')).length,
+      subscriptions,
+    );
+    expect(observed.last.key, 'Bearer controlled-proxy-2');
+    await choose('deepseek/manual-chat-id');
+    release.complete();
+    release = null;
+    await waitFor(
+      () =>
+          original.phase == ChatRunPhase.succeeded ||
+          original.phase == ChatRunPhase.failed,
+    );
+    expect(original.phase, ChatRunPhase.succeeded);
+    expect(original.provider, 'deepseek_3');
+    expect(original.rawText, '自定义本地链路回复');
+    expect(chat.activeRunCount, 0);
+    expect(session.draft, '下一条草稿保留');
+    await send(5, 'controlled-custom-first', 8192, 0, provider: 'deepseek');
+    await choose('deepseek_3/manual-chat-id');
+    await send(6, 'controlled-proxy-2', 8192, 2, provider: 'deepseek_3');
+    await choose('deepseek_2/manual-chat-id');
+    // 被修改连接使用新路径；另两份仍沿原地址和 Key。
+    await edit('chat-draft-input', '修改后正式请求');
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byKey(const ValueKey('chat-send-button')));
+    await tester.pump();
+    await waitFor(
+      () =>
+          session.runs.length == 7 &&
+          (session.runs.last.phase == ChatRunPhase.succeeded ||
+              session.runs.last.phase == ChatRunPhase.failed),
+    );
+    expect(session.runs.last.phase, ChatRunPhase.succeeded);
+    expect(observed.last.port, upstreams[1].port);
+    expect(observed.last.path, '/updated/v1/chat/completions');
+    expect(observed.last.key, 'Bearer controlled-proxy-1-new');
+    expect(observed.last.body['model'], 'manual-chat-id');
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(() async {
+      final reopened = await ConfigFileStore(
+        directory.path,
+      ).readModelConnections();
+      expect(reopened.map((v) => v.provider), [
+        'deepseek',
+        'deepseek_2',
+        'deepseek_3',
+      ]);
+      expect(reopened.map((v) => v.displayName), ['官方', '改名后的代理', '代理 2']);
+      expect(reopened.every((v) => v.models.single.hasLocalKey), isTrue);
+      await stop();
+      await start();
+      final restarted = ChatViewModel(
+        gateway: gateway,
+        readConnectionNames: store.readConnectionNames,
+      );
+      await restarted.loadModels();
+      expect(restarted.models, hasLength(3));
+      expect(restarted.models.every((v) => v.available), isTrue);
+      expect(restarted.models.map(restarted.modelLabel), [
+        '官方 / manual-chat-id',
+        '改名后的代理 / manual-chat-id',
+        '代理 2 / manual-chat-id',
+      ]);
+      final history = await gateway.getSession(sessionId);
+      expect(history.runIds, hasLength(7));
+      for (var i = 0; i < history.runIds.length; i++) {
+        final run = await gateway.getRun(history.runIds[i]);
+        expect(
+          run.provider,
+          [
+            'deepseek',
+            'deepseek_2',
+            'deepseek_3',
+            'deepseek_3',
+            'deepseek',
+            'deepseek_3',
+            'deepseek_2',
+          ][i],
+        );
+      }
+      final fresh = restarted.createLocalSession();
+      restarted.updateDraft(fresh.sessionId, '重启后的连接请求');
+      await restarted.send(
+        fresh.sessionId,
+        provider: 'deepseek_2',
+        model: 'manual-chat-id',
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 15));
+      while (fresh.runs.single.phase != ChatRunPhase.succeeded &&
+          fresh.runs.single.phase != ChatRunPhase.failed &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(fresh.runs.single.phase, ChatRunPhase.succeeded);
+      expect(observed, hasLength(8));
+      expect(observed.last.path, '/updated/v1/chat/completions');
+      expect(observed.last.key, 'Bearer controlled-proxy-1-new');
+      restarted.dispose();
+      await stop();
+      await for (final entity in directory.list(recursive: true)) {
+        if (entity is! File ||
+            p.basename(entity.path) == '.env' ||
+            entity.path == binary) {
+          continue;
+        }
+        final contents = latin1.decode(await entity.readAsBytes());
+        for (final key in [
+          'controlled-custom-first',
+          'controlled-proxy-1',
+          'controlled-proxy-2',
+          'controlled-proxy-1-new',
+        ]) {
+          expect(
+            contents,
+            isNot(contains(key)),
+            reason: p.basename(entity.path),
+          );
+        }
+      }
+      gateway.dispose();
+      client.close(force: true);
+    });
+    await pumpUi();
+    expect(tester.takeException(), isNull);
+    return;
+  }
 
   // 同一身份连续保存 Key、预算和服务地址，期间不改文件、不重启 Go。
   await tester.tap(find.byTooltip('管理模型'));
@@ -927,7 +1191,7 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
   );
   await tester.ensureVisible(find.text('高级设置'));
   await tester.tap(find.text('高级设置'));
-  await tester.pumpAndSettle();
+  await pumpUi();
   await edit('model-output-0', '1024');
   await save();
   await send(3, 'controlled-custom-second', 1024, 1);
@@ -977,7 +1241,7 @@ Future<void> _customConnectionGoFlow(WidgetTester tester) async {
       );
     }
   });
-  await tester.pumpAndSettle();
+  await pumpUi();
   expect(tester.takeException(), isNull);
 }
 

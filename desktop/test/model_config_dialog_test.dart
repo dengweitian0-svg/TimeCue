@@ -27,11 +27,13 @@ void main() {
     );
     await harness.open(tester);
     await tester.enterText(
-      find.byKey(const ValueKey('model-provider')),
+      find.byKey(const ValueKey('model-name')),
       'draft-provider',
     );
-    await tester.ensureVisible(find.text('deepseek'));
-    await tester.tap(find.text('deepseek'));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('connection-selector')),
+    );
+    await tester.tap(find.byKey(const ValueKey('connection-selector')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('新建连接').last);
     await tester.pumpAndSettle();
@@ -41,10 +43,55 @@ void main() {
     expect(find.text('新建连接'), findsNothing);
     expect(
       tester
-          .widget<TextFormField>(find.byKey(const ValueKey('model-provider')))
+          .widget<TextFormField>(find.byKey(const ValueKey('model-name')))
           .controller!
           .text,
       'draft-provider',
+    );
+    await harness.close(tester);
+  });
+
+  testWidgets('修改连接名称后重开仍保留身份，预设不能重写旧身份', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    await tester.runAsync(
+      () => harness.store.saveModelConnection(
+        const ModelConnectionSettings(
+          provider: 'deepseek',
+          baseUrl: 'https://api.deepseek.com',
+          models: [ChatModelSettings(model: 'chat')],
+        ),
+        apiKey: 'controlled-old',
+      ),
+    );
+    await harness.open(tester);
+    final provider = find.byKey(const ValueKey('model-provider'));
+    expect(
+      tester
+          .widget<TextField>(
+            find.descendant(of: provider, matching: find.byType(TextField)),
+          )
+          .readOnly,
+      isTrue,
+    );
+    final name = find.byKey(const ValueKey('model-name'));
+    await tester.enterText(name, '官方连接');
+    await tester.tap(find.text('保存并应用'));
+    await _waitForDialog(tester);
+    expect(harness.chat.selectedModel!.identity, 'deepseek/chat');
+    expect(harness.chat.modelLabel(harness.chat.selectedModel!), '官方连接 / chat');
+    await _dismissToasts(tester);
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('打开配置'));
+    await _waitForDialog(tester);
+    expect(tester.widget<TextFormField>(name).controller!.text, '官方连接');
+    expect(tester.widget<TextFormField>(provider).controller!.text, 'deepseek');
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const ValueKey('model-key')))
+          .controller!
+          .text,
+      isEmpty,
     );
     await harness.close(tester);
   });

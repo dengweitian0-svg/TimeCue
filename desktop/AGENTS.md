@@ -1,5 +1,7 @@
 # Flutter 桌面端
 
+- `main.dart` 为应用级聊天模型注入同目录连接名称读取入口；连接名称只影响本地展示，正式请求、历史及密钥继续使用稳定 provider/model。
+
 - 聊天可执行入口及组合验收只使用真实 Go。`test/fixtures/chat_widget_gateway.dart` 仅供 Widget 布局、滚动与截图测试显式安排合成历史，构造时不播种，使用 widget 专用 provider/model；不装配为可执行 profile 聊天程序。
 
 - T06 真实只读日程查询复用工具事件解码及展示；参数、规则 revision、原始 JSON 结果和工具错误保持原值，工具错误不直接作为运行失败。

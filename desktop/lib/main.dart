@@ -6,6 +6,7 @@ import 'app/managed_backend.dart';
 import 'app/timecue_app.dart';
 import 'app/windows_notification_bridge.dart';
 import 'data/demo_notebook_repository.dart';
+import 'data/config_file_store.dart';
 import 'data/http_chat_gateway.dart';
 import 'data/http_notebook_repository.dart';
 import 'features/chat/chat_view_model.dart';
@@ -74,7 +75,10 @@ Future<void> main() async {
     baseUri: apiBase,
     beforeRequest: () => chatGuard.beforeRequest(),
   );
-  chat = ChatViewModel(gateway: chatGateway);
+  chat = ChatViewModel(
+    gateway: chatGateway,
+    readConnectionNames: configFiles.readConnectionNames,
+  );
   chatGuard = ChatRuntimeGuard(
     managed: configuration.managed,
     health: repository.deliveryRuntime,

@@ -371,7 +371,7 @@ class _ChatSpreadState extends State<ChatSpread> {
                         value: option.identity,
                         enabled: option.available,
                         child: Text(
-                          '${option.provider} / ${option.model}${option.available ? '' : '（不可用）'}',
+                          '${chat.modelLabel(option)}${option.available ? '' : '（不可用）'}',
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),

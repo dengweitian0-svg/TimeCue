@@ -9,11 +9,13 @@ import '../../contracts/chat_contracts.dart';
 class ChatViewModel extends ChangeNotifier {
   ChatViewModel({
     required ChatGateway gateway,
+    Future<Map<String, String>> Function()? readConnectionNames,
     String Function()? createSessionId,
     String Function()? createIdempotencyKey,
     Duration Function(int attempt)? retryDelay,
     this.maxReconnectAttempts = 4,
   }) : _gateway = gateway,
+       _readConnectionNames = readConnectionNames,
        _createSessionId = createSessionId ?? _uuidV4,
        _createIdempotencyKey = createIdempotencyKey ?? _defaultIdempotencyKey,
        _retryDelay = retryDelay ?? _defaultRetryDelay;
@@ -23,6 +25,35 @@ class ChatViewModel extends ChangeNotifier {
   String? _modelsError;
   bool _modelsLoading = false;
   int _modelLoadGeneration = 0;
+  final Future<Map<String, String>> Function()? _readConnectionNames;
+  Map<String, String> _connectionNames = const {};
+  int _namesGeneration = 0;
+
+  /// 更新本地展示名称，不更改模型选择、历史、草稿或运行身份。
+  void setConnectionNames(Map<String, String> names) {
+    if (_disposed) return;
+    _namesGeneration++;
+    _connectionNames = Map.unmodifiable(names);
+    notifyListeners();
+  }
+
+  /// 重名连接补充稳定身份，未配置名称的旧连接显示原 provider。
+  String connectionLabel(String provider) {
+    final name = _connectionNames[provider] ?? provider;
+    return {
+          ..._connectionNames.keys,
+          for (final model in _models) model.provider,
+        }.any(
+          (other) =>
+              other != provider && (_connectionNames[other] ?? other) == name,
+        )
+        ? '$name ($provider)'
+        : name;
+  }
+
+  /// 选择器展示本地连接名称，实际值仍为 provider/model。
+  String modelLabel(ChatModelOption option) =>
+      '${connectionLabel(option.provider)} / ${option.model}';
 
   /// 当前配置模型列表及可用性。
   List<ChatModelOption> get models => List.unmodifiable(_models);
@@ -44,9 +75,21 @@ class ChatViewModel extends ChangeNotifier {
     _modelsLoading = true;
     final request = ++_modelLoadGeneration;
     final generation = _runtimeGeneration;
+    final namesGeneration = _namesGeneration;
     try {
       final values = await (gateway as ChatModelGateway).getModels();
+      Map<String, String>? names;
+      try {
+        names = await _readConnectionNames?.call().timeout(
+          const Duration(seconds: 2),
+        );
+      } catch (_) {
+        // 名称读取失败沿用已知名称；本地展示不阻断正式模型与历史读取。
+      }
       if (!_modelReadCurrent(generation, request)) return;
+      if (names != null && namesGeneration == _namesGeneration) {
+        _connectionNames = Map.unmodifiable(names);
+      }
       _publishModels(values);
     } catch (error) {
       if (!_modelReadCurrent(generation, request)) return;
