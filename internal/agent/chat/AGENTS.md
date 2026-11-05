@@ -1,5 +1,7 @@
 # Chat 模块
 
+- `tool_recovery_test.go` 在释放中断门后对原实例收尾和重启恢复均使用三十秒有界终态观察，仍核对真实 finished_at、原调用身份、固定预算及业务结果；不将四秒观察窗口视作恢复性能契约。
+
 - `tools_test.go` 的正式工具集成入口使用三十秒有界终态读取，覆盖多工具及多模型轮的真实 SQLite 提交；超时保留运行身份和状态诊断，观察期限不作为业务性能契约。
 
 - ModelOption 可选 `config_revision` 来自当前已发布的 ModelConfig；旧配置省略该字段。列表不返回 Key、预算或上游认证结果，版本不进入 run/checkpoint/模型请求及数据库。

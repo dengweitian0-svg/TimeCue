@@ -11,6 +11,8 @@ import 'package:timecue_desktop/data/config_file_store.dart';
 import 'package:timecue_desktop/data/demo_notebook_repository.dart';
 import 'package:timecue_desktop/features/settings/settings_dialog.dart';
 
+import 'fixtures/config_file_faults.dart';
+
 void main() {
   late Directory directory;
   late ConfigFileStore store;
@@ -40,17 +42,15 @@ void main() {
       of: find.byType(SettingsDialog),
       matching: find.byType(LinearProgressIndicator),
     );
-    for (
-      var attempt = 0;
-      attempt < 100 && progress.evaluate().isNotEmpty;
-      attempt++
-    ) {
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (progress.evaluate().isNotEmpty &&
+        DateTime.now().isBefore(deadline)) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 10)),
       );
       await tester.pump(const Duration(milliseconds: 20));
     }
-    expect(progress, findsNothing);
+    expect(progress, findsNothing, reason: '设置读写未在观察期限内完成');
     await tester.pumpAndSettle();
   }
 
@@ -377,13 +377,22 @@ db:
     await tester.pumpAndSettle();
     await tester.tap(find.text('debug').last);
     await tester.pumpAndSettle();
-    tester
-        .widget<FilledButton>(find.widgetWithText(FilledButton, '保存设置'))
-        .onPressed!();
-    await flush(tester);
+    final faults = ConfigFileFaults(directory.path);
+    await tester.runAsync(() async {
+      faults.beforeConfigReplace = Future<void>.delayed(
+        const Duration(seconds: 5),
+      );
+    });
+    await IOOverrides.runWithIOOverrides(() async {
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '保存设置'))
+          .onPressed!();
+      await flush(tester);
+    }, faults);
     final contents = await tester.runAsync(
       () => File(store.configPath).readAsString(),
     );
+    expect(contents, contains('level: debug'));
     expect(contents, contains('log_path: logs'));
     expect(contents, contains('db_path: db/custom.sqlite'));
     await tester.pumpWidget(const SizedBox());

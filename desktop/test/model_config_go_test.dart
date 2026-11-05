@@ -707,9 +707,12 @@ Future<void> _customConnectionGoFlow(
     () => Directory.systemTemp.createTemp('custom-connection-go-'),
   ))!;
   final store = ConfigFileStore(directory.path);
-  final client = _RealHttpOverrides().createHttpClient(null)
-    ..findProxy = (_) => 'DIRECT';
-  final transport = _ObservedClient(client);
+  final transport = (await tester.runAsync(() async {
+    final client = _RealHttpOverrides().createHttpClient(null)
+      ..findProxy = (_) => 'DIRECT';
+    return _ObservedClient(client, ioZone: Zone.current);
+  }))!;
+  final client = transport.client;
   final gateway = HttpChatGateway(
     baseUri: Uri.parse('http://127.0.0.1:1145'),
     client: transport,
@@ -830,15 +833,59 @@ Future<void> _customConnectionGoFlow(
     await tester.pump(const Duration(milliseconds: 350));
   }
 
-  Future<void> waitFor(bool Function() condition) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 15));
+  Future<void> waitFor(
+    bool Function() condition, {
+    String stage = '界面状态同步',
+  }) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 30));
     while (!condition() && DateTime.now().isBefore(deadline)) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 25)),
       );
       await tester.pump(const Duration(milliseconds: 25));
     }
-    expect(condition(), isTrue);
+    if (!condition()) {
+      final session = chat.selectedConversation;
+      final run = session?.runs.lastOrNull;
+      final backend = await tester.runAsync(() async {
+        final inspectionClient = _RealHttpOverrides().createHttpClient(null)
+          ..findProxy = (_) => 'DIRECT';
+        final inspection = HttpChatGateway(
+          baseUri: Uri.parse('http://127.0.0.1:1145'),
+          client: inspectionClient,
+        );
+        try {
+          if (run?.runId == null) return {'run_id': null};
+          final snapshot = await inspection.getRun(run!.runId!);
+          return {
+            'run_id': snapshot.runId,
+            'provider': snapshot.provider,
+            'model': snapshot.model,
+            'status': snapshot.status.name,
+            'finished_at': snapshot.finishedAt?.toIso8601String(),
+            'error_code': snapshot.error?.code,
+          };
+        } catch (error) {
+          return {'snapshot_error_type': error.runtimeType.toString()};
+        } finally {
+          inspection.dispose();
+          inspectionClient.close(force: true);
+        }
+      });
+      // 只记录状态及请求路由，不输出认证头、请求正文或密钥。
+      final diagnostics = {
+        'session_id': session?.sessionId,
+        'run_count': session?.runs.length,
+        'run_id': run?.runId,
+        'phase': run?.phase.name,
+        'connection': run?.connectionState.name,
+        'last_event_id': run?.lastEventId,
+        'upstream_request_count': observed.length,
+        'http_paths': transport.paths,
+        'backend': backend,
+      };
+      fail('等待$stage超时：${jsonEncode(diagnostics)}');
+    }
     await pumpUi();
   }
 
@@ -884,6 +931,7 @@ Future<void> _customConnectionGoFlow(
                   ChatRunPhase.succeeded ||
               chat.selectedConversation!.runs.last.phase ==
                   ChatRunPhase.failed),
+      stage: '第 $index 次聊天 $provider/$model 的终态',
     );
     final run = chat.selectedConversation!.runs.last;
     expect(run.phase, ChatRunPhase.succeeded);
@@ -1101,16 +1149,31 @@ Future<void> _customConnectionGoFlow(
         reopened.every((v) => v.models.every((m) => m.hasLocalKey)),
         isTrue,
       );
+      gateway.dispose();
+      client.close(force: true);
       await stop();
       await start();
-      final restarted = await gateway.getModels();
+      final restartedClient = _RealHttpOverrides().createHttpClient(null)
+        ..findProxy = (_) => 'DIRECT';
+      final restartedGateway = HttpChatGateway(
+        baseUri: Uri.parse('http://127.0.0.1:1145'),
+        client: restartedClient,
+      );
+      addTearDown(() {
+        restartedGateway.dispose();
+        restartedClient.close(force: true);
+      });
+      final restarted = await restartedGateway.getModels();
       expect(restarted.map((v) => v.identity), [
         'local_gateway/renamed-reasoner',
         'other/manual-chat-id',
       ]);
       expect(restarted.first.configRevision, reopened.first.configRevision);
-      expect((await gateway.getSession(sessionId)).runIds, hasLength(9));
-      final fresh = ChatViewModel(gateway: gateway);
+      expect(
+        (await restartedGateway.getSession(sessionId)).runIds,
+        hasLength(9),
+      );
+      final fresh = ChatViewModel(gateway: restartedGateway);
       final next = fresh.createLocalSession();
       fresh.updateDraft(next.sessionId, '重启后的正式请求');
       await fresh.send(
@@ -1306,10 +1369,22 @@ Future<void> _customConnectionGoFlow(
       ]);
       expect(reopened.map((v) => v.displayName), ['官方', '改名后的代理', '代理 2']);
       expect(reopened.every((v) => v.models.single.hasLocalKey), isTrue);
+      gateway.dispose();
+      client.close(force: true);
       await stop();
       await start();
+      final restartedClient = _RealHttpOverrides().createHttpClient(null)
+        ..findProxy = (_) => 'DIRECT';
+      final restartedGateway = HttpChatGateway(
+        baseUri: Uri.parse('http://127.0.0.1:1145'),
+        client: restartedClient,
+      );
+      addTearDown(() {
+        restartedGateway.dispose();
+        restartedClient.close(force: true);
+      });
       final restarted = ChatViewModel(
-        gateway: gateway,
+        gateway: restartedGateway,
         readConnectionNames: store.readConnectionNames,
       );
       await restarted.loadModels();
@@ -1320,10 +1395,10 @@ Future<void> _customConnectionGoFlow(
         '改名后的代理 / manual-chat-id',
         '代理 2 / manual-chat-id',
       ]);
-      final history = await gateway.getSession(sessionId);
+      final history = await restartedGateway.getSession(sessionId);
       expect(history.runIds, hasLength(7));
       for (var i = 0; i < history.runIds.length; i++) {
-        final run = await gateway.getRun(history.runIds[i]);
+        final run = await restartedGateway.getRun(history.runIds[i]);
         expect(
           run.provider,
           [
@@ -1463,22 +1538,24 @@ Future<void> _customConnectionGoFlow(
 
 // 仅记录真实 HTTP 边界的路径，验证配置操作没有另建聊天或 SSE。
 class _ObservedClient implements HttpClient {
-  _ObservedClient(this.client);
+  _ObservedClient(this.client, {Zone? ioZone}) : _ioZone = ioZone;
   final HttpClient client;
+  final Zone? _ioZone;
   final paths = <String>[];
 
   /// JSON 请求完整转交真实客户端。
   @override
   Future<HttpClientRequest> openUrl(String method, Uri url) {
     paths.add(url.path);
-    return client.openUrl(method, url);
+    return _ioZone?.run(() => client.openUrl(method, url)) ??
+        client.openUrl(method, url);
   }
 
   /// SSE 请求完整转交真实客户端。
   @override
   Future<HttpClientRequest> getUrl(Uri url) {
     paths.add(url.path);
-    return client.getUrl(url);
+    return _ioZone?.run(() => client.getUrl(url)) ?? client.getUrl(url);
   }
 
   @override
