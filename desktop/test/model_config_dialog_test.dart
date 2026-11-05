@@ -428,6 +428,9 @@ void main() {
   testWidgets('应用等待中运行身份失效，迟到列表不提示成功或重复保存', (tester) async {
     final harness = await _DialogHarness.create(tester);
     final gate = Completer<void>();
+    addTearDown(() {
+      if (!gate.isCompleted) gate.complete();
+    });
     harness.modelsGate = gate.future;
     await harness.open(tester);
     await tester.enterText(find.byKey(const ValueKey('model-id')), 'chat');
@@ -438,13 +441,17 @@ void main() {
     await tester.tap(find.text('保存并应用'));
     await tester.pump();
     final env = File('${harness.directory.path}/.env');
-    for (var i = 0; i < 30 && !harness.chat.modelsLoading; i++) {
+    final saveDeadline = DateTime.now().add(const Duration(seconds: 12));
+    while ((!harness.chat.modelsLoading ||
+            !harness.modelsRequested.isCompleted) &&
+        DateTime.now().isBefore(saveDeadline)) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
       await tester.pump(const Duration(milliseconds: 50));
     }
     expect(harness.chat.modelsLoading, isTrue);
+    expect(harness.modelsRequested.isCompleted, isTrue);
     final savedEnv = await tester.runAsync(env.readAsString);
     harness.chat.invalidateRuntime();
     gate.complete();
@@ -939,6 +946,7 @@ class _DialogHarness {
   bool hangModels = false;
   String? forcedRevision;
   Future<void>? modelsGate;
+  final modelsRequested = Completer<void>();
   List<({String provider, String model})> models = [
     (provider: 'deepseek', model: 'chat'),
   ];
@@ -966,13 +974,16 @@ class _DialogHarness {
     await tester.runAsync(() async {
       server.listen((request) async {
         if (harness.hangModels) return;
-        await harness.modelsGate;
         final revisions = {
           for (final connection in await harness.store.readModelConnections())
             for (final model in connection.models)
               '${connection.provider}/${model.model}':
                   connection.configRevision,
         };
+        if (!harness.modelsRequested.isCompleted) {
+          harness.modelsRequested.complete();
+        }
+        await harness.modelsGate;
         // 此夹具仅确认加载交互；真实 Go 热加载由 model_config_go_test 验证。
         request.response.headers.contentType = ContentType.json;
         request.response.write(
