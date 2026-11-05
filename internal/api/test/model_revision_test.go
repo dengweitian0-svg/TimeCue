@@ -43,7 +43,11 @@ func TestModelListReportsPublishedRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := chat.NewService(chat.Storage{}, completion.NewClient(nil), manager.ChatModels, nil)
-	router := api.NewRouter(&app.App{ChatServices: chat.Services{Model: service, Run: service, Session: service}}, nil)
+	router := api.NewRouter(&app.App{ChatServices: chat.Services{
+		Model:   service,
+		Run:     service,
+		Session: service,
+	}}, nil)
 	check := func(revision string) {
 		t.Helper()
 		response := chatRequest(router, "GET", "/v1/model", "")
