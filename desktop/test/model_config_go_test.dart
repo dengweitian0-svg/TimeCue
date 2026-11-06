@@ -731,13 +731,27 @@ Future<void> _customConnectionGoFlow(
   var ordinal = 0;
   Completer<void>? release;
   var finish = 'stop';
-  addTearDown(() async {
-    if (release?.isCompleted == false) release!.complete();
+  var primaryClosed = false;
+  void disposePrimary() {
+    if (primaryClosed) return;
+    primaryClosed = true;
     chat.dispose();
     gateway.dispose();
+    client.close(force: true);
+  }
+
+  Future<void> closePrimary() async {
+    disposePrimary();
+    // 先取消真实连接，再让已经取消的请求超时与回调退出虚拟时钟。
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pumpAndSettle(const Duration(seconds: 10));
+  }
+
+  addTearDown(() async {
+    if (release?.isCompleted == false) release!.complete();
+    disposePrimary();
     notebook.dispose();
     repository.dispose();
-    client.close(force: true);
     process?.kill();
     await process?.exitCode;
     for (final server in upstreams) {
@@ -1138,6 +1152,7 @@ Future<void> _customConnectionGoFlow(
     await send(9, 'controlled-renamed', 3072, 0, model: 'renamed-reasoner');
     final sessionId = session.sessionId;
     await tester.pumpWidget(const SizedBox());
+    await closePrimary();
     await tester.runAsync(() async {
       final reopened = await ConfigFileStore(
         directory.path,
@@ -1149,8 +1164,6 @@ Future<void> _customConnectionGoFlow(
         reopened.every((v) => v.models.every((m) => m.hasLocalKey)),
         isTrue,
       );
-      gateway.dispose();
-      client.close(force: true);
       await stop();
       await start();
       final restartedClient = _RealHttpOverrides().createHttpClient(null)
@@ -1190,6 +1203,8 @@ Future<void> _customConnectionGoFlow(
       expect(observed.last.key, 'Bearer controlled-renamed');
       expect(observed.last.body['max_tokens'], 3072);
       fresh.dispose();
+      restartedGateway.dispose();
+      restartedClient.close(force: true);
       await stop();
       await for (final entity in directory.list(recursive: true)) {
         if (entity is! File ||
@@ -1358,6 +1373,7 @@ Future<void> _customConnectionGoFlow(
     expect(observed.last.key, 'Bearer controlled-proxy-1-new');
     expect(observed.last.body['model'], 'manual-chat-id');
     await tester.pumpWidget(const SizedBox());
+    await closePrimary();
     await tester.runAsync(() async {
       final reopened = await ConfigFileStore(
         directory.path,
@@ -1369,8 +1385,6 @@ Future<void> _customConnectionGoFlow(
       ]);
       expect(reopened.map((v) => v.displayName), ['官方', '改名后的代理', '代理 2']);
       expect(reopened.every((v) => v.models.single.hasLocalKey), isTrue);
-      gateway.dispose();
-      client.close(force: true);
       await stop();
       await start();
       final restartedClient = _RealHttpOverrides().createHttpClient(null)
@@ -1430,6 +1444,8 @@ Future<void> _customConnectionGoFlow(
       expect(observed.last.path, '/updated/v1/chat/completions');
       expect(observed.last.key, 'Bearer controlled-proxy-1-new');
       restarted.dispose();
+      restartedGateway.dispose();
+      restartedClient.close(force: true);
       await stop();
       await for (final entity in directory.list(recursive: true)) {
         if (entity is! File ||
@@ -1489,6 +1505,7 @@ Future<void> _customConnectionGoFlow(
 
   final sessionId = chat.selectedSessionId!;
   await tester.pumpWidget(const SizedBox());
+  await closePrimary();
   await tester.runAsync(() async {
     final saved = (await ConfigFileStore(
       directory.path,
