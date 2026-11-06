@@ -359,6 +359,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
   Widget _modelFields(_ModelDraft draft, int index) => Column(
     key: ValueKey('model-row-${draft.id}'),
     crossAxisAlignment: CrossAxisAlignment.start,
+    spacing: 16,
     children: [
       Row(
         children: [
@@ -397,10 +398,12 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
         key: ValueKey('model-advanced-${draft.id}'),
         title: const Text('高级设置'),
         tilePadding: EdgeInsets.zero,
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
         maintainState: true,
         enabled: !_busy,
         children: [
           const Text('这是本地预算初值，请按所用模型的实际容量调整。'),
+          const SizedBox(height: 16),
           TextFormField(
             key: ValueKey('model-context-${draft.id}'),
             controller: draft.context,
@@ -415,6 +418,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                   : null;
             },
           ),
+          const SizedBox(height: 16),
           TextFormField(
             key: ValueKey('model-output-${draft.id}'),
             controller: draft.output,
@@ -433,7 +437,6 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
           ),
         ],
       ),
-      const SizedBox(height: 16),
     ],
   );
 
@@ -457,6 +460,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
+                spacing: 16,
                 children: [
                   if (_busy) const LinearProgressIndicator(),
                   if (_loaded) ...[
@@ -531,6 +535,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                       decoration: const InputDecoration(
                         labelText: 'provider（连接身份）',
                         helperText: '保存后身份固定；更名请修改连接名称。',
+                        helperMaxLines: 4,
                       ),
                       validator: (v) =>
                           v == null || v.trim().isEmpty ? '请填写 provider' : null,
@@ -546,7 +551,6 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                         helperMaxLines: 4,
                       ),
                     ),
-                    const SizedBox(height: 16),
                     TextFormField(
                       key: const ValueKey('model-key'),
                       controller: _key,
@@ -574,7 +578,6 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 16),
                     for (var i = 0; i < _models.length; i++)
                       _modelFields(_models[i], i),
                     TextButton.icon(
