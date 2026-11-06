@@ -9,7 +9,9 @@ import 'package:timecue_desktop/data/http_chat_gateway.dart';
 import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 import 'package:timecue_desktop/features/chat/chat_message_list.dart';
 import 'package:timecue_desktop/features/chat/chat_content_segments.dart';
+import 'package:timecue_desktop/features/chat/chat_event_timeline.dart';
 import 'package:timecue_desktop/features/chat/chat_markdown_body.dart';
+import 'package:timecue_desktop/features/chat/chat_tool_call_list.dart';
 
 void main() {
   for (final prefix in ['Hello ', '中间正文\n\nHello ', '中间正文', 'Hello world']) {
@@ -605,6 +607,108 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('可恢复的思考'), findsOneWidget);
     expect(find.textContaining('模型中断'), findsWidgets);
+  });
+
+  testWidgets('运行记录跨页合并连续同类增量并逐个展开工具详情', (tester) async {
+    final fixture = (await tester.runAsync(_HistoryServer.open))!;
+    addTearDown(fixture.close);
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..pageSize = 100;
+    var seq = 0;
+    fixture.events.addAll([
+      _event(++seq, 'start', {}),
+      for (var i = 0; i < 100; i++) _event(++seq, 'thinking', {'content': '甲'}),
+      _event(++seq, 'tool_start', {
+        'function': [
+          {'id': 'first', 'name': '查询日程', 'argument': '今天'},
+        ],
+      }),
+      _event(++seq, 'tool_start', {
+        'function': [
+          {'id': 'second', 'name': '读取日程', 'argument': '明天'},
+        ],
+      }),
+      _event(++seq, 'tool_result', {
+        'tool_call_id': 'second',
+        'output': '第二项结果',
+        'error': null,
+      }),
+      _event(++seq, 'tool_result', {
+        'tool_call_id': 'first',
+        'output': '第一项结果',
+        'error': null,
+      }),
+      for (var i = 0; i < 153; i++) _event(++seq, 'thinking', {'content': '乙'}),
+      for (var i = 0; i < 64; i++) _event(++seq, 'text', {'content': '丙'}),
+      _event(++seq, 'end', {'status': 'succeeded'}),
+    ]);
+    await tester.runAsync(() async {
+      await fixture.model.loadHistory();
+      await fixture.model.loadMoreEvents('r');
+    });
+    final run = fixture.model.conversations.single.runs.single;
+    Future<void> render() => tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(child: ChatEventTimeline(run: run)),
+        ),
+      ),
+    );
+    Future<void> open(Finder item) async {
+      await tester.ensureVisible(item);
+      await tester.tap(item);
+      await tester.pumpAndSettle();
+    }
+
+    await render();
+    await open(find.text('运行记录'));
+    await open(find.text('#2 · 思考'));
+    expect(find.text(List.filled(99, '甲').join()), findsOneWidget);
+
+    await tester.runAsync(() async {
+      for (var page = 1; page < 4; page++) {
+        await fixture.model.loadMoreEvents('r');
+        expect(run.eventsError, isNull);
+      }
+    });
+    await render();
+    expect(run.hasMoreEvents, isFalse);
+    expect(run.timeline, hasLength(seq));
+    expect(run.segments.map((segment) => segment.kind), [
+      ChatSegmentKind.reasoning,
+      ChatSegmentKind.tool,
+      ChatSegmentKind.reasoning,
+      ChatSegmentKind.text,
+    ]);
+    expect(find.text(List.filled(100, '甲').join()), findsOneWidget);
+    expect(find.byType(ExpansionTile), findsNWidgets(5));
+    final tools = find.byType(ChatToolCallList);
+    final secondThinking = find.text('#106 · 思考');
+    final text = find.text('#259 · 正文');
+    expect(
+      tester.getTopLeft(tools).dy,
+      lessThan(tester.getTopLeft(secondThinking).dy),
+    );
+    expect(
+      tester.getTopLeft(secondThinking).dy,
+      lessThan(tester.getTopLeft(text).dy),
+    );
+    expect(find.text('查询日程'), findsNothing);
+    await open(find.text('Tool calling · 已发起 2 次调用'));
+    await open(find.text('查询日程'));
+    expect(find.text('工具 ID：first'), findsOneWidget);
+    expect(find.text('参数：\n"今天"'), findsOneWidget);
+    expect(find.text('原始结果：\n"第一项结果"'), findsOneWidget);
+    await open(find.text('读取日程'));
+    expect(find.text('工具 ID：second'), findsOneWidget);
+    expect(find.text('参数：\n"明天"'), findsOneWidget);
+    expect(find.text('原始结果：\n"第二项结果"'), findsOneWidget);
+    await open(secondThinking);
+    expect(find.text(List.filled(153, '乙').join()), findsOneWidget);
+    await open(text);
+    expect(find.text(List.filled(64, '丙').join()), findsOneWidget);
   });
 
   test('工具跨回复复用 ID 时按开始 seq 建立实例并保留参数和原始 JSON 结果', () async {

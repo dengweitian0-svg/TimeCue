@@ -1680,14 +1680,11 @@ class ChatRunState {
     );
   }
 
-  /// 记录同一开始事件中的工具请求，供按顺序内联展示。
+  /// 合并连续的工具请求，保留每次调用的独立身份。
   void _appendTools(int seq, Iterable<String> instanceIds) {
     _completeOpenReasoning();
     final last = _segments.isEmpty ? null : _segments.last;
-    final segment =
-        last != null &&
-            last.kind == ChatSegmentKind.tool &&
-            last.startSeq == seq
+    final segment = last != null && last.kind == ChatSegmentKind.tool
         ? last
         : ChatContentSegment(
             id: 'tool-${++_segmentSeq}',
