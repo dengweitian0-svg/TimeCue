@@ -315,6 +315,20 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final harness = await _DialogHarness.create(tester);
     await harness.open(tester, textScale: 2);
+
+    Finder field(String key) => find.byKey(ValueKey(key));
+    void expectFieldGap(Finder previous, Finder next) {
+      final gap =
+          tester.getTopLeft(next).dy - tester.getBottomLeft(previous).dy;
+      expect(gap, greaterThanOrEqualTo(12), reason: '$previous → $next');
+    }
+
+    expectFieldGap(
+      find.textContaining('仅支持 Chat Completions'),
+      field('model-name'),
+    );
+    expectFieldGap(field('model-name'), field('model-provider'));
+    expectFieldGap(field('model-provider'), field('model-base-url'));
     await tester.ensureVisible(find.byKey(const ValueKey('model-base-url')));
     await tester.enterText(
       find.byKey(const ValueKey('model-base-url')),
@@ -325,6 +339,8 @@ void main() {
     await tester.ensureVisible(find.text('高级设置'));
     await tester.tap(find.text('高级设置'));
     await tester.pumpAndSettle();
+    expectFieldGap(find.textContaining('这是本地预算初值'), field('model-context-0'));
+    expectFieldGap(field('model-context-0'), field('model-output-0'));
     await tester.ensureVisible(find.byKey(const ValueKey('model-output-0')));
     await tester.enterText(
       find.byKey(const ValueKey('model-output-0')),
