@@ -42,7 +42,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
   List<(String?, String, String, String)> _savedDrafts = [];
   String? _error;
   String? _message;
-  ({String provider, Set<String> models})? _pendingApplication;
+  ({String provider, ModelConnectionSaveResult saved})? _pendingApplication;
 
   List<(String?, String, String, String)> get _drafts => [
     for (final draft in _models)
@@ -249,7 +249,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
       _savedDrafts = _drafts;
       _key.clear();
       _visibleKey = false;
-      _pendingApplication = (provider: settings.provider, models: expected);
+      _pendingApplication = (provider: settings.provider, saved: expected);
     } on ModelConfigException catch (failure) {
       if (mounted) {
         setState(() => _error = failure.message);
@@ -281,7 +281,8 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
     });
     final applied = await widget.chat.applySavedModels(
       provider: settings.provider,
-      models: settings.models,
+      models: settings.saved.revisions.keys,
+      revisions: settings.saved.revisions,
     );
     if (!mounted) return;
     final available = applied && widget.chat.acceptingOperations;
@@ -561,7 +562,7 @@ class _ModelConfigDialogState extends State<ModelConfigDialog> {
                       onChanged: _edited,
                       decoration: InputDecoration(
                         labelText: 'API Key',
-                        helperText: '新 Key 用于全部模型；留空保留各模型已有本地密钥。',
+                        helperText: '新 Key 用于当前连接的全部目标模型；留空保留各模型已有本地密钥。',
                         helperMaxLines: 4,
                         errorMaxLines: 3,
                         suffixIcon: IconButton(

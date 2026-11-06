@@ -18,6 +18,54 @@ import 'package:timecue_desktop/theme/notebook_theme.dart';
 import 'fixtures/config_file_faults.dart';
 
 void main() {
+  testWidgets('同名预算保存遇到旧版本时不误报成功，重试加载保留完整集合与草稿', (tester) async {
+    final harness = await _DialogHarness.create(tester);
+    await tester.runAsync(
+      () => harness.store.saveModelConnection(
+        const ModelConnectionSettings(
+          provider: 'deepseek',
+          baseUrl: 'https://api.deepseek.com',
+          models: [ChatModelSettings(model: 'chat')],
+        ),
+        apiKey: 'controlled-existing',
+      ),
+    );
+    final session = harness.chat.createLocalSession();
+    harness.chat.updateDraft(session.sessionId, '下一条草稿');
+    await harness.open(tester);
+    await tester.ensureVisible(find.text('高级设置'));
+    await tester.tap(find.text('高级设置'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('model-output-0')));
+    await tester.enterText(
+      find.byKey(const ValueKey('model-output-0')),
+      '1024',
+    );
+    harness.forcedRevision = 'previous-version';
+    await tester.tap(find.text('保存并应用'));
+    await _waitForDialog(tester);
+    expect(find.text('本地模型配置已可用'), findsNothing);
+    expect(find.text('重试加载'), findsOneWidget);
+    final contents = await tester.runAsync(
+      () => File(harness.store.configPath).readAsString(),
+    );
+    expect(contents, contains('max_output_tokens: 1024'));
+    harness.forcedRevision = null;
+    await _dismissToasts(tester);
+    await tester.tap(find.text('重试加载'));
+    await _waitForDialog(tester);
+    expect(find.text('本地模型配置已可用'), findsOneWidget);
+    expect(
+      await tester.runAsync(
+        () => File(harness.store.configPath).readAsString(),
+      ),
+      contents,
+    );
+    expect(session.draft, '下一条草稿');
+    expect(session.runs, isEmpty);
+    await harness.close(tester);
+  });
+
   testWidgets('旧同 provider 分组改名分别显示，重开及名称读取保留原模型身份和 Key', (tester) async {
     final harness = await _DialogHarness.create(tester);
     harness.models = [
@@ -333,69 +381,106 @@ void main() {
     testWidgets('$phase 等待期间禁止编辑和关闭，页面卸载后忽略迟到结果', (tester) async {
       final harness = await _DialogHarness.create(tester);
       final gate = Completer<void>();
+      final saveReleased = Completer<void>();
       final faults = ConfigFileFaults(harness.directory.path);
       if (phase == 'read') faults.beforeRead = gate.future;
-      if (phase == 'save') faults.beforeConfigReplace = gate.future;
+      if (phase == 'save') {
+        faults.beforeConfigReplace = gate.future.then(
+          (_) => saveReleased.future,
+        );
+      }
       if (phase == 'apply') harness.modelsGate = gate.future;
-      await IOOverrides.runWithIOOverrides(() async {
-        await harness.open(tester, wait: phase != 'read');
-        if (phase != 'read') {
-          await tester.enterText(
-            find.byKey(const ValueKey('model-id')),
-            'chat',
+      try {
+        await IOOverrides.runWithIOOverrides(() async {
+          await harness.open(tester, wait: phase != 'read');
+          if (phase != 'read') {
+            await tester.enterText(
+              find.byKey(const ValueKey('model-id')),
+              'chat',
+            );
+            await tester.enterText(
+              find.byKey(const ValueKey('model-key')),
+              'new-key',
+            );
+            await tester.tap(find.text('保存并应用'));
+            for (var i = 0; i < 20; i++) {
+              await tester.runAsync(
+                () => Future<void>.delayed(const Duration(milliseconds: 20)),
+              );
+              await tester.pump(const Duration(milliseconds: 50));
+            }
+          }
+          expect(find.byType(LinearProgressIndicator), findsOneWidget);
+          for (final field in tester.widgetList<TextFormField>(
+            find.byType(TextFormField),
+          )) {
+            expect(field.enabled, isFalse);
+          }
+          expect(
+            tester
+                .widget<TextButton>(find.widgetWithText(TextButton, '关闭'))
+                .onPressed,
+            isNull,
           );
-          await tester.enterText(
-            find.byKey(const ValueKey('model-key')),
-            'new-key',
+          await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+          await tester.pump();
+          expect(find.text('舍弃未保存的修改？'), findsNothing);
+          expect(find.byType(ModelConfigDialog), findsOneWidget);
+          await tester.pumpWidget(
+            const MaterialApp(
+              key: ValueKey('replacement'),
+              home: Scaffold(body: Text('新页面')),
+            ),
           );
-          await tester.tap(find.text('保存并应用'));
+          if (phase == 'save') {
+            await tester.runAsync(() async {
+              unawaited(
+                Future<void>.delayed(const Duration(seconds: 2)).then((_) {
+                  saveReleased.complete();
+                }),
+              );
+            });
+          }
+          gate.complete();
           for (var i = 0; i < 20; i++) {
             await tester.runAsync(
               () => Future<void>.delayed(const Duration(milliseconds: 20)),
             );
             await tester.pump(const Duration(milliseconds: 50));
           }
+        }, faults);
+        if (phase == 'save') await harness.waitForFiles(tester);
+        expect(find.text('新页面'), findsOneWidget);
+        expect(find.text('本地模型配置已可用'), findsNothing);
+        expect(tester.takeException(), isNull);
+      } finally {
+        if (!gate.isCompleted) {
+          saveReleased.complete();
+          gate.complete();
         }
-        expect(find.byType(LinearProgressIndicator), findsOneWidget);
-        for (final field in tester.widgetList<TextFormField>(
-          find.byType(TextFormField),
-        )) {
-          expect(field.enabled, isFalse);
-        }
+        await harness.close(tester);
+      }
+      if (phase == 'save') {
         expect(
-          tester
-              .widget<TextButton>(find.widgetWithText(TextButton, '关闭'))
-              .onPressed,
-          isNull,
+          await tester.runAsync(() => File(harness.store.configPath).exists()),
+          isTrue,
         );
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await tester.pump();
-        expect(find.text('舍弃未保存的修改？'), findsNothing);
-        expect(find.byType(ModelConfigDialog), findsOneWidget);
-        await tester.pumpWidget(
-          const MaterialApp(
-            key: ValueKey('replacement'),
-            home: Scaffold(body: Text('新页面')),
-          ),
-        );
-        gate.complete();
-        for (var i = 0; i < 20; i++) {
-          await tester.runAsync(
-            () => Future<void>.delayed(const Duration(milliseconds: 20)),
-          );
-          await tester.pump(const Duration(milliseconds: 50));
-        }
-      }, faults);
-      expect(find.text('新页面'), findsOneWidget);
-      expect(find.text('本地模型配置已可用'), findsNothing);
-      expect(tester.takeException(), isNull);
-      await harness.close(tester);
+        final persisted = (await tester.runAsync(
+          harness.store.readModelConnections,
+        ))!;
+        final model = persisted.single.models.single;
+        expect(model.model, 'chat');
+        expect(model.hasLocalKey, isTrue);
+      }
     });
   }
 
   testWidgets('应用等待中运行身份失效，迟到列表不提示成功或重复保存', (tester) async {
     final harness = await _DialogHarness.create(tester);
     final gate = Completer<void>();
+    addTearDown(() {
+      if (!gate.isCompleted) gate.complete();
+    });
     harness.modelsGate = gate.future;
     await harness.open(tester);
     await tester.enterText(find.byKey(const ValueKey('model-id')), 'chat');
@@ -406,13 +491,17 @@ void main() {
     await tester.tap(find.text('保存并应用'));
     await tester.pump();
     final env = File('${harness.directory.path}/.env');
-    for (var i = 0; i < 30 && !harness.chat.modelsLoading; i++) {
+    final saveDeadline = DateTime.now().add(const Duration(seconds: 12));
+    while ((!harness.chat.modelsLoading ||
+            !harness.modelsRequested.isCompleted) &&
+        DateTime.now().isBefore(saveDeadline)) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
       await tester.pump(const Duration(milliseconds: 50));
     }
     expect(harness.chat.modelsLoading, isTrue);
+    expect(harness.modelsRequested.isCompleted, isTrue);
     final savedEnv = await tester.runAsync(env.readAsString);
     harness.chat.invalidateRuntime();
     gate.complete();
@@ -697,16 +786,19 @@ void main() {
       server.listen((request) async {
         request.response.headers.contentType = ContentType.json;
         if (request.uri.path == '/v1/model') {
-          final saved = await store.readDeepSeekModels();
+          final connections = await store.readModelConnections();
           request.response.write(
             jsonEncode({
               'models': [
-                for (final value in saved)
-                  {
-                    'provider': 'deepseek',
-                    'model': value.model,
-                    'available': true,
-                  },
+                for (final connection in connections)
+                  for (final value in connection.models)
+                    {
+                      'provider': connection.provider,
+                      'model': value.model,
+                      'available': true,
+                      if (connection.configRevision.isNotEmpty)
+                        'config_revision': connection.configRevision,
+                    },
               ],
             }),
           );
@@ -895,14 +987,24 @@ Future<void> _dismissToasts(WidgetTester tester) async {
 }
 
 class _DialogHarness {
-  _DialogHarness(this.directory, this.store, this.chat, this.client);
+  _DialogHarness(
+    this.directory,
+    this.store,
+    this.chat,
+    this.client,
+    this.gateway,
+  );
 
   final Directory directory;
   final ConfigFileStore store;
   final ChatViewModel chat;
   final HttpClient client;
+  final HttpChatGateway gateway;
+  bool _closing = false;
   bool hangModels = false;
+  String? forcedRevision;
   Future<void>? modelsGate;
+  final modelsRequested = Completer<void>();
   List<({String provider, String model})> models = [
     (provider: 'deepseek', model: 'chat'),
   ];
@@ -926,10 +1028,24 @@ class _DialogHarness {
       ConfigFileStore(directory.path),
       chat,
       client,
+      gateway,
     );
     await tester.runAsync(() async {
       server.listen((request) async {
+        if (harness._closing) {
+          await request.response.close();
+          return;
+        }
         if (harness.hangModels) return;
+        final revisions = {
+          for (final connection in await harness.store.readModelConnections())
+            for (final model in connection.models)
+              '${connection.provider}/${model.model}':
+                  connection.configRevision,
+        };
+        if (!harness.modelsRequested.isCompleted) {
+          harness.modelsRequested.complete();
+        }
         await harness.modelsGate;
         // 此夹具仅确认加载交互；真实 Go 热加载由 model_config_go_test 验证。
         request.response.headers.contentType = ContentType.json;
@@ -941,6 +1057,13 @@ class _DialogHarness {
                   'provider': model.provider,
                   'model': model.model,
                   'available': true,
+                  if ((harness.forcedRevision ??
+                          revisions['${model.provider}/${model.model}'] ??
+                          '')
+                      .isNotEmpty)
+                    'config_revision':
+                        harness.forcedRevision ??
+                        revisions['${model.provider}/${model.model}'],
                 },
             ],
           }),
@@ -959,9 +1082,34 @@ class _DialogHarness {
   }
 
   Future<void> close(WidgetTester tester) async {
+    _closing = true;
+    chat.invalidateRuntime();
+    gateway.dispose();
     client.close(force: true);
     await tester.pumpWidget(const SizedBox());
-    await tester.pumpAndSettle();
+    await waitForFiles(tester);
+    await tester.pumpAndSettle(const Duration(seconds: 10));
+  }
+
+  Future<void> waitForFiles(WidgetTester tester) async {
+    // 公开读取与保存共用串行队列，完成后才能删除目录；格式错误仍表示队列已收尾。
+    var filesSettled = false;
+    unawaited(
+      store.readModelConnections().then<void>(
+        (_) => filesSettled = true,
+        onError: (Object _) {
+          filesSettled = true;
+        },
+      ),
+    );
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (!filesSettled && DateTime.now().isBefore(deadline)) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(filesSettled, isTrue, reason: '卸载后的配置读写尚未收尾');
   }
 
   Future<void> open(

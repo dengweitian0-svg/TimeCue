@@ -511,10 +511,12 @@ class ChatModelOption {
     required this.provider,
     required this.model,
     required this.available,
+    this.configRevision = '',
   });
   final String provider;
   final String model;
   final bool available;
+  final String configRevision;
   String get identity => '$provider/$model';
 
   /// 读取服务端声明的本地可用性。
@@ -527,6 +529,9 @@ class ChatModelOption {
       provider: _requiredString(json, 'provider'),
       model: _requiredString(json, 'model'),
       available: available,
+      configRevision: json.containsKey('config_revision')
+          ? _requiredString(json, 'config_revision')
+          : '',
     );
   }
 }

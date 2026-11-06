@@ -1,5 +1,7 @@
 # Agent Handler
 
+- 模型条目可选 config_revision 仅表示已发布配置的本地版本；旧连接无版本时保持原三字段，不返回密钥。
+
 提供 Agent run 创建、查询、取消、模型列表及分页/SSE 事件接口。
 
 - `create_run_handler.go`、`get_run_handler.go`、`cancel_run_handler.go`、`run_events_handler.go` 实现 run HTTP 处理。

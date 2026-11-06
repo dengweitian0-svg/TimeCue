@@ -18,6 +18,8 @@ type ChatProvider struct {
 	Provider string      `mapstructure:"provider"`
 	BaseURL  string      `mapstructure:"base_url"`
 	Models   []ChatModel `mapstructure:"models"`
+	// ConfigRevision 是本地保存生成的不透明标记，不由密钥派生。
+	ConfigRevision string `mapstructure:"config_revision"`
 }
 
 // ChatModel 是单个模型的上下文和输出预算。
@@ -155,6 +157,7 @@ func (m *Manager) ChatModels() ([]chat.ModelConfig, error) {
 			}
 			result = append(result, chat.ModelConfig{
 				Provider:            p.Provider,
+				ConfigRevision:      p.ConfigRevision,
 				Model:               model.Model,
 				BaseURL:             p.BaseURL,
 				Key:                 key,
