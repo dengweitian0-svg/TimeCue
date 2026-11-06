@@ -1,5 +1,11 @@
 # Chat 模块
 
+- `tool_recovery_test.go` 在释放中断门后对原实例收尾和重启恢复均使用三十秒有界终态观察，仍核对真实 finished_at、原调用身份、固定预算及业务结果；不将四秒观察窗口视作恢复性能契约。
+
+- `tools_test.go` 的正式工具集成入口使用三十秒有界终态读取，覆盖多工具及多模型轮的真实 SQLite 提交；超时保留运行身份和状态诊断，观察期限不作为业务性能契约。
+
+- ModelOption 可选 `config_revision` 来自当前已发布的 ModelConfig；旧配置省略该字段。列表不返回 Key、预算或上游认证结果，版本不进入 run/checkpoint/模型请求及数据库。
+
 - `call_registration_test.go`：经公共聊天用例和真实 SQLite 在调用插入后的 checkpoint 保存处注入事务故障，验证未发模型请求、运行以 persistence_failed 原子保存 start/error/end，不被回滚行号阻塞收尾。
 
 - `usage.go`：内部公开用例 `Runtime.GetRunUsage` 只读可见 run 的全部模型调用，包含普通、摘要及续写；每次从独立 usage 列重算，不缓存或累计。逐调用原始 JSON 保留供应商扩展字段；prompt/completion/total 各自仅在所有调用均有对应非负整数且合计不溢出时已知，无调用或字段缺失保持 nil，不推算 total。

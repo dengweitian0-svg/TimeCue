@@ -1,5 +1,7 @@
 # 配置管理
 
+- `chat_model[].config_revision` 是 Flutter 每次连接保存生成的不透明版本，随完整有效配置快照发布并由 ChatModels 传递；不参与模型身份、Key 定位或持久化请求。旧配置缺省为空；校验失败继续保留上一有效版本和预算。
+
 - `chat.max_continue` 由 default.yaml 提供默认 5 次，缺省或 0 使用默认值，负数拒绝发布；沿统一配置覆盖、快照和目录监听热更新，由 ChatModels 提供协调器使用。chat_test.go 覆盖默认/覆盖/负数保留旧快照及真实热更新。
 
 - `chat.tool_concurrency`、`tool_timeout_seconds`、`tool_max_retry` 统一管理工具运行参数，默认 3/30/3；并发与超时的 0 使用默认值，显式零重试有效，负数拒绝发布。调度及每次尝试读取当前值，读取失败时保留批次最近有效工具参数，逻辑工具预算首次登记后固定；CurrentConfig 深拷贝工具重试指针。

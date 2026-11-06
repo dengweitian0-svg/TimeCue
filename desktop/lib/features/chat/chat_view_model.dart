@@ -110,10 +110,16 @@ class ChatViewModel extends ChangeNotifier {
   Future<bool> applySavedModels({
     required String provider,
     required Iterable<String> models,
+    Map<String, String>? revisions,
     Duration timeout = const Duration(seconds: 10),
   }) async {
     final expected = models.toSet();
-    if (expected.isEmpty) return false;
+    if (expected.isEmpty ||
+        (revisions != null &&
+            (revisions.length != expected.length ||
+                !revisions.keys.toSet().containsAll(expected)))) {
+      return false;
+    }
     final gateway = _gateway;
     if (!_acceptingOperations || _disposed || gateway is! ChatModelGateway) {
       return false;
@@ -149,6 +155,8 @@ class ChatViewModel extends ChangeNotifier {
         if (targets.length == expected.length &&
             targets.map((v) => v.model).toSet().containsAll(expected) &&
             targets.every((v) => v.available) &&
+            (revisions == null ||
+                targets.every((v) => v.configRevision == revisions[v.model])) &&
             clock.elapsed >= const Duration(milliseconds: 500)) {
           _selectedModel =
               values

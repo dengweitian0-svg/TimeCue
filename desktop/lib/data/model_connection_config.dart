@@ -9,6 +9,7 @@ class ModelConnectionSettings {
     String? displayName,
     this.sourceIndex,
     this.sourceProvider,
+    this.configRevision = '',
   }) : displayName = displayName ?? provider;
 
   final String provider;
@@ -17,6 +18,7 @@ class ModelConnectionSettings {
   final List<ChatModelSettings> models;
   final int? sourceIndex;
   final String? sourceProvider;
+  final String configRevision;
 
   /// 写入前校验服务身份、地址及每个模型的预算。
   void validate() {
@@ -49,6 +51,13 @@ class ModelConnectionSettings {
   }
 }
 
+/// 一次文件保存的完整提供方目标及各模型应确认的已加载版本。
+class ModelConnectionSaveResult {
+  const ModelConnectionSaveResult(this.revisions);
+
+  final Map<String, String> revisions;
+}
+
 /// 通用连接与旧模型设置使用相同的文件、串行队列及密钥规则。
 extension ModelConnectionConfigFileStore on ConfigFileStore {
   /// 为聊天选择器读取本地名称；不扩展服务端模型身份和响应。
@@ -72,7 +81,7 @@ extension ModelConnectionConfigFileStore on ConfigFileStore {
       });
 
   /// 保存一份连接，保留其他分组；返回热加载应确认的完整 provider 模型集合。
-  Future<Set<String>> saveModelConnection(
+  Future<ModelConnectionSaveResult> saveModelConnection(
     ModelConnectionSettings settings, {
     required String apiKey,
   }) => _serialize(() async {
@@ -156,6 +165,16 @@ extension ModelConnectionConfigFileStore on ConfigFileStore {
       ...path,
       ConfigFileStore._key(original, 'base_url'),
     ], settings.baseUrl);
+    // 每次保存使用独立随机标记，不能由 Key 派生或因身份/数量未变而复用。
+    final random = Random.secure();
+    final revision = List.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+    editor.update([
+      ...path,
+      ConfigFileStore._key(original, 'config_revision'),
+    ], revision);
     final modelsKey = ConfigFileStore._key(original, 'models');
     final models = _models(original);
     if (_field(original, 'models') == null) {
@@ -185,13 +204,17 @@ extension ModelConnectionConfigFileStore on ConfigFileStore {
         },
       );
     }
+    final saved = ModelConnectionSaveResult(
+      Map.unmodifiable({
+        for (final provider in _providers(editor))
+          if (_field(provider, 'provider') == settings.provider)
+            for (final model in _models(provider))
+              _field(model, 'model') as String:
+                  (_field(provider, 'config_revision') as String?) ?? '',
+      }),
+    );
     await _publishModelFiles(editor, before, after, writeKey: key.isNotEmpty);
-    return {
-      for (final provider in _providers(editor))
-        if (_field(provider, 'provider') == settings.provider)
-          for (final model in _models(provider))
-            _field(model, 'model') as String,
-    };
+    return saved;
   });
 
   Future<void> _publishModelFiles(
@@ -228,11 +251,15 @@ ModelConnectionSettings _readConnection(
 ) {
   final name = _field(provider, 'provider');
   final displayName = _field(provider, 'display_name') ?? name;
+  final revision = _field(provider, 'config_revision') ?? '';
   // 旧空分组允许省略地址，DeepSeek 沿用原首次配置的官方初值。
   final address =
       _field(provider, 'base_url') ??
       (name == 'deepseek' ? 'https://api.deepseek.com' : '');
-  if (name is! String || address is! String || displayName is! String) {
+  if (name is! String ||
+      address is! String ||
+      displayName is! String ||
+      revision is! String) {
     throw const ModelConfigException('连接配置格式无效，请检查本地配置');
   }
   return ModelConnectionSettings(
@@ -241,6 +268,7 @@ ModelConnectionSettings _readConnection(
     baseUrl: address,
     sourceIndex: index,
     sourceProvider: name,
+    configRevision: revision,
     models: [
       for (final model in _models(provider)) _readChatModel(model, name, keys),
     ],

@@ -204,7 +204,7 @@ func testScheduleToolCrash(t *testing.T, request chat.ToolRequest, stage string,
 		originalStatus, originalModels = chat.StatusCancelled, 1
 	}
 	resume()
-	if run := awaitFinishedRun(t, service, receipt.RunID); run.Status != originalStatus {
+	if run := awaitFinishedRunWithin(t, service, receipt.RunID, 30*time.Second); run.Status != originalStatus {
 		t.Fatalf("原实例未完成: %+v", run)
 	}
 	service.Stop()
