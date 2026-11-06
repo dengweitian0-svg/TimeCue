@@ -1,3 +1,6 @@
+@Timeout(Duration(minutes: 6))
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -15,19 +18,40 @@ import 'package:timecue_desktop/features/settings/model_config_dialog.dart';
 import 'package:yaml_edit/yaml_edit.dart';
 
 void main() {
+  Directory? buildDirectory;
+  late String binary;
+
+  setUpAll(() async {
+    // 冷编译独立于各用例的超时，所有用例共用二进制但独立启动服务。
+    final directory = await Directory.systemTemp.createTemp('model-go-build-');
+    buildDirectory = directory;
+    binary = p.join(directory.path, 'timecue-core.exe');
+    final build = await Process.run('go', [
+      'build',
+      '-o',
+      binary,
+      './cmd/flutter',
+    ], workingDirectory: '..');
+    expect(build.exitCode, 0, reason: '${build.stderr}');
+  });
+
+  tearDownAll(() async {
+    await buildDirectory?.delete(recursive: true);
+  });
+
   testWidgets(
     '连接内多模型经真实 Go 维护预算密钥，保留在途请求并验证重启和原身份失效',
-    (tester) => _customConnectionGoFlow(tester, maintenance: true),
+    (tester) => _customConnectionGoFlow(tester, binary, maintenance: true),
     timeout: const Timeout(Duration(minutes: 3)),
   );
   testWidgets(
     '同模型三份连接经真实 Go 隔离请求，运行中改名切换保留原身份与订阅，重启可区分',
-    (tester) => _customConnectionGoFlow(tester, multiple: true),
+    (tester) => _customConnectionGoFlow(tester, binary, multiple: true),
     timeout: const Timeout(Duration(minutes: 3)),
   );
   testWidgets(
     '自定义连接经正式页面保存，真实 Go 同进程使用新地址模型密钥预算并在重启后读取',
-    _customConnectionGoFlow,
+    (tester) => _customConnectionGoFlow(tester, binary),
     timeout: const Timeout(Duration(minutes: 3)),
   );
   test('真实 Go 同一身份连续保存，正式请求消费最新 Key 和预算，重启可读取', () async {
@@ -38,14 +62,6 @@ void main() {
       'timecue-go-model-',
     );
     addTearDown(() => directory.delete(recursive: true));
-    final binary = p.join(directory.path, 'timecue-core.exe');
-    final build = await Process.run('go', [
-      'build',
-      '-o',
-      binary,
-      './cmd/flutter',
-    ], workingDirectory: '..');
-    expect(build.exitCode, 0, reason: '${build.stderr}');
     final data = Directory(p.join(directory.path, '中文 数据'));
     await data.create();
     final store = ConfigFileStore(data.path);
@@ -398,14 +414,6 @@ void main() {
     await tester.runAsync(() async {
       final port = await ServerSocket.bind(InternetAddress.loopbackIPv4, 1145);
       await port.close();
-      final binary = p.join(directory.path, 'timecue-core.exe');
-      final build = await Process.run('go', [
-        'build',
-        '-o',
-        binary,
-        './cmd/flutter',
-      ], workingDirectory: '..');
-      expect(build.exitCode, 0, reason: '${build.stderr}');
       await store.saveDeepSeekModels([
         const DeepSeekModelSettings(model: 'chat'),
         const DeepSeekModelSettings(model: 'reasoner'),
@@ -699,7 +707,8 @@ Future<void> _routeMaintenanceUpstream(ConfigFileStore store, int port) async {
 class _RealHttpOverrides extends HttpOverrides {}
 
 Future<void> _customConnectionGoFlow(
-  WidgetTester tester, {
+  WidgetTester tester,
+  String binary, {
   bool multiple = false,
   bool maintenance = false,
 }) async {
@@ -727,7 +736,6 @@ Future<void> _customConnectionGoFlow(
       <({int port, String path, String? key, Map<String, dynamic> body})>[];
   final upstreams = <HttpServer>[];
   Process? process;
-  final binary = p.join(directory.path, 'timecue-core.exe');
   var ordinal = 0;
   Completer<void>? release;
   var finish = 'stop';
@@ -792,13 +800,6 @@ Future<void> _customConnectionGoFlow(
   await tester.runAsync(() async {
     final port = await ServerSocket.bind(InternetAddress.loopbackIPv4, 1145);
     await port.close();
-    final build = await Process.run('go', [
-      'build',
-      '-o',
-      binary,
-      './cmd/flutter',
-    ], workingDirectory: '..');
-    expect(build.exitCode, 0, reason: '${build.stderr}');
     for (var i = 0; i < (multiple ? 3 : 2); i++) {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       upstreams.add(server);
@@ -1207,9 +1208,7 @@ Future<void> _customConnectionGoFlow(
       restartedClient.close(force: true);
       await stop();
       await for (final entity in directory.list(recursive: true)) {
-        if (entity is! File ||
-            p.basename(entity.path) == '.env' ||
-            entity.path == binary) {
+        if (entity is! File || p.basename(entity.path) == '.env') {
           continue;
         }
         final contents = latin1.decode(await entity.readAsBytes());
@@ -1448,9 +1447,7 @@ Future<void> _customConnectionGoFlow(
       restartedClient.close(force: true);
       await stop();
       await for (final entity in directory.list(recursive: true)) {
-        if (entity is! File ||
-            p.basename(entity.path) == '.env' ||
-            entity.path == binary) {
+        if (entity is! File || p.basename(entity.path) == '.env') {
           continue;
         }
         final contents = latin1.decode(await entity.readAsBytes());
@@ -1531,9 +1528,7 @@ Future<void> _customConnectionGoFlow(
     await stop();
     // 可控测试 Key 不得进入配置正文、数据库或日志。
     await for (final entity in directory.list(recursive: true)) {
-      if (entity is! File ||
-          p.basename(entity.path) == '.env' ||
-          entity.path == binary) {
+      if (entity is! File || p.basename(entity.path) == '.env') {
         continue;
       }
       final contents = latin1.decode(await entity.readAsBytes());
