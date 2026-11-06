@@ -11,6 +11,7 @@ import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 import 'package:timecue_desktop/features/chat/chat_composer.dart';
 import 'package:timecue_desktop/features/chat/chat_markdown_body.dart';
 import 'package:timecue_desktop/features/chat/chat_session_list.dart';
+import 'package:timecue_desktop/features/chat/chat_tool_call_list.dart';
 import 'package:timecue_desktop/features/notebook/chat_spread.dart';
 import 'package:timecue_desktop/features/notebook/notebook_view_model.dart';
 import 'package:timecue_desktop/theme/notebook_theme.dart';
@@ -132,7 +133,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(chat.selectedConversation?.activeRun?.toolCalls, hasLength(3));
-    expect(find.text('Tool calling · 已发起 1 次调用'), findsNWidgets(3));
+    final toolList = find.byType(ChatToolCallList);
+    expect(toolList, findsOneWidget);
+    expect(tester.widget<ChatToolCallList>(toolList).calls, hasLength(3));
     final toolPositions = [
       for (final key in ['2:call-one', '3:call-two', '4:call-three'])
         tester.getTopLeft(find.byKey(ValueKey('chat-tool-$key'))).dy,

@@ -7,16 +7,23 @@ import 'chat_view_model.dart';
 
 /// 按开始事件的实例身份展示工具请求及其原始结果。
 class ChatToolCallList extends StatelessWidget {
-  const ChatToolCallList({super.key, required this.calls});
+  const ChatToolCallList({
+    super.key,
+    required this.calls,
+    this.initiallyExpanded = true,
+  });
 
   final List<ChatToolCall> calls;
+
+  /// 工具区块首次显示时是否展开调用列表。
+  final bool initiallyExpanded;
 
   @override
   Widget build(BuildContext context) {
     if (calls.isEmpty) return const SizedBox.shrink();
     return ExpansionTile(
       key: const ValueKey('chat-tool-call-list'),
-      initiallyExpanded: true,
+      initiallyExpanded: initiallyExpanded,
       tilePadding: EdgeInsets.zero,
       title: Text(
         'Tool calling · 已发起 ${calls.length} 次调用',
