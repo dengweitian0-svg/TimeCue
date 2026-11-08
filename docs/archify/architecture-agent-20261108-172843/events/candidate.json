@@ -1,0 +1,381 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "SQLite 事务、SSE 补读与用量",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/events/events.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+    }
+  },
+  "lanes": [
+    {
+      "id": "write",
+      "label": "模型流与事务写入"
+    },
+    {
+      "id": "read",
+      "label": "本机 SSE 订阅"
+    },
+    {
+      "id": "flutter",
+      "label": "Flutter 消费与补齐"
+    },
+    {
+      "id": "usage",
+      "label": "内部只读用量"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "delta",
+      "lane": "write",
+      "col": 0,
+      "type": "backend",
+      "label": "收集流式增量",
+      "sublabel": "正文与思考独立记录",
+      "sources": [
+        {
+          "path": "internal/agent/chat/event_batch.go",
+          "line": 24,
+          "end_line": 44
+        },
+        {
+          "path": "internal/agent/completion/client.go",
+          "line": 97,
+          "end_line": 136
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "batch",
+      "lane": "write",
+      "col": 1,
+      "type": "database",
+      "label": "提交增量批次",
+      "sublabel": "5 条或 5 秒",
+      "sources": [
+        {
+          "path": "internal/agent/chat/event_batch.go",
+          "line": 45,
+          "end_line": 85
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 545,
+          "end_line": 595
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "tail",
+      "lane": "write",
+      "col": 2,
+      "type": "database",
+      "label": "原子提交终态",
+      "sublabel": "尾批、checkpoint、end",
+      "sources": [
+        {
+          "path": "internal/store/chat.go",
+          "line": 598,
+          "end_line": 679
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "subscribe",
+      "lane": "read",
+      "col": 1,
+      "type": "security",
+      "label": "验证游标与可见性",
+      "sublabel": "Last-Event-ID",
+      "sources": [
+        {
+          "path": "internal/api/handler/agent/run_events_handler.go",
+          "line": 19,
+          "end_line": 74
+        },
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 479,
+          "end_line": 505
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "page",
+      "lane": "read",
+      "col": 2,
+      "type": "database",
+      "label": "按 seq 读已提交事件",
+      "sublabel": "读取下一批或等下一轮",
+      "sources": [
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 524,
+          "end_line": 549
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 683,
+          "end_line": 713
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "sse",
+      "lane": "read",
+      "col": 3,
+      "type": "messagebus",
+      "label": "顺序输出 SSE",
+      "sublabel": "id、类型、数据；逐条刷新",
+      "sources": [
+        {
+          "path": "internal/api/handler/agent/run_events_handler.go",
+          "line": 82,
+          "end_line": 120
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "merge",
+      "lane": "flutter",
+      "col": 4,
+      "type": "frontend",
+      "label": "消费连续事件",
+      "sublabel": "去重，缺口走历史分页",
+      "sources": [
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1042,
+          "end_line": 1063
+        },
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1173,
+          "end_line": 1218
+        },
+        {
+          "path": "desktop/lib/data/http_chat_gateway.dart",
+          "line": 199,
+          "end_line": 221
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "finish",
+      "lane": "flutter",
+      "col": 5,
+      "type": "frontend",
+      "label": "读取运行概况",
+      "sublabel": "使用 run.output 补齐正文",
+      "sources": [
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1234,
+          "end_line": 1289
+        },
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1057,
+          "end_line": 1061
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "no_content",
+      "lane": "flutter",
+      "col": 3,
+      "type": "frontend",
+      "label": "已终态返回 204",
+      "sublabel": "恢复概况并补读历史",
+      "sources": [
+        {
+          "path": "internal/api/handler/agent/run_events_handler.go",
+          "line": 29,
+          "end_line": 34
+        },
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1027,
+          "end_line": 1039
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "raw",
+      "lane": "usage",
+      "col": 2,
+      "type": "database",
+      "label": "读取原始 usage 列",
+      "sublabel": "全部模型调用，保留 NULL",
+      "sources": [
+        {
+          "path": "internal/store/chat_usage.go",
+          "line": 12,
+          "end_line": 35
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 566,
+          "end_line": 585
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "sum",
+      "lane": "usage",
+      "col": 4,
+      "type": "backend",
+      "label": "按字段重算用量",
+      "sublabel": "普通、摘要和续写",
+      "sources": [
+        {
+          "path": "internal/agent/chat/usage.go",
+          "line": 34,
+          "end_line": 72
+        }
+      ],
+      "width": 128
+    }
+  ],
+  "edges": [
+    {
+      "id": "delta-batch",
+      "from": "delta",
+      "to": "batch",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "batch-tail",
+      "from": "batch",
+      "to": "tail",
+      "label": "尾批随终态提交",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "batch-page",
+      "from": "batch",
+      "to": "page",
+      "label": "已提交",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "tail-page",
+      "from": "tail",
+      "to": "page",
+      "label": "包含 end",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "subscribe-page",
+      "from": "subscribe",
+      "to": "page",
+      "label": "可订阅",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "page-sse",
+      "from": "page",
+      "to": "sse",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sse-merge",
+      "from": "sse",
+      "to": "merge",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "merge-finish",
+      "from": "merge",
+      "to": "finish",
+      "label": "收到 end",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "subscribe-no_content",
+      "from": "subscribe",
+      "to": "no_content",
+      "label": "已终态",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "no_content-finish",
+      "from": "no_content",
+      "to": "finish",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "tail-raw",
+      "from": "tail",
+      "to": "raw",
+      "label": "用量随调用保存",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "id": "raw-sum",
+      "from": "raw",
+      "to": "sum",
+      "label": "内部按需读取",
+      "role": "branch",
+      "variant": "default"
+    }
+  ],
+  "mainPath": [
+    "delta",
+    "batch",
+    "page",
+    "sse",
+    "merge",
+    "finish"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "事务边界",
+      "items": [
+        "每个 run 的 seq 连续。模型调用登记、工具起止、摘要切换与终态各有短事务。终态事务回读最新事实，写入剩余事件和唯一 end。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "SSE 与分页",
+      "items": [
+        "新订阅只有在可见性与游标验证后才替换旧订阅，断开连接不取消 run。/event 提供 SSE，/events 按 after_seq 分页。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "内部用量",
+      "items": [
+        "GetRunUsage 先查运行可见性，然后每次重算。prompt_tokens、completion_tokens、total_tokens 分别聚合；缺失、无效或溢出记未知，真实 0 仍有效。原始扩展字段保留。",
+        "查询也支持活跃运行，只读取当时已保存的调用用量。无公开 HTTP 用量入口。"
+      ]
+    }
+  ]
+}

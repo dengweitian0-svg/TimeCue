@@ -1,0 +1,343 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "一轮 Agent 对话的主流程",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/run-flow/run-flow.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+    }
+  },
+  "lanes": [
+    {
+      "id": "entry",
+      "label": "消息与准入"
+    },
+    {
+      "id": "run",
+      "label": "运行、模型与持久化"
+    },
+    {
+      "id": "branch",
+      "label": "摘要与工具分支"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "send",
+      "lane": "entry",
+      "col": 0,
+      "type": "frontend",
+      "label": "发送消息",
+      "sublabel": "原文、模型、幂等键",
+      "sources": [
+        {
+          "path": "desktop/lib/data/http_chat_gateway.dart",
+          "line": 161,
+          "end_line": 181
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "admit",
+      "lane": "entry",
+      "col": 1,
+      "type": "security",
+      "label": "运行准入",
+      "sublabel": "先重放，再校验和占用",
+      "sources": [
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 203,
+          "end_line": 250
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "record",
+      "lane": "run",
+      "col": 2,
+      "type": "database",
+      "label": "保存新 run",
+      "sublabel": "会话、幂等、start",
+      "sources": [
+        {
+          "path": "internal/store/chat.go",
+          "line": 147,
+          "end_line": 195
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "request",
+      "lane": "entry",
+      "col": 2,
+      "type": "backend",
+      "label": "准备上下文",
+      "sublabel": "有效历史与输入预算",
+      "sources": [
+        {
+          "path": "internal/agent/chat/request.go",
+          "line": 17,
+          "end_line": 61
+        },
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 264,
+          "end_line": 299
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "call",
+      "lane": "run",
+      "col": 3,
+      "type": "backend",
+      "label": "模型调用",
+      "sublabel": "先登记，再流式请求",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 105,
+          "end_line": 147
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 373,
+          "end_line": 405
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "result",
+      "lane": "run",
+      "col": 4,
+      "type": "backend",
+      "label": "判定模型结果",
+      "sublabel": "结束、工具或 length",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 37,
+          "end_line": 64
+        },
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 136,
+          "end_line": 158
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "tools",
+      "lane": "branch",
+      "col": 4,
+      "type": "backend",
+      "label": "执行工具批次",
+      "sublabel": "原 ID 全部配对",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 37,
+          "end_line": 45
+        },
+        {
+          "path": "internal/agent/chat/progress.go",
+          "line": 194,
+          "end_line": 234
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "next",
+      "lane": "branch",
+      "col": 5,
+      "type": "backend",
+      "label": "回到模型调用",
+      "sublabel": "工具后超预算先摘要",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 48,
+          "end_line": 103
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "compact",
+      "lane": "branch",
+      "col": 2,
+      "type": "backend",
+      "label": "上下文摘要",
+      "sublabel": "创建前已达阈值",
+      "sources": [
+        {
+          "path": "internal/agent/chat/compact.go",
+          "line": 24,
+          "end_line": 88
+        },
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 68,
+          "end_line": 92
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "finish",
+      "lane": "run",
+      "col": 5,
+      "type": "database",
+      "label": "提交运行终态",
+      "sublabel": "尾批、output、end",
+      "sources": [
+        {
+          "path": "internal/store/chat.go",
+          "line": 598,
+          "end_line": 679
+        },
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 360,
+          "end_line": 377
+        }
+      ],
+      "width": 128
+    }
+  ],
+  "edges": [
+    {
+      "id": "send-admit",
+      "from": "send",
+      "to": "admit",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "call-result",
+      "from": "call",
+      "to": "result",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "result-finish",
+      "from": "result",
+      "to": "finish",
+      "label": "完成 / 失败",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "compact-call",
+      "from": "compact",
+      "to": "call",
+      "label": "摘要生效",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "result-tools",
+      "from": "result",
+      "to": "tools",
+      "label": "含工具",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "tools-next",
+      "from": "tools",
+      "to": "next",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "result-next",
+      "from": "result",
+      "to": "next",
+      "label": "仅 length",
+      "role": "branch",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "drop"
+    },
+    {
+      "label": "新建通过",
+      "id": "admit-request",
+      "role": "main",
+      "to": "request",
+      "variant": "emphasis",
+      "from": "admit"
+    },
+    {
+      "from": "request",
+      "to": "record",
+      "variant": "emphasis",
+      "role": "main",
+      "id": "request-record"
+    },
+    {
+      "label": "可执行且无需摘要",
+      "id": "record-call",
+      "role": "main",
+      "to": "call",
+      "variant": "emphasis",
+      "from": "record"
+    },
+    {
+      "from": "record",
+      "to": "compact",
+      "role": "branch",
+      "label": "需要摘要",
+      "id": "record-compact"
+    }
+  ],
+  "mainPath": [
+    "send",
+    "admit",
+    "request",
+    "record",
+    "call",
+    "result",
+    "finish"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "启动与结束",
+      "items": [
+        "预算超限且没有可用摘要路径时，原子创建失败回执与 start / error / end，不登记模型调用。",
+        "普通完成、失败及取消由终态事务保存尾批和 end，Flutter 用 run.output 对齐最终正文。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "两层循环",
+      "items": [
+        "网络重试沿用同一条 model_call。工具回填与正常 length 续写新建调用，摘要也有独立调用。",
+        "模型有工具并同时 length 时，先处理整批工具，再决定续写。",
+        "回到模型调用时按原结果进入续写、工具回填或运行中摘要；开始新的 model_call 后继续同一循环。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "失败与中断",
+      "items": [
+        "用户取消、宿主退出和持久化故障各走独立收尾分支，详见恢复图。"
+      ]
+    }
+  ]
+}

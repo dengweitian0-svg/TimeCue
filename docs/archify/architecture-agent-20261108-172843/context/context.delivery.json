@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "e6f958da-b46e-4e07-bba5-3a7ef9fd1c33",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\context\\candidate.json",
+  "output": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\context\\context.html",
+  "specification": {
+    "sha256": "f4b5ffaf2596dc79b49d136638d58975ad1cd638832bfc4e2cb7945a780c5076",
+    "bytes": 9029
+  },
+  "artifact": {
+    "sha256": "444df95bc72bf471108da9b363d71a26244bf4c7835c1d670e3a8a56c3e003c0",
+    "bytes": 764962
+  }
+}
