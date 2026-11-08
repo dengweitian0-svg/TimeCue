@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\config\\candidate.json",
+    "sha256": "50a0e03f493e1bb6ef61bc43b4d7443270e0ba0dc961be455425dd9b98a89956",
+    "bytes": 7735
+  },
+  "artifact": {
+    "path": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\config\\config.html",
+    "sha256": "ec09c12f3b1df07ea945c872f72d35971f6e8b79c486e9af73b75c8e53f935ea",
+    "bytes": 764359
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\config\\config.finalize.json",
+    "summaryReceipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\config\\config.finalize-summary.json",
+    "browserCheckReceipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\config\\config.browser-check.json"
+  },
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "cache-unavailable"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 8380,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "routesOverSuggestedBends": 1,
+      "routesOverSuggestedStretch": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [],
+      "detours": [
+        {
+          "relationship": {
+            "id": "check-wait",
+            "from": "check",
+            "to": "wait",
+            "label": "尚未匹配",
+            "collectionIndex": 1,
+            "artifactIndex": 2
+          },
+          "bends": 3,
+          "stretch": 1.078
+        },
+        {
+          "relationship": {
+            "id": "save-save_error",
+            "from": "save",
+            "to": "save_error",
+            "label": "写入失败",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "bends": 2,
+          "stretch": 2.194,
+          "directCorridorBlockers": [
+            {
+              "id": "key",
+              "label": "实际发送前读取",
+              "box": [
+                168,
+                341,
+                128,
+                52
+              ]
+            }
+          ]
+        }
+      ],
+      "truncated": false
+    },
+    "hints": [
+      "check → wait needs 3 bends: move node check or wait so they share a row or column with matching centers, or sit diagonally with a clear corner."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}

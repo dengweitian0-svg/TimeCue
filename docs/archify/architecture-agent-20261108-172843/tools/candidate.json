@@ -1,0 +1,366 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "日程工具执行、重试与回填",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/tools/tools.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+    }
+  },
+  "lanes": [
+    {
+      "id": "reg",
+      "label": "tools.Registry 与 App 日程业务"
+    },
+    {
+      "id": "chat",
+      "label": "工具协调与 SQLite 短事务"
+    },
+    {
+      "id": "store",
+      "label": "退避与全批回填"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "accept",
+      "lane": "chat",
+      "col": 0,
+      "type": "backend",
+      "label": "接纳模型回复",
+      "sublabel": "加载原工具与已配对 ID",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 147,
+          "end_line": 159
+        },
+        {
+          "path": "internal/agent/chat/tool_attempts.go",
+          "line": 60,
+          "end_line": 87
+        },
+        {
+          "path": "internal/store/chat_tools.go",
+          "line": 15,
+          "end_line": 27
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "schedule",
+      "lane": "chat",
+      "col": 1,
+      "type": "backend",
+      "label": "选择可运行工具",
+      "sublabel": "并行上限与串行互斥",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_attempts.go",
+          "line": 200,
+          "end_line": 249
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "begin",
+      "lane": "chat",
+      "col": 2,
+      "type": "database",
+      "label": "登记有效尝试",
+      "sublabel": "原参数、身份与 tool_use",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_attempts.go",
+          "line": 221,
+          "end_line": 262
+        },
+        {
+          "path": "internal/store/chat_tools.go",
+          "line": 91,
+          "end_line": 129
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "validate",
+      "lane": "chat",
+      "col": 3,
+      "type": "security",
+      "label": "校验工具与参数",
+      "sublabel": "统一接口，错误可回填",
+      "sources": [
+        {
+          "path": "internal/agent/tools/registry.go",
+          "line": 195,
+          "end_line": 297
+        },
+        {
+          "path": "internal/agent/chat/tool_attempts.go",
+          "line": 271,
+          "end_line": 291
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "business",
+      "lane": "reg",
+      "col": 4,
+      "type": "backend",
+      "label": "调用正式 App 入口",
+      "sublabel": "查询、写入或版本删除",
+      "sources": [
+        {
+          "path": "internal/agent/tools/schedule.go",
+          "line": 24,
+          "end_line": 66
+        },
+        {
+          "path": "internal/agent/tools/schedule_write.go",
+          "line": 112,
+          "end_line": 165
+        },
+        {
+          "end_line": 263,
+          "path": "internal/store/schedule_change.go",
+          "line": 195
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "settle",
+      "lane": "chat",
+      "col": 4,
+      "type": "backend",
+      "label": "结算当次尝试",
+      "sublabel": "校验 token 与期限",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_attempts.go",
+          "line": 29,
+          "end_line": 36
+        },
+        {
+          "path": "internal/agent/chat/tool_attempts.go",
+          "line": 110,
+          "end_line": 162
+        },
+        {
+          "path": "internal/agent/chat/tool_attempts.go",
+          "line": 169,
+          "end_line": 199
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "commit",
+      "lane": "chat",
+      "col": 5,
+      "type": "database",
+      "label": "提交单项工具结果",
+      "sublabel": "原始 JSON、事件、配对",
+      "sources": [
+        {
+          "path": "internal/store/chat_tools.go",
+          "line": 150,
+          "end_line": 214
+        },
+        {
+          "path": "internal/agent/chat/progress.go",
+          "line": 194,
+          "end_line": 221
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "ready",
+      "lane": "store",
+      "col": 5,
+      "type": "backend",
+      "label": "全部原 ID 配齐",
+      "sublabel": "tool_end 后回到模型",
+      "sources": [
+        {
+          "path": "internal/agent/chat/progress.go",
+          "line": 218,
+          "end_line": 234
+        },
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 37,
+          "end_line": 64
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "wait",
+      "lane": "store",
+      "col": 4,
+      "type": "database",
+      "label": "持久化 retry_wait",
+      "sublabel": "沿原调用与剩余预算",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_attempts.go",
+          "line": 110,
+          "end_line": 127
+        },
+        {
+          "path": "internal/store/chat_tools.go",
+          "line": 132,
+          "end_line": 148
+        }
+      ],
+      "width": 128
+    }
+  ],
+  "edges": [
+    {
+      "id": "accept-schedule",
+      "from": "accept",
+      "to": "schedule",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "schedule-begin",
+      "from": "schedule",
+      "to": "begin",
+      "label": "可启动",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "begin-validate",
+      "from": "begin",
+      "to": "validate",
+      "role": "main",
+      "variant": "emphasis",
+      "label": "登记成功"
+    },
+    {
+      "id": "validate-business",
+      "from": "validate",
+      "to": "business",
+      "label": "有效",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "business-settle",
+      "from": "business",
+      "to": "settle",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "settle-commit",
+      "from": "settle",
+      "to": "commit",
+      "label": "最终结果",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "commit-ready",
+      "from": "commit",
+      "to": "ready",
+      "label": "全批完成",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "validate-settle",
+      "from": "validate",
+      "to": "settle",
+      "label": "参数或工具错误",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "settle-wait",
+      "from": "settle",
+      "to": "wait",
+      "label": "暂时故障",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "role": "return",
+      "from": "wait",
+      "label": "退避到期",
+      "route": "bottom-channel",
+      "to": "schedule",
+      "id": "wait-schedule",
+      "variant": "dashed",
+      "toSide": "bottom",
+      "fromSide": "bottom"
+    },
+    {
+      "role": "return",
+      "from": "commit",
+      "label": "还有待配对",
+      "route": "up-channel",
+      "to": "schedule",
+      "id": "commit-schedule",
+      "variant": "dashed",
+      "toSide": "top",
+      "fromSide": "top",
+      "channelY": 80
+    }
+  ],
+  "mainPath": [
+    "accept",
+    "schedule",
+    "begin",
+    "validate",
+    "business",
+    "settle",
+    "commit",
+    "ready"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "六个工具",
+      "items": [
+        "get_schedule、list_schedules、query_occurrences 三个查询可并行；create_schedule、update_schedule、delete_schedule 串行，均走正式 App 业务入口。",
+        "创建和修改使用空业务键；修改保留未提交字段并检查 expectedRevision。相对日期按实际解析时的北京时间处理。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "删除身份与业务事务",
+      "items": [
+        "仅删除标记危险。首次登记生成 tool:{tool_call_id}:{uuid} 并经 context 注入。正式删除先核对回执，再检查版本，软删除、提醒联动与回执同事务。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "尝试与逻辑结果",
+      "items": [
+        "默认并发 3、单次 30 秒；并发和超时热读。仅超时或明确暂时故障可重试，预算首次登记固定，默认首次外 3 次，退避 5 / 10 / 20 秒。",
+        "超时释放有效尝试，旧 token 的迟到返回无法结算。重试等待不写最终结果；业务失败只作为 tool_result 回填。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "恢复边界",
+      "items": [
+        "已有原 ID 配对直接复用。仍未配对的 running 或 retry_wait 先读删除回执，命中免重试；其余沿原身份和固定剩余预算，取消时走只读收尾。"
+      ]
+    }
+  ]
+}

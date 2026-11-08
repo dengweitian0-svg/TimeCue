@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>TimeCue Agent 图表导航</title>
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const system = matchMedia('(prefers-color-scheme: light)');
+      const storageKey = 'archify-theme';
+      let temporaryTheme;
+
+      function preferredTheme() {
+        if (temporaryTheme) return temporaryTheme;
+        try {
+          const saved = localStorage.getItem(storageKey);
+          if (saved === 'light' || saved === 'dark') return saved;
+        } catch {}
+      }
+
+      function applyTheme() {
+        const preferred = preferredTheme();
+        root.dataset.theme = preferred ?? (system.matches ? 'light' : 'dark');
+        return preferred;
+      }
+
+      applyTheme();
+      document.addEventListener('DOMContentLoaded', () => {
+        const button = document.getElementById('btn-theme');
+        const links = document.querySelectorAll('.card');
+
+        function syncTheme() {
+          const preferred = applyTheme();
+          button.setAttribute('aria-pressed', String(root.dataset.theme === 'light'));
+          // 本地文件之间也通过 Archify 支持的参数传递所选主题。
+          for (const link of links) link.search = preferred ? 'theme=' + preferred : '';
+        }
+
+        button.addEventListener('click', () => {
+          const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+          try {
+            localStorage.setItem(storageKey, next);
+            temporaryTheme = undefined;
+          } catch {
+            temporaryTheme = next;
+          }
+          syncTheme();
+        });
+        system.addEventListener('change', syncTheme);
+        window.addEventListener('pageshow', syncTheme);
+        syncTheme();
+        button.hidden = false;
+      });
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #020617;
+      --canvas-dot: rgba(148, 163, 184, 0.16);
+      --panel: rgba(15, 23, 42, 0.5);
+      --panel-border: #1e293b;
+      --card-bg: #0b1222;
+      --text: #ffffff;
+      --text-muted: #94a3b8;
+      --frontend-stroke: #22d3ee;
+      --backend-stroke: #34d399;
+      --switch-thumb: #3b4a63;
+      --switch-icon: #c7d2fe;
+    }
+    [data-theme="light"] {
+      color-scheme: light;
+      --bg: #f4f5f7;
+      --canvas-dot: #d9dee5;
+      --panel: #ffffff;
+      --panel-border: #e5e7eb;
+      --card-bg: #fff;
+      --text: #111827;
+      --text-muted: #5b6474;
+      --frontend-stroke: #0891b2;
+      --backend-stroke: #059669;
+      --switch-thumb: #fff;
+      --switch-icon: #d97706;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 1rem clamp(1rem, 2.25vw, 2rem) 2rem;
+      background: var(--bg);
+      color: var(--text);
+      font: 1rem/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    main {
+      max-width: 1440px;
+      margin-inline: auto;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      min-height: 2.75rem;
+      margin-bottom: .875rem;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 650;
+      line-height: 1.25;
+      letter-spacing: -.015em;
+    }
+    .pulse-dot {
+      flex: none;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--frontend-stroke);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--frontend-stroke) 16%, transparent);
+    }
+    .theme-switch {
+      display: inline-grid;
+      flex: none;
+      place-items: center;
+      margin-left: auto;
+      width: 3.5rem;
+      height: 2.25rem;
+      border: 1px solid var(--panel-border);
+      border-radius: .6875rem;
+      background: var(--panel);
+      color: var(--switch-icon);
+      cursor: pointer;
+    }
+    .theme-switch[hidden] { display: none; }
+    .theme-track {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      width: 2.625rem;
+      height: 1.25rem;
+      padding: .125rem;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+    }
+    [data-theme="light"] .theme-track { justify-content: flex-start; }
+    .theme-thumb {
+      display: grid;
+      place-items: center;
+      width: 1rem;
+      height: 1rem;
+      border-radius: 50%;
+      background: var(--switch-thumb);
+      box-shadow: 0 1px 3px rgba(15, 23, 42, .24);
+    }
+    .theme-thumb svg { width: .75rem; height: .75rem; }
+    [data-theme="dark"] .sun, [data-theme="light"] .moon { display: none; }
+    .theme-switch:hover { border-color: var(--frontend-stroke); }
+    .diagram-container {
+      padding: clamp(1rem, 2vw, 1.5rem);
+      border: 1px solid var(--panel-border);
+      border-radius: 1rem;
+      background: radial-gradient(circle at 1px 1px, var(--canvas-dot) 1px, transparent 1.4px) 0 0 / 20px 20px, var(--panel);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 16px 40px -20px rgba(15, 23, 42, .18);
+    }
+    .intro, .description, footer { color: var(--text-muted); }
+    .intro { margin: 0; font-size: .875rem; }
+    section { margin-top: 1.5rem; }
+    h2 { margin: 0 0 .625rem; font-size: 1rem; font-weight: 650; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 18.5rem), 1fr));
+      gap: 1rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .card {
+      --card-tone: var(--frontend-stroke);
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+      height: 100%;
+      padding: 1rem 1.25rem;
+      border: 1px solid var(--panel-border);
+      border-radius: .75rem;
+      background: var(--card-bg);
+      color: var(--text);
+      text-decoration: none;
+    }
+    .featured .card {
+      border-color: color-mix(in srgb, var(--card-tone) 40%, var(--panel-border));
+    }
+    .featured li + li .card { --card-tone: var(--backend-stroke); }
+    .index { color: var(--text-muted); font-size: .75rem; }
+    .featured .index { display: flex; align-items: center; gap: .5rem; }
+    .featured .index::before {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--card-tone);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--card-tone) 16%, transparent);
+      content: "";
+    }
+    .card:hover, .card:focus-visible { border-color: var(--card-tone); }
+    :is(.card, .theme-switch):focus-visible { outline: 2px solid var(--frontend-stroke); outline-offset: 3px; }
+    .card:hover .card-title { text-decoration: underline; text-underline-offset: .2em; }
+    .card-title { font-size: .9375rem; font-weight: 600; }
+    .featured .card-title { font-size: 1.125rem; }
+    .card-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+    .arrow { flex: none; color: var(--card-tone); }
+    .description { font-size: .8125rem; }
+    footer {
+      margin-top: 1rem;
+      font-size: .8125rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="pulse-dot" aria-hidden="true"></span>
+      <h1>TimeCue Agent 图表导航</h1>
+      <button id="btn-theme" class="theme-switch" type="button" aria-label="浅色主题" aria-pressed="false" hidden>
+        <span class="theme-track" aria-hidden="true">
+          <span class="theme-thumb">
+            <svg class="sun" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+              <circle cx="10" cy="10" r="3.1"/>
+              <path d="M10 2.2v1.4M10 16.4v1.4M2.2 10h1.4M16.4 10h1.4M4.5 4.5l1 1M14.5 14.5l1 1M15.5 4.5l-1 1M5.5 14.5l-1 1"/>
+            </svg>
+            <svg class="moon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+              <path d="M15.2 12.7A6.3 6.3 0 017.3 4.8a6.3 6.3 0 107.9 7.9Z"/>
+            </svg>
+          </span>
+        </span>
+      </button>
+    </header>
+
+    <div class="diagram-container">
+      <p class="intro">先看各模块如何协作，再沿一轮对话深入具体分支。点击卡片打开图表。</p>
+      <section aria-labelledby="start">
+        <h2 id="start">总体视图</h2>
+        <ul class="grid featured">
+          <li>
+            <a class="card" href="overview/overview.html">
+              <span class="index">架构</span>
+              <span class="card-heading"><span class="card-title">总体架构</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">查看 Flutter、Go 本机 HTTP、Agent、模型服务、日程工具和 SQLite 的职责与依赖。</span>
+            </a>
+          </li>
+          <li>
+            <a class="card" href="run-flow/run-flow.html">
+              <span class="index">主流程</span>
+              <span class="card-heading"><span class="card-title">一轮对话</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">从发送消息到保存终态，追踪模型调用、工具回填、摘要与续写。</span>
+            </a>
+          </li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="modules">
+        <h2 id="modules">模块详情</h2>
+        <ul class="grid">
+          <li>
+            <a class="card" href="admission/admission.html">
+              <span class="index">01</span>
+              <span class="card-heading"><span class="card-title">会话与运行准入</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">原文幂等、模型门禁、占用限制与创建事务</span>
+            </a>
+          </li>
+          <li>
+            <a class="card" href="model/model.html">
+              <span class="index">02</span>
+              <span class="card-heading"><span class="card-title">模型流式调用与重试</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">Chat Completions、首包与空闲超时、同一调用重试</span>
+            </a>
+          </li>
+          <li>
+            <a class="card" href="tools/tools.html">
+              <span class="index">03</span>
+              <span class="card-heading"><span class="card-title">日程工具执行与回填</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">六个日程工具、并发与串行、删除回执和结果配对</span>
+            </a>
+          </li>
+          <li>
+            <a class="card" href="context/context.html">
+              <span class="index">04</span>
+              <span class="card-heading"><span class="card-title">上下文、摘要与续写</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">历史接续、预算检查、摘要触发与 length 续写</span>
+            </a>
+          </li>
+          <li>
+            <a class="card" href="events/events.html">
+              <span class="index">05</span>
+              <span class="card-heading"><span class="card-title">SQLite、SSE 与用量</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">事件分批落库、断线补读与内部用量汇总</span>
+            </a>
+          </li>
+          <li>
+            <a class="card" href="recovery/recovery.html">
+              <span class="index">06</span>
+              <span class="card-heading"><span class="card-title">取消、退出与重启恢复</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">取消意图、退出期限、恢复分支与持久化故障</span>
+            </a>
+          </li>
+          <li>
+            <a class="card" href="config/config.html">
+              <span class="index">07</span>
+              <span class="card-heading"><span class="card-title">模型配置与热加载</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">逐模型预算、密钥保留、版本确认与请求门禁</span>
+            </a>
+          </li>
+        </ul>
+      </section>
+    </div>
+
+    <footer>9 张交互图 · 源码版本 <code>640dbcba</code> · 可用浏览器返回此页</footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,318 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "模型连接保存、热加载与请求门禁",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/config/config.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+    }
+  },
+  "lanes": [
+    {
+      "id": "flutter",
+      "label": "Flutter 模型设置"
+    },
+    {
+      "id": "files",
+      "label": "实例配置文件"
+    },
+    {
+      "id": "go",
+      "label": "Go 配置发布与使用"
+    },
+    {
+      "id": "errors",
+      "label": "保存或加载分支",
+      "variant": "exception"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "edit",
+      "lane": "flutter",
+      "col": 0,
+      "type": "frontend",
+      "label": "编辑连接及多个模型",
+      "sublabel": "同连接地址，预算逐模型",
+      "sources": [
+        {
+          "path": "desktop/lib/data/model_connection_config.dart",
+          "line": 4,
+          "end_line": 53
+        },
+        {
+          "path": "desktop/lib/data/model_connection_config.dart",
+          "line": 84,
+          "end_line": 148
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "save",
+      "lane": "files",
+      "col": 1,
+      "type": "database",
+      "label": "保存配置与密钥",
+      "sublabel": ".env 与 config_revision",
+      "sources": [
+        {
+          "path": "desktop/lib/data/model_connection_config.dart",
+          "line": 137,
+          "end_line": 177
+        },
+        {
+          "path": "desktop/lib/data/model_connection_config.dart",
+          "line": 195,
+          "end_line": 244
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "watch",
+      "lane": "go",
+      "col": 2,
+      "type": "backend",
+      "label": "监听与校验配置",
+      "sublabel": "通过才发布新快照",
+      "sources": [
+        {
+          "path": "internal/config/config.go",
+          "line": 110,
+          "end_line": 135
+        },
+        {
+          "path": "internal/config/config.go",
+          "line": 184,
+          "end_line": 207
+        },
+        {
+          "path": "internal/config/chat.go",
+          "line": 58,
+          "end_line": 86
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "list",
+      "lane": "go",
+      "col": 3,
+      "type": "backend",
+      "label": "返回模型列表",
+      "sublabel": "已发布版本和本地可用性",
+      "sources": [
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 170,
+          "end_line": 189
+        },
+        {
+          "path": "internal/config/chat.go",
+          "line": 87,
+          "end_line": 110
+        },
+        {
+          "path": "internal/config/chat.go",
+          "line": 150,
+          "end_line": 175
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "check",
+      "lane": "flutter",
+      "col": 4,
+      "type": "security",
+      "label": "确认连接加载",
+      "sublabel": "集合、可用性与逐模型版本",
+      "sources": [
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 111,
+          "end_line": 171
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "ready",
+      "lane": "flutter",
+      "col": 5,
+      "type": "frontend",
+      "label": "更新模型选择",
+      "sublabel": "保留可用原选择或回退",
+      "sources": [
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 154,
+          "end_line": 167
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "key",
+      "lane": "go",
+      "col": 1,
+      "type": "security",
+      "label": "实际发送前读取",
+      "sublabel": "原 provider / model 的 Key",
+      "sources": [
+        {
+          "path": "internal/agent/chat/model_retry.go",
+          "line": 9,
+          "end_line": 20
+        },
+        {
+          "path": "internal/agent/chat/model_retry.go",
+          "line": 84,
+          "end_line": 112
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "save_error",
+      "lane": "errors",
+      "col": 1,
+      "type": "security",
+      "label": "保存失败",
+      "sublabel": "尝试恢复原密钥文件",
+      "sources": [
+        {
+          "path": "desktop/lib/data/model_connection_config.dart",
+          "line": 220,
+          "end_line": 244
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "wait",
+      "lane": "errors",
+      "col": 4,
+      "type": "frontend",
+      "label": "版本未匹配",
+      "sublabel": "有界轮询，超时仍待确认",
+      "sources": [
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 128,
+          "end_line": 172
+        }
+      ],
+      "width": 128
+    }
+  ],
+  "edges": [
+    {
+      "id": "edit-save",
+      "from": "edit",
+      "to": "save",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "save-watch",
+      "from": "save",
+      "to": "watch",
+      "label": "配置已写入",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "watch-list",
+      "from": "watch",
+      "to": "list",
+      "label": "发布后可见",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "list-check",
+      "from": "list",
+      "to": "check",
+      "label": "轮询 /v1/model",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "check-ready",
+      "from": "check",
+      "to": "ready",
+      "label": "集合与版本匹配",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "save-save_error",
+      "from": "save",
+      "to": "save_error",
+      "label": "写入失败",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "check-wait",
+      "from": "check",
+      "to": "wait",
+      "label": "尚未匹配",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "wait-list",
+      "from": "wait",
+      "to": "list",
+      "label": "预算内重读",
+      "role": "return",
+      "variant": "dashed"
+    },
+    {
+      "id": "watch-key",
+      "from": "watch",
+      "to": "key",
+      "label": "实际模型请求时",
+      "role": "branch",
+      "variant": "default"
+    }
+  ],
+  "mainPath": [
+    "edit",
+    "save",
+    "watch",
+    "list",
+    "check",
+    "ready"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "连接与密钥",
+      "items": [
+        "同连接多个模型共享本次输入的新 Key。空 Key 按各目标模型保留既有值；任一目标无旧 Key 时拒绝。每次保存生成随机版本，版本与 Key 无关。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "确认本地加载",
+      "items": [
+        "Go 从已发布配置携带 config_revision。Flutter 要求目标提供方模型集合完整、都可用且逐一匹配保存版本；确认本地状态，不向上游探测密钥。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "运行身份",
+      "items": [
+        "provider / model 以创建时为准。每次实际发送前读取该身份的最新配置；当次请求参数固定，移除原模型会阻断后续发送。配置版本只用于本地确认。"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,336 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "模型流式调用与有限重试",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/model/model.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+    }
+  },
+  "lanes": [
+    {
+      "id": "error",
+      "label": "失败结束",
+      "variant": "exception"
+    },
+    {
+      "id": "chat",
+      "label": "模型协调与 completion 适配器"
+    },
+    {
+      "id": "store",
+      "label": "增量事务与重试退避"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "input",
+      "lane": "chat",
+      "col": 0,
+      "type": "backend",
+      "label": "接收模型请求",
+      "sublabel": "固定请求与调用预算",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 105,
+          "end_line": 134
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 388,
+          "end_line": 405
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "load",
+      "lane": "chat",
+      "col": 1,
+      "type": "security",
+      "label": "检查原模型配置",
+      "sublabel": "实际发送前热读",
+      "sources": [
+        {
+          "path": "internal/agent/chat/model_retry.go",
+          "line": 46,
+          "end_line": 96
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "stream",
+      "lane": "chat",
+      "col": 2,
+      "type": "cloud",
+      "label": "发起流式请求",
+      "sublabel": "Chat Completions",
+      "sources": [
+        {
+          "path": "internal/agent/completion/client.go",
+          "line": 31,
+          "end_line": 83
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "parse",
+      "lane": "chat",
+      "col": 3,
+      "type": "backend",
+      "label": "拼接流式增量",
+      "sublabel": "正文、思考、工具、usage",
+      "sources": [
+        {
+          "path": "internal/agent/completion/client.go",
+          "line": 84,
+          "end_line": 176
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "classify",
+      "lane": "chat",
+      "col": 4,
+      "type": "backend",
+      "label": "评估返回结果",
+      "sublabel": "校验响应或分类故障",
+      "sources": [
+        {
+          "path": "internal/agent/completion/client.go",
+          "line": 179,
+          "end_line": 211
+        },
+        {
+          "path": "internal/agent/chat/model_retry.go",
+          "line": 108,
+          "end_line": 133
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "accept",
+      "lane": "chat",
+      "col": 5,
+      "type": "database",
+      "label": "交给运行协调",
+      "sublabel": "接纳完整响应或保存尾批",
+      "sources": [
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 135,
+          "end_line": 160
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 598,
+          "end_line": 657
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "batch",
+      "lane": "store",
+      "col": 3,
+      "type": "database",
+      "label": "增量批量落库",
+      "sublabel": "5 条或 5 秒",
+      "sources": [
+        {
+          "path": "internal/agent/chat/event_batch.go",
+          "line": 24,
+          "end_line": 75
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 588,
+          "end_line": 595
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "retry",
+      "lane": "store",
+      "col": 4,
+      "type": "database",
+      "label": "保存重试等待",
+      "sublabel": "固定预算与 next_retry_at",
+      "sources": [
+        {
+          "path": "internal/agent/chat/model_retry.go",
+          "line": 22,
+          "end_line": 44
+        },
+        {
+          "path": "internal/agent/chat/model_retry.go",
+          "line": 120,
+          "end_line": 145
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "stop",
+      "lane": "error",
+      "col": 4,
+      "type": "backend",
+      "label": "结束逻辑调用",
+      "sublabel": "保留已收到的输出",
+      "sources": [
+        {
+          "path": "internal/agent/chat/model_retry.go",
+          "line": 108,
+          "end_line": 129
+        }
+      ],
+      "width": 128
+    },
+    {
+      "lane": "error",
+      "label": "阻断请求",
+      "width": 128,
+      "type": "security",
+      "id": "blocked",
+      "sources": [
+        {
+          "line": 87,
+          "end_line": 94,
+          "path": "internal/agent/chat/model_retry.go"
+        }
+      ],
+      "col": 1,
+      "sublabel": "原模型配置不可用"
+    }
+  ],
+  "edges": [
+    {
+      "id": "input-load",
+      "from": "input",
+      "to": "load",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "load-stream",
+      "from": "load",
+      "to": "stream",
+      "label": "模型可用",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "stream-parse",
+      "from": "stream",
+      "to": "parse",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "parse-classify",
+      "from": "parse",
+      "to": "classify",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "classify-accept",
+      "from": "classify",
+      "to": "accept",
+      "label": "完整响应",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "parse-batch",
+      "from": "parse",
+      "to": "batch",
+      "label": "正文 / 思考",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "id": "classify-retry",
+      "from": "classify",
+      "to": "retry",
+      "label": "暂时故障且无输出",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "retry-load",
+      "from": "retry",
+      "to": "load",
+      "label": "到期后重发",
+      "role": "return",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "route": "bottom-channel"
+    },
+    {
+      "id": "classify-stop",
+      "from": "classify",
+      "to": "stop",
+      "label": "其余错误",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "label": "不可用",
+      "id": "load-blocked",
+      "variant": "security",
+      "from": "load",
+      "role": "error",
+      "to": "blocked"
+    }
+  ],
+  "mainPath": [
+    "input",
+    "load",
+    "stream",
+    "parse",
+    "classify",
+    "accept"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "流式协议",
+      "items": [
+        "每次请求固定当次 Key 与超时。首个有效正文、思考或工具增量前默认等 120 秒；此后默认空闲 60 秒。SDK 的自动重试关闭。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "网络重试",
+      "items": [
+        "超时、网络错误、429、500、503，且当前及此前均无有效输出时才可重试。默认首次外 3 次，间隔 5 / 10 / 20 秒；重用请求、调用 ID 和已保存预算。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "两个结束条件",
+      "items": [
+        "正常 length 属于完整响应，交给续写协调器。已产生部分输出后发生故障时，保留可用的输出和用量，结束该逻辑调用。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "恢复",
+      "items": [
+        "checkpoint 引用原请求。已有完整响应先经统一校验后复用，未完成响应沿原调用重发；恢复发送本身不额外消费网络重试。"
+      ]
+    }
+  ]
+}

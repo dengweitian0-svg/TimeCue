@@ -1,0 +1,360 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "TimeCue Agent 总体架构",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/overview/overview.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+    }
+  },
+  "components": [
+    {
+      "id": "flutter",
+      "type": "frontend",
+      "label": "Flutter 聊天界面",
+      "sublabel": "发送、订阅与补读",
+      "pos": [
+        30,
+        226
+      ],
+      "size": [
+        176,
+        64
+      ],
+      "sources": [
+        {
+          "path": "desktop/lib/data/http_chat_gateway.dart",
+          "line": 161,
+          "end_line": 221
+        },
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 947,
+          "end_line": 1066
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Go 本机 HTTP",
+      "sublabel": "/v1 会话、运行、模型",
+      "pos": [
+        296,
+        226
+      ],
+      "size": [
+        176,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/api/chat_routes.go",
+          "line": 14,
+          "end_line": 25
+        },
+        {
+          "path": "internal/app/runtime.go",
+          "line": 76,
+          "end_line": 89
+        }
+      ]
+    },
+    {
+      "id": "chat",
+      "type": "backend",
+      "label": "chat.Runtime",
+      "sublabel": "准入、模型循环、运行恢复",
+      "pos": [
+        570,
+        226
+      ],
+      "size": [
+        176,
+        64
+      ],
+      "sources": [
+        {
+          "path": "cmd/flutter/main.go",
+          "line": 82,
+          "end_line": 99
+        },
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 204,
+          "end_line": 301
+        },
+        {
+          "path": "internal/agent/chat/tool_loop.go",
+          "line": 12,
+          "end_line": 161
+        }
+      ]
+    },
+    {
+      "id": "adapter",
+      "type": "backend",
+      "label": "completion 适配器",
+      "sublabel": "Chat Completions 流式适配",
+      "pos": [
+        844,
+        226
+      ],
+      "size": [
+        176,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/agent/chat/model_retry.go",
+          "line": 87,
+          "end_line": 110
+        },
+        {
+          "path": "internal/agent/completion/client.go",
+          "line": 80,
+          "end_line": 103
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "type": "cloud",
+      "label": "已配置的模型服务",
+      "sublabel": "连接地址 / 模型 ID",
+      "pos": [
+        1116,
+        226
+      ],
+      "size": [
+        176,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/agent/completion/client.go",
+          "line": 80,
+          "end_line": 103
+        },
+        {
+          "path": "internal/config/chat.go",
+          "line": 156,
+          "end_line": 175
+        }
+      ]
+    },
+    {
+      "id": "config",
+      "type": "security",
+      "label": "配置管理器",
+      "sublabel": "已发布快照与本地 Key",
+      "pos": [
+        570,
+        50
+      ],
+      "size": [
+        176,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/config/chat.go",
+          "line": 87,
+          "end_line": 175
+        }
+      ]
+    },
+    {
+      "id": "registry",
+      "type": "backend",
+      "label": "tools.Registry",
+      "sublabel": "工具定义、校验、执行",
+      "pos": [
+        570,
+        411
+      ],
+      "size": [
+        176,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/agent/tools/registry.go",
+          "line": 155,
+          "end_line": 181
+        },
+        {
+          "path": "internal/agent/tools/registry.go",
+          "line": 195,
+          "end_line": 294
+        },
+        {
+          "path": "internal/agent/chat/tool_attempts.go",
+          "line": 249,
+          "end_line": 282
+        }
+      ]
+    },
+    {
+      "id": "schedule",
+      "type": "backend",
+      "label": "App 日程业务",
+      "sublabel": "查询、版本写入、提醒联动",
+      "pos": [
+        844,
+        411
+      ],
+      "size": [
+        176,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/app/schedule.go",
+          "line": 34,
+          "end_line": 89
+        },
+        {
+          "path": "internal/agent/tools/schedule_write.go",
+          "line": 112,
+          "end_line": 165
+        },
+        {
+          "path": "internal/agent/tools/schedule_delete.go",
+          "line": 79,
+          "end_line": 101
+        }
+      ]
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "SQLite 聊天适配器",
+      "sublabel": "调用、事件与 checkpoint",
+      "pos": [
+        296,
+        411
+      ],
+      "size": [
+        176,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/store/chat.go",
+          "line": 18,
+          "end_line": 31
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 598,
+          "end_line": 679
+        },
+        {
+          "path": "internal/store/chat_tools.go",
+          "line": 150,
+          "end_line": 214
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "flutter-api",
+      "from": "flutter",
+      "to": "api",
+      "label": "HTTP / SSE",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-chat",
+      "from": "api",
+      "to": "chat",
+      "label": "调用服务端口",
+      "variant": "emphasis"
+    },
+    {
+      "id": "chat-adapter",
+      "from": "chat",
+      "to": "adapter",
+      "label": "流式模型调用",
+      "variant": "emphasis"
+    },
+    {
+      "id": "adapter-model",
+      "from": "adapter",
+      "to": "model",
+      "label": "HTTP / SSE",
+      "variant": "emphasis"
+    },
+    {
+      "id": "chat-config",
+      "from": "chat",
+      "to": "config",
+      "label": "读取配置",
+      "variant": "default",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "chat-registry",
+      "from": "chat",
+      "to": "registry",
+      "label": "执行工具",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "registry-schedule",
+      "from": "registry",
+      "to": "schedule",
+      "label": "正式业务端口",
+      "variant": "emphasis"
+    },
+    {
+      "id": "chat-store",
+      "from": "chat",
+      "to": "store",
+      "label": "读写已提交事实",
+      "variant": "default",
+      "fromSide": "left",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "生产装配",
+      "items": [
+        "cmd/flutter 装配真实模型适配器、SQLite 存储、配置和六个日程工具。",
+        "Go 先独占环回监听端口，再启动聊天恢复；运行占用重建并接入 HTTP 接收循环后才发布托管 ready。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "两段 SSE",
+      "items": [
+        "模型流进入 completion，由 chat 批量保存正文和思考。Flutter 的本机 SSE 订阅读取已提交事件。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "两类事务",
+      "items": [
+        "日程工具经 App 执行业务。日程写入与 Agent 工具结果分属两个事务，删除回执可在恢复时只读核对。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "事实来源",
+      "items": [
+        "chat 统一投影消息、事件与 checkpoint。SQLite 适配器执行事务核验与保存，Runtime 只采用提交后的快照。"
+      ]
+    }
+  ]
+}

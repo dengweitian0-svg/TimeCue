@@ -1,0 +1,304 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "会话与运行准入",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/admission/admission.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+    }
+  },
+  "lanes": [
+    {
+      "id": "gate",
+      "label": "创建请求与 chat.Runtime 准入锁"
+    },
+    {
+      "id": "store",
+      "label": "SQLite 创建事务"
+    },
+    {
+      "id": "branch",
+      "label": "提前返回",
+      "variant": "exception"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "send",
+      "lane": "gate",
+      "col": 0,
+      "type": "frontend",
+      "label": "创建 run",
+      "sublabel": "POST /v1/run",
+      "sources": [
+        {
+          "path": "desktop/lib/data/http_chat_gateway.dart",
+          "line": 161,
+          "end_line": 181
+        },
+        {
+          "path": "internal/api/handler/agent/create_run_handler.go",
+          "line": 24,
+          "end_line": 57
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "replay",
+      "lane": "gate",
+      "col": 1,
+      "type": "security",
+      "label": "查找原幂等记录",
+      "sublabel": "会话内按 key 查找",
+      "sources": [
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 203,
+          "end_line": 223
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 130,
+          "end_line": 145
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "model",
+      "lane": "gate",
+      "col": 2,
+      "type": "security",
+      "label": "校验模型配置",
+      "sublabel": "provider / model",
+      "sources": [
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 224,
+          "end_line": 242
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "capacity",
+      "lane": "gate",
+      "col": 3,
+      "type": "security",
+      "label": "检查运行占用",
+      "sublabel": "同会话 1 个，全局 3 个",
+      "sources": [
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 243,
+          "end_line": 250
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "budget",
+      "lane": "gate",
+      "col": 4,
+      "type": "backend",
+      "label": "读取历史与预算",
+      "sublabel": "必要时准备摘要",
+      "sources": [
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 264,
+          "end_line": 273
+        },
+        {
+          "path": "internal/agent/chat/request.go",
+          "line": 21,
+          "end_line": 60
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "commit",
+      "lane": "store",
+      "col": 5,
+      "type": "database",
+      "label": "创建事务",
+      "sublabel": "写会话、run、幂等、start",
+      "sources": [
+        {
+          "path": "internal/store/chat.go",
+          "line": 147,
+          "end_line": 195
+        },
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 274,
+          "end_line": 300
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "receipt",
+      "lane": "branch",
+      "col": 1,
+      "type": "backend",
+      "label": "原回执或冲突",
+      "sublabel": "仅原文相同可重放",
+      "sources": [
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 191,
+          "end_line": 222
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "deny",
+      "lane": "branch",
+      "col": 3,
+      "type": "security",
+      "label": "拒绝本次创建",
+      "sublabel": "非法、不可用或占用满",
+      "sources": [
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 224,
+          "end_line": 250
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "failed",
+      "lane": "branch",
+      "col": 5,
+      "type": "database",
+      "label": "预算失败回执",
+      "sublabel": "同事务写 error / end",
+      "sources": [
+        {
+          "path": "internal/agent/chat/service.go",
+          "line": 264,
+          "end_line": 280
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 147,
+          "end_line": 195
+        }
+      ],
+      "width": 128
+    }
+  ],
+  "edges": [
+    {
+      "id": "send-replay",
+      "from": "send",
+      "to": "replay",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "replay-model",
+      "from": "replay",
+      "to": "model",
+      "label": "无记录",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "model-capacity",
+      "from": "model",
+      "to": "capacity",
+      "label": "可用",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "capacity-budget",
+      "from": "capacity",
+      "to": "budget",
+      "label": "有名额",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "budget-commit",
+      "from": "budget",
+      "to": "commit",
+      "label": "可继续",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "replay-receipt",
+      "from": "replay",
+      "to": "receipt",
+      "label": "命中",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "model-deny",
+      "from": "model",
+      "to": "deny",
+      "label": "无效 / 不可用",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "capacity-deny",
+      "from": "capacity",
+      "to": "deny",
+      "label": "超限",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "budget-failed",
+      "from": "budget",
+      "to": "failed",
+      "label": "超限且不摘要",
+      "role": "error",
+      "variant": "security"
+    }
+  ],
+  "mainPath": [
+    "send",
+    "replay",
+    "model",
+    "capacity",
+    "budget",
+    "commit"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "准入顺序",
+      "items": [
+        "HTTP 与 Runtime 校验基本参数和服务可用性后，优先查询同会话幂等记录。原文逐字比较，重复键携带不同原文返回冲突。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "占用边界",
+      "items": [
+        "准入锁覆盖检查、创建与占用登记。非法、配置拒绝、名额冲突或创建事务失败均不留新键；预算失败是已创建的终态。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "模型门禁",
+      "items": [
+        "未配置的组合是非法请求；已配置但无本地 Key 或预算无效是模型不可用。模型列表使用本地状态，不做上游鉴权。"
+      ]
+    }
+  ]
+}
