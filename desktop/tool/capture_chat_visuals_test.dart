@@ -127,11 +127,13 @@ void main() {
       () => chat.selectedConversation!.activeRun!.toolCalls.length == 18,
     );
     await _scrollToLatest(tester, sessionId);
+    await tester.tap(find.text('Thinking'));
+    await tester.pumpAndSettle();
+    final toolToggle = find.byKey(const ValueKey('chat-tool-call-list'));
+    await tester.ensureVisible(toolToggle);
+    await tester.tap(toolToggle);
+    await tester.pumpAndSettle();
     final lastTool = find.byKey(const ValueKey('chat-tool-19:tool-call-17'));
-    if (lastTool.evaluate().isEmpty) {
-      await tester.tap(find.text('Tool calling · 已发起 18 次调用'));
-      await tester.pump(const Duration(milliseconds: 250));
-    }
     expect(lastTool, findsOneWidget);
     await tester.ensureVisible(lastTool);
     await _capture(tester, '08-multi-tools-sequential.png');

@@ -173,9 +173,15 @@ void main() {
       lessThan(48),
       reason: '最新消息应继续保持在实际滚动范围末尾',
     );
+    await tester.tap(find.text('Thinking'));
+    await tester.pumpAndSettle();
     final toolList = find.byType(ChatToolCallList);
     expect(toolList, findsOneWidget);
     expect(tester.widget<ChatToolCallList>(toolList).calls, hasLength(3));
+    final toolToggle = find.byKey(const ValueKey('chat-tool-call-list'));
+    await tester.ensureVisible(toolToggle);
+    await tester.tap(toolToggle);
+    await tester.pumpAndSettle();
     final toolPositions = [
       for (var index = 0; index < 3; index++)
         tester

@@ -117,6 +117,35 @@ void main() {
     gateway.events.add(_toolFrame(2, 'call-one', 'search_schedules'));
     gateway.events.add(_toolFrame(3, 'call-two', 'search_schedules'));
     gateway.events.add(_toolFrame(4, 'call-three', 'get_calendar'));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(chat.selectedConversation?.activeRun?.toolCalls, hasLength(3));
+    final thinking = find.text('Thinking');
+    expect(find.text('private reasoning'), findsNothing);
+    await tester.ensureVisible(thinking);
+    await tester.tap(thinking);
+    await tester.pumpAndSettle();
+    final toolList = find.byType(ChatToolCallList);
+    expect(toolList, findsOneWidget);
+    expect(tester.widget<ChatToolCallList>(toolList).calls, hasLength(3));
+    final toolToggle = find.byKey(const ValueKey('chat-tool-call-list'));
+    expect(find.text('search_schedules'), findsNothing);
+    await tester.ensureVisible(toolToggle);
+    await tester.tap(toolToggle);
+    await tester.pumpAndSettle();
+    final toolPositions = [
+      for (final key in ['2:call-one', '3:call-two', '4:call-three'])
+        tester.getTopLeft(find.byKey(ValueKey('chat-tool-$key'))).dy,
+    ];
+    expect(toolPositions[0], lessThan(toolPositions[1]));
+    expect(toolPositions[1], lessThan(toolPositions[2]));
+    expect(find.text('search_schedules'), findsNWidgets(2));
+    expect(find.text('get_calendar'), findsOneWidget);
+    expect(find.text('private reasoning'), findsOneWidget);
+    expect(find.text('private args'), findsNothing);
     gateway.events.add(
       _frameSignal(
         5,
@@ -128,33 +157,19 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.pump();
-    await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
-
-    expect(chat.selectedConversation?.activeRun?.toolCalls, hasLength(3));
-    final toolList = find.byType(ChatToolCallList);
-    expect(toolList, findsOneWidget);
-    expect(tester.widget<ChatToolCallList>(toolList).calls, hasLength(3));
-    final toolPositions = [
-      for (final key in ['2:call-one', '3:call-two', '4:call-three'])
-        tester.getTopLeft(find.byKey(ValueKey('chat-tool-$key'))).dy,
-    ];
-    expect(toolPositions[0], lessThan(toolPositions[1]));
-    expect(toolPositions[1], lessThan(toolPositions[2]));
-    expect(find.text('search_schedules'), findsNWidgets(2));
-    expect(find.text('get_calendar'), findsOneWidget);
-    expect(find.text('private reasoning'), findsNothing);
-    expect(find.text('private args'), findsNothing);
     expect(find.textContaining('你好'), findsOneWidget);
     expect(find.byKey(const ValueKey('chat-stop-button')), findsOneWidget);
     expect(tester.takeException(), isNull);
 
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
     await tester.drag(_chatMessageList(tester), const Offset(0, 250));
     await tester.pumpAndSettle();
     final readingOffset = _verticalScrollOffset(tester);
     expect(readingOffset, greaterThan(0));
     await mount(640, 480, 1);
+    expect(find.text('search_schedules'), findsNWidgets(2));
     expect(_verticalScrollOffset(tester), closeTo(readingOffset, 1));
     gateway.events.add(
       _frameSignal(

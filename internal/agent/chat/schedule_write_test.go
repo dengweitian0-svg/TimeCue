@@ -34,6 +34,8 @@ func TestAssistantCreatesRealSchedule(t *testing.T) {
 			}
 			if len(request.Messages) < 2 || request.Messages[0].Role != "system" || !strings.Contains(request.Messages[0].Content, "先澄清") || !strings.Contains(request.Messages[0].Content, "不自动重试") {
 				t.Errorf("缺少真实操作约束提示：%s", mustJSON(request.Messages))
+			} else if !strings.Contains(request.Messages[0].Content, "只用于工具调用，不在回复中列出") {
+				t.Errorf("缺少用户回复的字段展示约束：%s", request.Messages[0].Content)
 			}
 			emitTools(w, []chat.ToolRequest{toolRequest("create", "create_schedule", `{"name":"助手会议","type":"single","notifyTime":"2099-01-02 09:00"}`)})
 			return

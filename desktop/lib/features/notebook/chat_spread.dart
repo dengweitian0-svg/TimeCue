@@ -448,8 +448,8 @@ class _ChatSpreadState extends State<ChatSpread> {
                     segmentId: segmentId,
                     expanded: expanded,
                   ),
-              onLoadMoreEvents: chat.supportsEventHistory
-                  ? (id) => chat.loadMoreEvents(id)
+              onLoadHistory: chat.supportsEventHistory
+                  ? (id) => chat.loadMoreEvents(id, all: true)
                   : null,
             );
       final composer = ChatComposer(
@@ -500,10 +500,7 @@ class _ChatSpreadState extends State<ChatSpread> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: (constraints.maxHeight * .4).clamp(0.0, 240.0),
-                  ),
+                Flexible(
                   child: SingleChildScrollView(
                     primary: false,
                     child: Column(
@@ -512,7 +509,7 @@ class _ChatSpreadState extends State<ChatSpread> {
                     ),
                   ),
                 ),
-                Expanded(child: messages),
+                Expanded(flex: 2, child: messages),
                 const Divider(),
                 composer,
               ],

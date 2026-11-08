@@ -4,7 +4,6 @@ import '../../theme/notebook_theme.dart';
 import '../../contracts/chat_contracts.dart';
 import 'chat_content_segments.dart';
 import 'chat_view_model.dart';
-import 'chat_event_timeline.dart';
 
 /// 显示单会话的用户消息、助手正文和独立过程信息。
 class ChatMessageList extends StatefulWidget {
@@ -17,7 +16,7 @@ class ChatMessageList extends StatefulWidget {
     required this.onReadingPosition,
     required this.onRetryCreate,
     required this.onRetryConnection,
-    this.onLoadMoreEvents,
+    this.onLoadHistory,
     this.onToggleReasoning,
   });
 
@@ -28,7 +27,7 @@ class ChatMessageList extends StatefulWidget {
   final void Function(double offset, bool followLatest) onReadingPosition;
   final ValueChanged<String> onRetryCreate;
   final ValueChanged<String> onRetryConnection;
-  final ValueChanged<String>? onLoadMoreEvents;
+  final ValueChanged<String>? onLoadHistory;
   final void Function(String runId, String segmentId, bool expanded)?
   onToggleReasoning;
 
@@ -150,7 +149,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
                       run: widget.runs[index],
                       onRetryCreate: widget.onRetryCreate,
                       onRetryConnection: widget.onRetryConnection,
-                      onLoadMoreEvents: widget.onLoadMoreEvents,
+                      onLoadHistory: widget.onLoadHistory,
                       onToggleReasoning: widget.onToggleReasoning,
                     ),
             ),
@@ -208,7 +207,7 @@ class _ChatTurn extends StatelessWidget {
     required this.run,
     required this.onRetryCreate,
     required this.onRetryConnection,
-    this.onLoadMoreEvents,
+    this.onLoadHistory,
     this.onToggleReasoning,
   });
 
@@ -216,99 +215,121 @@ class _ChatTurn extends StatelessWidget {
   final ChatRunState run;
   final ValueChanged<String> onRetryCreate;
   final ValueChanged<String> onRetryConnection;
-  final ValueChanged<String>? onLoadMoreEvents;
+  final ValueChanged<String>? onLoadHistory;
   final void Function(String runId, String segmentId, bool expanded)?
   onToggleReasoning;
 
+  bool get _shouldLoadHistory =>
+      onLoadHistory != null &&
+      run.runId != null &&
+      run.isTerminal &&
+      run.hasMoreEvents &&
+      !run.eventsLoading &&
+      run.eventsError == null;
+
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 18),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 620),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color.fromARGB(255, 242, 235, 218),
-              borderRadius: BorderRadius.circular(12),
+  Widget build(BuildContext context) {
+    if (_shouldLoadHistory) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted && _shouldLoadHistory) {
+          onLoadHistory!(run.runId!);
+        }
+      });
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 620),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color.fromARGB(255, 242, 235, 218),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: SelectableText(run.input),
             ),
-            child: SelectableText(run.input),
           ),
-        ),
-        const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 620),
-            child: Material(
-              color: const Color.fromARGB(255, 255, 250, 240),
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.auto_awesome,
-                          size: 16,
-                          color: NotebookTheme.ink,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            _phaseLabel(run),
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: NotebookTheme.ink,
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 620),
+              child: Material(
+                color: const Color.fromARGB(255, 255, 250, 240),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.auto_awesome,
+                            size: 16,
+                            color: NotebookTheme.ink,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              _phaseLabel(run),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: NotebookTheme.ink,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    ChatContentSegments(
-                      run: run,
-                      onToggleReasoning: onToggleReasoning == null
-                          ? null
-                          : (segment, expanded) => onToggleReasoning!(
-                              run.runId ?? run.messageId,
-                              segment.id,
-                              expanded,
-                            ),
-                    ),
-                    if (run.timeline.isNotEmpty || onLoadMoreEvents != null)
-                      ChatEventTimeline(run: run, onLoadMore: onLoadMoreEvents),
-                    if (run.error != null)
-                      _InlineChatError(
-                        message: run.error!,
-                        onRetry:
-                            run.phase == ChatRunPhase.creating &&
-                                run.runId == null
-                            ? () => onRetryCreate(sessionId)
-                            : run.needsSnapshot &&
-                                  onLoadMoreEvents != null &&
-                                  run.runId != null
-                            ? () => onLoadMoreEvents!(run.runId!)
-                            : run.connectionState ==
-                                      ChatConnectionState.disconnected &&
-                                  run.runId != null &&
-                                  !run.isTerminal
-                            ? () => onRetryConnection(sessionId)
-                            : null,
+                        ],
                       ),
-                  ],
+                      ChatContentSegments(
+                        run: run,
+                        onToggleReasoning: onToggleReasoning == null
+                            ? null
+                            : (segment, expanded) => onToggleReasoning!(
+                                run.runId ?? run.messageId,
+                                segment.id,
+                                expanded,
+                              ),
+                      ),
+                      if (run.error != null)
+                        _InlineChatError(
+                          message: '连接或请求失败：${run.error}',
+                          onRetry:
+                              run.phase == ChatRunPhase.creating &&
+                                  run.runId == null
+                              ? () => onRetryCreate(sessionId)
+                              : run.needsSnapshot &&
+                                    onLoadHistory != null &&
+                                    run.runId != null
+                              ? () => onLoadHistory!(run.runId!)
+                              : run.connectionState ==
+                                        ChatConnectionState.disconnected &&
+                                    run.runId != null &&
+                                    !run.isTerminal
+                              ? () => onRetryConnection(sessionId)
+                              : null,
+                        ),
+                      if (run.eventsError case final error?)
+                        _InlineChatError(
+                          message: '历史内容读取失败：$error',
+                          onRetry: onLoadHistory == null || run.runId == null
+                              ? null
+                              : () => onLoadHistory!(run.runId!),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }
 
 String _phaseLabel(ChatRunState run) => switch (run.phase) {
@@ -345,7 +366,7 @@ class _InlineChatError extends StatelessWidget {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(child: SelectableText('连接或请求失败：$message')),
+        Expanded(child: SelectableText(message)),
         if (onRetry != null)
           TextButton(onPressed: onRetry, child: const Text('重试')),
       ],

@@ -9,9 +9,7 @@ import 'package:timecue_desktop/data/http_chat_gateway.dart';
 import 'package:timecue_desktop/features/chat/chat_view_model.dart';
 import 'package:timecue_desktop/features/chat/chat_message_list.dart';
 import 'package:timecue_desktop/features/chat/chat_content_segments.dart';
-import 'package:timecue_desktop/features/chat/chat_event_timeline.dart';
 import 'package:timecue_desktop/features/chat/chat_markdown_body.dart';
-import 'package:timecue_desktop/features/chat/chat_tool_call_list.dart';
 
 void main() {
   for (final prefix in ['Hello ', '中间正文\n\nHello ', '中间正文', 'Hello world']) {
@@ -104,14 +102,14 @@ void main() {
       () => Future<void>.delayed(const Duration(milliseconds: 30)),
     );
     await tester.pumpWidget(content());
-    expect(find.text('正在思考…'), findsNothing);
-    expect(find.text('思考过程（已完成）'), findsOneWidget);
+    expect(find.text('Thinking'), findsOneWidget);
+    expect(find.text('第一段第二段'), findsNothing);
     await tester.tap(
       find.byKey(const ValueKey('chat-reasoning-toggle-reasoning-1')),
     );
     await tester.pump(const Duration(milliseconds: 20));
     expect(find.text('第一段第二段'), findsOneWidget);
-    expect(find.text('正在思考…'), findsNothing);
+    expect(find.text('Thinking'), findsOneWidget);
     await tester.runAsync(() => fixture.model.loadMoreEvents('r'));
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 30)),
@@ -192,13 +190,13 @@ void main() {
     await fixture.model.loadHistory();
     expect(fixture.model.historyConversations, isEmpty);
   });
-  testWidgets('T06 查询对象与参数错误保持原值，详情默认折叠', (tester) async {
+  testWidgets('T06 保留工具原值，预览和折叠详情隐藏内部字段', (tester) async {
     final fixture = (await tester.runAsync(_HistoryServer.open))!;
     addTearDown(fixture.close);
     fixture
       ..finished = true
       ..status = 'succeeded'
-      ..output = '已核实真实会议'
+      ..output = '已核实真实会议（ID 1）'
       ..pageSize = 100;
     // 使用已通过 Apifox 验收的查询对象和解析失败协议形状。
     fixture.events.addAll([
@@ -208,7 +206,7 @@ void main() {
           {
             'id': 'lookup',
             'name': 'get_schedule',
-            'argument': {'id': 1},
+            'argument': {'id': 1, 'expectedRevision': 2},
           },
         ],
       }),
@@ -227,10 +225,15 @@ void main() {
       }),
       _event(5, 'tool_result', {
         'tool_call_id': 'lookup',
-        'output': {'id': 1, 'name': '真实会议', 'revision': 1},
+        'output': {
+          'id': 1,
+          'name': '真实会议',
+          'revision': 1,
+          'rule': {'version': 2, 'open': false},
+        },
         'error': null,
       }),
-      _event(6, 'text', {'content': '已核实真实会议'}),
+      _event(6, 'text', {'content': '已核实真实会议（ID 1）'}),
       _event(7, 'end', {'status': 'succeeded'}),
     ]);
     await tester.runAsync(() async {
@@ -239,46 +242,59 @@ void main() {
     });
     final run = fixture.model.conversations.single.runs.single;
     expect(run.error, isNull);
+    expect(fixture.model.conversations.single.summary, '已核实真实会议');
     expect(run.toolCalls.first.output, {
       'id': 1,
       'name': '真实会议',
       'revision': 1,
+      'rule': {'version': 2, 'open': false},
     });
     expect(run.toolCalls.last.argument, isNull);
     expect(run.toolCalls.last.output, isNull);
     expect(run.toolCalls.last.error?.code, 'tool_argument_parse_error');
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: ChatMessageList(
-            sessionId: 's',
-            runs: [run],
-            initialOffset: 0,
-            initiallyFollowLatest: false,
-            onReadingPosition: (_, _) {},
-            onRetryCreate: (_) {},
-            onRetryConnection: (_) {},
-          ),
+    Widget render() => MaterialApp(
+      home: Scaffold(
+        body: ChatMessageList(
+          sessionId: 's',
+          runs: [run],
+          initialOffset: 0,
+          initiallyFollowLatest: false,
+          onReadingPosition: (_, _) {},
+          onRetryCreate: (_) {},
+          onRetryConnection: (_) {},
+          onToggleReasoning: (_, segmentId, expanded) =>
+              run.setSegmentExpanded(segmentId, expanded),
         ),
       ),
     );
-    expect(
-      find.text('已返回 · {"id":1,"name":"真实会议","revision":1}'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('原始结果：'), findsNothing);
-    expect(find.textContaining('tool_argument_parse_error'), findsNothing);
+    await tester.pumpWidget(render());
+    await tester.tap(find.text('Thinking'));
+    await tester.pumpWidget(render());
+    await tester.tap(find.byKey(const ValueKey('chat-tool-call-list')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('已返回 · {"name":"真实会议"'), findsOneWidget);
+    expect(find.textContaining('结果：'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('chat-tool-2:lookup')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('"revision": 1'), findsOneWidget);
+    expect(find.textContaining('"状态": "已停用"'), findsOneWidget);
+    for (final field in [
+      'id',
+      'expectedRevision',
+      'revision',
+      'version',
+      'open',
+    ]) {
+      expect(find.textContaining('"$field"'), findsNothing);
+    }
+    expect(find.textContaining('工具 ID'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('chat-tool-2:lookup')));
     await tester.pumpAndSettle();
     final failedTool = find.byKey(const ValueKey('chat-tool-3:bad'));
     await tester.ensureVisible(failedTool);
     await tester.tap(failedTool);
     await tester.pumpAndSettle();
-    expect(find.textContaining('tool_argument_parse_error'), findsOneWidget);
-    expect(find.textContaining('原始结果：\nnull'), findsOneWidget);
+    expect(find.textContaining('工具参数不是完整合法 JSON'), findsOneWidget);
+    expect(find.textContaining('结果：\nnull'), findsOneWidget);
   });
 
   for (final failRecovery in [false, true]) {
@@ -541,18 +557,25 @@ void main() {
     await _until(() => fixture.connections.isNotEmpty);
   });
 
-  testWidgets('原始记录与正文分开，工具参数结果和思考可折叠查看', (tester) async {
+  testWidgets('只展示有序回复内容，工具参数结果和思考仍可折叠查看', (tester) async {
     final fixture = (await tester.runAsync(_HistoryServer.open))!;
     addTearDown(fixture.close);
+    const rawReply =
+        '保留正文\n\n'
+        '- **日程：** 打扫卫生（ID 2）\n'
+        '- **状态：** 周期规则已停用（open: false）\n'
+        '- **revision:** 2\n'
+        '- **日程 ID：** 2（version 1）\n'
+        '- **时间：** 每周五 20:00';
     fixture
       ..finished = true
       ..status = 'failed'
-      ..output = '保留正文'
+      ..output = rawReply
       ..pageSize = 100;
     fixture.error = {'code': 'model_network_error', 'message': '模型中断'};
     fixture.events.addAll([
       _event(1, 'start', {}),
-      _event(2, 'thinking', {'content': '可恢复的思考'}),
+      _event(2, 'thinking', {'content': '可恢复的思考（ID 2）'}),
       _event(3, 'tool_start', {
         'function': [
           {
@@ -567,7 +590,7 @@ void main() {
         'output': ['原始结果', 7],
         'error': null,
       }),
-      _event(5, 'text', {'content': '保留正文'}),
+      _event(5, 'text', {'content': rawReply}),
       _event(6, 'error', {'code': 'model_network_error', 'message': '模型中断'}),
       _event(7, 'end', {'status': 'failed'}),
     ]);
@@ -576,40 +599,51 @@ void main() {
       await fixture.model.loadMoreEvents('r');
     });
     final run = fixture.model.conversations.single.runs.single;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: ChatMessageList(
-            sessionId: 's',
-            runs: [run],
-            initialOffset: 0,
-            initiallyFollowLatest: false,
-            onReadingPosition: (_, _) {},
-            onRetryCreate: (_) {},
-            onRetryConnection: (_) {},
-          ),
+    Widget render() => MaterialApp(
+      home: Scaffold(
+        body: ChatMessageList(
+          sessionId: 's',
+          runs: [run],
+          initialOffset: 0,
+          initiallyFollowLatest: false,
+          onReadingPosition: (_, _) {},
+          onRetryCreate: (_) {},
+          onRetryConnection: (_) {},
+          onToggleReasoning: (_, segmentId, expanded) =>
+              run.setSegmentExpanded(segmentId, expanded),
         ),
       ),
     );
-    expect(find.text('运行记录'), findsOneWidget);
+    await tester.pumpWidget(render());
+    expect(find.text('运行记录'), findsNothing);
+    expect(run.rawText, rawReply);
+    final reply = tester.widget<ChatMarkdownBody>(
+      find.byType(ChatMarkdownBody),
+    );
+    expect(
+      reply.data,
+      '保留正文\n\n'
+      '- **日程：** 打扫卫生\n'
+      '- **状态：** 周期规则已停用\n'
+      '- **时间：** 每周五 20:00',
+    );
     expect(find.text('可恢复的思考'), findsNothing);
+    await tester.tap(find.text('Thinking'));
+    await tester.pumpWidget(render());
+    expect(find.text('可恢复的思考'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-tool-3:original-id')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chat-tool-call-list')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('chat-tool-3:original-id')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('original-id'), findsWidgets);
+    expect(find.textContaining('original-id'), findsNothing);
     expect(find.text('已返回 · ["原始结果",7]'), findsOneWidget);
-    expect(find.textContaining('原始结果：\n'), findsOneWidget);
+    expect(find.textContaining('结果：\n'), findsOneWidget);
     expect(find.textContaining('今天'), findsOneWidget);
-    await tester.ensureVisible(find.text('运行记录'));
-    await tester.tap(find.text('运行记录'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('#2 · 思考'));
-    await tester.tap(find.text('#2 · 思考'));
-    await tester.pumpAndSettle();
-    expect(find.text('可恢复的思考'), findsOneWidget);
     expect(find.textContaining('模型中断'), findsWidgets);
   });
 
-  testWidgets('运行记录跨页合并连续同类增量并逐个展开工具详情', (tester) async {
+  testWidgets('历史消息自动翻页并在原有内容区展示思考和工具详情', (tester) async {
     final fixture = (await tester.runAsync(_HistoryServer.open))!;
     addTearDown(fixture.close);
     fixture
@@ -644,15 +678,35 @@ void main() {
       for (var i = 0; i < 64; i++) _event(++seq, 'text', {'content': '丙'}),
       _event(++seq, 'end', {'status': 'succeeded'}),
     ]);
-    await tester.runAsync(() async {
-      await fixture.model.loadHistory();
-      await fixture.model.loadMoreEvents('r');
-    });
+    await tester.runAsync(fixture.model.loadHistory);
     final run = fixture.model.conversations.single.runs.single;
-    Future<void> render() => tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(child: ChatEventTimeline(run: run)),
+    expect(fixture.pageCursors, isEmpty);
+    fixture.pageFailures = 1;
+    await tester.runAsync(
+      () => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ListenableBuilder(
+              listenable: fixture.model,
+              builder: (context, _) => ChatMessageList(
+                sessionId: 's',
+                runs: [run],
+                initialOffset: 0,
+                initiallyFollowLatest: false,
+                onReadingPosition: (_, _) {},
+                onRetryCreate: (_) {},
+                onRetryConnection: (_) {},
+                onToggleReasoning: (runId, segmentId, expanded) =>
+                    fixture.model.setSegmentExpanded(
+                      runId: runId,
+                      segmentId: segmentId,
+                      expanded: expanded,
+                    ),
+                onLoadHistory: (id) =>
+                    fixture.model.loadMoreEvents(id, all: true),
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -662,18 +716,18 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    await render();
-    await open(find.text('运行记录'));
-    await open(find.text('#2 · 思考'));
-    expect(find.text(List.filled(99, '甲').join()), findsOneWidget);
-
     await tester.runAsync(() async {
-      for (var page = 1; page < 4; page++) {
-        await fixture.model.loadMoreEvents('r');
-        expect(run.eventsError, isNull);
-      }
+      await _until(() => run.eventsError != null);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
     });
-    await render();
+    await tester.pump();
+    expect(find.textContaining('历史内容读取失败'), findsOneWidget);
+    await tester.runAsync(() async {
+      await tester.tap(find.text('重试'));
+      await _until(() => !run.eventsLoading && run.lastEventId == seq);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    });
+    await tester.pumpAndSettle();
     expect(run.hasMoreEvents, isFalse);
     expect(run.timeline, hasLength(seq));
     expect(run.segments.map((segment) => segment.kind), [
@@ -682,32 +736,22 @@ void main() {
       ChatSegmentKind.reasoning,
       ChatSegmentKind.text,
     ]);
+    expect(find.text('运行记录'), findsNothing);
+    expect(find.textContaining('历史内容读取失败'), findsNothing);
+    final reasoning = find.text('Thinking');
+    expect(reasoning, findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-tool-call-list')), findsNothing);
+    await open(reasoning);
     expect(find.text(List.filled(100, '甲').join()), findsOneWidget);
-    expect(find.byType(ExpansionTile), findsNWidgets(5));
-    final tools = find.byType(ChatToolCallList);
-    final secondThinking = find.text('#106 · 思考');
-    final text = find.text('#259 · 正文');
-    expect(
-      tester.getTopLeft(tools).dy,
-      lessThan(tester.getTopLeft(secondThinking).dy),
-    );
-    expect(
-      tester.getTopLeft(secondThinking).dy,
-      lessThan(tester.getTopLeft(text).dy),
-    );
+    expect(find.text(List.filled(153, '乙').join()), findsOneWidget);
     expect(find.text('查询日程'), findsNothing);
     await open(find.text('Tool calling · 已发起 2 次调用'));
     await open(find.text('查询日程'));
-    expect(find.text('工具 ID：first'), findsOneWidget);
     expect(find.text('参数：\n"今天"'), findsOneWidget);
-    expect(find.text('原始结果：\n"第一项结果"'), findsOneWidget);
+    expect(find.text('结果：\n"第一项结果"'), findsOneWidget);
     await open(find.text('读取日程'));
-    expect(find.text('工具 ID：second'), findsOneWidget);
     expect(find.text('参数：\n"明天"'), findsOneWidget);
-    expect(find.text('原始结果：\n"第二项结果"'), findsOneWidget);
-    await open(secondThinking);
-    expect(find.text(List.filled(153, '乙').join()), findsOneWidget);
-    await open(text);
+    expect(find.text('结果：\n"第二项结果"'), findsOneWidget);
     expect(find.text(List.filled(64, '丙').join()), findsOneWidget);
   });
 
