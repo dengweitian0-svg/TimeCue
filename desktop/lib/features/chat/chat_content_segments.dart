@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../theme/notebook_theme.dart';
+import 'chat_display_content.dart';
 import 'chat_markdown_body.dart';
 import 'chat_tool_call_list.dart';
 import 'chat_view_model.dart';
@@ -19,7 +20,7 @@ class ChatContentSegments extends StatelessWidget {
   /// 当前运行的只读展示状态。
   final ChatRunState run;
 
-  /// 用户手动展开或折叠某段思考；为 null 时保持只读。
+  /// 使用分组首段记录用户的展开选择；为 null 时保持只读。
   final void Function(ChatContentSegment segment, bool expanded)?
   onToggleReasoning;
 
@@ -42,20 +43,13 @@ class ChatContentSegments extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final segment in segments)
-          _segment(
-            context,
-            segment,
-            suffix: extendLastText && identical(segment, segments.last)
-                ? missing
-                : '',
-          ),
+        ..._sections(segments, suffix: extendLastText ? missing : ''),
         if (needsFinal)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: ChatMarkdownBody(
               key: ValueKey('chat-assistant-${run.messageId}'),
-              data: missing,
+              data: chatDisplayText(missing),
             ),
           ),
         if (segments.isEmpty &&
@@ -71,37 +65,74 @@ class ChatContentSegments extends StatelessWidget {
     );
   }
 
-  Widget _segment(
-    BuildContext context,
-    ChatContentSegment segment, {
-    String suffix = '',
-  }) => switch (segment.kind) {
-    ChatSegmentKind.reasoning => _ReasoningSection(
-      segment: segment,
-      isStreaming: !run.isTerminal && !segment.completed,
-      onToggle: onToggleReasoning == null
-          ? null
-          : (expanded) => onToggleReasoning!(segment, expanded),
-    ),
-    ChatSegmentKind.text => Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: ChatAnimatedMarkdown(
-        key: ValueKey('chat-text-${segment.id}'),
-        data: segment.content + suffix,
-        instantLength: segment.instantLength,
-        isStreaming: !run.isTerminal,
-      ),
-    ),
-    ChatSegmentKind.tool => Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: ChatToolCallList(
-        calls: [
-          for (final call in run.toolCalls)
-            if (segment.toolIds.contains(call.instanceId)) call,
+  Iterable<Widget> _sections(
+    List<ChatContentSegment> segments, {
+    required String suffix,
+  }) sync* {
+    var index = 0;
+    while (index < segments.length) {
+      final start = index;
+      final first = segments[index++];
+      if (first.kind == ChatSegmentKind.text) {
+        yield _segment(first, suffix: index == segments.length ? suffix : '');
+        continue;
+      }
+
+      // 正文分隔过程分组，组内思考与工具保持原事件顺序。
+      while (index < segments.length &&
+          segments[index].kind != ChatSegmentKind.text) {
+        index++;
+      }
+      final last = segments[index - 1];
+      final expanded =
+          first.expandedOverride ??
+          (!run.isTerminal &&
+              last.kind == ChatSegmentKind.reasoning &&
+              !last.completed);
+      yield _ThinkingSection(
+        key: ValueKey(first.id),
+        segmentId: first.id,
+        expanded: expanded,
+        onToggle: onToggleReasoning == null
+            ? null
+            : (expanded) => onToggleReasoning!(first, expanded),
+        children: [
+          if (expanded)
+            for (var member = start; member < index; member++)
+              _segment(segments[member]),
         ],
-      ),
-    ),
-  };
+      );
+    }
+  }
+
+  Widget _segment(ChatContentSegment segment, {String suffix = ''}) =>
+      switch (segment.kind) {
+        ChatSegmentKind.reasoning => ChatAnimatedMarkdown(
+          key: ValueKey(segment.id),
+          data: segment.content,
+          instantLength: segment.instantLength,
+          isStreaming: !run.isTerminal && !segment.completed,
+        ),
+        ChatSegmentKind.text => Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: ChatAnimatedMarkdown(
+            key: ValueKey('chat-text-${segment.id}'),
+            data: segment.content + suffix,
+            instantLength: segment.instantLength,
+            isStreaming: !run.isTerminal,
+          ),
+        ),
+        ChatSegmentKind.tool => Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: ChatToolCallList(
+            key: ValueKey('chat-tools-${run.messageId}-${segment.id}'),
+            calls: [
+              for (final call in run.toolCalls)
+                if (segment.toolIds.contains(call.instanceId)) call,
+            ],
+          ),
+        ),
+      };
 }
 
 // 线性核对事件正文的后缀与概况正文的前缀，只补缺失文字，不推断模型轮次。
@@ -132,75 +163,65 @@ int _finalOverlap(String streamed, String output) {
   return matched;
 }
 
-/// 思考段落：生成期间展开并逐步追加，本段完成后自动折叠。
-class _ReasoningSection extends StatelessWidget {
-  const _ReasoningSection({
-    required this.segment,
-    required this.isStreaming,
+class _ThinkingSection extends StatelessWidget {
+  const _ThinkingSection({
+    super.key,
+    required this.segmentId,
+    required this.expanded,
+    required this.children,
     this.onToggle,
   });
 
-  final ChatContentSegment segment;
-  final bool isStreaming;
+  final String segmentId;
+  final bool expanded;
+  final List<Widget> children;
   final ValueChanged<bool>? onToggle;
 
   @override
-  Widget build(BuildContext context) {
-    final expanded = segment.expanded;
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          InkWell(
-            key: ValueKey('chat-reasoning-toggle-${segment.id}'),
-            borderRadius: BorderRadius.circular(6),
-            onTap: onToggle == null ? null : () => onToggle!(!expanded),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                children: [
-                  Icon(
-                    expanded ? Icons.expand_more : Icons.chevron_right,
-                    size: 16,
-                    color: NotebookTheme.ink,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    segment.completed
-                        ? '思考过程（已完成）'
-                        : expanded
-                        ? '正在思考…'
-                        : '思考过程',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: NotebookTheme.ink,
-                    ),
-                  ),
-                ],
-              ),
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 4),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          key: ValueKey('chat-reasoning-toggle-$segmentId'),
+          borderRadius: BorderRadius.circular(6),
+          onTap: onToggle == null ? null : () => onToggle!(!expanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Icon(
+                  expanded ? Icons.expand_more : Icons.chevron_right,
+                  size: 16,
+                  color: NotebookTheme.ink,
+                ),
+                const SizedBox(width: 4),
+                const Text(
+                  'Thinking',
+                  style: TextStyle(fontSize: 12, color: NotebookTheme.ink),
+                ),
+              ],
             ),
           ),
-          if (expanded)
-            Container(
-              key: ValueKey('chat-reasoning-${segment.id}'),
-              margin: const EdgeInsets.only(top: 2, left: 6),
-              padding: const EdgeInsets.only(left: 8),
-              decoration: const BoxDecoration(
-                border: Border(
-                  left: BorderSide(color: NotebookTheme.line, width: 2),
-                ),
-              ),
-              child: ChatAnimatedMarkdown(
-                data: segment.content,
-                instantLength: segment.instantLength,
-                isStreaming: isStreaming,
+        ),
+        if (expanded)
+          Container(
+            margin: const EdgeInsets.only(top: 2, left: 6),
+            padding: const EdgeInsets.only(left: 8),
+            decoration: const BoxDecoration(
+              border: Border(
+                left: BorderSide(color: NotebookTheme.line, width: 2),
               ),
             ),
-        ],
-      ),
-    );
-  }
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: children,
+            ),
+          ),
+      ],
+    ),
+  );
 }
 
 /// 逐步显示已接收正文的原文前缀；既有内容首次显示时直接完整展示。
@@ -281,9 +302,11 @@ class _ChatAnimatedMarkdownState extends State<ChatAnimatedMarkdown> {
 
   @override
   Widget build(BuildContext context) => ChatMarkdownBody(
-    data: _revealed >= widget.data.length
-        ? widget.data
-        : widget.data.substring(0, _revealed),
+    data: chatDisplayText(
+      _revealed >= widget.data.length
+          ? widget.data
+          : widget.data.substring(0, _revealed),
+    ),
     isStreaming: widget.isStreaming || _revealed < widget.data.length,
   );
 }

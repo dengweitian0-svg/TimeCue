@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../../contracts/chat_contracts.dart';
+import 'chat_display_content.dart';
 
 /// 聊天运行在 UI 生命周期之外维护的受控状态模型。
 class ChatViewModel extends ChangeNotifier {
@@ -193,7 +194,7 @@ class ChatViewModel extends ChangeNotifier {
     _modelsError = null;
   }
 
-  /// 记录用户对某段思考展开状态的手动选择，供当前保留的会话展示状态复用。
+  /// 记录用户对过程分组展开状态的手动选择，供会话展示复用。
   void setSegmentExpanded({
     required String runId,
     required String segmentId,
@@ -753,8 +754,8 @@ class ChatViewModel extends ChangeNotifier {
   /// 当前网关是否提供持久化事件分页。
   bool get supportsEventHistory => _gateway is ChatEventHistoryGateway;
 
-  /// 按需读取下一页，事件应用与 SSE 共用每个运行的串行队列。
-  Future<void> loadMoreEvents(String runId) async {
+  /// 按需读取下一页或全部剩余历史，与 SSE 共用每个运行的串行队列。
+  Future<void> loadMoreEvents(String runId, {bool all = false}) async {
     final run = _runsById[runId];
     if (!_acceptingOperations ||
         !supportsEventHistory ||
@@ -763,6 +764,7 @@ class ChatViewModel extends ChangeNotifier {
       return;
     }
     final generation = _runtimeGeneration;
+    final retryEvents = run._eventsError != null;
     run._eventsLoading = true;
     run._eventsError = null;
     _scheduleNotify();
@@ -770,7 +772,9 @@ class ChatViewModel extends ChangeNotifier {
       if (!_isCurrent(generation, run)) return;
       try {
         if (run._needsSnapshot) await _loadRunSnapshot(run, generation);
-        await _readEvents(run, generation);
+        if (!all || run.hasMoreEvents || retryEvents) {
+          await _readEvents(run, generation, all: all);
+        }
         if (run._sseFinished && run._subscription != null) {
           await _detachEvents(run);
           await _loadRunSnapshot(run, generation);
@@ -1149,6 +1153,7 @@ class ChatViewModel extends ChangeNotifier {
         run._status = end.status;
         run._terminalConfirmed = true;
         run._sseFinished = true;
+        run._hasMoreEvents = false;
         run._cancelPending = false;
         run._phase = run._statusPhase;
     }
@@ -1705,7 +1710,7 @@ class ChatRunState {
     }
   }
 
-  /// 用户手动选择某段思考的展开状态，后续自动更新不再覆盖。
+  /// 用户手动选择过程分组的展开状态，记录在分组首段。
   void setSegmentExpanded(String segmentId, bool expanded) {
     for (final segment in _segments) {
       if (segment.id == segmentId) {
@@ -1879,7 +1884,7 @@ String _errorMessage(Object error) => error is ChatHttpError
     : error.toString().replaceFirst('Exception: ', '');
 
 String _plainSummary(String markdown) {
-  final text = markdown
+  final text = chatDisplayText(markdown)
       .replaceAll(RegExp(r'```[^\n]*\n?|~~~[^\n]*\n?'), '')
       .replaceAllMapped(
         RegExp(r'!\[([^\]]*)\]\([^)]*\)'),

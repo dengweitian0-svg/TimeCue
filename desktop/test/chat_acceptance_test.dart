@@ -173,9 +173,16 @@ void main() {
       ),
       hasLength(2),
     );
+    expect(find.byKey(const ValueKey('chat-tool-2:tool-a')), findsNothing);
+    await tester.tap(find.text('Thinking'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-tool-call-list')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('chat-tool-2:tool-a')), findsOneWidget);
     expect(find.byKey(const ValueKey('chat-tool-3:tool-b')), findsOneWidget);
     expect(find.byKey(const ValueKey('chat-tool-4:tool-c')), findsOneWidget);
+    await tester.tap(find.text('Thinking'));
+    await tester.pumpAndSettle();
 
     final source = gateway.longChatMarkdown;
     gateway.emitText(runId, 5, source);
@@ -218,31 +225,41 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 20));
     final runId = gateway.createdRunIds.single;
-    gateway.emitText(runId, 1, gateway.longChatMarkdown);
     for (var index = 0; index < 24; index++) {
       gateway.emitTool(
         runId,
-        index + 2,
+        index + 1,
         'narrow-tool-$index',
         'long_calendar_tool_name_for_accessibility_$index',
       );
     }
     await _pumpUntil(
       tester,
-      () =>
-          chat.selectedConversation!.activeRun!.toolCalls.length == 24 &&
-          chat.selectedConversation!.activeRun!.rawText ==
-              gateway.longChatMarkdown,
+      () => chat.selectedConversation!.activeRun!.toolCalls.length == 24,
     );
     expect(chat.selectedConversation!.activeRun!.toolCalls, hasLength(24));
 
-    final finalTool = find.byKey(const ValueKey('chat-tool-25:narrow-tool-23'));
+    final messageList = find.byKey(ValueKey('chat-message-list-$sessionId'));
+    Future<void> openInViewport(Finder target) async {
+      await tester.pumpAndSettle();
+      await Scrollable.ensureVisible(tester.element(target), alignment: .5);
+      await tester.pump();
+      expect(
+        target.hitTestable(),
+        findsOneWidget,
+        reason: '${tester.getRect(target)}，消息区 ${tester.getRect(messageList)}',
+      );
+      await tester.tap(target);
+      await tester.pumpAndSettle();
+    }
+
+    await openInViewport(find.text('Thinking'));
+    await openInViewport(find.byKey(const ValueKey('chat-tool-call-list')));
+    final finalTool = find.byKey(const ValueKey('chat-tool-24:narrow-tool-23'));
     await tester.ensureVisible(finalTool);
     await tester.pump();
     expect(finalTool, findsOneWidget);
-    final messageViewport = tester.getRect(
-      find.byKey(ValueKey('chat-message-list-$sessionId')),
-    );
+    final messageViewport = tester.getRect(messageList);
     final toolRect = tester.getRect(finalTool);
     expect(toolRect.bottom, greaterThan(messageViewport.top));
     expect(toolRect.top, lessThan(messageViewport.bottom));
@@ -255,6 +272,13 @@ void main() {
     final statusRect = tester.getRect(finalToolStatus);
     expect(statusRect.bottom, greaterThan(messageViewport.top));
     expect(statusRect.top, lessThan(messageViewport.bottom));
+    gateway.emitText(runId, 25, gateway.longChatMarkdown);
+    await _pumpUntil(
+      tester,
+      () =>
+          chat.selectedConversation!.activeRun!.rawText ==
+          gateway.longChatMarkdown,
+    );
     expect(find.byTooltip('停止生成'), findsOneWidget);
     await tester.tap(find.byTooltip('停止生成'));
     await tester.pump();

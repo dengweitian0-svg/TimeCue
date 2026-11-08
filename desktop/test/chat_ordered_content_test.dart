@@ -57,14 +57,11 @@ void main() {
       'search_schedules',
       args: {'day': 'today'},
     );
-    await _pumpUntil(
-      tester,
-      () => find
-          .byKey(const ValueKey('chat-tool-4:lookup'))
-          .evaluate()
-          .isNotEmpty,
-    );
+    await _pumpUntil(tester, () => _active(chat).segments.length == 2);
     expect(_active(chat).segments.first.completed, isTrue);
+    final tools = find.byKey(const ValueKey('chat-tool-call-list'));
+    final lookup = find.byKey(const ValueKey('chat-tool-4:lookup'));
+    expect(tools, findsNothing);
 
     // 用户重新展开后可以看到完整思考原文。
     await tester.tap(
@@ -72,8 +69,12 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('先确认可用时间，再检查冲突，继续核对'), findsOneWidget);
-    expect(find.text('思考过程（已完成）'), findsOneWidget);
-    expect(find.text('正在思考…'), findsNothing);
+    expect(find.text('Thinking'), findsOneWidget);
+    expect(tools, findsOneWidget);
+    expect(lookup, findsNothing);
+    await tester.tap(tools);
+    await tester.pumpAndSettle();
+    expect(lookup, findsOneWidget);
 
     gateway.emitText(runId, 5, '我查一下');
     gateway.emitTool(
@@ -111,26 +112,35 @@ void main() {
     final first = tester.getTopLeft(
       find.byKey(const ValueKey('chat-reasoning-toggle-reasoning-1')),
     );
-    final firstTool = tester.getTopLeft(
-      find.byKey(const ValueKey('chat-tool-4:lookup')),
-    );
+    final firstTool = tester.getTopLeft(lookup);
     final middle = tester.getTopLeft(
       find.byKey(const ValueKey('chat-text-text-3')),
     );
-    final secondTool = tester.getTopLeft(
-      find.byKey(const ValueKey('chat-tool-6:write')),
+    final secondGroup = find.byKey(
+      const ValueKey('chat-reasoning-toggle-tool-4'),
     );
-    final secondReasoning = tester.getTopLeft(
-      find.byKey(const ValueKey('chat-reasoning-toggle-reasoning-5')),
-    );
+    final secondReasoning = tester.getTopLeft(secondGroup);
     final finalText = tester.getTopLeft(
       find.byKey(const ValueKey('chat-text-text-6')),
     );
     expect(first.dy, lessThan(firstTool.dy));
     expect(firstTool.dy, lessThan(middle.dy));
-    expect(middle.dy, lessThan(secondTool.dy));
-    expect(secondTool.dy, lessThan(secondReasoning.dy));
+    expect(middle.dy, lessThan(secondReasoning.dy));
     expect(secondReasoning.dy, lessThan(finalText.dy));
+    final write = find.byKey(const ValueKey('chat-tool-6:write'));
+    expect(write, findsNothing);
+    await tester.ensureVisible(secondGroup);
+    await tester.tap(secondGroup);
+    await tester.pumpAndSettle();
+    expect(find.text('已创建'), findsOneWidget);
+    expect(write, findsNothing);
+    await tester.ensureVisible(tools.last);
+    await tester.tap(tools.last);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(write).dy,
+      lessThan(tester.getTopLeft(find.text('已创建')).dy),
+    );
   });
 
   testWidgets('新到达正文逐步显示，确认结束时立即补齐全部已收文字', (tester) async {

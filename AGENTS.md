@@ -42,11 +42,11 @@ Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务
 - CI 按 PR 路径选择 Go、Flutter 或 Windows Python 更新脚本检查，纯文档 dev PR 只运行轻量分类；dev 非文档 push 后执行完整 Windows 集成验证；所有 main PR 通过 Go Windows Checks 和 Flutter Windows Checks 执行完整发布构建与原生验证；手动运行发行工作流时上传发行产物。
 
 - T01 文字对话使用真实 Chat Completions 与 SQLite 版本 3 的六张 AI 表；缺少 Key 仍正常启动，配置与当前切片边界见 [docs/CHAT.md](docs/CHAT.md)。
-- T02 使用连续 seq 的五条/五秒事件批次、原子尾批和持久化 SSE 接续；Flutter 按需翻阅合并连续同类区块的运行记录、去重补缺并在 204 后恢复，最终正文独立使用 run.output，取消收尾保留占用，工具详情保留原始 JSON。不增加数据库结构或模型调用分组 DTO。
+- T02 使用连续 seq 的五条/五秒事件批次、原子尾批和持久化 SSE 接续；Flutter 按需补读已显示消息的历史、去重补缺并在 204 后恢复，最终正文使用 run.output 补齐，取消收尾保留占用。不增加数据库结构或模型调用分组 DTO。
 - T03 通过真实 SQLite 验证会话内原文幂等、创建互斥与全局三个活跃名额；重放先于新建门禁，配置拒绝、非法请求与创建失败不留新键。启动先重建占用，取消恢复不重发模型；HTTP 允许 cancelled 且 finished_at=null 的收尾概况，不以投影状态释放名额。
 - T04 在同一逻辑 model_call 中持久化有限重试、退避期限与历史；默认首次外三次及 5/10/20 秒，仅无有效输出的明确暂时故障重试。Key 与超时在每次请求前热读取，请求内固定；部分输出失败保留内容及 usage，取消不重试。配置规范化冲突拒绝发布，明确的配置 503 不占前端运行名额。
 - T05 新 run 沿最新已结束运行的完整 checkpoint 消息快照接续，保留正文、reasoning_content、工具配对及后端请求；中断说明独立置于旧轮全部消息之后。请求序列化字节统一用于预算、持久化及上游发送；预算失败原子创建 start/error/end，不创建调用或 checkpoint。普通轮数默认 20，通过现有调用记录排除 continuation/compact 统计，不新增数据库结构或 run 参数快照。
-- T06 所有工具实现统一 Info/InvokableRun 接口并在 Registry 注册；三个只读日程工具通过正式单条/列表/日期入口查询。正常模型回复持久化接纳后逐项登记 running/原参数/tool_start/tool_use，再校验执行；结果、原始 JSON、配对消息、事件与 checkpoint 同事务保存，全批结果完成再回填模型。参数或业务错误只进入 tool_result，不直接失败运行；沿用版本 3，工具详情在 Flutter 保持原值并折叠展示。
+- T06 所有工具实现统一 Info/InvokableRun 接口并在 Registry 注册；三个只读日程工具通过正式单条/列表/日期入口查询。正常模型回复持久化接纳后逐项登记 running/原参数/tool_start/tool_use，再校验执行；结果、原始 JSON、配对消息、事件与 checkpoint 同事务保存，全批结果完成再回填模型。参数或业务错误只进入 tool_result，不直接失败运行；沿用版本 3，Flutter 工具详情折叠展示业务字段。
 - T07 创建/修改工具串行调用 App.WriteSchedule，修改必带 expectedRevision，保留未提交字段并复用正式规则校验与提醒联动；dangerous=false、工具键 SQL NULL、业务 key 为空，不按名称或时间去重。相对日期按每次实际解析时北京时间转换，明确时间和已提交结果直接复用；提示要求完整唯一直接执行、缺失或歧义先澄清、依赖操作分模型轮次、冲突不自动覆盖。HTTP 与数据库版本 3 不变，写入恢复遵循 T15。
 - T08 删除为唯一危险、串行工具，首次登记保存后台生成的 tool:{tool_call_id}:{uuid}，参数失败仍保留，重入复用原键。App.DeleteScheduleVersion 在同一正式业务事务优先核对回执，再检查版本、软删除、联动提醒及保存回执；App.ReadScheduleDeleteReceipt 独立只读，未命中不补做删除。业务与 AI 结果分属短事务，统一进度只负责原 ID 配对；数据库版本 3、HTTP 及 Flutter 不变，取消与写入恢复遵循 T10/T15。
 - T09 工具并发默认 3、单次超时默认 30 秒，调度/尝试前热读且调低不取消在途；串行与其他有效尝试互斥，超时立即取消结算并隔离迟到返回。工具预算首次登记固定默认首次外 3 次，仅超时或明确暂时故障沿原记录/参数/适用键退避 5/10/20 秒；retry_wait 不回填最终结果，实际重试增加计数并原子保存 running/tool_use，全批最终结果完成才继续模型。沿用数据库版本 3，写入恢复遵循 T15。

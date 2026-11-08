@@ -21,6 +21,6 @@
 - `d8_host_smoke.py` 配合测试 Dart 入口运行 managed/external 两种真实宿主闭环，保存新隔离目录、PID、sent/未确认及退出证据；`d8_native_go_smoke.py` 用 --go/--driver 的明确路径验证生产原生监管的真实 Go，覆盖优雅停止、EOF 和宿主崩溃。两者仅结束自身创建并持有句柄的测试进程。
 
 - 聊天可执行入口和真实链路验收只连接真实 Go；合成聊天网关限定在 `test/fixtures`，不由可执行 profile 程序装配。
-- 聊天截图工具按开始事件 seq 与原工具 ID 定位展示实例，允许同一运行中不同回复复用原 ID。
+- 聊天截图工具在 `Thinking` 内展开工具列表后，按开始事件 seq 与原工具 ID 定位展示实例，允许同一运行中不同回复复用原 ID。
 
 - `d8_host_smoke.dart` 从既有宿主配置注入日程、提醒及 ready 校验地址，服从同一次启动的环境端口。
