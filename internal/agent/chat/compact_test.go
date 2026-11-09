@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -136,12 +135,18 @@ func TestCompactUsesFixedPromptAndPairedBusinessFacts(t *testing.T) {
 	if len(request.Messages) != 2 || len(request.Tools) != 0 || request.Model != "model" || request.MaxTokens != 1000 {
 		t.Fatalf("summary request=%s", mustJSON(request))
 	}
-	document, err := os.ReadFile("../../../docs/AI-BACKEND.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	prompt := strings.Split(strings.Split(strings.ReplaceAll(string(document), "\r\n", "\n"), "```text\n你正在执行一次上下文检查点压缩。\n")[1], "\n```")[0]
-	if request.Messages[0].Content != "你正在执行一次上下文检查点压缩。\n"+prompt {
+	const expectedPrompt = `你正在执行一次上下文检查点压缩。
+
+请为后续接手任务的另一个大语言模型生成一份交接摘要，使其能够继续当前任务。
+
+摘要应包含：
+1. 当前任务的进度，以及已经做出的关键决策。
+2. 重要的上下文、约束条件和用户偏好。
+3. 尚未完成的工作，以及明确的后续步骤。
+4. 继续工作所必需的关键数据、示例和参考资料。
+
+摘要应简洁、结构清晰，专注于让接手的模型能够顺利继续工作。`
+	if request.Messages[0].Content != expectedPrompt {
 		t.Fatal("专用提示未按确认原文发送")
 	}
 	var history []chat.Message
