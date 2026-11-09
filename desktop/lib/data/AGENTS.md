@@ -1,55 +1,11 @@
 # 界面数据接入
 
-- `saveModelConnection` 每次原子发布连接时生成随机 config_revision，并返回完整 provider 下各模型的预期版本；其他连接与旧同 provider 分组保留各自版本。版本与 Key 无关，保留模型未知字段、注释及移除模型的旧密钥。
+- `http_notebook_repository.dart` 接入日程、提醒查询和投递，`http_chat_gateway.dart` 接入聊天 HTTP、事件分页和 SSE。
+- `demo_notebook_repository.dart` 提供内存演示数据和交互。
+- `config_file_store.dart` 负责用户配置文件读写及旧数据库目录规范化。
+- `model_connection_config.dart` 管理通用模型连接，`deepseek_model_config.dart` 支持 DeepSeek 配置兼容。
 
-- 通用连接的 `display_name` 独立保存，旧配置缺省时显示原 provider；已有连接 provider 固定且存储层拒绝替换。名称不参与密钥定位、冲突校验或模型身份，单份连接的保存不修改其他连接；`readConnectionNames` 按完整 provider/model 向聊天层提供名称映射，兼容同 provider 的旧多分组。
+## 工程约束
 
-- Chat Completions 模型只读设置包含 `hasLocalKey` 布尔状态，依据同目录 `.env` 的目标条目是否非空计算，不包含原始密钥。保存不信任此前读取的状态，空 Key 仍在串行写入期间重新核对全部目标条目。
-
-- 模型读取同时校验 `config.yaml` 和 `.env`，缺文件是正常首次使用；密钥路径非文件、无法读取或内容损坏时拒绝进入编辑，不以空值覆盖。模型存储只通过 `ModelConfigException` 提供可展示的固定校验及密钥恢复结果，底层解析/IO 错误不作为界面文案。
-
-密钥文件记录识别兼容 Go 的 CR、LF 和 CRLF 换行，保留无关记录及其原换行。
-
-`chat_model` 缺省、留空或显式为 null 时，读取与首次保存均视为空提供方列表；保存初始化列表并保留原字段名大小写，非法非列表值仍拒绝。
-
-旧分组省略 `base_url` 时仍可读取：DeepSeek 使用原首次配置的官方地址初值，其他提供方显示空地址供用户填写；读取不改写文件，非法非字符串地址仍拒绝。
-
-多模型读取覆盖全部 DeepSeek 分组；保存按原身份在原位置更新与移除，保留模型未知字段和注释。新增模型放入首个已有模型分组，无模型时复用首个空分组；至少保留一个模型。单模型兼容入口只编辑首项身份和预算，共享新 Key 和官方地址仍应用全部 DeepSeek 模型。
-
-- `model_connection_config.dart`：通用连接读取与单分组保存，使用首次保存前可编辑的 provider、独立显示名称、HTTP(S) 服务地址和手填模型 ID；校验身份、地址、预算与全局规范化密钥冲突。按原分组位置保留其他连接与未知字段；已变更的来源身份拒绝覆盖。返回目标 provider 的完整模型集合供既有列表刷新确认。共用密钥编码、原子发布及失败回滚，不返回原 Key、不新增协议、HTTP 或数据库结构。
-
-- `deepseek_model_config.dart`：作为 ConfigFileStore 的组成部分读取无密钥的完整模型设置，校验模型 ID、正整数预算、密钥字符和 PROVIDER_MODEL 命名冲突；替换全部 DeepSeek 模型并固定官方地址，保留其他提供方、未知字段和注释。重复身份、规范化后密钥名冲突（含其他提供方）及非法预算在写入前拒绝。一次新 Key 更新全部目标条目，留空时要求各目标已有非空本地条目；移除模型保留旧密钥。密钥只写同目录 `.env`，按完整赋值记录保留无关变量及合法跨行值。两文件与普通设置共用串行队列，先原子替换密钥，再原子替换配置；配置失败尝试恢复密钥并区分恢复失败，不承诺跨文件崩溃原子性。每次保存均发布配置，即使身份或列表数量未改变。
-
-- `config_file_store.dart`：固定 data-dir 下的 config.yaml 用户覆盖值读取、运行字段更新与恢复；日志级别限定 debug/info/warn/error，路径校验非空及空字符。数据库目录保存时自动追加 timecue.db，读取提供所属目录；数据库及日志目录不能指向已有文件。使用 yaml_edit 保留注释与未知字段，同一文件多实例读写串行化，临时文件刷新后在同一文件系统替换。
-- 旧 db.db_path 指向已存在的普通目录时，只读视图先补齐 timecue.db 再提取目录；normalizeLegacyDatabaseDirectory 在托管启动前仅修正该字段，保留其他配置和数据库内容。相对目录按固定 data-dir 判断，普通文件路径、缺省值和 SQLite 特殊数据源保持原样；修正与设置保存共用串行及原子替换。
-
-配置约束：应用内仅 Flutter 写用户配置，Go 只读取和监听。公开视图只返回日志级别、日志路径与数据库路径的用户覆盖值，未配置字段返回 null，默认值由 Go 原有 default.yaml 决定。恢复只移除三个运行字段，保留 app、desktop 和未知字段。保存结果 pathsChanged 只描述路径字段变化，数据库和日志路径在下次启动应用，不将保存配置当成资源迁移。启动层负责传入共同的绝对数据目录；此组件不新增 HTTP 接口或配置编辑页面。
-
-- `http_notebook_repository.dart`：读取 Go 的今日、日期、月历和待确认快照，处理分页、提醒详情、确认、真实规则详情/列表/创建/更新/删除、时间转换与错误状态。
-- 同一 HttpNotebookRepository 实现 NotificationDeliveryGateway，复用原请求封装调用领取、开始、结果和执行者退出 POST 及根 /health；退出 POST 使用宿主传入的剩余 deadline。投递操作不改变本子 loading 和快照，不自报成员，回填校验 attempt/outcome 一致。健康 503 读取 data.error，业务错误继续读取顶层 error；请求失败不改写投递结果。
-- 同一仓储实现 NotificationQueryGateway，读取持久提醒详情、task 历史及 attempt 冻结成员；只返回分页 DTO，不覆盖今日/历史缓存或 loading。任务请求不附 state/scope，详情核对返回 notificationId，复用原客户端和错误类型。组合刷新相容发布 recovery 摘要，失败保留原快照及错误标记。确认成功后先作废旧恢复未确认数，正式刷新再发布真实剩余数；不能按本次确认总数估减本轮计数，后续读取失败不继续展示已过期的提示数量。
-- `demo_notebook_repository.dart`：提供内存示例日程与提醒、预设规则投影、创建/编辑/删除和确认交互。
-- `http_chat_gateway.dart`：通过本机 HTTP/SSE 实现聊天与模型列表接口，映射严格聊天 DTO 和 `ChatHttpError`，支持启动门禁、运行失效及传输释放；SSE 游标使用 `Last-Event-ID`。
-
-工程约束：HTTP 模式使用 Go 的快照、总数、游标和 occurrenceKey，RFC3339 转换为 UTC+8 展示；请求失败不回退示例数据。日程路径为 `/api/v1/scheduler/schedules`，提醒路径为 `/api/v1/notifications`；确认统一使用 `notificationIds` 数组。
-
-创建接受 201，删除接受 204，更新使用 PUT 与 expectedRevision。每个编辑会话的结果不明重试保留相同 Idempotency-Key 和内容；服务 5xx/网络中断不自动改键，不同内容被阻止。操作成功刷新失败只提示读取失败，不伪装写入失败。
-
-创建/更新提交前均校验单次时间的秒与亚秒为零，拒绝非分钟草稿，不先取整再发送。
-
-日期计数读取服务端 `openScheduleCount`，与首分页长度和待确认总数分开缓存；分页加载不重复累加日程数，确认不减数。刷新失败保留原快照，未取得计数时保持未知。
-
-周期写入通过 ScheduleRules 将独立时间项转换成现有 cron 数组，不改变 Go HTTP 契约；同频率不同日期/时间可无损编辑，混合频率保留原文。内存示例按独立项显示每次未来安排及短月月末去重，正式模式仍由 Go 投影。
-
-HTTP 仓储使用 scope=today/history 的独立首分页、游标链、位置、加载/错误及代次，不把组合快照全历史页当作范围页。组合快照提供今日安排和房间完整总数；普通刷新从新首分页重建各范围当前位置，越界回到有效页。确认对已加载日期和两范围同步事实与总数，跨页 ID 归属只用于页面缓存更新；写入成功后的读取失败单独显示。
-
-注入的北京时间墙上时钟检测跨日；新日期同时重读两范围首分页及今日安排，首分页响应日期不一致时只重试一次，不发布混合日期。旧游标 400 后废弃续页链，旧请求按全局及范围代次失效。跨日读取失败保留旧内容，pendingCurrent=false 禁止旧今日选择提交。演示仓储按计划时间及 ID 排序、分类已有事实，支持可控时钟；不触发平台投递。
-
-- HttpNotebookRepository 的 managed 门禁初始只开放 health；握手后绑定预期身份，运行失效禁止新业务请求、作废旧读取并关闭连接。启动前失败保留 health 客户端供显式重试；不接管不同健康身份、不向新运行补交旧 attempt。
-- HTTP 地址在应用装配时由宿主环境端口注入，scheduler、提醒、根 `/health` 与聊天共用同一来源；未注入时默认为 release/10086，不读取构建模式。
-- 默认本地 HTTP 客户端对 loopback 地址直连，不经系统 HTTP 代理；调用方注入的客户端保留其代理行为。空正文、非法 JSON 和非对象响应提供含状态及端点的有限诊断，不暴露响应正文；204 仍作为无正文成功处理。
-
-- 托管健康读取同时绑定 PID；运行身份/PID 错配立即封锁仓储并通过 onManagedRuntimeLost 回流到 ManagedBackend，进入全应用失效状态，不能仅停止通知桥后仍允许页面继续操作。
-
-- 创建请求包含 provider，接受 202 新建/running 重放和 200 终态回执；GET /v1/model 只读取可用性，不传输 Key。
-- 聊天网关同时实现 ChatEventHistoryGateway，通过 GET /v1/run/:run_id/events 完整读取 seq/type/data 和 next_after_seq/has_more，不裁剪大事件、不保存消费游标。空页须保留请求游标；SSE 204 只发出恢复信号，不伪造正文或结束事件。
+- 配置与密钥使用同一数据目录。保存走共享串行队列并保留无关字段。空 Key 按目标身份保留已有密钥。
+- 公开设置只返回本地密钥配置状态，原始密钥留在文件存储边界。

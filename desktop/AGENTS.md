@@ -1,51 +1,6 @@
 # Flutter 桌面端
 
-- 连接内模型可手动增删改并分别设置预算；新 Key 只用于当前连接的目标模型，空 Key 保留各目标已有条目。每次保存按完整提供方集合及逐模型 `config_revision` 确认生效；旧版本、超时和失败保持待加载，可单独重试。
-
-- `main.dart` 为应用级聊天模型注入同目录连接名称读取入口；连接名称只影响本地展示，正式请求、历史及密钥继续使用稳定 provider/model。
-
-- 聊天可执行入口及组合验收只使用真实 Go。`test/fixtures/chat_widget_gateway.dart` 仅供 Widget 布局、滚动与截图测试显式安排合成历史，构造时不播种，使用 widget 专用 provider/model；不装配为可执行 profile 聊天程序。
-
-- T06 真实只读日程查询复用工具事件解码及展示；原始参数、版本、结果和工具错误保留在运行状态中，工具详情只展示业务信息，工具错误不直接作为运行失败。
-- 聊天支持持久化事件分页、SSE 连续消费与 204 历史恢复；取消收尾状态保留占用。历史消息自动补读，思考、正文及工具按事件顺序显示一次；正文和工具详情隐藏 ID、版本等内部字段。
-- 明确的模型配置 503 拒绝不保留创建占用；密钥修复并刷新模型后可以继续新对话。上游认证、余额、限流、超时和网络错误展示服务端语义提示及已有部分正文。
-
-## 功能描述
-- 提供 Windows 房间场景与双页日程本。默认接入 Go 的查询、确认及规则创建、编辑、启停和删除；内存仓储仅用于显式演示。
-- 默认真实模式装配 Windows 即时通知桥及通知只读视图，复用 Go 的投递与查询协议；运行内去重和待回填结果不落盘，通知执行独立于本子开合及窗口焦点。点击校验运行身份并查看冻结成员，恢复入口显示本轮历史与进度；已接入托盘关闭隐藏、单实例唤回和激活参数转交，明确退出共用结果回填预算；自有 Go 子进程已接入；系统通知冷启动完整链路与自启由后续功能接入。
-- 房间与日程本书封固定提供管理入口，已暂停周期仍可查看完整信息；列表日程通过独立修改弹窗编辑、重新开启或删除，操作结束回到列表并刷新，不切换到日程本；查询规则列表不依赖日期投影。
-
-- `lib/main.dart`：选择 HTTP 或演示仓储，真实模式装配单个通知执行者、桌面生命周期及应用级 ChatViewModel/HttpChatGateway；原生主实例资格先于仓储与执行者创建，通知 callback 经宿主唤回后进入只读定位。聊天操作复用服务 health 和身份校验，运行身份变化后隔离旧操作，演示模式不装配真实聊天服务。
-- [lib/app](lib/app/AGENTS.md)：应用、主题与主屏装配。
-- `lib/app/operation_toast.dart`：应用级操作结果 Toast 宿主及成功、失败、警告入口。
-- [lib/contracts](lib/contracts/AGENTS.md)：日程 DTO、草稿和仓储操作契约。
-- [lib/data](lib/data/AGENTS.md)：HTTP 快照、分页、确认与内存示例数据。
-- `lib/data/config_file_store.dart`：用户配置与本机密钥的 Flutter 写入入口，保留注释及其他字段，管理运行覆盖值及通用 Chat Completions 连接；模型与普通设置共用 data-dir 和串行队列。
-- [lib/features/room](lib/features/room/AGENTS.md)：房间背景、时钟、桌面入口与本子显隐。
-- [lib/features/notebook](lib/features/notebook/AGENTS.md)：本子开合、今日/日历页面、跨页选择与查询状态。
-- [lib/features/chat](lib/features/chat/AGENTS.md)：聊天运行状态、按事件顺序的思考/正文/工具内容段、累计 Markdown、多工具名称、消息阅读与输入/停止组件。
-- [lib/features/schedule_editor](lib/features/schedule_editor/AGENTS.md)：日程表单、编辑草稿与时间选择器。
-- [lib/features/settings](lib/features/settings/AGENTS.md)：日志与数据设置弹窗、配置保存与恢复默认。
-- [lib/theme](lib/theme/AGENTS.md)：纸张主题、视觉参数与通用页面组件。
-- [assets](assets/AGENTS.md)：房间背景资源。
-- [windows](windows/AGENTS.md)：Windows 原生窗口与 Flutter 构建集成。
-- [test](test/AGENTS.md)：Widget、状态、HTTP 仓储与时间选择器测试。
-- [tool](tool/AGENTS.md)：视觉截图工具。
-- `README.md`：运行方式、接口说明与 Widget/状态索引。
-
-## 工程约束
-
-- Widget/ViewModel 依赖仓储契约，具体实现由 `main.dart` 装配。真实模式通过 Go 正式用例读写，不访问 SQLite、不在 Dart 展开 cron；更新提交编辑时读取的 revision，写入重试使用同一操作标识。结构变更同步 README 的 Widget 与状态索引。
-- `config.yaml` 的应用内写入归 Flutter 文件存储，使用与 Go 相同的 data-dir；Go 消费配置，不写用户配置。房间设置弹窗编辑日志级别、日志目录及数据库目录，数据库文件名 timecue.db 自动补齐，支持恢复默认和草稿守卫；路径下次启动生效，不迁移数据库或切换运行中的连接。演示模式禁用设置写入，登录自启协调由对应功能装配。
-
-日程本提供“今天｜历史待确认｜日历｜AI 对话”四标签，今日安排与两类待确认分开读取。今日/历史各自分页与选择，房间总数继续包含全部到期未确认。跨北京日期废弃旧分页、重读两范围并清理旧范围选择；查询和标签切换只读，不调用平台投递。
-
-- 真实启动默认 managed、同目录 timecue-core.exe，可显式覆盖路径；默认数据根目录为 Flutter EXE 所在目录，独立于构建模式和环境，显式相对 data-dir 按启动工作目录解析。开发外连显式指定 backend=external 和 data-dir。主实例握手前不挂载业务房间或执行通知，失败保留可见错误/重试/退出；隐藏不停止自有 Go，退出回填与 Go 协作共用 5 秒预算，零预算仍最终关闭 Job。
-- Windows Flutter 构建要求 Go 已安装并位于 PATH；平台构建每次编译 Go 服务并安装到 runner 同目录，使默认 managed 开发启动可直接创建自有服务。切换 managed/external 前需完整退出旧实例，Go 源码更改需退出并重新运行 Flutter，热重载不重建 Go。
-- 托管启动在创建 Go 前修正旧设置保存的数据库目录值，自动追加 timecue.db；设置只读视图显示原目录，不误取父目录。配置修正失败走启动错误/重试，不创建 Go 或迁移数据库。
-- `--env=test|release` 在所有构建模式固定选择 1145/10086，省略为 release；托管 Go、日程、提醒、聊天及 ready 核验使用同一端口。Debug/Profile 保留独立于 Release 的单实例身份，环境不参与身份。显式数据目录不改写，external 模式不创建或停止手动 Go。
-
-- 聊天契约位于 `lib/contracts/chat_contracts.dart`，独立于日程仓储；真实模式将应用级 ChatViewModel 和 HttpChatGateway 注入房间、本子及 AI 多会话页面，演示模式保留未接线框架。模型负责有界历史索引、服务端名称、正式回复摘要、搜索进度、独立草稿与阅读位置、三会话并发及删除隔离；宿主身份守卫在健康检查前后核验操作资格，退出释放不等待回复自然结束。Go 聊天使用真实模型与 SQLite；页面选择 provider/model，缺 Key 时保持历史查询并禁用新建。
-- 房间猫咪透明热区与背景共用 cover 投影，悬停/键盘焦点提示可进入 AI 标签；关闭回到原入口，裁切后回固定本子按钮。AI 内容窄于 840 或大字模式使用单栏，其他日程标签保留双页横向访问；书签可横向访问且关闭始终固定。
-
-- T10 允许直接删除已取得 run ID 的活动会话，成功后立即隐藏历史并选中新本地会话；原 SSE 继续跟踪取消收尾占用，不再读取隐藏历史，end 后释放。连接丢失无法重新查询隐藏运行时结束本地跟踪，实际并发准入仍由 Go 保护。
+- [lib](lib/AGENTS.md) 包含 Flutter 入口、界面和数据接入。
+- [windows](windows/AGENTS.md) 提供 Windows 原生宿主与构建。
+- [test](test/AGENTS.md) 提供 Dart 和原生回归测试。
+- [tool](tool/AGENTS.md) 提供截图与联调工具。

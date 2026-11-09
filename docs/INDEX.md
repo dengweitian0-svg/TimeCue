@@ -1,6 +1,16 @@
 # 文档索引
 
-## AI 后端
+## 工程文档
+
+- [CONTEXT.md](CONTEXT.md) 定义领域术语。
+- [CHAT.md](CHAT.md) 说明已实现的聊天链路、配置和验证方式。
+- [AI-BACKEND.md](AI-BACKEND.md) 记录 Agent 后端设计草案。
+- [DESIGN.md](DESIGN.md) 记录 Flutter 界面与交互设计。
+- [CONTRIBUTING.md](CONTRIBUTING.md) 说明开发、CI 与发布流程。
+- [RELEASE.md](RELEASE.md) 说明 Windows 发行包的启动、更新与验收。
+- [架构与流程图](archify/) 收录 Agent 架构、提醒流程和 CI 流程。
+
+## AI 后端设计摘录
 
 - `CONTEXT.md` 区分保留原始事实的会话历史与摘要及未覆盖消息构成的有效模型上下文，tool_start 仅为工具请求的开始侧记录，不证明实际处理或业务生效。
 - `AI-BACKEND.md` 在模型回复接纳前拒绝同一回复内重复的 tool_call_id，保留实际输出并以 model_invalid_format 失败，不执行该批任何工具；不同 model_call 允许同值 ID，恢复完成集合仅属于当前 model_call，不增加数据库唯一约束。T01 固定该身份边界，工具执行及对应验收由后续工具切片落实。
@@ -73,4 +83,4 @@
 - `AI-BACKEND.md` 的 length 正常结束响应按工具逐条处理：完整且校验通过的调用正常执行，仅截断调用要求重新生成；已接纳工具先完成并回填，再继续请求模型，不适用于网络异常中断。
 - `AI-BACKEND.md` 中实际纳入模型请求的 assistant.tool_calls 必须紧随同批调用的 role=tool 结果，每个 tool_call_id 都有对应结果，补齐前不插入 user/assistant 消息。截断解析错误使用原 ID 返回实际错误 tool output；完整调用校验失败仍保存 failed 的 tool_call 及错误 tool message。取消跳过的调用保留在上下文并以原 ID 配对 content="aborted" 的 tool 消息，不覆盖已经保存的实际结果；取消收尾只保存消息，不因此继续请求模型。消息配对约束不限制模型下一次只能输出工具调用。
 
-当前 T01 文字链路与配置以 [CHAT.md](CHAT.md) 为准；本索引其余完整 Agent 行为仍属后续切片目标。
+已实现的聊天行为、配置与验证方式见 [CHAT.md](CHAT.md)。

@@ -1,9 +1,4 @@
-# Session Handler
+# 会话请求处理
 
-提供会话查询与删除接口；查询返回 session 名称及 run 列表。
-
-- `get_session_handler.go`、`list_sessions_handler.go`、`delete_session_handler.go` 实现会话 HTTP 处理。
-- 通过 `internal/agent/chat` 服务契约访问会话，UUID 校验与聊天错误映射复用 `utils`。
-- 保持现有 DTO、状态码和错误响应。
-
-- 用例按 ModelService、RunService、SessionService 分别注入；HTTP Handler 只使用相应窄接口，App 通过独立 Lifecycle 管理启动与停止。
+- `get_session_handler.go`、`list_sessions_handler.go` 和 `delete_session_handler.go` 通过聊天会话用例处理查询与删除。
+- `helpers.go` 提供本包的参数处理辅助逻辑。
