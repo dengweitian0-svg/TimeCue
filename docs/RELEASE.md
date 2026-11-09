@@ -28,22 +28,22 @@ python update.py
 
 脚本需要 Python 3.9 或更高版本；Python 解释器不包含在 ZIP 中。Windows 已安装 Python 启动器且对应版本可用时，也可以用 `py -3` 代替命令中的 `python`。更新只写入当前用户可写的安装目录，不需要管理员权限。
 
-脚本优先读取当前用户的持久登记值，避免使用打开终端时遗留的旧环境变量。它会在同一卷的临时目录暂存文件，完成 SHA-256 校验后再替换。旧安装有发行清单时，只清理旧清单拥有而新版不再包含的文件；未登记的额外文件会保留。旧安装缺少清单时，脚本只更新新包中的同名文件，不猜测或清理其他文件。遇到占用文件或与未登记文件冲突时，脚本会明确失败，不会结束其他进程。替换失败时会尝试回滚；如果回滚也失败，终端会给出保留的备份目录位置以供恢复。
+脚本优先读取当前用户的持久登记值，避免使用打开终端时遗留的旧环境变量。它会在同一卷的临时目录暂存文件，完成 SHA-256 校验后再替换。旧安装有发行清单时，只清理旧清单拥有而新版不再包含的文件；未登记的额外文件会保留。旧安装缺少清单时，脚本写入新版清单中的文件，保留其他旧文件。遇到占用文件或与未登记文件冲突时，脚本会明确失败，不会结束其他进程。替换失败时会尝试回滚；如果回滚也失败，终端会给出保留的备份目录位置以供恢复。
 
 ## 开发外连与启动问题
 
-发行包默认使用 managed。开发或联调时，可以显式指定数据目录，并连接手动启动的 Go 服务：
+在解压目录打开两个 PowerShell 窗口。先在一个窗口启动 Go，待服务就绪后，在另一个窗口启动桌面端。两个命令使用同一数据目录。
 
 ```powershell
-timecue-core.exe --env=test --data-dir="D:\TimeCueData"
-timecue_desktop.exe --env=test --backend=external --data-dir="D:\TimeCueData"
+.\timecue-core.exe --env=test --data-dir="D:\TimeCueData"
+.\timecue_desktop.exe --env=test --backend=external --data-dir="D:\TimeCueData"
 ```
 
 退出应用不会停止手动启动的 Go 服务。手动 Go 省略数据目录仍使用 Go EXE 所在目录；前后端需声明同一环境，不会自动探测其他端口。若所选固定端口 `127.0.0.1:10086` 或测试端口 `127.0.0.1:1145` 已被其他程序占用，TimeCue 会报告启动失败；请先处理端口占用，不要依赖应用结束其他程序。
 
 ## 构建与检查
 
-开发者可在仓库根目录使用 `scripts/build-release.ps1` 构建 Windows x64 完整 ZIP。脚本使用当前环境中的 Go、Flutter 和 Python；每次都会重新编译 Go 服务并覆盖 Flutter Release 中可能存在的旧副本。正式发布由 stable CI 验证。详细检查命令见仓库中的贡献规范：<https://github.com/dengweitian0-svg/TimeCue/blob/dev/docs/CONTRIBUTING.md>。CI 会运行更新脚本标准库测试、Flutter stable 检查和 Windows 原生 CTest。
+在仓库根目录运行 `.\scripts\build-release.ps1` 构建 Windows x64 完整 ZIP。打包使用 Go 和 Flutter，每次都会重新编译随包交付的 Go 服务。Python 用于运行更新脚本及相关检查。正式发布由 CI 使用 Flutter stable 构建验证，检查命令见[贡献规范](https://github.com/dengweitian0-svg/TimeCue/blob/dev/docs/CONTRIBUTING.md)。
 
 打包前会检查 Release 构建目录，发现数据库、日志、配置、隐藏 `.env` 或链接时明确失败，不创建发行暂存目录或 ZIP，也不删除源数据。直接运行构建目录中的主程序可能产生这些文件；开发验证建议显式指定独立 `--data-dir`。遇到此错误先备份并移出提示的运行数据，或使用未运行过的干净构建目录，再重新打包；`-SkipFlutterBuild` 同样执行检查。
 
