@@ -1,20 +1,9 @@
 # 工具注册与日程业务
 
-- `Failure` 仅以明确的 tool_timeout 或 tool_temporary_error 参与协调器重试；未分类、参数及业务错误默认不可重试。工具将 context 传入正式业务，取消仅发出停止信号，不证明事务或副作用已回滚；执行尝试不直接保存 checkpoint。
+- `registry.go` 定义工具契约、注册、参数校验及回执核对入口。
+- `schedule.go` 提供单条、列表和日期查询，`schedule_write.go` 提供创建与修改。
+- `schedule_delete.go` 提供版本删除和只读回执核对，`time.go` 解析时间参数。
 
-- `registry.go`：统一 `Tool.Info` / `Tool.InvokableRun` 契约、`ToolInfo` 元数据、显式注册、模型定义和对象参数 schema 校验；支持字符串、整数、布尔与字符串数组，拒绝重名和不支持的定义，执行入口统一处理解析、校验、错误及 JSON 结果。
-- `schedule.go`：`get_schedule`、`list_schedules`、`query_occurrences` 三个具体工具，分别提供定义并实现同步调用；入口通过 `ScheduleTools` 和 `Registry.Register` 注册，依赖 `ScheduleQueries` 正式窄端口。
+## 工程约束
 
-- `schedule_write.go`：`create_schedule` / `update_schedule` 通过 `ScheduleWrites` 调用 App 正式回读和 WriteSchedule；参数使用平铺 name/description/notifyTime/cron/open，创建还需 type，修改必填 id/expectedRevision 并保留未提交字段。结果保留完整规则、revision 和正式提醒变更摘要。
-- `schedule_delete.go`：`delete_schedule` 为唯一 dangerous=true、串行工具，必填 id/expectedRevision；以 context 中已登记的后台键调用正式 DeleteScheduleVersion，不先读版本、不接受模型指定执行身份、不构造 checkpoint。返回已提交软删除状态、revision 与 mutation；没有后台键时拒绝执行。
-- `time.go`：解析 RFC3339、北京时间 YYYY-MM-DD HH:mm 及 今天/明天/后天/昨天 HH:mm；相对词每次解析才读时钟，不使用运行创建时间，不补默认日期或时刻，秒精度仍由正式规则拒绝。
-
-应用只装配一个统一 Registry，所有工具都必须注册后才能供模型使用和执行。注册在服务启动前完成，运行时只读；名称、说明、schema、dangerous 与 parallel 均由后端代码固定，不能由模型覆写。三个查询工具非危险、可并行；创建/修改非危险、串行、空业务 key，工具键 SQL NULL，不按名称或时间去重。不访问 SQLite 或 HTTP Handler，不拼装 checkpoint；开始、回填及异常配对沿统一聊天进度契约执行。
-
-参数校验在工具开始事务提交后进行，原始 arguments 不改写。语法错误与合法非对象/schema 错误分别返回 tool_argument_parse_error 和 tool_argument_validation_error；不猜测参数，不执行业务。统一 JSON 字符串调用返回合法 JSON，注册中心直接保留对象、数组、标量及 null 类型，不额外编码为字符串；日程错误在具体工具中转换为公开错误，未知错误不回显内部细节。
-
-单条及列表查询保留正式规则字段和 revision；列表默认 50、最大 50，支持 offset/name/type。日期查询复用正式发生情况页及 nextCursor，相对日期在每次实际解析时按北京时间计算。自动化通过 chat 公共用例、真实模型适配器、SQLite 与正式日程入口验证。
-
-写入复用正式规则校验、版本检查和提醒联动，版本冲突返回 revision_conflict、不存在返回 schedule_not_found、规则拒绝返回 invalid_schedule，不自动重试。缺信息或多目标先澄清，明确完整且唯一时直接执行；批量独立成功/失败，依赖操作分模型轮次。已保存明确时间和实际结果沿原进度复用，不承诺无键写入恰好执行一次；正常恢复的实际重执行沿原参数遵循剩余预算；只读回执命中不消耗预算。
-
-- `ResultReader` 为可选只读业务回执端口，由 Registry.ReadResult 分发；正常及取消恢复的 delete_schedule 沿原参数与 context 后台键调用 ReadScheduleDeleteReceipt，核对本身不调用删除或补写。正常恢复未命中时沿原身份及剩余预算重执行，预算耗尽才表达结果未确认；取消恢复不重执行，按实际在途或退避状态交统一进度补齐未确认或跳过。
+- 日程读写走正式业务用例。删除沿用已登记的后台执行键，回执核对走独立只读入口。

@@ -1,19 +1,11 @@
-# Windows 应用入口
+# Windows 原生宿主
 
-- `main.cpp`：初始化运行环境，在 Flutter 引擎创建前取得主实例资格或转交参数，然后创建 TimeCue 窗口并运行消息循环；mutex 所有权与句柄保持到退出清理完成。
-- `single_instance.*`：按当前用户 SID/会话使用命名 mutex 和专用隐藏接收窗口；32 KiB 的版本化参数协议保留 UTF-8 与参数边界，来源仅为普通打开、显式通知目标及登录意图。转交总计等待最多 2 秒，校验用户/会话、协议及白名单；未就绪保存有界意图，退出拒绝新请求，崩溃只在重新取得所有权后接管。不以窗口标题、端口或持久锁文件决定实例资格。
-- `flutter_window.*`：承载 Flutter 视图与插件注册；`timecue/desktop` 通道提供就绪/转交、实际托盘核验、同步显示完成、开始退出及销毁。初次显示由 Dart 宿主决定；创建前的空清理不关闭接收端。TaskbarCreated 事件先恢复可见窗口，再让宿主恢复并核验托盘。
-- `desktop_window.h`：在拥有窗口的线程同步显示/恢复并核验实际可见性；不以异步排队请求或首次启动的隐藏标志裁定显示结果。
-- `win32_window.*`：Win32 窗口和消息处理；关闭前保留宿主/插件拦截，真正销毁结束消息循环。
-- `utils.*`：控制台与启动参数辅助功能。
-- `Runner.rc`、`resource.h`、`resources/`、`runner.exe.manifest`：版本、图标及应用清单；`CMakeLists.txt`：runner 编译目标及单实例实现、Shell/用户身份系统库装配。
+- `main.cpp` 装配主实例、应用窗口和消息循环，`single_instance.*` 管理选主及参数转交。
+- `flutter_window.*` 承载 Flutter 视图与平台通道，`desktop_window.h`、`win32_window.*` 提供窗口操作。
+- `launch_configuration.*` 解析启动配置，`managed_process.*` 监管自有 Go，`install_directory.*` 登记发行目录。
+- `utils.*` 提供启动辅助。`CMakeLists.txt` 定义构建目标，`Runner.rc`、`resource.h`、`resources/` 和 `runner.exe.manifest` 提供应用资源与清单。
 
-约束：二次启动不创建 Flutter 引擎、业务仓储、通知执行者或 Go。跨进程激活原样交给 D6 只读查询，不能更改正在运行的目录、连接或模式；显式 payload 参数不是实际 Windows 横幅点击证据。Windows 会话退出/进程崩溃可能直接结束运行，不承诺异步回填完成。原生测试位于 `desktop/test/native`，使用独立锁名及自有隐藏进程。
+## 工程约束
 
-- `launch_configuration.*`：统一解析 env/backend/data-dir/go-executable 与 Windows 路径；单实例原始快照固定，重复启动显式冲突在接纳前拒绝，省略选项表示复用。转交到 Dart 的激活信封只包含原有窗口/通知意图。
-- 主实例默认 managed；所有构建模式默认使用 Flutter EXE 所在目录作为数据根目录，显式相对目录按启动工作目录解析，Go 可执行文件默认取程序目录中的 timecue-core.exe。只在取得主实例锁后补全默认值，转交端不把省略值变成冲突选项。显式 external 不创建或停止 Go；编译启用 UTF-8，程序路径通过 GetModuleFileNameW 解析。
-- CMake 对 Debug/Profile 定义 `TIMECUE_DEVELOPMENT`，仅保留独立单实例后缀。`--env` 默认 release/10086，test/1145；非法、空值及重复环境拒绝。宿主沿原 process 配置通道向 Dart 传 port，并将 env 传给自有 Go；重复启动显式环境冲突拒绝，省略复用现有环境。
-- `managed_process.*`：单一所有者创建自有 Go；CreateProcessW/CREATE_NO_WINDOW、限定继承匿名管道及创建时 Job 列表，kill-on-close 且 Job 不继承；后台排空有界 stdout/stderr、观察退出。shutdown/EOF 优雅取消，Release 幂等回收管道、线程及句柄；timecue/process 通道由 FlutterWindow 接入，原生销毁也回收 Job。
-- `install_directory.*`：主实例窗口创建成功后，仅检测到同目录更新脚本、manifest 和 Go 核心文件的发行目录时，将绝对程序目录登记到用户 `Environment` 的 `TIMECUE_INSTALL_DIR`；路径通过 Unicode Win32 API 解析，仅值变化时写入并限时广播环境变化。
-
-约束：C++ 所有代码注释使用中文；每个函数仅保留一处用途、参数方向和返回值说明，优先放在头文件，文件内函数及回调在定义处说明；使用四空格缩进。
+- 主实例持有业务宿主和自有进程，后续实例仅转交激活意图。
+- C++ 函数说明集中在一处，优先放头文件。缩进遵循 Windows 平台的 `.clang-format`。

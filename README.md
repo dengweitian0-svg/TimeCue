@@ -20,7 +20,7 @@ TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由
 
 日程本已接入“今天｜历史待确认｜日历”三标签：按原计划时间及北京时间零点分类，两类分别分页和选择，房间统计全部到期未确认；跨日重载首分页，查询及查看详情不会确认或调用平台通知。接口和自动检查证据见[历史待确认验收记录](docs/design/historical-unacknowledged-reminders-validation.md)。
 
-Go 代码按业务职责组织：`internal/api/handler` 分为 session、agent、schedule、utils，HTTP 回归集中在 `internal/api/test`；`internal/service` 分为 schedule、notification、recovery。`internal/app` 负责跨模块编排、共享正式操作边界和运行生命周期；服务通过各自的存储端口访问数据，具体 SQLite 适配器由入口注入。模块职责和约束见各目录 `AGENTS.md`。
+Go 代码按业务职责组织：`internal/api/handler` 分为 session、agent、schedule、utils，HTTP 回归集中在 `internal/api/test`；`internal/service` 分为 schedule、notification、recovery。`internal/app` 负责跨模块编排、共享正式操作边界和运行生命周期；服务通过各自的存储端口访问数据，具体 SQLite 适配器由入口注入。模块职责和约束见[模块索引](AGENTS.md)，其余工程说明见[文档索引](docs/INDEX.md)。
 
 ## 产品目标与核心规则
 

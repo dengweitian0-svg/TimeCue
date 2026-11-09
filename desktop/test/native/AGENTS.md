@@ -1,11 +1,10 @@
 # Windows 原生测试
 
-- single_instance_test.cpp：同步窗口显示完成、隐藏/重开、最小化恢复、失效句柄及 32 KiB 启动协议、Unicode、并发选主、就绪前缓冲、重复/非法 IPC、无响应退出及崩溃后的所有权恢复；使用独立测试锁名和自有隐藏子进程，不触及生产实例。
-- CMakeLists.txt：独立构建/CTest 入口，直接编译 runner 的单实例实现，不依赖 Flutter 引擎。
-- 原生测试启用 /EHsc、UTF-8 及严格告警；覆盖发行默认目录/Go 路径、普通唤回兼容，以及显式 external 保留开发所有权。
+- `CMakeLists.txt` 提供独立构建和 CTest 入口。
+- `single_instance_test.cpp` 验证选主、窗口与参数转交。
+- `managed_process_test.cpp` 验证自有进程监管、停止和回收。
+- `install_directory_test.cpp` 验证发行目录识别与登记。
 
-- `managed_process_test.cpp`：直接验证生产自有进程实现的 Unicode/引号参数、无控制台、stderr 排空、失败重试、独占创建、嵌套 Job、后代清理和宿主硬崩溃；--go 测试驱动真实 Go 的 ready/优雅停止，用持有的句柄观察退出。CMake 使用 /W4 /WX 同时运行 D7/D8 回归，全部进程为测试自有。
-- `install_directory_test.cpp`：使用隔离 HKCU 测试子项验证发行标记识别、Unicode/空格目录登记、值变化与不变、失败处理；不写用户 Environment 注册表值或广播设置变化，恢复测试进程原环境。
-- 首次登记失败输出原始 Win32 错误、受限令牌标记及进程完整性级别；低完整性文件会使普通终端启动的进程仍无法写常规 HKCU，不将其当作已通过或跳过测试。
+## 工程约束
 
-- 现有启动配置与 IPC 测试覆盖默认 release/10086、test/1145、非法/空值/重复环境、拒绝自定义端口、显式环境冲突及省略复用；默认数据目录来自宿主 EXE，相对显式目录按启动工作目录解析，环境不改变目录。
+- 使用隔离锁名、测试自有进程和隔离注册表测试项。

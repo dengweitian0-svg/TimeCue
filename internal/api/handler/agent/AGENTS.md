@@ -1,16 +1,9 @@
-# Agent Handler
+# Agent 请求处理
 
-- 模型条目可选 config_revision 仅表示已发布配置的本地版本；旧连接无版本时保持原三字段，不返回密钥。
+- `{create,get,cancel}_run_handler.go` 处理运行创建、查询和取消。
+- `get_run_events_handler.go` 和 `run_events_handler.go` 分别处理事件分页和 SSE。
+- `get_models_handler.go` 处理模型列表，`chat_http_helpers.go` 提供本包共享适配。
 
-提供 Agent run 创建、查询、取消、模型列表及分页/SSE 事件接口。
+## 工程约束
 
-- `create_run_handler.go`、`get_run_handler.go`、`cancel_run_handler.go`、`run_events_handler.go` 实现 run HTTP 处理。
-- 通过 `internal/agent/chat` 服务契约操作 run；通用聊天错误与 UUID 校验复用 `utils`。
-- SSE 保持事件 ID 与顺序，断开连接只关闭订阅，不取消 run。
-
-- `get_models_handler.go` 返回本地配置列表；`get_run_events_handler.go` 严格校验 after_seq 与 limit（默认 10，1–100），完整返回原始事件。创建四字段回执及概况十字段包含 provider，具体模型校验由真实服务负责。
-
-- 用例按 ModelService、RunService、SessionService 分别注入；HTTP Handler 只使用相应窄接口，App 通过独立 Lifecycle 管理启动与停止。
-- 创建 Handler 通过回执内部 NewlyCreated 元信息保持真正新建（含预算 failed）202、running 重放 202、终态重放 200；公开回执仍固定四字段。
-
-- 取消受理（含 wait_for_cancel 的 cancelled 投影及重复取消）返回 200，使用 Info 请求日志；已成功/失败的运行返回原终态并以 Warn 记录无效取消。回执不表示 end 已提交，SSE 及 finished_at 判断由服务层真实状态负责。
+- Handler 通过聊天用例读取和操作运行，SSE 断连只结束订阅。

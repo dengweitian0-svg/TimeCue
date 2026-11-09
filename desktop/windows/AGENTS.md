@@ -1,17 +1,5 @@
 # Windows 平台工程
 
-构建并启动承载 Flutter 界面的 Windows 应用。
-
-主实例由 runner 补全发行默认目录和同目录 Go；Windows CMake 在每次 Flutter Debug、Profile、Release 构建时编译 Go 服务并安装到 runner 旁，scripts/build-release.ps1 组合完整发行文件。
-
-- `CMakeLists.txt`：平台构建入口、目标装配与运行文件打包。
-- `.clang-format`：C++ 四空格缩进及续行格式，保留包含顺序和中文说明。
-- [runner](runner/AGENTS.md)：原生窗口、消息循环和应用资源。
-- [flutter](flutter/AGENTS.md)：Flutter 引擎、插件注册与构建集成。
-
-# 约束
-- C++ 所有代码注释使用中文
-- 每个函数只保留一处中文说明，包含用途、入参和出参；头文件已有说明时，实现不重复，文件内函数及回调在定义处说明
-- 自动生成文件重新生成后可能覆盖注释与格式
-
-- 运行环境由 `--env=test|release` 在启动时选择，默认 release；托管数据根目录默认取 Flutter EXE 所在目录，与构建模式无关。
+- `CMakeLists.txt` 装配 Windows 构建目标及 Go 运行文件。
+- [runner](runner/AGENTS.md) 提供原生宿主及应用资源。
+- [flutter](flutter/AGENTS.md) 提供 Flutter 构建与插件集成。
