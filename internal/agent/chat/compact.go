@@ -29,7 +29,7 @@ func compactHistory(request ModelRequest) []Message {
 	return history
 }
 
-func needsCompact(request ModelRequest, cfg ModelConfig) bool {
+func needsCompact(request ModelRequest, body string, cfg ModelConfig) bool {
 	if len(request.Messages) == 0 || len(compactHistory(request)) == 0 {
 		return false
 	}
@@ -37,8 +37,7 @@ func needsCompact(request ModelRequest, cfg ModelConfig) bool {
 	if threshold <= 0 {
 		threshold = 0.8
 	}
-	encoded, _ := json.Marshal(request)
-	return float64(EstimateTokens(encoded)) >= float64(cfg.ContextWindow-cfg.MaxOutputTokens)*threshold
+	return float64(EstimateTokens([]byte(body))) >= float64(cfg.ContextWindow-cfg.MaxOutputTokens)*threshold
 }
 
 func compactRequest(request ModelRequest) ModelRequest {
@@ -94,6 +93,11 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			return call, nil
 		}
 		if call.ID == 0 {
+			prepared, failure := s.prepareRequest(r.Provider, call.Input)
+			if failure != nil {
+				return call, failure
+			}
+			call.Input, call.InputBody = prepared.Input, prepared.Body
 			id, err := s.execution.BeginCall(ctx, call)
 			if err != nil {
 				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
@@ -161,11 +165,15 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 		}
 		ordinary.Messages = projected.CheckpointContext
 		var failure *RunError
+		var prepared PreparedRequest
 		if cfg.ContextWindow <= cfg.MaxOutputTokens || cfg.MaxOutputTokens <= 0 {
 			// 原模型预算已移除时仍保存完整成功摘要，随后以配置不可用结束。
 			failure = toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
 		} else {
-			failure = requestBudgetError(ordinary, cfg)
+			prepared, failure = s.prepareRequest(r.Provider, ordinary)
+			if failure == nil {
+				failure = requestBudgetError(prepared.Body, cfg)
+			}
 		}
 		if failure == nil {
 			failure = s.ordinaryRoundBudgetError(ctx, call, cfg)
@@ -179,7 +187,8 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			next = &ModelCall{
 				RunID:     r.RunID,
 				SessionID: r.SessionID,
-				Input:     ordinary,
+				Input:     prepared.Input,
+				InputBody: prepared.Body,
 				State:     StateRunning,
 				MaxRetry:  cfg.MaxRetry,
 			}

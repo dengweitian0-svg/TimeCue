@@ -98,7 +98,10 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 			},
 			cancel: cancel,
 		}
-		output, failure := s.model.Complete(modelCtx, cfg, call.Input, batch.append)
+		output, failure := s.model.Complete(modelCtx, cfg, PreparedRequest{
+			Body:  call.InputBody,
+			Input: call.Input,
+		}, batch.append)
 		var err error
 		call, err = batch.close()
 		cancel()

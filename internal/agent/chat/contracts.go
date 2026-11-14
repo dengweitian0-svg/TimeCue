@@ -203,7 +203,7 @@ type Message struct {
 	ToolCallID       string          `json:"tool_call_id,omitempty"`
 }
 
-// ModelRequest 是实际提交的 Chat Completions 请求。
+// ModelRequest 是 Chat Completions 请求的结构化视图。
 type ModelRequest struct {
 	Model         string             `json:"model"`
 	Messages      []Message          `json:"messages"`
@@ -211,6 +211,12 @@ type ModelRequest struct {
 	MaxTokens     int                `json:"max_tokens"`
 	StreamOptions map[string]bool    `json:"stream_options"`
 	Tools         []tools.Definition `json:"tools,omitempty"`
+}
+
+// PreparedRequest 持有已准备或从 SQLite 读取的最终正文，以及响应校验所需的请求视图。
+type PreparedRequest struct {
+	Body  string
+	Input ModelRequest
 }
 
 // ToolRequest 保存一次模型回复内完整组装的工具请求及参数原文。
@@ -311,18 +317,22 @@ func (output ModelOutput) ValidateResponse() *RunError {
 	return nil
 }
 
-// ModelClient 在上游边界提供可取消的增量请求。
+// ModelClient 在上游边界准备最终请求并执行可取消的流式调用。
 type ModelClient interface {
+	// PrepareRequest 按 provider 和请求模型准备最终正文，供预算、登记和发送共用。
+	PrepareRequest(provider string, input ModelRequest) (string, *RunError)
 	// Complete 通过上游端口读取真实模型响应及有效增量。
-	Complete(context.Context, ModelConfig, ModelRequest, func(EventType, string) error) (ModelOutput, *RunError)
+	Complete(context.Context, ModelConfig, PreparedRequest, func(EventType, string) error) (ModelOutput, *RunError)
 }
 
 // ModelCall 保存调用开始或结束时需要原子提交的实际事实。
 type ModelCall struct {
-	ID           int64
-	RunID        string
-	SessionID    string
-	Input        ModelRequest
+	ID        int64
+	RunID     string
+	SessionID string
+	Input     ModelRequest
+	// InputBody 保存本次逻辑调用的最终请求原文，直到调用结束都不重新编码。
+	InputBody    string
 	Output       *ModelOutput
 	State        RunState
 	Error        *RunError

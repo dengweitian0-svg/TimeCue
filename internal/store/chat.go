@@ -386,7 +386,15 @@ func (s *chatStore) BeginCall(ctx context.Context, call chat.ModelCall) (int64, 
 }
 
 func beginChatCall(ctx context.Context, tx *sql.Tx, call chat.ModelCall) (chat.ModelCall, error) {
-	result, err := tx.ExecContext(ctx, `INSERT INTO ai_model_calls(run_id,session_id,input,status,max_retry,continuation,created_at) VALUES(?,?,?,'running',?,?,?)`, call.RunID, call.SessionID, jsonValue(call.Input), call.MaxRetry, call.Continuation, time.Now().UnixNano())
+	if call.InputBody == "" {
+		// 兼容通过结构化输入直接登记调用的存储调用方。
+		body, err := json.Marshal(call.Input)
+		if err != nil {
+			return call, err
+		}
+		call.InputBody = string(body)
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO ai_model_calls(run_id,session_id,input,status,max_retry,continuation,created_at) VALUES(?,?,?,'running',?,?,?)`, call.RunID, call.SessionID, call.InputBody, call.MaxRetry, call.Continuation, time.Now().UnixNano())
 	if err != nil {
 		return call, err
 	}
@@ -475,6 +483,7 @@ func readCall(ctx context.Context, reader schemaReader, id string) (*chat.ModelC
 	if err = json.Unmarshal([]byte(input), &call.Input); err != nil {
 		return nil, err
 	}
+	call.InputBody = input
 	var state chat.CheckpointState
 	if err = json.Unmarshal([]byte(progress), &state); err != nil {
 		return nil, err

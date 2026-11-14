@@ -315,8 +315,15 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 	if err != nil {
 		return Receipt{}, err
 	}
-	compact := needsCompact(request, cfg)
-	if failure := requestBudgetError(request, cfg); failure != nil && !compact {
+	prepared, failure := s.prepareRequest(r.Provider, request)
+	compact := false
+	if failure == nil {
+		compact = needsCompact(prepared.Input, prepared.Body, cfg)
+		if !compact {
+			failure = requestBudgetError(prepared.Body, cfg)
+		}
+	}
+	if failure != nil {
 		r.State, r.Error = StateFailed, failure
 		now := time.Now()
 		r.FinishedAt = &now
@@ -339,12 +346,14 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 	call := &ModelCall{
 		RunID:     r.RunID,
 		SessionID: r.SessionID,
-		Input:     request,
+		Input:     prepared.Input,
+		InputBody: prepared.Body,
 		State:     StateRunning,
 		MaxRetry:  cfg.MaxRetry,
 	}
 	if compact {
 		call.Input = compactRequest(request)
+		call.InputBody = ""
 		call.CheckpointStage = "compact"
 	}
 	go s.execute(runCtx, run, r, cfg, call)

@@ -17,7 +17,10 @@ import (
 )
 
 // Client 使用官方 openai-go SDK 调用兼容的 Chat Completions 服务。
-type Client struct{ http *http.Client }
+type Client struct {
+	APIAdapter
+	http *http.Client
+}
 
 // NewClient 注入传输边界，默认禁止重定向以保护当前模型的密钥。
 func NewClient(client *http.Client) *Client {
@@ -28,19 +31,18 @@ func NewClient(client *http.Client) *Client {
 }
 
 // Complete 通过 SDK 消费流式响应，保留提供方扩展思考字段和原始 usage。
-func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.ModelRequest, emit func(chat.EventType, string) error) (chat.ModelOutput, *chat.RunError) {
+func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, request chat.PreparedRequest, emit func(chat.EventType, string) error) (chat.ModelOutput, *chat.RunError) {
 	output := chat.ModelOutput{
 		Message: chat.Message{Role: "assistant"},
 	}
-	for _, message := range input.Messages {
+	for _, message := range request.Input.Messages {
 		switch message.Role {
 		case "system", "user", "assistant", "tool":
 		default:
 			return output, failure("model_invalid_params")
 		}
 	}
-	encoded, err := json.Marshal(input)
-	if err != nil {
+	if request.Body == "" {
 		return output, failure("model_invalid_params")
 	}
 	requestCtx, cancel := context.WithCancelCause(ctx)
@@ -79,7 +81,7 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 	}()
 	client := openai.NewClient(option.WithAPIKey(cfg.Key), option.WithBaseURL(strings.TrimRight(cfg.BaseURL, "/")+"/"), option.WithHTTPClient(c.http), option.WithMaxRetries(0))
 	// 使用与预算检查、持久化完全相同的序列化结果，避免 SDK 消息转换改变字节预算。
-	stream := client.Chat.Completions.NewStreaming(requestCtx, openai.ChatCompletionNewParams{}, option.WithRequestBody("application/json", encoded))
+	stream := client.Chat.Completions.NewStreaming(requestCtx, openai.ChatCompletionNewParams{}, option.WithRequestBody("application/json", []byte(request.Body)))
 	defer stream.Close()
 	finished := false
 	var toolCalls []chat.ToolRequest
@@ -131,12 +133,12 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 				} else {
 					output.Message.ReasoningContent += delta.content
 				}
-				if err = emit(delta.kind, delta.content); err != nil {
+				if err := emit(delta.kind, delta.content); err != nil {
 					return output, failure("persistence_failed")
 				}
 			}
 			if len(choice.Delta.ToolCalls) > 0 {
-				if len(input.Tools) == 0 {
+				if len(request.Input.Tools) == 0 {
 					return output, failure("model_invalid_format")
 				}
 				effective := false
@@ -182,7 +184,7 @@ func (c *Client) Complete(ctx context.Context, cfg chat.ModelConfig, input chat.
 			Message: context.Cause(requestCtx).Error(),
 		}
 	}
-	if err = stream.Err(); err != nil {
+	if err := stream.Err(); err != nil {
 		var networkError net.Error
 		if errors.As(err, &networkError) && networkError.Timeout() {
 			return output, &chat.RunError{

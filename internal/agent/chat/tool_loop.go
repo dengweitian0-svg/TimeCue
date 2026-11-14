@@ -25,9 +25,15 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				}
 				return call, persistenceFailure(call, "history", err)
 			}
-			call.Input = request
-			if needsCompact(request, cfg) {
+			prepared, failure := s.prepareRequest(r.Provider, request)
+			if failure != nil {
+				return call, failure
+			}
+			call.Input = prepared.Input
+			call.InputBody = prepared.Body
+			if needsCompact(prepared.Input, prepared.Body, cfg) {
 				call.Input = compactRequest(request)
+				call.InputBody = ""
 				call.CheckpointStage = "compact"
 			}
 		}
@@ -66,7 +72,11 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 			}
 			request := call.FollowupRequest(continuation)
 			request.MaxTokens = cfg.MaxOutputTokens
-			if call.CheckpointStage == "tool_end" && requestBudgetError(request, cfg) != nil {
+			prepared, failure := s.prepareRequest(r.Provider, request)
+			if failure != nil {
+				return call, failure
+			}
+			if call.CheckpointStage == "tool_end" && requestBudgetError(prepared.Body, cfg) != nil {
 				base, err := s.newRequest(ctx, *r, cfg)
 				if err != nil {
 					if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
@@ -97,7 +107,8 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 			call = ModelCall{
 				RunID:        r.RunID,
 				SessionID:    r.SessionID,
-				Input:        request,
+				Input:        prepared.Input,
+				InputBody:    prepared.Body,
 				State:        StateRunning,
 				MaxRetry:     cfg.MaxRetry,
 				Continuation: continuation,
@@ -106,16 +117,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 		}
 		if call.ID == 0 {
 			var err error
-			if call.Input.Model == "" {
-				call.Input, err = s.newRequest(ctx, *r, cfg)
-			}
-			if err != nil {
-				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-					return call, nil
-				}
-				return call, persistenceFailure(call, "history", err)
-			}
-			if failure := requestBudgetError(call.Input, cfg); failure != nil {
+			if failure := requestBudgetError(call.InputBody, cfg); failure != nil {
 				return ModelCall{
 					RunID:     r.RunID,
 					SessionID: r.SessionID,

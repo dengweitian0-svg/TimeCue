@@ -17,7 +17,91 @@ import (
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/loop"
 )
+
+// TestLoopReplaysOriginalSQLiteRequest 验证重启沿用旧库的原始正文及逻辑调用身份。
+func TestLoopReplaysOriginalSQLiteRequest(t *testing.T) {
+	ctx := context.Background()
+	_, ports, path := admissionDatabase(t)
+	input := admissionInput("legacy-wire", "one")
+	record := chat.Record{
+		Run: chat.Run{
+			RunID:     "legacy-wire-run",
+			SessionID: input.SessionID,
+			Provider:  input.Provider,
+			Model:     input.Model,
+			Input:     input.Input,
+			CreatedAt: time.Now(),
+		},
+		State:          chat.StateRunning,
+		IdempotencyKey: input.IdempotencyKey,
+	}
+	if err := ports.Runs.Create(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	// 保留旧库中不同的字段次序、空白、转义及结构化视图未定义的字段。
+	raw := `{ "extension": "中文🙂\n\"\\", "messages":[{"role":"user","content":"\u4e2d🙂"}], "model":"model", "stream":true, "max_tokens":8, "stream_options":{"include_usage":true} }`
+	var request chat.ModelRequest
+	if err := json.Unmarshal([]byte(raw), &request); err != nil {
+		t.Fatal(err)
+	}
+	id, err := ports.Execution.BeginCall(ctx, chat.ModelCall{
+		RunID:     record.RunID,
+		SessionID: record.SessionID,
+		Input:     request,
+		MaxRetry:  2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = inspection.Close() })
+	if _, err := inspection.Exec(`UPDATE ai_model_calls SET input=? WHERE id=?`, raw, id); err != nil {
+		t.Fatal(err)
+	}
+	wire := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		wire <- string(body)
+		completedUpstreamForRetry(w)
+	}))
+	t.Cleanup(upstream.Close)
+	service, err := loop.New(ctx, ports, retrySettings(upstream.URL, 0), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Stop)
+	if err := service.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if run := awaitRun(t, service, record.RunID); run.Status != chat.StatusSucceeded {
+		t.Fatalf("重启未恢复原运行: %+v", run)
+	}
+	select {
+	case actual := <-wire:
+		if actual != raw {
+			t.Fatalf("重启改变了原始请求:\n实际 %s\n原文 %s", actual, raw)
+		}
+	default:
+		t.Fatal("重启未发送原请求")
+	}
+	var saved string
+	var savedID int64
+	var retries, count int
+	err = inspection.QueryRow(`SELECT m.id,m.input,m.max_retry,(SELECT COUNT(*) FROM ai_model_calls WHERE run_id=m.run_id)
+		FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, record.RunID).Scan(&savedID, &saved, &retries, &count)
+	if err != nil || savedID != id || saved != raw || retries != 2 || count != 1 {
+		t.Fatalf("恢复改变已登记的逻辑调用: id=%d retries=%d count=%d input=%s err=%v", savedID, retries, count, saved, err)
+	}
+}
 
 // TestNextRunUsesActualMessageSnapshot 验证多次逻辑调用后沿实际快照接续，不重复真实输入或丢失后端请求。
 func TestNextRunUsesActualMessageSnapshot(t *testing.T) {
@@ -419,38 +503,140 @@ func TestRecoveredOrdinaryRoundBudgetUsesLogicalCalls(t *testing.T) {
 	}
 }
 
-// TestRequestBudgetMatchesPersistedAndWireBytes 验证预算使用实际上游请求的 UTF-8 序列化字节，包含转义和结构开销。
+type extendedRequestClient struct {
+	*completion.Client
+	prepared []string
+}
+
+// PrepareRequest 向最终请求加入测试专用字段，使用空白及不同的转义以检测二次序列化。
+func (c *extendedRequestClient) PrepareRequest(provider string, input chat.ModelRequest) (string, *chat.RunError) {
+	body, failure := c.Client.PrepareRequest(provider, input)
+	if failure != nil {
+		return "", failure
+	}
+	body = `{"extension": "中文🙂\n\"\\<>&", ` + body[1:]
+	c.prepared = append(c.prepared, body)
+	return body, nil
+}
+
+// TestRequestBudgetMatchesPersistedAndWireBytes 验证扩展后的实际字节同时决定准入、登记、首次发送与重启重放。
 func TestRequestBudgetMatchesPersistedAndWireBytes(t *testing.T) {
-	_, ports, _ := admissionDatabase(t)
-	wire := make(chan []byte, 1)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		raw, err := io.ReadAll(req.Body)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		wire <- raw
-		completedUpstreamForRetry(w)
-	}))
-	t.Cleanup(upstream.Close)
-	service := startAdmissionService(t, ports, completion.NewClient(nil), retrySettings(upstream.URL, 0))
+	ctx := context.Background()
+	db, ports, path := admissionDatabase(t)
+	type sentRequest struct {
+		body string
+		auth string
+	}
+	firstWire, replayWire := make(chan sentRequest, 4), make(chan sentRequest, 4)
+	upstream := func(wire chan<- sentRequest, available bool) *httptest.Server {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			raw, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			select {
+			case wire <- sentRequest{
+				body: string(raw),
+				auth: req.Header.Get("Authorization"),
+			}:
+			default:
+				t.Error("上游请求次数超出预期")
+			}
+			if !available {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			completedUpstreamForRetry(w)
+		}))
+		t.Cleanup(server.Close)
+		return server
+	}
+	firstURL := upstream(firstWire, false).URL
+	settings := func() ([]chat.ModelConfig, error) {
+		configs, err := retrySettings(firstURL, 1)()
+		configs[0].ContextWindow, configs[0].MaxOutputTokens = 58, 8
+		return configs, err
+	}
+	client := &extendedRequestClient{Client: completion.NewClient(nil)}
+	service := startAdmissionService(t, ports, client, settings)
 	input := admissionInput("wire", "one")
-	input.Input = " 中文🙂 <>&\n\"\\ "
-	receipt, err := service.CreateRun(context.Background(), input)
+	input.Input = " 中文🙂 <>&\n\"\\"
+	receipt, err := service.CreateRun(ctx, input)
+	if err != nil || receipt.Status != chat.StatusRunning {
+		t.Fatalf("200 字节刚好等于预算: %+v %v", receipt, err)
+	}
+	planned := awaitRetryWait(t, ports, receipt.RunID, 1)
+	if len(client.prepared) != 1 || len(client.prepared[0]) != 200 {
+		t.Fatalf("首次准备应生成一份 200 字节的最终请求: %q", client.prepared)
+	}
+	first := client.prepared[0]
+	input.SessionID, input.Input = "over-budget", input.Input+"x"
+	rejected, err := service.CreateRun(ctx, input)
+	if err != nil || rejected.Status != chat.StatusFailed || rejected.Error == nil || rejected.Error.Code != "context_budget_exceeded" {
+		t.Fatalf("201 字节需要 51 token，创建时应拒绝: %+v %v", rejected, err)
+	}
+	if len(client.prepared) != 2 || len(client.prepared[1]) != 201 {
+		t.Fatalf("相邻请求正文应为 201 字节: %q", client.prepared)
+	}
+	page, err := service.GetRunEvents(ctx, rejected.RunID, 0, 100)
+	if err != nil || len(page.Events) != 3 || page.Events[0].Type != chat.EventStart || page.Events[1].Type != chat.EventError || page.Events[2].Type != chat.EventEnd {
+		t.Fatalf("预算失败事件不完整: %+v %v", page, err)
+	}
+	service.Stop()
+	var persisted string
+	inspection, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	awaitRun(t, service, receipt.RunID)
-	call, err := ports.Execution.ReadCall(context.Background(), receipt.RunID)
-	if err != nil || call == nil {
-		t.Fatalf("读取调用失败: %v", err)
+	t.Cleanup(func() { _ = inspection.Close() })
+	if err := inspection.QueryRow(`SELECT input FROM ai_model_calls WHERE id=?`, planned.ID).Scan(&persisted); err != nil || persisted != first {
+		t.Fatalf("SQLite 原文与准备的正文不一致: %q %v", persisted, err)
 	}
-	persisted, err := json.Marshal(call.Input)
+	var calls, checkpoints int
+	err = inspection.QueryRow(`SELECT (SELECT COUNT(*) FROM ai_model_calls WHERE run_id=?),
+		(SELECT COUNT(*) FROM ai_checkpoints WHERE run_id=?)`, rejected.RunID, rejected.RunID).Scan(&calls, &checkpoints)
+	if err != nil || calls != 0 || checkpoints != 0 {
+		t.Fatalf("预算失败遗留调用或 checkpoint: calls=%d checkpoints=%d %v", calls, checkpoints, err)
+	}
+	if len(firstWire) != 1 {
+		t.Fatalf("首次阶段只应发送一次请求，实际 %d 次", len(firstWire))
+	}
+	if actual := <-firstWire; actual.body != first || actual.auth != "Bearer secret" {
+		t.Fatalf("首次发送与准备的请求不一致: %+v", actual)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Connect(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	replayURL := upstream(replayWire, true).URL
+	restarted, err := loop.New(ctx, ports, func() ([]chat.ModelConfig, error) {
+		configs, err := retrySettings(replayURL, 0)()
+		configs[0].Key, configs[0].ContextWindow, configs[0].MaxOutputTokens = "updated-key", 32, 16
+		return configs, err
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if actual := <-wire; !bytes.Equal(actual, persisted) {
-		t.Fatalf("实际序列化请求与预算/持久化不一致:\nwire=%s\nsaved=%s", actual, persisted)
+	t.Cleanup(restarted.Stop)
+	if err := restarted.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if run := awaitRetryRun(t, restarted, receipt.RunID, 8*time.Second); run.Status != chat.StatusSucceeded {
+		t.Fatalf("重启未按原预算恢复请求: %+v", run)
+	}
+	if len(replayWire) != 1 {
+		t.Fatalf("重启只应发送一次请求，实际 %d 次", len(replayWire))
+	}
+	if actual := <-replayWire; actual.body != persisted || actual.auth != "Bearer updated-key" {
+		t.Fatalf("重启未沿新连接重放原正文: %+v", actual)
+	}
+	call, err := ports.Execution.ReadCall(ctx, receipt.RunID)
+	if err != nil || call == nil || call.ID != planned.ID || call.MaxRetry != 1 || call.RetryCount != 1 ||
+		len(call.RetryHistory) != 1 || call.RetryHistory[0].Result != "succeeded" {
+		t.Fatalf("重启改变了逻辑调用或重试预算: %+v %v", call, err)
 	}
 }
 

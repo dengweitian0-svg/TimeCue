@@ -3,6 +3,7 @@ package chat_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -195,10 +196,22 @@ func completedUpstreamForRetry(w http.ResponseWriter) {
 func TestRetriesReadLatestKeyAndTimeoutButKeepRegisteredBudget(t *testing.T) {
 	dir := t.TempDir()
 	firstStarted := make(chan struct{})
-	requests := make(chan string, 2)
+	type sentRequest struct {
+		auth string
+		body string
+	}
+	requests := make(chan sentRequest, 2)
 	var count atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests <- r.Header.Get("Authorization")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		requests <- sentRequest{
+			auth: r.Header.Get("Authorization"),
+			body: string(body),
+		}
 		if count.Add(1) == 1 {
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(w, ": keep-alive\n\n")
@@ -250,8 +263,15 @@ func TestRetriesReadLatestKeyAndTimeoutButKeepRegisteredBudget(t *testing.T) {
 	if err != nil || run.Status != chat.StatusSucceeded || call.MaxRetry != 1 || call.RetryCount != 1 || call.RetryHistory[0].Cause.Code != "model_timeout" {
 		t.Fatalf("重试没有重读超时或错误重置了预算: run=%+v call=%+v %v", run, call, err)
 	}
-	if <-requests != "Bearer original" || <-requests != "Bearer replacement" {
+	if len(requests) != 2 {
+		t.Fatalf("应只发送首次及一次重试请求，实际 %d 次", len(requests))
+	}
+	first, retry := <-requests, <-requests
+	if first.auth != "Bearer original" || retry.auth != "Bearer replacement" {
 		t.Fatal("后续请求未使用最新 Key")
+	}
+	if first.body != call.InputBody || retry.body != first.body {
+		t.Fatal("重试没有原样发送已登记的请求正文")
 	}
 }
 
