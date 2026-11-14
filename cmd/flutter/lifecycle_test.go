@@ -69,7 +69,11 @@ func unusedHostPort(t *testing.T) int {
 
 func checkHostStatus(t *testing.T, address, path string, want int) {
 	t.Helper()
-	client := &http.Client{Timeout: 2 * time.Second}
+	// 状态探针每次使用独立连接，避免复用与新连接竞争留下待收尾的连接。
+	client := &http.Client{
+		Transport: &http.Transport{DisableKeepAlives: true},
+		Timeout:   2 * time.Second,
+	}
 	response, err := client.Get("http://" + address + path)
 	if err != nil {
 		t.Error(err)

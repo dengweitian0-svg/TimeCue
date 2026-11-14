@@ -49,13 +49,24 @@ func (s *Runtime) newRequest(ctx context.Context, r Record, cfg ModelConfig) (Mo
 	}, nil
 }
 
-func requestBudgetError(input ModelRequest, cfg ModelConfig) *RunError {
-	encoded, _ := json.Marshal(input)
-	if EstimateTokens(encoded) > cfg.ContextWindow-cfg.MaxOutputTokens {
+func requestBudgetError(body string, cfg ModelConfig) *RunError {
+	if EstimateTokens([]byte(body)) > cfg.ContextWindow-cfg.MaxOutputTokens {
 		return &RunError{
 			Code:    "context_budget_exceeded",
 			Message: "输入超出模型上下文预算",
 		}
 	}
 	return nil
+}
+
+func (s *Runtime) prepareRequest(provider string, input ModelRequest) (PreparedRequest, *RunError) {
+	body, failure := s.model.PrepareRequest(provider, input)
+	if failure != nil {
+		return PreparedRequest{}, failure
+	}
+	prepared := PreparedRequest{Body: body}
+	if err := json.Unmarshal([]byte(body), &prepared.Input); err != nil || prepared.Input.Model != input.Model {
+		return PreparedRequest{}, toolError("model_invalid_params", "模型请求参数无效")
+	}
+	return prepared, nil
 }

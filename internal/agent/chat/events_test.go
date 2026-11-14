@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 )
 
@@ -81,12 +82,13 @@ func (f *transactionalFault) Finish(ctx context.Context, call chat.ModelCall, ru
 }
 
 type controlledModel struct {
+	completion.APIAdapter
 	deltas chan modelDelta
 	finish chan struct{}
 }
 
 // Complete 在模型边界提供逐条可控的响应，存储和运行用例仍使用真实实现。
-func (m *controlledModel) Complete(ctx context.Context, _ chat.ModelConfig, _ chat.ModelRequest, emit func(chat.EventType, string) error) (chat.ModelOutput, *chat.RunError) {
+func (m *controlledModel) Complete(ctx context.Context, _ chat.ModelConfig, _ chat.PreparedRequest, emit func(chat.EventType, string) error) (chat.ModelOutput, *chat.RunError) {
 	output := chat.ModelOutput{Message: chat.Message{Role: "assistant"}}
 	for {
 		select {

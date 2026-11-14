@@ -115,11 +115,12 @@ func TestTransportTimeoutUsesTimeoutSemanticCode(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	_, failure := completion.NewClient(&http.Client{Timeout: 50 * time.Millisecond}).Complete(context.Background(), chat.ModelConfig{
+	client := completion.NewClient(&http.Client{Timeout: 50 * time.Millisecond})
+	_, failure := client.Complete(context.Background(), chat.ModelConfig{
 		BaseURL:      server.URL,
 		Key:          "secret-token",
 		FirstTimeout: time.Second,
-	}, chat.ModelRequest{
+	}, prepare(t, client, chat.ModelRequest{
 		Model: "model",
 		Messages: []chat.Message{{
 			Role:    "user",
@@ -127,7 +128,7 @@ func TestTransportTimeoutUsesTimeoutSemanticCode(t *testing.T) {
 		}},
 		Stream:    true,
 		MaxTokens: 100,
-	}, func(chat.EventType, string) error { return nil })
+	}), func(chat.EventType, string) error { return nil })
 	if failure == nil || failure.Code != "model_timeout" {
 		t.Fatalf("传输超时错误: %+v", failure)
 	}
@@ -138,12 +139,13 @@ func complete(t *testing.T, url string, first, idle time.Duration, emit func(cha
 	if emit == nil {
 		emit = func(chat.EventType, string) error { return nil }
 	}
-	return completion.NewClient(nil).Complete(context.Background(), chat.ModelConfig{
+	client := completion.NewClient(nil)
+	return client.Complete(context.Background(), chat.ModelConfig{
 		BaseURL:      url,
 		Key:          "secret-token",
 		FirstTimeout: first,
 		IdleTimeout:  idle,
-	}, chat.ModelRequest{
+	}, prepare(t, client, chat.ModelRequest{
 		Model: "model",
 		Messages: []chat.Message{{
 			Role:    "user",
@@ -152,5 +154,17 @@ func complete(t *testing.T, url string, first, idle time.Duration, emit func(cha
 		Stream:        true,
 		MaxTokens:     100,
 		StreamOptions: map[string]bool{"include_usage": true},
-	}, emit)
+	}), emit)
+}
+
+func prepare(t *testing.T, client *completion.Client, input chat.ModelRequest) chat.PreparedRequest {
+	t.Helper()
+	body, failure := client.PrepareRequest("test", input)
+	if failure != nil {
+		t.Fatalf("准备请求失败: %+v", failure)
+	}
+	return chat.PreparedRequest{
+		Body:  body,
+		Input: input,
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 )
 
@@ -57,6 +58,7 @@ func admissionInput(session, key string) chat.CreateRunInput {
 }
 
 type admissionModel struct {
+	completion.APIAdapter
 	starts  atomic.Int32
 	active  atomic.Int32
 	peak    atomic.Int32
@@ -66,7 +68,7 @@ type admissionModel struct {
 }
 
 // Complete 仅在模型边界控制结束时机，便于并发验证真实服务和 SQLite。
-func (m *admissionModel) Complete(ctx context.Context, _ chat.ModelConfig, _ chat.ModelRequest, _ func(chat.EventType, string) error) (chat.ModelOutput, *chat.RunError) {
+func (m *admissionModel) Complete(ctx context.Context, _ chat.ModelConfig, _ chat.PreparedRequest, _ func(chat.EventType, string) error) (chat.ModelOutput, *chat.RunError) {
 	active := m.active.Add(1)
 	defer m.active.Add(-1)
 	for peak := m.peak.Load(); active > peak; peak = m.peak.Load() {
