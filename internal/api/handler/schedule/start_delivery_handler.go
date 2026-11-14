@@ -1,7 +1,6 @@
 package schedule
 
 import (
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"log/slog"
 	"net/http"
 
@@ -10,7 +9,7 @@ import (
 )
 
 // StartDeliveryHandler 开始前冻结合法成员；空组返回无需展示，重复请求幂等。
-func StartDeliveryHandler(app *application.App) middleware.HTTPHandler {
+func StartDeliveryHandler(app Service) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		var request struct{}
 		if failure := readDeliveryJSON(c, &request); failure != nil {

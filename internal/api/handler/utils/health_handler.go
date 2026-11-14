@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -16,14 +16,14 @@ type HealthCheck func(context.Context) error
 
 // HealthData 是健康检查接口的响应结构。
 type HealthData struct {
-	*app.RuntimeInfo
+	*model.RuntimeInfo
 	Status string    `json:"status"`
 	Error  *APIError `json:"error,omitempty"`
 }
 
 // HealthHandler 在每次请求时复查数据库连接和迁移结构。
-func HealthHandler(check HealthCheck, info ...app.RuntimeInfo) middleware.HTTPHandler {
-	var runtime *app.RuntimeInfo
+func HealthHandler(check HealthCheck, info ...model.RuntimeInfo) middleware.HTTPHandler {
+	var runtime *model.RuntimeInfo
 	if len(info) > 0 {
 		value := info[0]
 		value.Capabilities = append([]string(nil), value.Capabilities...)

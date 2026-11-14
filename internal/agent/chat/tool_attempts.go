@@ -269,7 +269,9 @@ func (s *Runtime) processTools(ctx context.Context, call ModelCall, r Record, cf
 				token:    token,
 			}
 			active[request.ID] = attempt
+			s.toolWorkers.Add(1)
 			go func(attempt *toolAttempt) {
+				defer s.toolWorkers.Done()
 				tool := attempt.tool
 				output, failure := s.tools.Execute(tools.WithExecutionKey(attempt.ctx, tool.IdempotencyKey), tool.Request.Function.Name, tool.Request.Function.Arguments)
 				tool.Output, tool.State = output, "succeeded"

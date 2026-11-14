@@ -2,7 +2,6 @@ package schedule
 
 import (
 	"encoding/json"
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	service "github.com/dengweitian0-svg/TimeCue/internal/service/notification"
 	"log/slog"
 	"net/http"
@@ -12,7 +11,7 @@ import (
 )
 
 // ClaimDeliveryHandler 领取完整任务；省略 limit 默认 20，显式 null 或越界拒绝。
-func ClaimDeliveryHandler(app *application.App) middleware.HTTPHandler {
+func ClaimDeliveryHandler(app Service) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		var request struct {
 			Limit json.RawMessage `json:"limit"`

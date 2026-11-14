@@ -1,7 +1,6 @@
 package schedule
 
 import (
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	service "github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
 	"net/http"
 	"time"
@@ -11,7 +10,7 @@ import (
 )
 
 // NotificationsHandler 读取受控查询，不修改任何业务事实。
-func NotificationsHandler(app *application.App) middleware.HTTPHandler {
+func NotificationsHandler(app Service) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		query := c.Request.URL.Query()
 		_, scoped := query["scope"]

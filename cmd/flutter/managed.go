@@ -16,8 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
 )
 
 const maxControlLine = 1024
@@ -96,12 +96,16 @@ func parseStartup(args []string) (startupOptions, error) {
 	}, nil
 }
 
-func writeReady(output io.Writer, info app.RuntimeInfo, port int) error {
+func writeReady(output io.Writer, info model.RuntimeInfo, port int) error {
 	return json.NewEncoder(output).Encode(struct {
 		Event string `json:"event"`
-		app.RuntimeInfo
+		model.RuntimeInfo
 		Address string `json:"address"`
-	}{Event: "ready", RuntimeInfo: info, Address: fmt.Sprintf("http://127.0.0.1:%d", port)})
+	}{
+		Event:       "ready",
+		RuntimeInfo: info,
+		Address:     fmt.Sprintf("http://127.0.0.1:%d", port),
+	})
 }
 
 // parentControl 只拥有管道读取工作；结果在 done 关闭后读取，停止请求始终取消原 context。

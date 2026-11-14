@@ -6,6 +6,7 @@
 - [Agent](internal/agent/AGENTS.md)
 - [HTTP 中间件](internal/middleware/AGENTS.md)
 - [领域服务](internal/service/AGENTS.md)
+- [并发协调](internal/syncutil/AGENTS.md)
 - [业务模型](internal/model/AGENTS.md)
 - [SQLite 存储](internal/store/AGENTS.md)
 - [配置管理](internal/config/AGENTS.md)

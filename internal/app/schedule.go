@@ -32,7 +32,9 @@ func (a *App) GetSchedule(ctx context.Context, id int) (*model.Schedule, error) 
 
 // WriteSchedule 执行日程正式写入并通知内存调度器。
 func (a *App) WriteSchedule(ctx context.Context, value model.Schedule, expectedRevision int, key string) (*model.ScheduleWrite, error) {
-	a.operations.Lock()
+	if err := a.operations.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer a.operations.Unlock()
 	if err := a.ensureScheduleService(); err != nil {
 		return nil, err
@@ -52,7 +54,9 @@ func (a *App) DeleteSchedule(ctx context.Context, id int) error {
 
 // DeleteScheduleWithResult 返回正式删除事务的状态变化。
 func (a *App) DeleteScheduleWithResult(ctx context.Context, id int) (*model.ScheduleWrite, error) {
-	a.operations.Lock()
+	if err := a.operations.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer a.operations.Unlock()
 	if a.Schedule == nil {
 		return nil, ErrScheduleNotFound
@@ -69,7 +73,9 @@ func (a *App) DeleteScheduleWithResult(ctx context.Context, id int) (*model.Sche
 
 // DeleteScheduleVersion 通过正式操作锁提交带版本及回执的删除，并同步内存调度器。
 func (a *App) DeleteScheduleVersion(ctx context.Context, id, expectedRevision int, key string) (*model.ScheduleWrite, error) {
-	a.operations.Lock()
+	if err := a.operations.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer a.operations.Unlock()
 	if err := a.ensureScheduleService(); err != nil {
 		return nil, err
