@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -585,7 +586,13 @@ func (g *acceptedToolGate) AcceptResponse(ctx context.Context, call chat.ModelCa
 
 // TestCancelAfterToolReplyAcceptedPairsSkippedResults 验证接纳后立即取消仍按全部原 ID 保存跳过结果。
 func TestCancelAfterToolReplyAcceptedPairsSkippedResults(t *testing.T) {
+	var requests atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) != 1 {
+			t.Error("取消后不应发送下一次模型请求")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		emitTools(w, []chat.ToolRequest{toolRequest("cancelled-query", "get_schedule", `{"id":1}`)})
 	}))
@@ -598,11 +605,15 @@ func TestCancelAfterToolReplyAcceptedPairsSkippedResults(t *testing.T) {
 		release:        make(chan struct{}),
 	}
 	storage.Tools = gate
+	storage.Runs = slowCancelStorage{RunRepository: storage.Runs}
 	service = chat.NewService(storage, completion.NewClient(nil), toolSettings(upstream.URL), queryRegistry(t, application))
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	defer service.Stop()
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate.release) }) }
+	defer release()
 	receipt, err := service.CreateRun(context.Background(), chat.CreateRunInput{
 		SessionID:      "cancel-accepted",
 		Input:          "查询",
@@ -613,11 +624,17 @@ func TestCancelAfterToolReplyAcceptedPairsSkippedResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	<-gate.accepted
-	cancelCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	select {
+	case <-gate.accepted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("未提交完整工具回复")
+	}
+	cancelCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, _ = service.CancelRun(cancelCtx, receipt.RunID)
-	close(gate.release)
+	if status, err := service.CancelRun(cancelCtx, receipt.RunID); err != nil || status != chat.StatusCancelled {
+		t.Fatalf("取消未登记: %s %v", status, err)
+	}
+	release()
 	run := awaitRun(t, service, receipt.RunID)
 	if run.Status != chat.StatusCancelled {
 		t.Fatalf("run: %+v", run)
