@@ -21,7 +21,6 @@ type execution struct {
 }
 type subscriber struct {
 	cancel context.CancelFunc
-	done   chan struct{}
 }
 
 // Runtime 用真实存储和模型端口协调运行，内存只保存准入与订阅控制。
@@ -41,6 +40,10 @@ type Runtime struct {
 	subscribers map[string]*subscriber
 	stopping    bool
 	started     bool
+	prepared    bool
+	recovery    []recoveryRun
+	toolWorkers sync.WaitGroup
+	subWorkers  sync.WaitGroup
 	shutdownCtx context.Context
 	storageCtx  context.Context
 	stopStorage context.CancelFunc
@@ -68,11 +71,26 @@ func NewService(storage Storage, model ModelClient, settings func() ([]ModelConf
 	return service
 }
 
-// Start 在 ready 前恢复活跃占用，后台沿原 input 和同一逻辑调用恢复请求。
+type recoveryRun struct {
+	record          Record
+	previous        *ModelCall
+	config          ModelConfig
+	cancelRequested bool
+}
+
+// Start 准备并启动恢复，供直接使用旧运行时的调用方使用。
 func (s *Runtime) Start(ctx context.Context) error {
+	if err := s.PrepareRecovery(ctx); err != nil {
+		return err
+	}
+	return s.Activate(ctx)
+}
+
+// PrepareRecovery 只读地准备恢复，等待宿主接纳后才启动推进。
+func (s *Runtime) PrepareRecovery(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.started {
+	if s.prepared {
 		return nil
 	}
 	records, err := s.runs.Active(ctx)
@@ -99,8 +117,11 @@ func (s *Runtime) Start(ctx context.Context) error {
 			}
 		}
 	}
+	var recovery []recoveryRun
 	for _, r := range records {
-		previous := previousCalls[r.RunID]
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		cfg := ModelConfig{}
 		configs, _ := s.settings()
 		for _, c := range configs {
@@ -109,20 +130,45 @@ func (s *Runtime) Start(ctx context.Context) error {
 				break
 			}
 		}
+		recovery = append(recovery, recoveryRun{
+			record:          r,
+			previous:        previousCalls[r.RunID],
+			config:          cfg,
+			cancelRequested: hidden[r.RunID] || r.State == StateWaitForCancel,
+		})
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.recovery, s.prepared = recovery, true
+	return nil
+}
+
+// Activate 在宿主接纳后恢复占用并允许后台推进。
+func (s *Runtime) Activate(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !s.prepared || s.stopping {
+		return ErrStopping
+	}
+	for _, item := range s.recovery {
 		runCtx, cancel := context.WithCancel(context.Background())
 		run := &execution{
-			cancel:  cancel,
-			done:    make(chan struct{}),
-			session: r.SessionID,
+			cancel:    cancel,
+			done:      make(chan struct{}),
+			session:   item.record.SessionID,
+			requested: item.cancelRequested,
 		}
-		if hidden[r.RunID] || r.State == StateWaitForCancel {
-			run.requested = true
+		if run.requested {
 			cancel()
 		}
-		s.active[r.RunID] = run
-		go s.execute(runCtx, run, r, cfg, previous)
+		s.active[item.record.RunID] = run
+		go s.execute(runCtx, run, item.record, item.config, item.previous)
 	}
-	s.started = true
+	s.recovery, s.started = nil, true
 	return nil
 }
 
@@ -133,7 +179,7 @@ func (s *Runtime) Stop() {
 	s.Shutdown(ctx)
 }
 
-// Shutdown 使用宿主的共享退出期限，停止准入与模型请求并等待进度保存结束。
+// Shutdown 使用调用方提供的退出期限，停止准入与模型请求并等待进度保存结束。
 func (s *Runtime) Shutdown(ctx context.Context) {
 	// 工具登记可能持有运行锁等待存储，先挂接期限才能解除该等待。
 	stopDeadline := context.AfterFunc(ctx, s.stopStorage)
@@ -143,6 +189,7 @@ func (s *Runtime) Shutdown(ctx context.Context) {
 		s.shutdownCtx = ctx
 	}
 	s.stopping = true
+	s.recovery = nil
 	var pending []chan struct{}
 	for _, run := range s.active {
 		run.cancel()
@@ -150,14 +197,17 @@ func (s *Runtime) Shutdown(ctx context.Context) {
 	}
 	for _, sub := range s.subscribers {
 		sub.cancel()
-		pending = append(pending, sub.done)
 	}
 	s.mu.Unlock()
 	for _, done := range pending {
 		<-done
 	}
 	s.stopStorage()
+	s.subWorkers.Wait()
 }
+
+// WaitForTools 等待已撤销的工具实际返回，宿主随后才能关闭 App 和数据库。
+func (s *Runtime) WaitForTools() { s.toolWorkers.Wait() }
 
 func (s *Runtime) persistenceContext() context.Context {
 	s.mu.Lock()
@@ -483,6 +533,9 @@ func (s *Runtime) Subscribe(ctx context.Context, id string, after int64) (*Subsc
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stopping {
+		return nil, ErrStopping
+	}
 	r, err := s.runs.ReadRun(ctx, id, true)
 	if err != nil {
 		return nil, err
@@ -504,14 +557,12 @@ func (s *Runtime) Subscribe(ctx context.Context, id string, after int64) (*Subsc
 		old.cancel()
 	}
 	subCtx, cancel := context.WithCancel(ctx)
-	sub := &subscriber{
-		cancel: cancel,
-		done:   make(chan struct{}),
-	}
+	sub := &subscriber{cancel: cancel}
 	s.subscribers[id] = sub
 	events := make(chan Event)
+	s.subWorkers.Add(1)
 	go func() {
-		defer close(sub.done)
+		defer s.subWorkers.Done()
 		defer close(events)
 		defer cancel()
 		defer func() {

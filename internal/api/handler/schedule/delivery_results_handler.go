@@ -1,7 +1,6 @@
 package schedule
 
 import (
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"log/slog"
 	"net/http"
 
@@ -11,7 +10,7 @@ import (
 )
 
 // DeliveryResultsHandler 回填一次分组平台请求的结果，成员仅取服务端冻结集合。
-func DeliveryResultsHandler(app *application.App) middleware.HTTPHandler {
+func DeliveryResultsHandler(app Service) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		var request struct {
 			Outcome model.NotifyStatus `json:"outcome"`

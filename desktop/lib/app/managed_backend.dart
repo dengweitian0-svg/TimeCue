@@ -220,19 +220,20 @@ class ManagedBackend extends ChangeNotifier {
     _failureMessage = null;
     _exited = _receivedReady = false;
     _readyLine = Completer<Map<String, dynamic>>();
-    _exit = Completer<void>();
+    _exit = null;
     _cancel = Completer<void>();
     _watch.reset();
     _watch.start();
     _publish();
     try {
       if (prepareStart != null) await _bounded(prepareStart!);
-      final values = await _bounded(
-        () => Future.wait<Object>([
+      final values = await _bounded(() {
+        _exit = Completer<void>();
+        return Future.wait<Object>([
           platform.start(generation, instanceId!),
           _readyLine!.future,
-        ], eagerError: true),
-      );
+        ], eagerError: true);
+      });
       if (!_current(generation)) return;
       pid = values[0] as int;
       final line = values[1] as Map<String, dynamic>;
@@ -369,16 +370,15 @@ class ManagedBackend extends ChangeNotifier {
     _publish();
   }
 
-  Future<void> stopOwned(Duration remaining) async {
+  Future<void> stopOwned() async {
     cancelStart();
     try {
-      if (remaining > Duration.zero && !_exited) {
-        final watch = Stopwatch()..start();
-        await platform.shutdown().timeout(remaining);
-        final left = remaining - watch.elapsed;
-        if (left > Duration.zero && _exit != null) {
-          await _exit!.future.timeout(left);
-        }
+      if (_exit case final exit? when !_exited && !_resourcesReleased) {
+        // 从发送停止消息起，等待同一个进程的退出事件。
+        await (() async {
+          await platform.shutdown();
+          await exit.future;
+        })().timeout(const Duration(seconds: 65));
       }
     } on TimeoutException {
       // 协作预算耗尽后由 Job 回收，不开启新的优雅等待。

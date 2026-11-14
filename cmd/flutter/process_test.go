@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/dengweitian0-svg/TimeCue/internal/app"
-	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
 	"io"
 	"net"
 	"net/http"
@@ -18,6 +16,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
 )
 
 // processFixture 只在测试新目录中手动应用已有迁移，不操作用户数据库。
@@ -128,7 +129,7 @@ func (p *testProcess) wait(t *testing.T, success bool) {
 	}
 }
 
-func (p *testProcess) ready(t *testing.T, expectedPorts ...int) app.RuntimeInfo {
+func (p *testProcess) ready(t *testing.T, expectedPorts ...int) model.RuntimeInfo {
 	t.Helper()
 	port := 1145
 	if len(expectedPorts) != 0 {
@@ -138,7 +139,7 @@ func (p *testProcess) ready(t *testing.T, expectedPorts ...int) app.RuntimeInfo 
 	case b := <-p.lines:
 		var ready struct {
 			Event, Address string
-			app.RuntimeInfo
+			model.RuntimeInfo
 		}
 		if err := json.Unmarshal(b, &ready); err != nil {
 			t.Fatal("stdout 混入非协议文本", string(b), err)
@@ -150,7 +151,7 @@ func (p *testProcess) ready(t *testing.T, expectedPorts ...int) app.RuntimeInfo 
 	case <-time.After(10 * time.Second):
 		t.Fatal("没有收到 ready")
 	}
-	return app.RuntimeInfo{}
+	return model.RuntimeInfo{}
 }
 
 // TestManagedProcess 使用编译后的自有进程和匿名管道串行验证固定端口协议。
@@ -182,7 +183,7 @@ func TestManagedProcess(t *testing.T) {
 			}
 			defer response.Body.Close()
 			var health struct {
-				Data app.RuntimeInfo `json:"data"`
+				Data model.RuntimeInfo `json:"data"`
 			}
 			if err := json.NewDecoder(response.Body).Decode(&health); err != nil || response.StatusCode != http.StatusOK || health.Data.InstanceID != info.InstanceID || health.Data.PID != info.PID {
 				t.Fatal("发布环境健康身份不匹配", health, err)
@@ -219,7 +220,7 @@ func TestManagedProcess(t *testing.T) {
 			}
 			var health struct {
 				Data struct {
-					app.RuntimeInfo
+					model.RuntimeInfo
 					Status string
 				}
 			}
@@ -307,11 +308,11 @@ func TestManagedProcess(t *testing.T) {
 		_ = p.input.Close()
 		client := &http.Client{Timeout: time.Second}
 		deadline := time.Now().Add(5 * time.Second)
-		var info app.RuntimeInfo
+		var info model.RuntimeInfo
 		for {
 			resp, err := client.Get("http://127.0.0.1:1145/health")
 			if err == nil {
-				var body struct{ Data app.RuntimeInfo }
+				var body struct{ Data model.RuntimeInfo }
 				_ = json.NewDecoder(resp.Body).Decode(&body)
 				_ = resp.Body.Close()
 				info = body.Data

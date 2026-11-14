@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	"io"
 	"os"
 	"path/filepath"
@@ -131,7 +130,7 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestReadyWriteFailure(t *testing.T) {
-	if err := writeReady(failingWriter{}, app.NewRuntimeInfo("launch"), 1145); !errors.Is(err, io.ErrClosedPipe) {
+	if err := writeReady(failingWriter{}, newRuntimeInfo("launch"), 1145); !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatal(err)
 	}
 }

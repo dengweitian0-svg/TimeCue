@@ -2,17 +2,17 @@ package schedule
 
 import (
 	"encoding/json"
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	service "github.com/dengweitian0-svg/TimeCue/internal/service/notification"
 	"log/slog"
 	"net/http"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/gin-gonic/gin"
 )
 
 // DeliveryExecutorExitHandler 接受与当前 Go 运行身份匹配的明确执行者退出事件。
-func DeliveryExecutorExitHandler(app *application.App, info application.RuntimeInfo) middleware.HTTPHandler {
+func DeliveryExecutorExitHandler(app Service, info model.RuntimeInfo) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		var request struct {
 			InstanceID string          `json:"instanceId"`

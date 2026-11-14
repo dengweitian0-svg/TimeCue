@@ -1,7 +1,6 @@
 package schedule
 
 import (
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	service "github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
 	"net/http"
 	"strconv"
@@ -43,7 +42,7 @@ func queryInteger(c *gin.Context, key string, fallback int, minimum int, maximum
 }
 
 // ListScheduleHandler 默认查询规则，按 view 参数提供日期触发和月份标记。
-func ListScheduleHandler(app *application.App) middleware.HTTPHandler {
+func ListScheduleHandler(app Service) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		if _, exists := c.Request.URL.Query()["view"]; exists {
 			return scheduleView(app, c)
@@ -86,7 +85,7 @@ func ListScheduleHandler(app *application.App) middleware.HTTPHandler {
 }
 
 // 查询投影复用日程资源入口，组合快照仍由服务层在同一读取事务内取得。
-func scheduleView(app *application.App, c *gin.Context) middleware.HTTPResult {
+func scheduleView(app Service, c *gin.Context) middleware.HTTPResult {
 	allowed := map[string]bool{"view": true}
 	switch c.Query("view") {
 	case "occurrences":

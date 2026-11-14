@@ -7,19 +7,18 @@ import (
 
 	"github.com/dengweitian0-svg/TimeCue/internal/api/handler/schedule"
 	"github.com/dengweitian0-svg/TimeCue/internal/api/handler/utils"
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/gin-gonic/gin"
 )
 
-// NewRouter 注册本地业务接口；聊天路由仅在 App 提供聊天服务时启用。
-func NewRouter(app *application.App, healthCheck utils.HealthCheck, info ...application.RuntimeInfo) *gin.Engine {
-	return NewRouterWithPort(app, healthCheck, 10086, info...)
+// NewRouter 注册本地业务接口。
+func NewRouter(app schedule.Service, healthCheck utils.HealthCheck, info ...model.RuntimeInfo) *gin.Engine {
+	return NewRouterWithPort(app, nil, healthCheck, 10086, info...)
 }
 
 // NewRouterWithPort 注册绑定指定本机端口的业务接口。
-func NewRouterWithPort(app *application.App, healthCheck utils.HealthCheck, port int, info ...application.RuntimeInfo) *gin.Engine {
+func NewRouterWithPort(app schedule.Service, chat ChatService, healthCheck utils.HealthCheck, port int, info ...model.RuntimeInfo) *gin.Engine {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 	router.RedirectTrailingSlash = false
@@ -46,15 +45,15 @@ func NewRouterWithPort(app *application.App, healthCheck utils.HealthCheck, port
 	notify.GET("/notifications/:id", middleware.WrapHTTPHandler(schedule.NotificationHandler(app), getNotificationFields))
 	notify.POST("/notifications/acknowledgements", middleware.WrapHTTPHandler(schedule.AcknowledgementsHandler(app), acknowledgeNotificationFields))
 	notify.POST("/notifications/claim", middleware.WrapHTTPHandler(schedule.ClaimDeliveryHandler(app), nil))
-	runtimeInfo := application.RuntimeInfo{}
+	runtimeInfo := model.RuntimeInfo{}
 	if len(info) > 0 {
 		runtimeInfo = info[0]
 	}
 	notify.POST("/notifications/executor-exit", middleware.WrapHTTPHandler(schedule.DeliveryExecutorExitHandler(app, runtimeInfo), nil))
 	notify.POST("/notifications/delivery-attempts/:id/start", middleware.WrapHTTPHandler(schedule.StartDeliveryHandler(app), nil))
 	notify.POST("/notifications/delivery-attempts/:id/results", middleware.WrapHTTPHandler(schedule.DeliveryResultsHandler(app), nil))
-	if app != nil && app.ChatServices.Run != nil && app.ChatServices.Model != nil && app.ChatServices.Session != nil {
-		registerChatRoutes(router, app.ChatServices)
+	if chat != nil {
+		registerChatRoutes(router, chat)
 	}
 	return router
 }

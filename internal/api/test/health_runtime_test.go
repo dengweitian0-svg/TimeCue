@@ -10,12 +10,17 @@ import (
 	"testing"
 
 	api "github.com/dengweitian0-svg/TimeCue/internal/api"
-	app "github.com/dengweitian0-svg/TimeCue/internal/app"
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 )
 
 func TestHealthRuntimeInfo(t *testing.T) {
-	info := app.NewRuntimeInfo("launch-123")
+	info := model.RuntimeInfo{
+		InstanceID:   "launch-123",
+		PID:          77,
+		APIVersion:   "v1",
+		Capabilities: []string{"managed-lifecycle-v1"},
+	}
 	for _, item := range []struct {
 		failure error
 		status  int
@@ -29,7 +34,7 @@ func TestHealthRuntimeInfo(t *testing.T) {
 		router.ServeHTTP(response, req)
 		var body struct {
 			Data struct {
-				app.RuntimeInfo
+				model.RuntimeInfo
 				Status string `json:"status"`
 				Error  *struct {
 					Code string `json:"code"`

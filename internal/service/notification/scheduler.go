@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
+	"github.com/dengweitian0-svg/TimeCue/internal/syncutil"
 )
 
 // SchedulerOptions 允许测试控制时钟与等待；错误回调不能改写业务结果。
@@ -44,7 +45,7 @@ type Scheduler struct {
 	repo                              NotificationSchedulerRepo
 	options                           SchedulerOptions
 	wake                              chan struct{}
-	work                              sync.Mutex
+	work                              syncutil.Mutex
 	mu                                sync.Mutex
 	waiting                           map[int]waitingNotification
 	groups                            map[int64]MinuteGroup
@@ -67,22 +68,36 @@ func NewScheduler(repo NotificationSchedulerRepo, options SchedulerOptions) (*Sc
 	if options.Wait == nil {
 		options.Wait = waitScheduler
 	}
-	return &Scheduler{repo: repo, options: options, wake: make(chan struct{}, 1), waiting: make(map[int]waitingNotification), groups: make(map[int64]MinuteGroup), memberSchedules: make(map[int]int), latestRevision: make(map[int]int), completed: make(map[int64]bool)}, nil
+	return &Scheduler{
+		repo:            repo,
+		options:         options,
+		wake:            make(chan struct{}, 1),
+		waiting:         make(map[int]waitingNotification),
+		groups:          make(map[int64]MinuteGroup),
+		memberSchedules: make(map[int]int),
+		latestRevision:  make(map[int]int),
+		completed:       make(map[int64]bool),
+	}, nil
 }
 
 // Run 在取消后立即结束等待；入口负责在关闭数据库前等待此函数返回。
 func (s *Scheduler) Run(ctx context.Context) error {
+	return s.RunUntil(ctx, ctx)
+}
+
+// RunUntil 停止扫描后等待当前批次完成，批次工作独立受 work 约束。
+func (s *Scheduler) RunUntil(polling, work context.Context) error {
 	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if polling.Err() != nil {
+			return polling.Err()
 		}
-		err := s.Step(ctx)
+		err := s.step(polling, work)
 		delay := s.nextDelay()
 		if err != nil {
 			s.report(err)
 			delay = time.Second
 		}
-		if err := s.options.Wait(ctx, delay, s.wake); err != nil {
+		if err := s.options.Wait(polling, delay, s.wake); err != nil {
 			return err
 		}
 	}
@@ -90,11 +105,14 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 // Step 使用墙上时间推进当前分钟并按 30 秒节奏扫描，可用于确定性测试。
 func (s *Scheduler) Step(ctx context.Context) error {
-	s.work.Lock()
-	defer s.work.Unlock()
-	if err := ctx.Err(); err != nil {
+	return s.step(ctx, ctx)
+}
+
+func (s *Scheduler) step(polling, ctx context.Context) error {
+	if err := s.work.LockContext(polling); err != nil {
 		return err
 	}
+	defer s.work.Unlock()
 	now := s.options.Now().In(model.BeijingLocation())
 	minute := now.Truncate(time.Minute)
 	s.mu.Lock()
@@ -171,7 +189,9 @@ func (s *Scheduler) ScheduleChanged(ctx context.Context, result *model.ScheduleW
 	if result == nil || result.Schedule == nil {
 		return
 	}
-	s.work.Lock()
+	if err := s.work.LockContext(ctx); err != nil {
+		return
+	}
 	defer s.work.Unlock()
 	now := s.options.Now().In(model.BeijingLocation())
 	if !result.Replayed {

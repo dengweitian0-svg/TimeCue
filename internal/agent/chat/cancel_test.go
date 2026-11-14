@@ -17,7 +17,6 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
 	"github.com/dengweitian0-svg/TimeCue/internal/api"
-	"github.com/dengweitian0-svg/TimeCue/internal/app"
 )
 
 // TestCancelAcknowledgesBeforeInflightResults 验证取消先持久化、保留占用与订阅，再接纳实际结果和跳过项。
@@ -407,13 +406,7 @@ func TestDeleteActiveSessionHidesQueriesAndKeepsExistingSSE(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sub.Close()
-	router := api.NewRouter(&app.App{
-		ChatServices: chat.Services{
-			Model:   service,
-			Run:     service,
-			Session: service,
-		},
-	}, nil)
+	router := api.NewRouterWithPort(nil, service, nil, 10086)
 	request := func(method, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
 		req.Host = "127.0.0.1:10086"

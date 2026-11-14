@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"github.com/dengweitian0-svg/TimeCue/internal/api/handler/utils"
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"io"
 	"mime"
 	"net/http"
@@ -21,7 +20,7 @@ type AcknowledgementResponse struct {
 }
 
 // AcknowledgementsHandler 统一确认一个或多个明确 ID，不接受动态的全部未确认选择条件。
-func AcknowledgementsHandler(app *application.App) middleware.HTTPHandler {
+func AcknowledgementsHandler(app Service) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 		if err != nil || mediaType != "application/json" {

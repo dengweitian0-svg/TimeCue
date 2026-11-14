@@ -2,7 +2,6 @@ package schedule
 
 import (
 	"errors"
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	service "github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
 	"net/http"
 	"strconv"
@@ -80,7 +79,7 @@ func parseScheduleID(c *gin.Context) (int, *middleware.HTTPResult) {
 }
 
 // GetScheduleHandler 返回一条未删除日程。
-func GetScheduleHandler(app *application.App) middleware.HTTPHandler {
+func GetScheduleHandler(app Service) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		id, failure := parseScheduleID(c)
 		if failure != nil {

@@ -16,7 +16,6 @@ import (
 
 	api "github.com/dengweitian0-svg/TimeCue/internal/api"
 	app "github.com/dengweitian0-svg/TimeCue/internal/app"
-	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 	"github.com/gin-gonic/gin"
@@ -63,11 +62,7 @@ func testRouter(t *testing.T) (*gin.Engine, *store.Sqlite) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := config.NewManager()
-	if err != nil {
-		t.Fatal(err)
-	}
-	app, err := app.NewApp(manager, schedules, notifications)
+	app, err := app.NewApp(schedules, notifications)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +81,7 @@ func request(router http.Handler, method, path, body, mediaType string) *httptes
 }
 
 func TestRouterWithPortChecksConfiguredHost(t *testing.T) {
-	router := api.NewRouterWithPort(nil, nil, 1145)
+	router := api.NewRouterWithPort(nil, nil, nil, 1145)
 
 	allowed := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:1145/unknown", nil)
 	allowed.Host = "127.0.0.1:1145"

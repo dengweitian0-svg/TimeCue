@@ -1,7 +1,6 @@
 package schedule
 
 import (
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"net/http"
 	"time"
 
@@ -10,7 +9,7 @@ import (
 )
 
 // NotificationHandler 读取受控查询，不修改任何业务事实。
-func NotificationHandler(app *application.App) middleware.HTTPHandler {
+func NotificationHandler(app Service) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		id, failure := parseScheduleID(c)
 		if failure != nil {

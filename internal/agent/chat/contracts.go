@@ -444,18 +444,3 @@ type SessionService interface {
 	// DeleteSession 隐藏会话并请求停止后续推进。
 	DeleteSession(context.Context, string) error
 }
-
-// Services 分别注入模型、运行与会话用例，消费方只依赖对应接口。
-type Services struct {
-	Model   ModelService
-	Run     RunService
-	Session SessionService
-}
-
-// Lifecycle 由 App 管理启动恢复与退出，不暴露给 HTTP Handler。
-type Lifecycle interface {
-	// Start 在 ready 前恢复占用并启动后台推进。
-	Start(context.Context) error
-	// Shutdown 在宿主共享期限内停止准入和上游请求，保存已取得进度。
-	Shutdown(context.Context)
-}

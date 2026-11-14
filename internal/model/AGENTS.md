@@ -4,3 +4,4 @@
 - `notification*.go` 定义提醒状态、加载和历史恢复数据。
 - `occurrence_view.go`、`recovery_view.go` 和 `unacknowledged.go` 定义只读视图及待确认范围。
 - `query_option.go` 和 `query_cursor.go` 定义筛选、分页和游标，`time.go` 提供北京时间工具。
+- `runtime_info.go` 定义托管握手与健康检查共用的运行身份。

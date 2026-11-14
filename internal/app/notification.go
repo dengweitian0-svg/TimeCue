@@ -34,7 +34,9 @@ func (a *App) GetNotification(ctx context.Context, id int, now time.Time) (*mode
 
 // AcknowledgeNotifications 原子确认明确的提醒集合。
 func (a *App) AcknowledgeNotifications(ctx context.Context, ids []int, now time.Time) ([]*model.Notification, error) {
-	a.operations.Lock()
+	if err := a.operations.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer a.operations.Unlock()
 	if err := a.ensureNotificationService(); err != nil {
 		return nil, err
@@ -45,7 +47,9 @@ func (a *App) AcknowledgeNotifications(ctx context.Context, ids []int, now time.
 
 // ClaimDelivery 接纳一组到期完整分钟任务。
 func (a *App) ClaimDelivery(ctx context.Context, limit int) ([]notification.DeliveryClaim, error) {
-	a.operations.Lock()
+	if err := a.operations.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer a.operations.Unlock()
 	a.syncServices()
 	defer a.syncServices()
@@ -62,7 +66,9 @@ func (a *App) ClaimDelivery(ctx context.Context, limit int) ([]notification.Deli
 
 // StartDelivery 冻结实际投递成员并确定展示内容。
 func (a *App) StartDelivery(ctx context.Context, id string) (notification.DeliveryStart, error) {
-	a.operations.Lock()
+	if err := a.operations.LockContext(ctx); err != nil {
+		return notification.DeliveryStart{}, err
+	}
 	defer a.operations.Unlock()
 	a.syncServices()
 	defer a.syncServices()
@@ -79,7 +85,9 @@ func (a *App) StartDelivery(ctx context.Context, id string) (notification.Delive
 
 // CompleteDelivery 回填投递结果。
 func (a *App) CompleteDelivery(ctx context.Context, id string, outcome model.NotifyStatus) (notification.DeliveryResult, error) {
-	a.operations.Lock()
+	if err := a.operations.LockContext(ctx); err != nil {
+		return notification.DeliveryResult{}, err
+	}
 	defer a.operations.Unlock()
 	a.syncServices()
 	defer a.syncServices()
@@ -123,7 +131,9 @@ func (a *App) DeliveryAttemptMembers(id string) ([]int, error) {
 
 // QueryDeliveryMembers 分页查询任务历史或尝试成员。
 func (a *App) QueryDeliveryMembers(ctx context.Context, taskID, attemptID, cursor string, now time.Time) (model.OccurrencePage, error) {
-	a.operations.Lock()
+	if err := a.operations.LockContext(ctx); err != nil {
+		return model.OccurrencePage{}, err
+	}
 	defer a.operations.Unlock()
 	a.syncServices()
 	page, err := a.notificationService.QueryDeliveryMembers(ctx, taskID, attemptID, cursor, now)

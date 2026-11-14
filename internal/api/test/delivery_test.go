@@ -11,7 +11,7 @@ import (
 
 	api "github.com/dengweitian0-svg/TimeCue/internal/api"
 	application "github.com/dengweitian0-svg/TimeCue/internal/app"
-	"github.com/dengweitian0-svg/TimeCue/internal/config"
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 )
@@ -39,10 +39,9 @@ func TestDeliveryHTTPBoundary(t *testing.T) {
 	}
 	requireStatus(t, request(router, http.MethodPost, "/api/v1/notifications/claim", `{}`, "text/plain"), 415)
 	requireStatus(t, request(router, http.MethodPost, "/api/v1/notifications/claim", strings.Repeat(" ", 1<<20)+`{}`, "application/json"), 413)
-	manager, _ := config.NewManager()
 	schedules, _ := store.NewScheduleStore(db)
 	notify, _ := store.NewNotificationStore(db)
-	app, err := application.NewApp(manager, schedules, notify)
+	app, err := application.NewApp(schedules, notify)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,10 +56,9 @@ func TestDeliveryHTTPBoundary(t *testing.T) {
 // TestDeliveryHTTPFlow 验证真实路由的开始、回填、重复结果和日志隐私。
 func TestDeliveryHTTPFlow(t *testing.T) {
 	_, db := testRouter(t)
-	manager, _ := config.NewManager()
 	schedules, _ := store.NewScheduleStore(db)
 	notify, _ := store.NewNotificationStore(db)
-	app, err := application.NewApp(manager, schedules, notify)
+	app, err := application.NewApp(schedules, notify)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +71,7 @@ func TestDeliveryHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := application.NewRuntimeInfo("delivery-test-run")
+	runtime := model.RuntimeInfo{InstanceID: "delivery-test-run"}
 	router := api.NewRouter(app, db.CheckHealth, runtime)
 	for _, body := range []string{`{"instanceId":"delivery-test-run"}`, `{"instanceId":"delivery-test-run","attemptIds":null}`, `{"instanceId":"delivery-test-run","attemptIds":"bad"}`, `{"instanceId":"delivery-test-run","attemptIds":[""]}`} {
 		requireStatus(t, request(router, http.MethodPost, "/api/v1/notifications/executor-exit", body, "application/json"), 400)
