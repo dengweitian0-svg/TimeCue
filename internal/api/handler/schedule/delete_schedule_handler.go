@@ -2,7 +2,6 @@ package schedule
 
 import (
 	"errors"
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	service "github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
 	"net/http"
 
@@ -11,7 +10,7 @@ import (
 )
 
 // DeleteScheduleHandler 软删除日程及其未来待投递提醒。
-func DeleteScheduleHandler(app *application.App) middleware.HTTPHandler {
+func DeleteScheduleHandler(app Service) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		id, failure := parseScheduleID(c)
 		if failure != nil {

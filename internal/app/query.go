@@ -9,7 +9,9 @@ import (
 
 // QueryScheduleState 在同一读取快照返回日程事实与待确认首分页。
 func (a *App) QueryScheduleState(ctx context.Context, date string, now time.Time) (*model.ScheduleQueryResult, error) {
-	a.operations.Lock()
+	if err := a.operations.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer a.operations.Unlock()
 	if err := a.ensureScheduleService(); err != nil {
 		return nil, err

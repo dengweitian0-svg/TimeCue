@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	utils "github.com/dengweitian0-svg/TimeCue/internal/api/handler/utils"
-	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	service "github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
 	"io"
 	"mime"
@@ -37,11 +36,11 @@ type createPeriodRequest struct {
 }
 
 // CreateScheduleHandler 校验 JSON 输入并创建日程及首条提醒。
-func CreateScheduleHandler(app *application.App) middleware.HTTPHandler {
+func CreateScheduleHandler(app Service) middleware.HTTPHandler {
 	return writeScheduleHandler(app, false)
 }
 
-func writeScheduleHandler(app *application.App, update bool) middleware.HTTPHandler {
+func writeScheduleHandler(app Service, update bool) middleware.HTTPHandler {
 	return func(c *gin.Context) middleware.HTTPResult {
 		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 		if err != nil || mediaType != "application/json" {

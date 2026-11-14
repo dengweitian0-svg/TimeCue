@@ -10,7 +10,6 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
 	"github.com/dengweitian0-svg/TimeCue/internal/api"
-	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
 )
 
@@ -43,11 +42,7 @@ func TestModelListReportsPublishedRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := chat.NewService(chat.Storage{}, completion.NewClient(nil), manager.ChatModels, nil)
-	router := api.NewRouter(&app.App{ChatServices: chat.Services{
-		Model:   service,
-		Run:     service,
-		Session: service,
-	}}, nil)
+	router := api.NewRouterWithPort(nil, service, nil, 10086)
 	check := func(revision string) {
 		t.Helper()
 		response := chatRequest(router, "GET", "/v1/model", "")

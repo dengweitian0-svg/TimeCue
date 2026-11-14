@@ -17,7 +17,6 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
 	"github.com/dengweitian0-svg/TimeCue/internal/api"
-	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -56,7 +55,7 @@ func chatHTTPFixture(t *testing.T, key string, handler http.HandlerFunc, configu
 		t.Fatal(err)
 	}
 	t.Cleanup(service.Stop)
-	return api.NewRouter(&app.App{ChatServices: chat.Services{Model: service, Run: service, Session: service}}, nil), service
+	return api.NewRouterWithPort(nil, service, nil, 10086), service
 }
 func chatRequest(router http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))

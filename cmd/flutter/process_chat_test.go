@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
-	"github.com/dengweitian0-svg/TimeCue/internal/app"
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 	"github.com/google/uuid"
 )
@@ -113,7 +113,7 @@ func managedChatRecovery(t *testing.T, binary, root string) {
 
 			p = launchProcess(t, binary, "--env", "test", "--data-dir", directory, "--instance-id", "chat-restarted")
 			info := p.ready(t)
-			var health struct{ Data app.RuntimeInfo }
+			var health struct{ Data model.RuntimeInfo }
 			processChatHTTP(t, http.MethodGet, "/health", "", http.StatusOK, &health)
 			if !reflect.DeepEqual(health.Data, info) {
 				t.Fatal("ready 和 health 身份不一致")

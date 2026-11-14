@@ -11,7 +11,6 @@ import (
 	"time"
 
 	application "github.com/dengweitian0-svg/TimeCue/internal/app"
-	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
 	schedulesvc "github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
@@ -355,11 +354,7 @@ func TestGetAllScheduleAcceptsOptionalFilters(t *testing.T) {
 // TestAppCreatesAndAdvancesNotifications 验证创建用例、暂停状态与重复推进的持久化结果。
 func TestAppCreatesAndAdvancesNotifications(t *testing.T) {
 	_, schedules, notifications := newMigratedStore(t)
-	manager, err := config.NewManager()
-	if err != nil {
-		t.Fatalf("创建配置管理器: %v", err)
-	}
-	app, err := application.NewApp(manager, schedules, notifications)
+	app, err := application.NewApp(schedules, notifications)
 	if err != nil {
 		t.Fatalf("组装服务: %v", err)
 	}
@@ -476,11 +471,7 @@ func TestCreateScheduleWithNotificationRollsBack(t *testing.T) {
 
 func queryApp(t *testing.T, schedules *ScheduleStore, notifications *NotificationStore) *application.App {
 	t.Helper()
-	manager, err := config.NewManager()
-	if err != nil {
-		t.Fatal(err)
-	}
-	app, err := application.NewApp(manager, schedules, notifications)
+	app, err := application.NewApp(schedules, notifications)
 	if err != nil {
 		t.Fatal(err)
 	}

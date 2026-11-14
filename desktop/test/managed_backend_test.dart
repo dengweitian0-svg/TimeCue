@@ -248,7 +248,7 @@ void main() {
     expect(backend.ready, true);
     expect(healths, 1);
     expect(backend.pid, 77);
-    await backend.stopOwned(const Duration(seconds: 1));
+    await backend.stopOwned();
     expect(process.shutdowns, 1);
     expect(process.living, false);
   });
@@ -334,8 +334,8 @@ void main() {
     expect(backend.ready, false);
     expect(process.living, false);
   });
-  test('零预算退出仍回收 Job，drain 与停止使用同一截止时刻', () async {
-    final process = FakeProcess();
+  testWidgets('通知收尾用完桌面预算后，Go 仍有独立的 65 秒退出期限', (tester) async {
+    final process = FakeProcess()..exitOnShutdown = false;
     final backend = ManagedBackend(
       platform: process,
       health: () async => runtime(process),
@@ -352,23 +352,63 @@ void main() {
     };
     host.stopOwnedProcess = backend.stopOwned;
     host.finalizeOwnedProcess = backend.releaseOwned;
-    await host.requestExit();
-    expect(process.shutdowns, 0);
+    unawaited(host.requestExit());
+    await tester.pump();
+    expect(process.shutdowns, 1);
+    await tester.pump(const Duration(seconds: 64));
+    expect(process.living, true);
+    expect(desktop.calls, isNot(contains('destroy')));
+    await tester.pump(const Duration(seconds: 1));
+    expect(process.releases, 1);
     expect(process.living, false);
+    expect(backend.state, BackendState.stopped);
     expect(desktop.calls, contains('destroy'));
   });
-  test('Go 不协作时只等待剩余预算，之后回收', () async {
+  testWidgets('启动准备中退出不会等待尚未创建的 Go', (tester) async {
+    final process = FakeProcess()..exitOnShutdown = false;
+    final preparation = Completer<void>();
+    final backend = ManagedBackend(
+      platform: process,
+      health: () async => runtime(process),
+      prepareStart: () => preparation.future,
+    );
+    final desktop = FakeDesktop();
+    final host = DesktopLifecycle(desktop);
+    addTearDown(backend.dispose);
+    addTearDown(host.dispose);
+    unawaited(backend.start());
+    host.stopNewWork = backend.cancelStart;
+    host.stopOwnedProcess = backend.stopOwned;
+    unawaited(host.requestExit());
+    await tester.pump();
+    expect(process.starts, 0);
+    expect(process.shutdowns, 0);
+    expect(desktop.calls, contains('destroy'));
+    preparation.complete();
+    await tester.pump();
+  });
+  testWidgets('Go 延长退出等待后仍移除托盘', (tester) async {
     final process = FakeProcess()..exitOnShutdown = false;
     final backend = ManagedBackend(
       platform: process,
       health: () async => runtime(process),
     );
+    final desktop = FakeDesktop();
+    var elapsed = Duration.zero;
+    final host = DesktopLifecycle(desktop, elapsed: () => elapsed);
     addTearDown(backend.dispose);
+    addTearDown(host.dispose);
     await backend.start();
-    await backend.stopOwned(const Duration(milliseconds: 15));
+    host.stopOwnedProcess = backend.stopOwned;
+    unawaited(host.requestExit());
+    await tester.pump();
     expect(process.shutdowns, 1);
-    expect(process.living, false);
-    expect(backend.state, BackendState.stopped);
+    elapsed = const Duration(seconds: 10);
+    await tester.pump(elapsed);
+    expect(desktop.calls, isNot(contains('destroy')));
+    process.exit();
+    await tester.pump();
+    expect(desktop.calls, containsAllInOrder(['removeTray', 'destroy']));
   });
   test('运行中退出一次撤销资格，无自动重启或热重试', () async {
     final process = FakeProcess();

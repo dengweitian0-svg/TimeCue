@@ -2,231 +2,78 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net"
-	"net/http"
-	"os"
-	"path/filepath"
-	"sync"
 	"time"
 
-	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
 	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
-	"github.com/dengweitian0-svg/TimeCue/internal/service/recovery"
 )
 
-// Run 管理配置、日志、数据库、HTTP 与调度生命周期，退出后才释放依赖资源。
-func (a *App) Run(ctx context.Context, options RuntimeOptions) error {
-	if a.Config == nil || options.Database == nil || options.Handler == nil {
-		return fmt.Errorf("[app] runtime configuration, database and handler are required")
-	}
-	if ctx.Err() != nil {
-		return nil
-	}
-	port := options.Port
-	if port == 0 {
-		port = 10086
-	}
-	if port < 1 || port > 65535 {
-		return fmt.Errorf("port must be between 1 and 65535")
-	}
-	defer a.Config.Close()
-	log := options.Log
-	if log == nil {
-		log = logger.Default()
-	}
-	if err := a.Config.LoadConfig(); err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	cfg, err := a.Config.CurrentConfig()
-	if err != nil {
-		return fmt.Errorf("get config: %w", err)
-	}
-	logFile, err := openLogFile(a.Config.ResolvePath(cfg.Log.LogPath))
-	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
-	}
-	defer func() {
-		a.Config.Close()
-		if err := logFile.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "close log file: %v\n", err)
-		}
-	}()
-	log.Upgrade(logFile)
-	if err = options.Database.Connect(ctx, a.Config.ResolveDatabasePath(cfg.DB.DBPath)); err != nil {
-		return fmt.Errorf("connect database: %w", err)
-	}
-	defer func() {
-		if err := options.Database.Close(); err != nil {
-			log.Error("[app] failed to close database", "error", err)
-		}
-	}()
-	if options.PrepareDatabase != nil {
-		if err = options.PrepareDatabase(ctx); err != nil {
-			return fmt.Errorf("prepare database schema: %w", err)
-		}
-	}
-	if err = options.Database.CheckHealth(ctx); err != nil {
-		return fmt.Errorf("check database schema: %w", err)
-	}
-	if ctx.Err() != nil {
-		return nil
-	}
-	// 先独占本机监听端口，再允许聊天恢复产生模型请求或持久化副作用。
-	address := fmt.Sprintf("127.0.0.1:%d", port)
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", address, err)
-	}
-	defer listener.Close()
-	stopChat := func(context.Context) {}
-	if lifecycle := a.ChatRuntime; lifecycle != nil {
-		if err = lifecycle.Start(ctx); err != nil {
-			return fmt.Errorf("start chat service: %w", err)
-		}
-		var stopOnce sync.Once
-		stopChat = func(ctx context.Context) { stopOnce.Do(func() { lifecycle.Shutdown(ctx) }) }
-		defer func() {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			stopChat(shutdownCtx)
-		}()
-	}
-	if ctx.Err() != nil {
-		return nil
-	}
+// Lifecycle 提供 App 就绪、全局退出和 Loop 实际退出的协调端口。
+type Lifecycle struct {
+	Ready           chan<- *App
+	LoopDone        <-chan struct{}
+	Fail            func(error)
+	ShutdownBudget  time.Duration
+	BackgroundError func(error)
+}
+
+// Run 启动提醒调度和历史恢复，并在收到全局退出及 LoopDone 后收尾。
+func (a *App) Run(ctx context.Context, lifecycle Lifecycle) error {
+	options := notification.SchedulerOptions{OnError: lifecycle.BackgroundError}
 	if a.Scheduler == nil {
 		repo, ok := a.Notify.(notification.NotificationSchedulerRepo)
 		if !ok {
-			return fmt.Errorf("[app] notification repo does not support scheduling")
+			return fmt.Errorf("notification repo does not support scheduling")
 		}
-		a.Scheduler, err = notification.NewScheduler(repo, notification.SchedulerOptions{OnError: func(err error) { log.Error("[scheduler] background operation failed", "error", err) }})
+		var err error
+		a.Scheduler, err = notification.NewScheduler(repo, options)
 		if err != nil {
 			return err
 		}
 	}
-	if a.Recovery == nil {
-		repo, ok := a.Notify.(recovery.Repo)
-		if !ok {
-			return fmt.Errorf("[app] notification repo does not support recovery")
-		}
-		a.Recovery, err = recovery.NewService(repo, notification.SchedulerOptions{OnError: func(err error) { log.Error("[recovery] background operation failed", "error", err) }})
-		if err != nil {
-			return err
-		}
+	if err := a.configureRecovery(options); err != nil {
+		return err
 	}
-	runCtx, stop := context.WithCancel(ctx)
-	schedulerDone := make(chan error, 1)
-	go func() { schedulerDone <- a.Scheduler.Run(runCtx) }()
-	recoveryDone := make(chan error, 1)
-	go func() { recoveryDone <- a.RunRecovery(runCtx) }()
-	requests := &requestTracker{handler: options.Handler}
-	// 请求上下文由 HTTP 连接管理；退出只取消后台工作，已接收回填保留优雅窗口。
-	server := &http.Server{
-		Handler:           requests,
-		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
-		WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
-	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		stop()
-		a.StopDelivery()
-		stopChat(shutdownCtx)
-		requests.stop()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Error("[app] HTTP shutdown exceeded graceful window", "error", err)
-			_ = server.Close()
-		}
-		requests.active.Wait()
-		<-schedulerDone
-		<-recoveryDone
-	}()
-	serveErrors := make(chan error, 1)
-	serving := &readyListener{Listener: listener, started: make(chan struct{})}
-	go func() { serveErrors <- server.Serve(serving) }()
-	select {
-	case <-ctx.Done():
-		return nil
-	case err := <-serveErrors:
-		return serveError(err)
-	case <-serving.started:
-	}
-	// Serve 已进入接收循环；再次检查故障和取消，避免为失败的启动发送握手。
-	select {
-	case err := <-serveErrors:
-		return serveError(err)
-	default:
-	}
-	if ctx.Err() != nil {
-		return nil
-	}
-	if options.OnReady != nil {
-		if err := options.OnReady(); err != nil {
-			return fmt.Errorf("announce ready: %w", err)
-		}
-	}
-	log.Info("[app] HTTP server listening", "address", listener.Addr().String())
-	select {
-	case <-ctx.Done():
-		log.Info("[app] runtime stop requested", "reason", ctx.Err())
-		return nil
-	case err := <-serveErrors:
-		return serveError(err)
-	}
-}
+	a.syncServices()
 
-func serveError(err error) error {
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("serve HTTP: %w", err)
+	// 收尾时停止开始新批次，并给已开始的批次保留独立的完成窗口。
+	work, cancelWork := context.WithCancel(context.Background())
+	defer cancelWork()
+	polling, stopPolling := context.WithCancel(work)
+	defer stopPolling()
+	started := make(chan struct{})
+	done := make(chan struct{}, 2)
+	start := func(name string, run func(context.Context, context.Context) error) {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			started <- struct{}{}
+			err := run(polling, work)
+			if polling.Err() == nil {
+				if err == nil {
+					err = fmt.Errorf("background task stopped unexpectedly")
+				}
+				lifecycle.Fail(fmt.Errorf("%s: %w", name, err))
+			}
+		}()
 	}
+	start("notification scheduler", a.Scheduler.RunUntil)
+	start("notification recovery", a.runRecovery)
+	<-started
+	<-started
+	select {
+	case lifecycle.Ready <- a:
+	case <-ctx.Done():
+	}
+
+	<-ctx.Done()
+	<-lifecycle.LoopDone
+	shutdown, cancel := context.WithTimeout(context.Background(), lifecycle.ShutdownBudget)
+	defer cancel()
+	stopDeadline := context.AfterFunc(shutdown, cancelWork)
+	defer stopDeadline()
+	stopPolling()
+	a.StopDelivery()
+	<-done
+	<-done
 	return nil
 }
-
-// readyListener 以 Serve 的首次接收调用确认循环接入，不以固定等待推测就绪。
-type readyListener struct {
-	net.Listener
-	started chan struct{}
-	once    sync.Once
-}
-
-// Accept 在首次等待连接时通知 HTTP 服务已进入接收循环。
-func (l *readyListener) Accept() (net.Conn, error) {
-	l.once.Do(func() { close(l.started) })
-	return l.Listener.Accept()
-}
-
-func openLogFile(directory string) (*os.File, error) {
-	if directory == "" {
-		return nil, fmt.Errorf("log.log_path is empty")
-	}
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return nil, err
-	}
-	return os.OpenFile(filepath.Join(directory, "timecue.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-}
-
-// requestTracker 关闭请求入口后才允许等待，避免退出与新请求交错。
-type requestTracker struct {
-	handler http.Handler
-	mu      sync.Mutex
-	closing bool
-	active  sync.WaitGroup
-}
-
-// ServeHTTP 跟踪正在处理的请求，并在停止接入后拒绝新请求。
-func (t *requestTracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	t.mu.Lock()
-	if t.closing {
-		t.mu.Unlock()
-		http.Error(w, "service stopping", http.StatusServiceUnavailable)
-		return
-	}
-	t.active.Add(1)
-	t.mu.Unlock()
-	defer t.active.Done()
-	t.handler.ServeHTTP(w, r)
-}
-
-func (t *requestTracker) stop() { t.mu.Lock(); t.closing = true; t.mu.Unlock() }

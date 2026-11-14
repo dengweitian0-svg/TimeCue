@@ -240,7 +240,7 @@ void main() {
       platform.calls.add('drain');
       await draining.future;
     };
-    host.stopOwnedProcess = (_) async => platform.calls.add('owned');
+    host.stopOwnedProcess = () async => platform.calls.add('owned');
     host.releaseResources = () => platform.calls.add('release');
     host.onActivate = (_) async => platform.calls.add('activate');
     final first = host.requestExit();
@@ -278,7 +278,7 @@ void main() {
     expect(platform.calls.where((call) => call == 'destroy').length, 1);
   });
 
-  testWidgets('清理超时不会另开一个停止预算或伪造结果', (tester) async {
+  testWidgets('桌面清理超时后仍请求自有进程停止', (tester) async {
     final platform = FakeDesktop();
     var spent = Duration.zero;
     final host = DesktopLifecycle(
@@ -288,14 +288,14 @@ void main() {
     );
     await host.initialize();
     host.drain = (_) => Completer<void>().future;
-    host.stopOwnedProcess = (_) async => platform.calls.add('owned');
+    host.stopOwnedProcess = () async => platform.calls.add('owned');
     var completed = false;
     unawaited(host.requestExit().then((_) => completed = true));
     await tester.pump();
     spent = const Duration(seconds: 5);
     await tester.pump(const Duration(seconds: 5));
     expect(completed, isTrue);
-    expect(platform.calls, isNot(contains('owned')));
+    expect(platform.calls, contains('owned'));
     expect(platform.calls.last, 'destroy');
     host.dispose();
   });

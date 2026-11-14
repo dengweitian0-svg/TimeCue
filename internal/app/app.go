@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
-	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
 	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
 	"github.com/dengweitian0-svg/TimeCue/internal/service/recovery"
 	"github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
+	"github.com/dengweitian0-svg/TimeCue/internal/syncutil"
 )
 
 // App 统筹服务用例、跨模块操作边界与运行生命周期。
@@ -19,21 +18,15 @@ type App struct {
 	Notify              notification.Repo
 	scheduleService     *schedule.Service
 	notificationService *notification.Service
-	Config              *config.Manager
 	Scheduler           *notification.Scheduler
 	Delivery            *notification.DeliveryService
 	Recovery            *recovery.Service
-	ChatServices        chat.Services
-	ChatRuntime         chat.Lifecycle
-	operations          sync.Mutex
+	operations          syncutil.Mutex
 	serviceMu           sync.Mutex
 }
 
 // NewApp 通过持久化端口组装日程与提醒服务。
-func NewApp(manager *config.Manager, schedules schedule.Repo, notifications notification.Repo) (*App, error) {
-	if manager == nil {
-		return nil, fmt.Errorf("[app] config manager is nil")
-	}
+func NewApp(schedules schedule.Repo, notifications notification.Repo) (*App, error) {
 	if schedules == nil {
 		return nil, fmt.Errorf("[app] schedule repo is nil")
 	}
@@ -48,7 +41,12 @@ func NewApp(manager *config.Manager, schedules schedule.Repo, notifications noti
 	if err != nil {
 		return nil, err
 	}
-	return &App{Schedule: schedules, Notify: notifications, scheduleService: scheduleService, notificationService: notificationService, Config: manager}, nil
+	return &App{
+		Schedule:            schedules,
+		Notify:              notifications,
+		scheduleService:     scheduleService,
+		notificationService: notificationService,
+	}, nil
 }
 
 // ErrNotPeriodSchedule 表示提醒所属日程不是可推进的周期日程。
