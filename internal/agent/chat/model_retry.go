@@ -88,7 +88,7 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 			return call, nil
 		}
 		modelCtx, cancel := context.WithCancel(ctx)
-		previousOutput := call.Output != nil && hasModelOutput(*call.Output)
+		previousOutput := call.Output != nil && hasAssistantContent(call.Output.Message)
 		batch := &eventBatch{
 			repository: s.execution,
 			context:    s.persistenceContext,
@@ -108,7 +108,7 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 		if err != nil {
 			failure = persistenceFailure(call, "model_events", err)
 		}
-		hasOutput := hasModelOutput(output)
+		hasOutput := hasAssistantContent(output.Message)
 		// 生命周期恢复没有新输出时保留旧快照；完整空响应仍替换旧回复。
 		if failure == nil && ctx.Err() == nil || !previousOutput || hasOutput {
 			call.Output = &output

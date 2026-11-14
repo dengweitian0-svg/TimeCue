@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/loop"
 	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 )
@@ -46,8 +48,16 @@ func TestLegacyCheckpointContinuesExactContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacyPrompt := `你是 TimeCue 日程助手。通过真实工具查询或操作日程，只有工具的实际成功结果才能证明已完成，不能凭文字宣称已创建、已修改或已删除。
+用户指令明确、信息完整且目标唯一时直接执行，无需重复确认。缺少名称、日期、时刻、周期规则，或修改/删除目标不唯一时先澄清，不猜测时间、目标或规则。修改或删除前通过查询取得唯一 id 和当前 revision，以 expectedRevision 提交；版本冲突或目标不存在须如实报告，不自动重试，不换成新版本强行覆盖。删除的后台执行身份由后端管理，禁止填写或猜测幂等键。
+相对日期按每次实际解析时北京时间处理：将用户“明天上午九点”等规范为“明天 09:00”，保留今天/明天/后天/昨天原词交给工具解析，不根据运行或会话创建时间提前换算绝对日期。已取得的明确时间及实际结果按原事实使用。
+批量意图拆为独立单条操作，逐条报告成功或失败，不回滚其他成功操作；有依赖的操作必须分模型轮次，先取得前一步真实结果，再生成下一步工具调用。创建和修改没有业务幂等键，不按名称或时间猜测去重，不承诺恰好执行一次；结果未确认时不能断言未生效。`
+	prompt := mustJSON(chat.Message{
+		Role:    "system",
+		Content: legacyPrompt,
+	})
 	_, err = db.Exec(`INSERT INTO ai_checkpoints(run_id,model_call_id,status,state) VALUES('legacy',last_insert_rowid(),'model_call_end',
-		'{"context":[{"role":"user","content":"旧输入"},{"role":"assistant","content":"","tool_calls":[{"id":"old-id","type":"function","function":{"name":"get_schedule","arguments":" {\"id\":1} "}}]},{"role":"tool","content":"{\"name\":\"旧结果\"}","tool_call_id":"old-id"},{"role":"assistant","content":""},{"role":"assistant","content":"","tool_calls":[]},{"role":"assistant","content":"","tool_calls":null},{"role":"assistant","content":"","reasoning_content":"只留下思考"}],"completed_tool":[],"last_tool":""}')`)
+		'{"context":[' || ? || ',{"role":"user","content":"旧输入"},{"role":"assistant","content":"","tool_calls":[{"id":"old-id","type":"function","function":{"name":"get_schedule","arguments":" {\"id\":1} "}}]},{"role":"tool","content":"{\"name\":\"旧结果\"}","tool_call_id":"old-id"},{"role":"assistant","content":""},{"role":"assistant","content":"","tool_calls":[]},{"role":"assistant","content":"","tool_calls":null},{"role":"assistant","content":"","reasoning_content":"只留下思考"}],"completed_tool":[],"last_tool":""}')`, string(prompt))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +80,19 @@ func TestLegacyCheckpointContinuesExactContext(t *testing.T) {
 		emitText(w, "已接续")
 	}))
 	t.Cleanup(upstream.Close)
-	service := startAdmissionService(t, ports, completion.NewClient(nil), retrySettings(upstream.URL, 0))
+	startLoop := func() *loop.Run {
+		t.Helper()
+		service, err := loop.New(ctx, ports, retrySettings(upstream.URL, 0), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { shutdownContinuationLoop(service) })
+		if err := service.Activate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return service
+	}
+	service := startLoop()
 	input := admissionInput(record.SessionID, "next")
 	input.Input = "新输入"
 	receipt, err := service.CreateRun(ctx, input)
@@ -78,6 +100,10 @@ func TestLegacyCheckpointContinuesExactContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	actual := awaitHistoryRequest(t, requests)
+	if len(actual.Messages) == 0 || actual.Messages[0].Role != "system" ||
+		!strings.HasPrefix(actual.Messages[0].Content, legacyPrompt+"\n面向用户的回复只报告") {
+		t.Fatalf("未替换旧系统提示: %s", mustJSON(actual.Messages))
+	}
 	want := []chat.Message{
 		{
 			Role:    "user",
@@ -105,11 +131,11 @@ func TestLegacyCheckpointContinuesExactContext(t *testing.T) {
 			Content: "新输入",
 		},
 	}
-	if !reflect.DeepEqual(actual.Messages, want) {
+	if !reflect.DeepEqual(actual.Messages[1:], want) {
 		t.Fatalf("旧格式上下文被改变: %s", mustJSON(actual.Messages))
 	}
-	service.Stop()
-	resumed := startAdmissionService(t, ports, completion.NewClient(nil), retrySettings(upstream.URL, 0))
+	shutdownContinuationLoop(service)
+	resumed := startLoop()
 	if run := awaitRun(t, resumed, receipt.RunID); run.Status != chat.StatusSucceeded {
 		t.Fatalf("恢复失败: %+v", run)
 	}

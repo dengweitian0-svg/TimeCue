@@ -13,6 +13,9 @@ import (
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/loop"
+	"github.com/dengweitian0-svg/TimeCue/internal/app"
+	"github.com/dengweitian0-svg/TimeCue/internal/store"
 )
 
 // TestLengthContinuesTextAndThinking 验证真实长度结束保留消息边界、原调用和连续事件。
@@ -205,7 +208,7 @@ func TestLengthContinuationSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	var calls atomic.Int32
 	started := make(chan struct{})
-	inputs := make(chan chat.ModelRequest, 3)
+	inputs := make(chan chat.ModelRequest, 4)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request chat.ModelRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -215,8 +218,12 @@ func TestLengthContinuationSurvivesRestart(t *testing.T) {
 		inputs <- request
 		switch calls.Add(1) {
 		case 1:
-			emitLengthDelta(w, "content", "保留前段", "length")
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"旧轮正文\"}}]}\n\n")
+			emitTools(w, []chat.ToolRequest{toolRequest("query", "list_schedules", "{}")})
 		case 2:
+			emitLengthDelta(w, "content", "保留前段", "length")
+		case 3:
 			close(started)
 			<-r.Context().Done()
 		default:
@@ -224,9 +231,26 @@ func TestLengthContinuationSurvivesRestart(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	_, storage, _ := admissionDatabase(t)
+	db, storage, _ := admissionDatabase(t)
+	schedules, err := store.NewScheduleStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	application := &app.App{Schedule: schedules}
 	settings := retrySettings(upstream.URL, 0)
-	service := startAdmissionService(t, storage, completion.NewClient(nil), settings)
+	startLoop := func() *loop.Run {
+		t.Helper()
+		service, err := loop.New(ctx, storage, settings, application)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { shutdownContinuationLoop(service) })
+		if err := service.Activate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return service
+	}
+	service := startLoop()
 	receipt, err := service.CreateRun(ctx, admissionInput("restart-continuation", "first"))
 	if err != nil {
 		t.Fatal(err)
@@ -236,13 +260,13 @@ func TestLengthContinuationSurvivesRestart(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("continuation did not start")
 	}
-	service.Stop()
+	shutdownContinuationLoop(service)
 	before := eventPage(t, service, receipt.RunID, 0, 100)
 	firstCall, err := storage.Execution.ReadCall(ctx, receipt.RunID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	service = startAdmissionService(t, storage, completion.NewClient(nil), settings)
+	service = startLoop()
 	run := awaitFinishedRun(t, service, receipt.RunID)
 	if run.Status != chat.StatusSucceeded || run.Output == nil || *run.Output != "保留前段接续后段" {
 		t.Fatalf("run=%+v output=%v", run, run.Output)
@@ -253,6 +277,11 @@ func TestLengthContinuationSurvivesRestart(t *testing.T) {
 		t.Fatalf("recovery spent new call: first=%+v last=%+v count=%d err=%v %v", firstCall, lastCall, count, err, countErr)
 	}
 	<-inputs
+	second := <-inputs
+	if messages := second.Messages; len(messages) != 4 || messages[2].Content != "旧轮正文" ||
+		messages[3].Role != "tool" || messages[3].ToolCallID != "query" || messages[3].Content != "[]" {
+		t.Fatalf("普通回复请求缺失原工具配对: %s", mustJSON(messages))
+	}
 	original, replay := <-inputs, <-inputs
 	if string(mustJSON(original)) != string(mustJSON(replay)) {
 		t.Fatalf("request changed: %s / %s", mustJSON(original), mustJSON(replay))
@@ -261,6 +290,63 @@ func TestLengthContinuationSurvivesRestart(t *testing.T) {
 	if len(after.Events) <= len(before.Events) || string(mustJSON(after.Events[:len(before.Events)])) != string(mustJSON(before.Events)) {
 		t.Fatalf("old events rewritten: before=%s after=%s", mustJSON(before), mustJSON(after))
 	}
+}
+
+// TestLoopResumesSavedTextLengthWithEmptyToolCalls 验证旧库中的空工具列表仍走文字续写。
+func TestLoopResumesSavedTextLengthWithEmptyToolCalls(t *testing.T) {
+	for _, raw := range []string{"null", "[]"} {
+		t.Run(raw, func(t *testing.T) {
+			ctx := context.Background()
+			_, storage, _ := admissionDatabase(t)
+			call := recoveryCall(t, storage, "empty-tool-list")
+			call.Output = &chat.ModelOutput{
+				Message: chat.Message{
+					Role:      "assistant",
+					Content:   "截断前段",
+					ToolCalls: json.RawMessage(raw),
+				},
+				FinishReason: "length",
+			}
+			if err := storage.Execution.Pause(ctx, call); err != nil {
+				t.Fatal(err)
+			}
+			requests := make(chan chat.ModelRequest, 1)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request chat.ModelRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				requests <- request
+				emitText(w, "接续后段")
+			}))
+			t.Cleanup(upstream.Close)
+			service, err := loop.New(ctx, storage, retrySettings(upstream.URL, 0), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { shutdownContinuationLoop(service) })
+			if err := service.Activate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			request := awaitHistoryRequest(t, requests)
+			messages := request.Messages
+			if len(messages) != len(call.Input.Messages)+2 || messages[len(messages)-2].Content != "截断前段" ||
+				len(messages[len(messages)-2].ToolCalls) != 0 || messages[len(messages)-1].Content != "继续未完成的输出" {
+				t.Fatalf("恢复请求没有沿文字续写: %s", mustJSON(messages))
+			}
+			run := awaitFinishedRun(t, service, call.RunID)
+			if run.Status != chat.StatusSucceeded || run.Output == nil || *run.Output != "截断前段接续后段" {
+				t.Fatalf("续写终态未保留完整正文: %+v", run)
+			}
+		})
+	}
+}
+
+func shutdownContinuationLoop(service *loop.Run) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	service.Shutdown(ctx)
 }
 
 // TestLengthContinuationBudgetFailsWithAcceptedOutput 验证默认五次和配置预算耗尽均保留正常调用及全部正文。

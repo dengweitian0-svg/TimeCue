@@ -25,37 +25,42 @@ type subscriber struct {
 
 // Runtime 用真实存储和模型端口协调运行，内存只保存准入与订阅控制。
 type Runtime struct {
-	runs        RunRepository
-	sessions    SessionRepository
-	execution   ExecutionRepository
-	events      EventRepository
-	usage       UsageRepository
-	model       ModelClient
-	tools       *tools.Registry
-	toolStore   ToolRepository
-	settings    func() ([]ModelConfig, error)
-	mu          sync.Mutex
-	active      map[string]*execution
-	slots       chan struct{}
-	subscribers map[string]*subscriber
-	stopping    bool
-	started     bool
-	prepared    bool
-	recovery    []recoveryRun
-	toolWorkers sync.WaitGroup
-	subWorkers  sync.WaitGroup
-	shutdownCtx context.Context
-	storageCtx  context.Context
-	stopStorage context.CancelFunc
+	runs           RunRepository
+	sessions       SessionRepository
+	execution      ExecutionRepository
+	contextBuilder ContextBuilder
+	events         EventRepository
+	usage          UsageRepository
+	model          ModelClient
+	tools          *tools.Registry
+	toolStore      ToolRepository
+	settings       func() ([]ModelConfig, error)
+	mu             sync.Mutex
+	active         map[string]*execution
+	slots          chan struct{}
+	subscribers    map[string]*subscriber
+	stopping       bool
+	started        bool
+	prepared       bool
+	recovery       []recoveryRun
+	toolWorkers    sync.WaitGroup
+	subWorkers     sync.WaitGroup
+	shutdownCtx    context.Context
+	storageCtx     context.Context
+	stopStorage    context.CancelFunc
 }
 
 // NewService 装配真实聊天用例，不播种任何会话。
 func NewService(storage Storage, model ModelClient, settings func() ([]ModelConfig, error), registry *tools.Registry) *Runtime {
 	storageCtx, stopStorage := context.WithCancel(context.Background())
 	service := &Runtime{
-		runs:        storage.Runs,
-		sessions:    storage.Sessions,
-		execution:   storage.Execution,
+		runs:      storage.Runs,
+		sessions:  storage.Sessions,
+		execution: storage.Execution,
+		contextBuilder: ContextBuilder{
+			history: storage.Execution,
+			tools:   registry,
+		},
 		events:      storage.Events,
 		usage:       storage.Usage,
 		model:       model,
@@ -311,7 +316,7 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 		State:          StateRunning,
 		IdempotencyKey: input.IdempotencyKey,
 	}
-	request, err := s.newRequest(ctx, r, cfg)
+	request, err := s.contextBuilder.firstRequest(ctx, r, cfg)
 	if err != nil {
 		return Receipt{}, err
 	}

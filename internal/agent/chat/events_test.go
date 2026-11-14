@@ -189,7 +189,7 @@ func createEventRun(t *testing.T, s *chat.Runtime) string {
 	return r.RunID
 }
 
-func eventPage(t *testing.T, s *chat.Runtime, id string, after int64, limit int) chat.EventPage {
+func eventPage(t *testing.T, s chat.RunService, id string, after int64, limit int) chat.EventPage {
 	t.Helper()
 	p, err := s.GetRunEvents(context.Background(), id, after, limit)
 	if err != nil {
