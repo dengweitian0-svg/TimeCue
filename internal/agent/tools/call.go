@@ -46,7 +46,7 @@ func (tool ToolCall) WithResultUnconfirmed() ToolCall {
 
 // WithTerminalResult 保留已结算结果，并按运行取消和已登记事实补齐未完成项。
 func (tool ToolCall) WithTerminalResult(registered, cancelled bool) ToolCall {
-	if registered && tool.State != "running" && tool.State != "retry_wait" {
+	if registered && !tool.unsettled() {
 		return tool
 	}
 	if !cancelled || registered && tool.State == "running" {

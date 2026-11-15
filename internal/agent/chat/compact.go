@@ -20,7 +20,8 @@ const compactInstructions = `你正在执行一次上下文检查点压缩。
 
 摘要应简洁、结构清晰，专注于让接手的模型能够顺利继续工作。`
 
-func (c Compactor) beforeFirstCall(prepared PreparedRequest, cfg ModelConfig) (ModelRequest, bool) {
+// BeforeFirstCall 判断已准备的首个请求是否达到摘要阈值。
+func (c Compactor) BeforeFirstCall(prepared PreparedRequest, cfg ModelConfig) (ModelRequest, bool) {
 	messages := prepared.Input.Messages
 	if len(messages) == 0 {
 		return ModelRequest{}, false
@@ -36,12 +37,16 @@ func (c Compactor) beforeFirstCall(prepared PreparedRequest, cfg ModelConfig) (M
 	return ModelRequest{}, false
 }
 
-func (c Compactor) afterTools(request, base ModelRequest) (ModelRequest, *RunError) {
+// AfterTools 从已配齐工具的请求中提取待压缩历史。
+func (c Compactor) AfterTools(request, base ModelRequest) (ModelRequest, *RunError) {
 	// 普通上下文的首个已登记请求止于本轮真实输入。按完整前缀定位，
 	// 以保留同名旧输入和此前已生效的摘要。
 	index := len(base.Messages) - 1
 	if index < 0 || base.Messages[index].Role != "user" || !hasMessagePrefix(request.Messages, base.Messages) {
-		return ModelRequest{}, toolError("model_invalid_format", "无法从普通请求前缀定位本轮输入")
+		return ModelRequest{}, &RunError{
+			Code:    "model_invalid_format",
+			Message: "无法从普通请求前缀定位本轮输入",
+		}
 	}
 	history := cloneMessages(request.Messages)
 	history = append(history[:index], history[index+1:]...)
@@ -71,12 +76,14 @@ func withoutLeadingSystem(messages []Message) []Message {
 	return messages
 }
 
-func (Compactor) validResponse(output *ModelOutput) bool {
+// ValidResponse 检查摘要回复是否可以接纳。
+func (Compactor) ValidResponse(output *ModelOutput) bool {
 	return output != nil && !hasToolCalls(output.Message.ToolCalls) &&
 		(output.FinishReason == "stop" || output.FinishReason == "length")
 }
 
-func (Compactor) summary(call ModelCall) string {
+// Summary 拼接已接纳的摘要正文与续写。
+func (Compactor) Summary(call ModelCall) string {
 	var content strings.Builder
 	// 跳过专用系统提示和待压缩历史，只拼接已接纳的摘要正文。
 	for _, message := range call.Input.Messages[min(2, len(call.Input.Messages)):] {

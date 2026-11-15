@@ -25,7 +25,7 @@ import (
 const testSessionID = "550e8400-e29b-41d4-a716-446655440000"
 const testKeyUUID = "c9bf9e57-1685-4c89-bafb-ff5af830be8a"
 
-func chatHTTPFixture(t *testing.T, key string, handler http.HandlerFunc, configure ...func(*chat.Storage)) (http.Handler, *chat.Runtime) {
+func chatHTTPFixture(t *testing.T, key string, handler http.HandlerFunc, configure ...func(*chat.Storage)) (http.Handler, *loop.Run) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	upstream := httptest.NewServer(handler)
@@ -68,7 +68,7 @@ func chatHTTPFixture(t *testing.T, key string, handler http.HandlerFunc, configu
 	if err := service.Activate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return api.NewRouterWithPort(nil, service, nil, 10086), service.Runtime
+	return api.NewRouterWithPort(nil, service, nil, 10086), service
 }
 func chatRequest(router http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))

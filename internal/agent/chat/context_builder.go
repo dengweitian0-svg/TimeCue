@@ -18,6 +18,14 @@ type ContextBuilder struct {
 	tools *tools.Registry
 }
 
+// NewContextBuilder 使用历史读取端口和已注册的模型工具目录。
+func NewContextBuilder(history ExecutionRepository, registry *tools.Registry) ContextBuilder {
+	return ContextBuilder{
+		history: history,
+		tools:   registry,
+	}
+}
+
 const legacyScheduleInstructions = `你是 TimeCue 日程助手。通过真实工具查询或操作日程，只有工具的实际成功结果才能证明已完成，不能凭文字宣称已创建、已修改或已删除。
 用户指令明确、信息完整且目标唯一时直接执行，无需重复确认。缺少名称、日期、时刻、周期规则，或修改/删除目标不唯一时先澄清，不猜测时间、目标或规则。修改或删除前通过查询取得唯一 id 和当前 revision，以 expectedRevision 提交；版本冲突或目标不存在须如实报告，不自动重试，不换成新版本强行覆盖。删除的后台执行身份由后端管理，禁止填写或猜测幂等键。
 相对日期按每次实际解析时北京时间处理：将用户“明天上午九点”等规范为“明天 09:00”，保留今天/明天/后天/昨天原词交给工具解析，不根据运行或会话创建时间提前换算绝对日期。已取得的明确时间及实际结果按原事实使用。
@@ -26,7 +34,8 @@ const legacyScheduleInstructions = `你是 TimeCue 日程助手。通过真实�
 const scheduleInstructions = legacyScheduleInstructions + `
 面向用户的回复只报告日程名称、时间、周期、启停状态、操作结果等业务信息。内部 ID、revision、version、expectedRevision、open 等原始字段只用于工具调用，不在回复中列出或作为附注；将启停状态写成“已启用”或“已停用”。`
 
-func (b ContextBuilder) firstRequest(ctx context.Context, r Record, cfg ModelConfig) (ModelRequest, error) {
+// FirstRequest 根据已提交历史构造本轮首个普通请求。
+func (b ContextBuilder) FirstRequest(ctx context.Context, r Record, cfg ModelConfig) (ModelRequest, error) {
 	history, err := b.history.History(ctx, r.SessionID)
 	if err != nil {
 		return ModelRequest{}, err
@@ -55,7 +64,8 @@ func (b ContextBuilder) firstRequest(ctx context.Context, r Record, cfg ModelCon
 	}, nil
 }
 
-func (ContextBuilder) followupRequest(call ModelCall, continuation bool) ModelRequest {
+// FollowupRequest 根据已接纳的回复及工具进度组装后续请求。
+func (ContextBuilder) FollowupRequest(call ModelCall, continuation bool) ModelRequest {
 	request := call.Input
 	messages := call.CheckpointContext
 	if call.CheckpointStage == "compact" {
@@ -65,7 +75,7 @@ func (ContextBuilder) followupRequest(call ModelCall, continuation bool) ModelRe
 	if call.CheckpointStage == "compact" && call.Output != nil {
 		request.Messages = appendAssistant(request.Messages, call.Output.Message)
 	}
-	if continuation && !call.hasToolCalls() {
+	if continuation && !call.HasToolCalls() {
 		request.Messages = append(request.Messages, Message{
 			Role:    "user",
 			Content: "继续未完成的输出",
@@ -74,7 +84,8 @@ func (ContextBuilder) followupRequest(call ModelCall, continuation bool) ModelRe
 	return request
 }
 
-func (ContextBuilder) withSummary(request ModelRequest, summary string) ModelRequest {
+// WithSummary 保留系统提示和本轮输入，中间使用已生效的摘要。
+func (ContextBuilder) WithSummary(request ModelRequest, summary string) ModelRequest {
 	messages := request.Messages
 	systemCount := len(messages) - len(withoutLeadingSystem(messages))
 	request.Messages = append(cloneMessages(messages[:systemCount]), Message{
@@ -85,7 +96,7 @@ func (ContextBuilder) withSummary(request ModelRequest, summary string) ModelReq
 }
 
 func appendAssistant(messages []Message, message Message) []Message {
-	if !hasAssistantContent(message) {
+	if !HasAssistantContent(message) {
 		return messages
 	}
 	if hasToolCalls(message.ToolCalls) {
@@ -136,7 +147,8 @@ func cloneMessages(messages []Message) []Message {
 	return result
 }
 
-func hasAssistantContent(message Message) bool {
+// HasAssistantContent 判断助手消息是否包含正文、思考或工具调用。
+func HasAssistantContent(message Message) bool {
 	return message.Content != "" || message.ReasoningContent != "" || hasToolCalls(message.ToolCalls)
 }
 
@@ -154,7 +166,8 @@ func hasToolCalls(raw json.RawMessage) bool {
 	return true
 }
 
-func (call ModelCall) hasToolCalls() bool {
+// HasToolCalls 判断回复是否包含实际工具调用，兼容旧空数组。
+func (call ModelCall) HasToolCalls() bool {
 	return call.Output != nil && hasToolCalls(call.Output.Message.ToolCalls)
 }
 
@@ -163,7 +176,7 @@ func (state CheckpointState) History(status RunState) []Message {
 	messages := make([]Message, 0, len(state.Context)+1)
 	for _, message := range cloneMessages(state.Context) {
 		// 兼容旧快照的全空 assistant，保留仅思考回复及原工具配对。
-		if message.Role != "assistant" || hasAssistantContent(message) {
+		if message.Role != "assistant" || HasAssistantContent(message) {
 			messages = append(messages, message)
 		}
 	}

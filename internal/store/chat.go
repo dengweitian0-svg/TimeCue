@@ -373,10 +373,24 @@ func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall) error {
 	return err
 }
 
+func requireRunningChatRun(ctx context.Context, tx *sql.Tx, runID string) error {
+	var state chat.RunState
+	if err := tx.QueryRowContext(ctx, "SELECT status FROM ai_runs WHERE run_id=?", runID).Scan(&state); err != nil {
+		return err
+	}
+	if state != chat.StateRunning {
+		return context.Canceled
+	}
+	return nil
+}
+
 // BeginCall 在请求前原子保存实际 input、running 和 checkpoint。
 func (s *chatStore) BeginCall(ctx context.Context, call chat.ModelCall) (int64, error) {
 	var id int64
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		if err := requireRunningChatRun(ctx, tx, call.RunID); err != nil {
+			return err
+		}
 		var err error
 		call, err = beginChatCall(ctx, tx, call)
 		id = call.ID
@@ -423,12 +437,8 @@ func (s *chatStore) CompleteCompact(ctx context.Context, call chat.ModelCall, ne
 	}
 	result := call
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		var status chat.RunState
-		if err := tx.QueryRowContext(ctx, `SELECT status FROM ai_runs WHERE run_id=?`, call.RunID).Scan(&status); err != nil {
+		if err := requireRunningChatRun(ctx, tx, call.RunID); err != nil {
 			return err
-		}
-		if status != chat.StateRunning {
-			return context.Canceled
 		}
 		if err := saveCall(ctx, tx, call, true); err != nil {
 			return err
@@ -500,8 +510,8 @@ func readCall(ctx context.Context, reader schemaReader, id string) (*chat.ModelC
 	call := &chat.ModelCall{RunID: id}
 	var input, retries, progress string
 	var nextRetry sql.NullInt64
-	var output, failure sql.NullString
-	err := reader.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.status,m.error,m.max_retry,m.retry_count,m.next_retry_at,m.retry_history,m.continuation,c.status,c.state FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &call.State, &failure, &call.MaxRetry, &call.RetryCount, &nextRetry, &retries, &call.Continuation, &call.CheckpointStage, &progress)
+	var output, usage, failure sql.NullString
+	err := reader.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.usage,m.status,m.error,m.max_retry,m.retry_count,m.next_retry_at,m.retry_history,m.continuation,c.status,c.state FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &usage, &call.State, &failure, &call.MaxRetry, &call.RetryCount, &nextRetry, &retries, &call.Continuation, &call.CheckpointStage, &progress)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -528,6 +538,14 @@ func readCall(ctx context.Context, reader schemaReader, id string) (*chat.ModelC
 		if err = json.Unmarshal([]byte(output.String), &call.Output); err != nil {
 			return nil, err
 		}
+		if call.Output != nil {
+			// 用量以独立列为准，部分流式响应的 SQL NULL 表示尚未获得用量。
+			call.Output.Usage = nil
+			if usage.Valid {
+				call.Output.Usage = json.RawMessage(usage.String)
+			}
+		}
+		*call = call.WithOutputSaved()
 	}
 	if failure.Valid {
 		if err = json.Unmarshal([]byte(failure.String), &call.Error); err != nil {
@@ -626,6 +644,18 @@ func saveCall(ctx context.Context, tx *sql.Tx, call chat.ModelCall, finished boo
 // SaveEvents 原子保存部分响应与原始事件批次，订阅只读取已提交数据。
 func (s *chatStore) SaveEvents(ctx context.Context, call chat.ModelCall) error {
 	return s.transaction(ctx, func(tx *sql.Tx) error {
+		// 重试进入 running 时仍须有执行权；已在途的实际增量允许随取消收尾保存。
+		if call.State == chat.StateRunning && call.RetryCount > 0 {
+			var waiting bool
+			if err := tx.QueryRowContext(ctx, "SELECT status='retry_wait' FROM ai_model_calls WHERE id=?", call.ID).Scan(&waiting); err != nil {
+				return err
+			}
+			if waiting {
+				if err := requireRunningChatRun(ctx, tx, call.RunID); err != nil {
+					return err
+				}
+			}
+		}
 		if err := saveCall(ctx, tx, call, false); err != nil {
 			return err
 		}
@@ -646,30 +676,38 @@ func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Reco
 		// 取消受理与正常收尾可能竞争，已提交的取消意图优先于旧终态快照。
 		if state == chat.StateWaitForCancel && (r.Error == nil || r.Error.Code != "persistence_failed") {
 			r.State, r.Error = chat.StateCancelled, nil
-			if !call.State.Terminal() {
-				call.State, call.Error = chat.StateCancelled, nil
-			}
 		}
-		if call.ID != 0 {
-			// 终态事务内回读实际已提交调用、checkpoint 与工具事实，成功调用不可被旧快照覆盖。
-			committed, err := readCall(ctx, tx, r.RunID)
-			if err != nil {
-				return err
-			}
-			if committed == nil || committed.ID != call.ID {
-				return chat.ErrInvalidRequest
-			}
-			if committed.State.Terminal() {
+		// 即使调用登记的回执丢失，也从当前 checkpoint 取得已提交调用。
+		committed, err := readCall(ctx, tx, r.RunID)
+		if err != nil {
+			return err
+		}
+		if committed == nil && call.ID != 0 {
+			return chat.ErrInvalidRequest
+		}
+		if committed != nil {
+			switch {
+			case committed.State.Terminal() && committed.ID == call.ID:
 				pending := call.PendingTools
 				call = *committed
 				call.PendingTools = pending
+				r.Output = call.PresentedOutput()
+			case !call.BasedOn(*committed):
+				// 回执丢失或旧快照不再拥有待提交事件，避免重写正文或追加已提交批次。
+				sameCall := committed.ID == call.ID
+				call = *committed
+				if output := call.PresentedOutput(); sameCall || output != nil {
+					r.Output = output
+				}
+			default:
+				call = call.WithCheckpoint(committed.CheckpointStage, committed.Checkpoint())
 			}
 			stored, err := readTools(ctx, tx, call.ID)
 			if err != nil {
 				return err
 			}
 			var results []chat.ToolCall
-			call, results, err = call.WithRunFinished(r.State, stored)
+			call, results, err = call.WithRunFinished(r.State, r.Error, stored)
 			if err != nil {
 				return err
 			}

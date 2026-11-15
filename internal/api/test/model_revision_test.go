@@ -9,6 +9,7 @@ import (
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/loop"
 	"github.com/dengweitian0-svg/TimeCue/internal/api"
 	"github.com/dengweitian0-svg/TimeCue/internal/config"
 )
@@ -41,7 +42,7 @@ func TestModelListReportsPublishedRevision(t *testing.T) {
 	if err := load(); err != nil {
 		t.Fatal(err)
 	}
-	service := chat.NewService(chat.Storage{}, completion.NewClient(nil), manager.ChatModels, nil)
+	service := loop.NewWithPorts(chat.Storage{}, completion.NewClient(nil), manager.ChatModels, nil)
 	router := api.NewRouterWithPort(nil, service, nil, 10086)
 	check := func(revision string) {
 		t.Helper()

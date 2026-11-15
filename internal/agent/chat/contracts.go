@@ -120,6 +120,20 @@ type Record struct {
 	IdempotencyKey string
 }
 
+// Receipt 构造首次创建或幂等重放的公开回执。
+func (r Record) Receipt(created bool) Receipt {
+	result := Receipt{
+		RunID:   r.RunID,
+		Status:  r.State.Public(),
+		created: created,
+	}
+	if r.State != StateRunning {
+		result.Output = r.Output
+		result.Error = r.Error
+	}
+	return result
+}
+
 // Session 是可见会话及按创建顺序排列的运行 ID。
 type Session struct {
 	SessionID   string   `json:"session_id"`
@@ -307,6 +321,7 @@ type ModelCall struct {
 	// InputBody 保存本次逻辑调用的最终请求原文，直到调用结束都不重新编码。
 	InputBody    string
 	Output       *ModelOutput
+	savedOutput  *ModelOutput
 	State        RunState
 	Error        *RunError
 	MaxRetry     int

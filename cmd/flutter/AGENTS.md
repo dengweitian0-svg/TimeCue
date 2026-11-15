@@ -5,4 +5,4 @@
 - `http.go` 管理唯一的 HTTP 服务与 ready 握手。HTTP 和 Loop 并行收尾，分别有 5 秒和 30 秒。App 收到全局退出和实际 LoopDone 后取得独立 30 秒。宿主等待服务与在途请求退出后释放共享数据库。
 - `managed.go` 处理启动参数、托管 ready 编码与父端停止控制。
 - `control_windows.go` 提供 Windows 控制管道读取。
-- `*_test.go` 覆盖启动参数、控制协议及真实进程的启动、退出和聊天恢复。
+- `*_test.go` 覆盖启动参数、控制协议及真实进程的启动、退出和聊天恢复。testdata 中的 SQLite v3 夹具由重构前的生产入口和合成上游生成。
