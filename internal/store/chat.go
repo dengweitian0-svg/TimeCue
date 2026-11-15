@@ -538,8 +538,12 @@ func readCall(ctx context.Context, reader schemaReader, id string) (*chat.ModelC
 		if err = json.Unmarshal([]byte(output.String), &call.Output); err != nil {
 			return nil, err
 		}
-		if call.Output != nil && usage.Valid {
-			call.Output.Usage = json.RawMessage(usage.String)
+		if call.Output != nil {
+			// 用量以独立列为准，部分流式响应的 SQL NULL 表示尚未获得用量。
+			call.Output.Usage = nil
+			if usage.Valid {
+				call.Output.Usage = json.RawMessage(usage.String)
+			}
 		}
 		*call = call.WithOutputSaved()
 	}

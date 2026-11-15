@@ -22,6 +22,10 @@ import (
 func TestRunUsageRecomputesPersistedFacts(t *testing.T) {
 	const raw = `{"prompt_tokens":11,"completion_tokens":7,"total_tokens":99,"prompt_cache_hit_tokens":3,"completion_tokens_details":{"reasoning_tokens":2}}`
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 先提交一批没有 usage 的增量，随后再收到完整回复和用量。
+		for i := 0; i < 5; i++ {
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"前段\"}}]}\n\n")
+		}
 		fmt.Fprintf(w, "data: {\"id\":\"actual\",\"choices\":[{\"delta\":{\"content\":\"真实正文\"},\"finish_reason\":\"stop\"}],\"usage\":%s}\n\ndata: [DONE]\n\n", raw)
 	}))
 	defer upstream.Close()
@@ -33,6 +37,11 @@ func TestRunUsageRecomputesPersistedFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := awaitFinishedRun(t, service, receipt.RunID)
+	saved, err := ports.Execution.ReadCall(ctx, run.RunID)
+	if err != nil || saved == nil || saved.Output == nil || saved.Output.ID != "actual" ||
+		run.Output == nil || *run.Output != strings.Repeat("前段", 5)+"真实正文" {
+		t.Fatalf("增量提交后完整响应丢失: run=%+v call=%+v err=%v", run, saved, err)
+	}
 	other, err := service.CreateRun(ctx, admissionInput("other", "first"))
 	if err != nil {
 		t.Fatal(err)
