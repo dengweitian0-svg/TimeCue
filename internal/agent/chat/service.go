@@ -33,7 +33,7 @@ type Runtime struct {
 	events         EventRepository
 	usage          UsageRepository
 	model          ModelClient
-	tools          *tools.Registry
+	toolFactory    *tools.ToolFactory[ModelCall]
 	toolStore      ToolRepository
 	settings       func() ([]ModelConfig, error)
 	mu             sync.Mutex
@@ -44,7 +44,6 @@ type Runtime struct {
 	started        bool
 	prepared       bool
 	recovery       []recoveryRun
-	toolWorkers    sync.WaitGroup
 	subWorkers     sync.WaitGroup
 	shutdownCtx    context.Context
 	storageCtx     context.Context
@@ -70,10 +69,16 @@ func NewService(storage Storage, model ModelClient, settings func() ([]ModelConf
 		slots:       make(chan struct{}, 3),
 		subscribers: map[string]*subscriber{},
 		toolStore:   storage.Tools,
-		tools:       registry,
 		storageCtx:  storageCtx,
 		stopStorage: stopStorage,
 	}
+	service.toolFactory = tools.NewToolFactory(registry, storage.Tools, tools.BatchControl{
+		PersistenceContext: service.persistenceContext,
+		StartContext:       service.storageCtx,
+		StartGate:          &service.mu,
+		RunLifecycle:       service.toolRunLifecycle,
+		ReadSettings:       service.currentToolSettings,
+	})
 	return service
 }
 
@@ -213,7 +218,7 @@ func (s *Runtime) Shutdown(ctx context.Context) {
 }
 
 // WaitForTools 等待已撤销的工具实际返回，宿主随后才能关闭 App 和数据库。
-func (s *Runtime) WaitForTools() { s.toolWorkers.Wait() }
+func (s *Runtime) WaitForTools() { s.toolFactory.Wait() }
 
 func (s *Runtime) persistenceContext() context.Context {
 	s.mu.Lock()
@@ -429,30 +434,16 @@ func (s *Runtime) readCancellationResults(call ModelCall, cfg ModelConfig) Model
 	if call.ID == 0 || s.toolStore == nil {
 		return call
 	}
-	stored, err := s.toolStore.ReadTools(s.persistenceContext(), call.ID)
+	batch := tools.Batch{
+		RunID:       call.RunID,
+		ModelCallID: call.ID,
+	}
+	results, err := s.toolFactory.CancellationResults(s.persistenceContext(), batch, call, cfg.toolSettings())
 	if err != nil {
 		logger.Error("[chat] 取消恢复读取工具失败", "run_id", call.RunID, "model_call_id", call.ID, "error", err)
 		return call
 	}
-	for _, tool := range stored {
-		if tool.State != "running" && tool.State != "retry_wait" || call.ToolCompleted(tool.Request.ID) {
-			continue
-		}
-		output, found, err := s.tools.ReadResult(tools.WithExecutionKey(s.persistenceContext(), tool.IdempotencyKey), tool.Request.Function.Name, tool.Request.Function.Arguments)
-		if err != nil {
-			logger.Warn("[chat] 取消恢复未确认业务回执", "run_id", call.RunID, "tool_call_id", tool.Request.ID, "error", err)
-		}
-		if found {
-			tool.State, tool.Output, tool.Error, tool.NextRetryAt = "succeeded", output, nil, nil
-		} else if tool.State == "running" {
-			tool = tool.WithResultUnconfirmed()
-		} else {
-			// 没有实际回执的退避项仍由统一进度跳过，绝不进入写入入口。
-			continue
-		}
-		tool.ModelContentLimit = cfg.ToolResultMaxTokens
-		call.PendingTools = append(call.PendingTools, tool)
-	}
+	call.PendingTools = append(call.PendingTools, results...)
 	return call
 }
 

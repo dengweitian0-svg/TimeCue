@@ -3,6 +3,8 @@ package chat
 import (
 	"encoding/json"
 	"slices"
+
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
 )
 
 // CheckpointState 是版本 3 的三字段磁盘格式，不持有独立于 ModelCall 的可推进状态。
@@ -123,22 +125,10 @@ func (call ModelCall) WithToolResult(tool ToolCall) ModelCall {
 
 func (call ModelCall) toolBatchComplete() bool {
 	var requests []ToolRequest
-	if call.Output == nil || json.Unmarshal(call.Output.Message.ToolCalls, &requests) != nil || len(requests) == 0 {
+	if call.Output == nil || json.Unmarshal(call.Output.Message.ToolCalls, &requests) != nil {
 		return false
 	}
-	for _, request := range requests {
-		if !call.ToolCompleted(request.ID) {
-			return false
-		}
-	}
-	return true
-}
-
-// WithResultUnconfirmed 保留原调用身份，为无法确认的处理生成统一失败事实。
-func (tool ToolCall) WithResultUnconfirmed() ToolCall {
-	tool.State = "failed"
-	tool.Error = toolError("tool_result_unconfirmed", "中断前工具结果未能确认，未重新执行")
-	return tool
+	return (tools.Batch{Requests: requests}).Complete(call)
 }
 
 // WithRunFinished 沿事务内已提交事实收拢异常批次，实际结果优先于取消或未确认补齐。
@@ -175,17 +165,10 @@ func (call ModelCall) WithRunFinished(status RunState, stored []ToolCall) (Model
 			tool = ToolCall{
 				ModelCallID: call.ID,
 				Request:     request,
-				MaxRetry:    3,
+				MaxRetry:    tools.DefaultMaxRetry,
 			}
 		}
-		if !exists || tool.State == "running" || tool.State == "retry_wait" {
-			tool = tool.WithResultUnconfirmed()
-			if status == StateCancelled && (!exists || known[request.ID].State == "retry_wait") {
-				tool.State = "skipped"
-				tool.Output = nil
-				tool.Error = toolError("tool_skipped", "运行已取消，未启动或未恢复此工具")
-			}
-		}
+		tool = tool.WithTerminalResult(exists, status == StateCancelled)
 		call = call.WithToolResult(tool)
 		results = append(results, tool)
 	}

@@ -3,6 +3,8 @@ package chat
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
 )
 
 // partialJSONContext 只闭合已有容器和字符串；不完整字段或字面值整体省略，不推测业务值。
@@ -122,13 +124,13 @@ func (call ModelCall) toolFeedback(tool ToolCall, content string) string {
 		return content
 	}
 	feedback, _ := json.Marshal(struct {
-		*RunError
+		*tools.Failure
 		Context json.RawMessage `json:"context_arguments"`
 		Notice  string          `json:"notice"`
 	}{
-		RunError: tool.Error,
-		Context:  partialJSONContext(tool.Request.Function.Arguments),
-		Notice:   "该工具参数不完整，未执行业务操作，请重新输出完整调用；格式补全仅供理解已接收内容，省略未完成字段，不代表可执行参数，不得拼接两次 arguments。",
+		Failure: tool.Error,
+		Context: partialJSONContext(tool.Request.Function.Arguments),
+		Notice:  "该工具参数不完整，未执行业务操作，请重新输出完整调用；格式补全仅供理解已接收内容，省略未完成字段，不代表可执行参数，不得拼接两次 arguments。",
 	})
 	return string(feedback)
 }

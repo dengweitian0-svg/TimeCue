@@ -115,6 +115,7 @@ func TestAssistantDeletePersistsIdentityAndPairsActualResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertSerialToolEvents(t, page.Events)
 	results := map[string]chat.ToolResultData{}
 	for _, event := range page.Events {
 		if event.Type == chat.EventError {
@@ -166,17 +167,9 @@ func deleteFixture(t *testing.T) (*store.Sqlite, chat.Storage, *app.App, string)
 
 func deleteRegistry(t *testing.T, application *app.App) *tools.Registry {
 	t.Helper()
-	definitions := append(tools.ScheduleTools(application), tools.ScheduleWriteTools(application, nil)...)
-	definitions = append(definitions, tools.ScheduleDeleteTools(application)...)
-	registry, err := tools.NewRegistry(context.Background(), definitions...)
+	registry, err := tools.NewScheduleRegistry(context.Background(), application)
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, definition := range registry.Definitions() {
-		info, _ := registry.Lookup(definition.Function.Name)
-		if info.Dangerous != (info.Name == "delete_schedule") || info.Name == "delete_schedule" && info.Parallel {
-			t.Fatalf("危险或串行元数据错误: %+v", info)
-		}
 	}
 	return registry
 }

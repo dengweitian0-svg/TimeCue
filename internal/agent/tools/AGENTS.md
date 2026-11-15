@@ -1,6 +1,8 @@
 # 工具注册与日程业务
 
-- `registry.go` 定义工具契约、注册、参数校验及回执核对入口。
+- `registry.go` 从同一份 schema 生成模型定义并校验执行参数，执行策略仅在模块内部读取。
+- `factory.go` 管理批次调度、热配置、超时与重试，通过现有存储事务登记尝试和逐项结算。
+- `call.go` 定义原调用身份、参数和结果事实。`recovery.go` 沿原身份只读核对回执。
 - `schedule.go` 提供单条、列表和日期查询，`schedule_write.go` 提供创建与修改。
 - `schedule_delete.go` 提供版本删除和只读回执核对，`time.go` 解析时间参数。
 

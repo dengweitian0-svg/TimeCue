@@ -3,7 +3,7 @@
 - `contracts.go` 定义聊天用例、模型和存储端口。`service.go` 管理会话、运行准入、取消和生命周期。
 - `context_builder.go` 组装有效历史和模型消息，沿实际请求前缀恢复续写正文。`request.go` 准备最终请求正文并检查预算，`model_retry.go` 管理模型调用、重试及恢复。
 - `progress.go` 生成可保存的进度快照，`event_batch.go` 管理流式事件批次，`persistence.go` 处理保存失败和终态重试。
-- `tool_loop.go` 衔接模型与工具批次，`tool_attempts.go` 调度工具尝试。`tool_content.go` 和 `argument_feedback.go` 生成模型侧反馈。
+- `tool_loop.go` 衔接模型与下一轮对话，`tool_batch.go` 向 ToolFactory 交付已接纳批次及运行门禁，并采用其已提交进度。`tool_content.go` 和 `argument_feedback.go` 生成模型侧反馈。
 - `compact.go` 提取待压缩历史、构造无工具摘要请求并校验正文。`compact_flow.go` 推进摘要与续写，原子提交有效摘要及下一普通调用或运行终态。
 - `usage.go` 定义只读模型用量用例。
 - `*_test.go` 按准入、取消、模型、工具、事件、摘要、用量和持久化故障分组。

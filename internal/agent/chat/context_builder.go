@@ -31,9 +31,7 @@ func (b ContextBuilder) firstRequest(ctx context.Context, r Record, cfg ModelCon
 	if err != nil {
 		return ModelRequest{}, err
 	}
-	_, writes := b.tools.Lookup("create_schedule")
-	_, deletes := b.tools.Lookup("delete_schedule")
-	if writes || deletes {
+	if b.tools.Has("create_schedule") || b.tools.Has("delete_schedule") {
 		if len(history) > 0 && history[0].Role == "system" && history[0].Content == legacyScheduleInstructions {
 			history = history[1:]
 		}
