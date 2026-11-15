@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 
@@ -131,10 +132,53 @@ func (call ModelCall) toolBatchComplete() bool {
 	return (tools.Batch{Requests: requests}).Complete(call)
 }
 
+// WithOutputSaved 记录调用快照已提交的响应，隔离后续流式追加。
+func (call ModelCall) WithOutputSaved() ModelCall {
+	call.savedOutput = nil
+	if call.Output != nil {
+		saved := *call.Output
+		call.savedOutput = &saved
+	}
+	return call
+}
+
+// BasedOn 判断调用是否源自该已提交事实，区分旧快照和重放得到的新响应。
+func (call ModelCall) BasedOn(committed ModelCall) bool {
+	if call.ID != committed.ID || call.RetryCount < committed.RetryCount {
+		return false
+	}
+	if call.savedOutput == nil || committed.Output == nil {
+		return call.savedOutput == committed.Output
+	}
+	// 独立 usage 列保留原字节，不能只比较 JSON 结构。
+	if !bytes.Equal(call.savedOutput.Usage, committed.Output.Usage) {
+		return false
+	}
+	saved, savedErr := json.Marshal(call.savedOutput)
+	actual, actualErr := json.Marshal(committed.Output)
+	return savedErr == nil && actualErr == nil && bytes.Equal(saved, actual)
+}
+
+func (call ModelCall) withFinishedState(status RunState, failure *RunError) ModelCall {
+	if call.State.Terminal() {
+		return call
+	}
+	call.State, call.Error, call.NextRetryAt = status, failure, nil
+	call.RetryHistory = slices.Clone(call.RetryHistory)
+	if len(call.RetryHistory) > 0 {
+		last := &call.RetryHistory[len(call.RetryHistory)-1]
+		switch last.Result {
+		case "retry_wait", "running", "interrupted":
+			last.Result, last.Error = string(status), failure
+		}
+	}
+	return call
+}
+
 // WithRunFinished 沿事务内已提交事实收拢异常批次，实际结果优先于取消或未确认补齐。
-func (call ModelCall) WithRunFinished(status RunState, stored []ToolCall) (ModelCall, []ToolCall, error) {
-	call = call.WithCallEnded()
-	if call.State != StateSucceeded || !call.hasToolCalls() || status == StateSucceeded {
+func (call ModelCall) WithRunFinished(status RunState, failure *RunError, stored []ToolCall) (ModelCall, []ToolCall, error) {
+	call = call.withFinishedState(status, failure).WithCallEnded()
+	if call.State != StateSucceeded || !call.HasToolCalls() || status == StateSucceeded {
 		return call, nil, nil
 	}
 	var requests []ToolRequest

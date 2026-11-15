@@ -157,10 +157,6 @@ func (attempt *toolAttempt) accepts(result toolAttemptResult) bool {
 	return attempt.token == result.token && !result.finishedAt.After(deadline)
 }
 
-func toolRetryable(failure *Failure) bool {
-	return failure != nil && (failure.Code == "tool_timeout" || failure.Code == "tool_temporary_error")
-}
-
 // RunBatch 调度已接纳的批次并返回实际提交的配对进度。事务故障时一并交回已取得的结果。
 func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg Settings) (result P, pending []ToolCall, failure *BatchFailure) {
 	// 读取配置失败时保留最近一次有效设置；已登记的尝试保留原预算及期限。
@@ -210,11 +206,8 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 	settle := func(tool ToolCall) *BatchFailure {
 		refreshConfig()
 		tool.ModelContentLimit = contentLimit
-		if toolRetryable(tool.Error) && tool.RetryCount < tool.MaxRetry && f.canRetry(ctx, batch.RunID) {
-			next := time.Now().Add(agent.RetryDelay(tool.RetryCount + 1))
-			if latest := time.Unix(0, 1<<63-1); next.After(latest) {
-				next = latest
-			}
+		if tool.canRetry() && f.canRetry(ctx, batch.RunID) {
+			next := agent.RetryAt(time.Now(), tool.RetryCount+1)
 			tool.State, tool.NextRetryAt = "retry_wait", &next
 			if err := f.store.WaitToolRetry(f.control.PersistenceContext(), tool); err != nil {
 				// 保存退避失败也保留本次实际错误，不将已取得的结果改为未确认。
@@ -237,7 +230,7 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 	// 恢复先核对原身份的只读回执；命中是已有事实，不是一次新的业务尝试。
 	// retry_wait 也可能来自业务提交后返回的暂时故障，核对不受退避或剩余预算阻挡。
 	for _, tool := range stored {
-		if call.ToolCompleted(tool.Request.ID) || tool.State != "running" && tool.State != "retry_wait" {
+		if call.ToolCompleted(tool.Request.ID) || !tool.unsettled() {
 			continue
 		}
 		confirmed, found, err := f.readReceipt(f.control.PersistenceContext(), tool)
@@ -312,7 +305,7 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 				continue
 			}
 			tool, exists := known[request.ID]
-			if exists && tool.State == "retry_wait" && tool.NextRetryAt != nil && time.Now().Before(*tool.NextRetryAt) {
+			if tool.retryWait() > 0 {
 				continue
 			}
 			entry, registered := f.registry.lookup(request.Function.Name)
@@ -331,7 +324,7 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 					tool.IdempotencyKey = "tool:" + request.ID + ":" + uuid.NewString()
 				}
 			} else {
-				if tool.State != "running" && tool.State != "retry_wait" {
+				if !tool.unsettled() {
 					return call, pending, batchFailure("tool_state", fmt.Errorf("工具 %s 的已提交状态 %s 缺少配对进度", tool.Request.ID, tool.State))
 				}
 				if tool.RetryCount >= tool.MaxRetry {
@@ -408,8 +401,8 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 		}
 		if ctx.Err() == nil {
 			for id, tool := range known {
-				if active[id] == nil && !call.ToolCompleted(id) && tool.State == "retry_wait" && tool.NextRetryAt != nil {
-					if remaining := time.Until(*tool.NextRetryAt); remaining > 0 && remaining < wait {
+				if active[id] == nil && !call.ToolCompleted(id) {
+					if remaining := tool.retryWait(); remaining > 0 && remaining < wait {
 						wait = remaining
 					}
 				}

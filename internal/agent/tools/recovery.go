@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"time"
 
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
 )
@@ -22,7 +23,7 @@ func (f *ToolFactory[P]) CancellationResults(ctx context.Context, batch Batch, p
 	}
 	var results []ToolCall
 	for _, tool := range stored {
-		if tool.State != "running" && tool.State != "retry_wait" || progress.ToolCompleted(tool.Request.ID) {
+		if !tool.unsettled() || progress.ToolCompleted(tool.Request.ID) {
 			continue
 		}
 		confirmed, found, err := f.readReceipt(ctx, tool)
@@ -41,4 +42,20 @@ func (f *ToolFactory[P]) CancellationResults(ctx context.Context, batch Batch, p
 		results = append(results, tool)
 	}
 	return results, nil
+}
+
+func (tool ToolCall) unsettled() bool {
+	return tool.State == "running" || tool.State == "retry_wait"
+}
+
+func (tool ToolCall) retryWait() time.Duration {
+	if tool.State != "retry_wait" || tool.NextRetryAt == nil {
+		return 0
+	}
+	return time.Until(*tool.NextRetryAt)
+}
+
+func (tool ToolCall) canRetry() bool {
+	return tool.RetryCount < tool.MaxRetry && tool.Error != nil &&
+		(tool.Error.Code == "tool_timeout" || tool.Error.Code == "tool_temporary_error")
 }

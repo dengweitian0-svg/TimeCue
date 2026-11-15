@@ -204,6 +204,7 @@ func TestManagedProcess(t *testing.T) {
 	}
 	_ = probe.Close()
 	t.Run("chat-recovery", func(t *testing.T) { managedChatRecovery(t, binary, root) })
+	t.Run("chat-legacy-v3", func(t *testing.T) { managedLegacyChatRecovery(t, binary, root) })
 	directory := processFixture(t, root, "valid")
 	for _, reason := range []string{"shutdown", "eof", "invalid", "oversized", "restart"} {
 		t.Run(reason, func(t *testing.T) {
