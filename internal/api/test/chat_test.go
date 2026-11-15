@@ -15,8 +15,9 @@ import (
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
-	"github.com/dengweitian0-svg/TimeCue/internal/agent/completion"
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/loop"
 	"github.com/dengweitian0-svg/TimeCue/internal/api"
+	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -41,7 +42,12 @@ func chatHTTPFixture(t *testing.T, key string, handler http.HandlerFunc, configu
 	for _, apply := range configure {
 		apply(&ports)
 	}
-	service := chat.NewService(ports, completion.NewClient(nil), func() ([]chat.ModelConfig, error) {
+	schedules, err := store.NewScheduleStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	service, err := loop.New(ctx, ports, func() ([]chat.ModelConfig, error) {
 		return []chat.ModelConfig{{
 			Provider:        "test",
 			Model:           "configured-model",
@@ -50,12 +56,19 @@ func chatHTTPFixture(t *testing.T, key string, handler http.HandlerFunc, configu
 			ContextWindow:   32768,
 			MaxOutputTokens: 8192,
 		}}, nil
-	}, nil)
-	if err := service.Start(context.Background()); err != nil {
+	}, &app.App{Schedule: schedules})
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
-	return api.NewRouterWithPort(nil, service, nil, 10086), service
+	t.Cleanup(func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		service.Shutdown(shutdown)
+	})
+	if err := service.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return api.NewRouterWithPort(nil, service, nil, 10086), service.Runtime
 }
 func chatRequest(router http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))

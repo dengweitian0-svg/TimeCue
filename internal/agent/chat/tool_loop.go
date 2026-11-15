@@ -5,10 +5,6 @@ import (
 	"errors"
 )
 
-func hasModelOutput(output ModelOutput) bool {
-	return output.Message.Content != "" || output.Message.ReasoningContent != "" || len(output.Message.ToolCalls) > 0
-}
-
 func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call ModelCall) (ModelCall, *RunError) {
 	for r.Error == nil {
 		// 无 checkpoint 的恢复仍属于首次调用前，沿同一创建前阈值检查。
@@ -18,7 +14,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 			if !ok {
 				return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
 			}
-			request, err := s.newRequest(ctx, *r, cfg)
+			request, err := s.contextBuilder.firstRequest(ctx, *r, cfg)
 			if err != nil {
 				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 					return call, nil
@@ -44,7 +40,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				return call, failure
 			}
 		}
-		hasTools := call.Output != nil && len(call.Output.Message.ToolCalls) > 0
+		hasTools := call.hasToolCalls()
 		if call.State == StateSucceeded && hasTools && (call.CheckpointStage == "model_call_end" || call.CheckpointStage == "tool_start") {
 			var failure *RunError
 			call, failure = s.processTools(ctx, call, *r, cfg)
@@ -70,14 +66,14 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 					return call, failure
 				}
 			}
-			request := call.FollowupRequest(continuation)
+			request := s.contextBuilder.followupRequest(call, continuation)
 			request.MaxTokens = cfg.MaxOutputTokens
 			prepared, failure := s.prepareRequest(r.Provider, request)
 			if failure != nil {
 				return call, failure
 			}
 			if call.CheckpointStage == "tool_end" && requestBudgetError(prepared.Body, cfg) != nil {
-				base, err := s.newRequest(ctx, *r, cfg)
+				base, err := s.contextBuilder.firstRequest(ctx, *r, cfg)
 				if err != nil {
 					if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 						return call, nil
@@ -143,10 +139,10 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 		if failure != nil || ctx.Err() != nil {
 			return call, failure
 		}
-		if call.Output == nil || len(call.Output.Message.ToolCalls) == 0 && call.Output.FinishReason != "length" {
+		if call.Output == nil || !call.hasToolCalls() && call.Output.FinishReason != "length" {
 			return call, nil
 		}
-		if s.toolStore == nil || len(call.Output.Message.ToolCalls) > 0 && s.tools == nil {
+		if s.toolStore == nil || call.hasToolCalls() && s.tools == nil {
 			return call, &RunError{
 				Code:    "model_invalid_format",
 				Message: "工具执行端口未装配",

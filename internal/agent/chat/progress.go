@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"bytes"
 	"encoding/json"
 	"slices"
 )
@@ -11,41 +10,6 @@ type CheckpointState struct {
 	Context   []Message `json:"context"`
 	Completed []string  `json:"completed_tool"`
 	Last      string    `json:"last_tool"`
-}
-
-func cloneMessages(messages []Message) []Message {
-	if messages == nil {
-		return nil
-	}
-	result := make([]Message, len(messages))
-	copy(result, messages)
-	for i := range result {
-		result[i].ToolCalls = append(json.RawMessage(nil), messages[i].ToolCalls...)
-	}
-	return result
-}
-
-func hasAssistantContent(message Message) bool {
-	return message.Content != "" || message.ReasoningContent != "" ||
-		len(message.ToolCalls) > 0 && string(message.ToolCalls) != "null" && string(message.ToolCalls) != "[]"
-}
-
-// History 沿完整快照保留消息次序，并在旧轮全部消息之后追加独立中断说明。
-func (state CheckpointState) History(status RunState) []Message {
-	messages := make([]Message, 0, len(state.Context)+1)
-	for _, message := range cloneMessages(state.Context) {
-		// 兼容旧快照的全空 assistant，保留仅思考回复及原工具配对。
-		if message.Role != "assistant" || hasAssistantContent(message) {
-			messages = append(messages, message)
-		}
-	}
-	if status != StateSucceeded {
-		messages = append(messages, Message{
-			Role:    "user",
-			Content: "上一轮回复未完成；其操作表述不代表业务已经生效。",
-		})
-	}
-	return messages
 }
 
 // Checkpoint 返回隔离的可保存快照，以 ModelCall 的进度字段为唯一事实来源。
@@ -79,25 +43,6 @@ func (call ModelCall) WithCallStarted() ModelCall {
 	return call.WithCheckpoint(stage, CheckpointState{Context: call.Input.Messages})
 }
 
-// FollowupRequest 沿已接纳的完整配对快照生成后续请求，文字续写保留独立 user 边界。
-func (call ModelCall) FollowupRequest(continuation bool) ModelRequest {
-	request := call.Input
-	request.Messages = cloneMessages(call.CheckpointContext)
-	if call.CheckpointStage == "compact" {
-		request.Messages = cloneMessages(call.Input.Messages)
-		if call.Output != nil && hasAssistantContent(call.Output.Message) {
-			request.Messages = append(request.Messages, cloneMessages([]Message{call.Output.Message})[0])
-		}
-	}
-	if continuation && len(call.Output.Message.ToolCalls) == 0 {
-		request.Messages = append(request.Messages, Message{
-			Role:    "user",
-			Content: "继续未完成的输出",
-		})
-	}
-	return request
-}
-
 // PresentedOutput 只拼接当前普通回复及其续写正文，不修改实际模型输出。
 func (call ModelCall) PresentedOutput() *string {
 	if call.CheckpointStage == "compact" {
@@ -114,34 +59,6 @@ func (call ModelCall) PresentedOutput() *string {
 		return nil
 	}
 	return &content
-}
-
-// WithContinuationBase 按实际请求的消息前缀恢复正文边界，不从事件重放或主键顺序猜测分组。
-func (call ModelCall) WithContinuationBase(base ModelRequest) (ModelCall, bool) {
-	messages := call.Input.Messages
-	if call.CheckpointStage == "compact" {
-		if call.Checkpoint().NeedsCompactBase("compact") {
-			return call, false
-		}
-		messages = call.CheckpointContext
-	} else if !call.Continuation {
-		return call, false
-	}
-	if len(base.Messages) > len(messages) {
-		return call, false
-	}
-	actual, _ := json.Marshal(messages[:len(base.Messages)])
-	start, _ := json.Marshal(base.Messages)
-	if !bytes.Equal(actual, start) {
-		return call, false
-	}
-	call.OutputPrefix = ""
-	for _, message := range messages[len(base.Messages):] {
-		if message.Role == "assistant" {
-			call.OutputPrefix += message.Content
-		}
-	}
-	return call, true
 }
 
 // WithResponseAccepted 生成完整成功回复的待提交进度，提交成功后才可进入工具流程。
@@ -172,9 +89,7 @@ func (call ModelCall) WithCallEnded() ModelCall {
 		if call.Error != nil || call.State != StateSucceeded {
 			message.ToolCalls = nil
 		}
-		if hasAssistantContent(message) {
-			call.CheckpointContext = append(call.CheckpointContext, cloneMessages([]Message{message})[0])
-		}
+		call.CheckpointContext = appendAssistant(call.CheckpointContext, message)
 	}
 	return call
 }
@@ -197,22 +112,7 @@ func (call ModelCall) WithToolResult(tool ToolCall) ModelCall {
 		return call.WithCheckpoint(call.CheckpointStage, call.Checkpoint())
 	}
 	call = call.WithCheckpoint("tool_start", call.Checkpoint())
-	content := string(tool.Output)
-	if tool.Error != nil {
-		encoded, _ := json.Marshal(tool.Error)
-		content = string(encoded)
-	}
-	if tool.State == "skipped" {
-		content = "aborted"
-	} else {
-		content = call.toolFeedback(tool, content)
-		content = trimToolContent(content, tool.ModelContentLimit)
-	}
-	call.CheckpointContext = append(call.CheckpointContext, Message{
-		Role:       "tool",
-		Content:    content,
-		ToolCallID: tool.Request.ID,
-	})
+	call.CheckpointContext = append(call.CheckpointContext, toolResultMessage(call, tool))
 	call.CompletedTools = append(call.CompletedTools, tool.Request.ID)
 	call.LastTool = "tool_result: " + tool.Request.Function.Name + "-" + tool.Request.ID
 	if call.toolBatchComplete() {
@@ -244,7 +144,7 @@ func (tool ToolCall) WithResultUnconfirmed() ToolCall {
 // WithRunFinished 沿事务内已提交事实收拢异常批次，实际结果优先于取消或未确认补齐。
 func (call ModelCall) WithRunFinished(status RunState, stored []ToolCall) (ModelCall, []ToolCall, error) {
 	call = call.WithCallEnded()
-	if call.State != StateSucceeded || call.Output == nil || len(call.Output.Message.ToolCalls) == 0 || status == StateSucceeded {
+	if call.State != StateSucceeded || !call.hasToolCalls() || status == StateSucceeded {
 		return call, nil, nil
 	}
 	var requests []ToolRequest
@@ -299,8 +199,8 @@ func (call ModelCall) WithCompactResponse() ModelCall {
 	if !call.Checkpoint().NeedsCompactBase("compact") {
 		return call
 	}
-	if call.Output != nil && hasAssistantContent(call.Output.Message) {
-		call.CheckpointContext = append(call.CheckpointContext, cloneMessages([]Message{call.Output.Message})[0])
+	if call.Output != nil {
+		call.CheckpointContext = appendAssistant(call.CheckpointContext, call.Output.Message)
 	}
 	return call
 }
@@ -334,12 +234,4 @@ func (call ModelCall) WithCompactSucceeded(ordinary ModelRequest) ModelCall {
 // NeedsCompactBase 表示尚未生效的摘要不能作为有效历史，须沿原快照保留历史与真实输入。
 func (state CheckpointState) NeedsCompactBase(stage string) bool {
 	return stage == "compact" && len(state.Context) > 0 && state.Context[0].Role == "system" && state.Context[0].Content == compactInstructions
-}
-
-// HistoryAfterCompact 生成摘要失败或取消后的有效历史，不纳入专用提示或部分摘要。
-func (state CheckpointState) HistoryAfterCompact(base []Message, input string, status RunState) []Message {
-	return (CheckpointState{Context: append(cloneMessages(base), Message{
-		Role:    "user",
-		Content: input,
-	})}).History(status)
 }

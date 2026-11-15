@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -64,13 +63,7 @@ func runtimeCompactRequest(request, base ModelRequest) ModelRequest {
 	// 首次摘要沿创建时的完整前缀定位真实输入；已生效的运行中摘要后，
 	// 有效前缀固定为 system、新摘要、真实输入。不能按输入文字搜索以免重名。
 	index := len(base.Messages) - 1
-	matched := index < len(request.Messages)
-	if matched {
-		actual, _ := json.Marshal(request.Messages[:index+1])
-		original, _ := json.Marshal(base.Messages)
-		matched = bytes.Equal(actual, original)
-	}
-	if !matched {
+	if !hasMessagePrefix(request.Messages, base.Messages) {
 		index = 1
 		for _, message := range request.Messages {
 			if message.Role != "system" {
@@ -114,7 +107,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			if failure != nil || ctx.Err() != nil {
 				return call, failure
 			}
-			if call.Output == nil || len(call.Output.Message.ToolCalls) > 0 || call.Output.FinishReason != "stop" && call.Output.FinishReason != "length" {
+			if call.Output == nil || call.hasToolCalls() || call.Output.FinishReason != "stop" && call.Output.FinishReason != "length" {
 				return call, toolError("model_invalid_format", "摘要响应必须为正文或思考，不允许调用工具")
 			}
 		}
@@ -137,7 +130,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			if failure := s.continuationBudgetError(ctx, call, cfg); failure != nil || ctx.Err() != nil {
 				return call, failure
 			}
-			request := call.FollowupRequest(true)
+			request := s.contextBuilder.followupRequest(call, true)
 			request.MaxTokens = cfg.MaxOutputTokens
 			call = ModelCall{
 				RunID:             r.RunID,
@@ -152,7 +145,7 @@ func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig
 			}
 			continue
 		}
-		ordinary, err := s.newRequest(ctx, *r, cfg)
+		ordinary, err := s.contextBuilder.firstRequest(ctx, *r, cfg)
 		if err != nil {
 			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 				return call, nil
