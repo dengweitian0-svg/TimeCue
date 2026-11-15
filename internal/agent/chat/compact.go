@@ -1,12 +1,12 @@
 package chat
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"strings"
-	"time"
 )
+
+// Compactor 提取待压缩历史、构造无工具请求并接纳模型摘要。
+type Compactor struct{}
 
 const compactInstructions = `你正在执行一次上下文检查点压缩。
 
@@ -20,30 +20,35 @@ const compactInstructions = `你正在执行一次上下文检查点压缩。
 
 摘要应简洁、结构清晰，专注于让接手的模型能够顺利继续工作。`
 
-func compactHistory(request ModelRequest) []Message {
-	history := request.Messages[:len(request.Messages)-1]
-	for len(history) > 0 && history[0].Role == "system" {
-		history = history[1:]
+func (c Compactor) beforeFirstCall(prepared PreparedRequest, cfg ModelConfig) (ModelRequest, bool) {
+	messages := prepared.Input.Messages
+	if len(messages) == 0 {
+		return ModelRequest{}, false
 	}
-	return history
-}
-
-func needsCompact(request ModelRequest, body string, cfg ModelConfig) bool {
-	if len(request.Messages) == 0 || len(compactHistory(request)) == 0 {
-		return false
-	}
+	history := withoutLeadingSystem(messages[:len(messages)-1])
 	threshold := cfg.CompactThreshold
 	if threshold <= 0 {
 		threshold = 0.8
 	}
-	return float64(EstimateTokens([]byte(body))) >= float64(cfg.ContextWindow-cfg.MaxOutputTokens)*threshold
+	if len(history) > 0 && float64(EstimateTokens([]byte(prepared.Body))) >= float64(cfg.ContextWindow-cfg.MaxOutputTokens)*threshold {
+		return c.request(prepared.Input, history), true
+	}
+	return ModelRequest{}, false
 }
 
-func compactRequest(request ModelRequest) ModelRequest {
-	return compactRequestWithHistory(request, compactHistory(request))
+func (c Compactor) afterTools(request, base ModelRequest) (ModelRequest, *RunError) {
+	// 普通上下文的首个已登记请求止于本轮真实输入。按完整前缀定位，
+	// 以保留同名旧输入和此前已生效的摘要。
+	index := len(base.Messages) - 1
+	if index < 0 || base.Messages[index].Role != "user" || !hasMessagePrefix(request.Messages, base.Messages) {
+		return ModelRequest{}, toolError("model_invalid_format", "无法从普通请求前缀定位本轮输入")
+	}
+	history := cloneMessages(request.Messages)
+	history = append(history[:index], history[index+1:]...)
+	return c.request(request, withoutLeadingSystem(history)), nil
 }
 
-func compactRequestWithHistory(request ModelRequest, messages []Message) ModelRequest {
+func (Compactor) request(request ModelRequest, messages []Message) ModelRequest {
 	history, _ := json.Marshal(messages)
 	request.Messages = []Message{
 		{
@@ -59,157 +64,32 @@ func compactRequestWithHistory(request ModelRequest, messages []Message) ModelRe
 	return request
 }
 
-func runtimeCompactRequest(request, base ModelRequest) ModelRequest {
-	// 首次摘要沿创建时的完整前缀定位真实输入；已生效的运行中摘要后，
-	// 有效前缀固定为 system、新摘要、真实输入。不能按输入文字搜索以免重名。
-	index := len(base.Messages) - 1
-	if !hasMessagePrefix(request.Messages, base.Messages) {
-		index = 1
-		for _, message := range request.Messages {
-			if message.Role != "system" {
-				break
-			}
-			index++
-		}
+func withoutLeadingSystem(messages []Message) []Message {
+	for len(messages) > 0 && messages[0].Role == "system" {
+		messages = messages[1:]
 	}
-	history := cloneMessages(request.Messages)
-	history = append(history[:index], history[index+1:]...)
-	for len(history) > 0 && history[0].Role == "system" {
-		history = history[1:]
-	}
-	return compactRequestWithHistory(request, history)
+	return messages
 }
 
-func (s *Runtime) advanceCompact(ctx context.Context, r *Record, cfg ModelConfig, call ModelCall) (ModelCall, *RunError) {
-	for {
-		if ctx.Err() != nil {
-			return call, nil
+func (Compactor) validResponse(output *ModelOutput) bool {
+	return output != nil && !hasToolCalls(output.Message.ToolCalls) &&
+		(output.FinishReason == "stop" || output.FinishReason == "length")
+}
+
+func (Compactor) summary(call ModelCall) string {
+	var content strings.Builder
+	// 跳过专用系统提示和待压缩历史，只拼接已接纳的摘要正文。
+	for _, message := range call.Input.Messages[min(2, len(call.Input.Messages)):] {
+		if message.Role == "assistant" {
+			content.WriteString(message.Content)
 		}
-		if call.ID == 0 {
-			prepared, failure := s.prepareRequest(r.Provider, call.Input)
-			if failure != nil {
-				return call, failure
-			}
-			call.Input, call.InputBody = prepared.Input, prepared.Body
-			id, err := s.execution.BeginCall(ctx, call)
-			if err != nil {
-				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-					return call, nil
-				}
-				return call, persistenceFailure(call, "compact_start", err)
-			}
-			call.ID = id
-			call = call.WithCallStarted()
-		}
-		if call.State != StateSucceeded {
-			var failure *RunError
-			call, failure = s.complete(ctx, *r, call)
-			if failure != nil || ctx.Err() != nil {
-				return call, failure
-			}
-			if call.Output == nil || call.hasToolCalls() || call.Output.FinishReason != "stop" && call.Output.FinishReason != "length" {
-				return call, toolError("model_invalid_format", "摘要响应必须为正文或思考，不允许调用工具")
-			}
-		}
-		latest, available := s.currentModel(r.Provider, r.Model)
-		if latest.ContextWindow > latest.MaxOutputTokens && latest.MaxOutputTokens > 0 {
-			cfg = latest
-		}
-		if call.Output.FinishReason == "length" {
-			accepted := call.WithCompactResponse()
-			if call.State != StateSucceeded {
-				if err := s.toolStore.AcceptResponse(s.persistenceContext(), accepted); err != nil {
-					return call, persistenceFailure(call, "compact_response", err)
-				}
-				accepted.PendingEvents = nil
-			}
-			call = accepted
-			if !available {
-				return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
-			}
-			if failure := s.continuationBudgetError(ctx, call, cfg); failure != nil || ctx.Err() != nil {
-				return call, failure
-			}
-			request := s.contextBuilder.followupRequest(call, true)
-			request.MaxTokens = cfg.MaxOutputTokens
-			call = ModelCall{
-				RunID:             r.RunID,
-				SessionID:         r.SessionID,
-				Input:             request,
-				State:             StateRunning,
-				MaxRetry:          cfg.MaxRetry,
-				Continuation:      true,
-				CheckpointStage:   "compact",
-				CheckpointContext: call.CheckpointContext,
-				OutputPrefix:      call.OutputPrefix,
-			}
-			continue
-		}
-		ordinary, err := s.contextBuilder.firstRequest(ctx, *r, cfg)
-		if err != nil {
-			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-				return call, nil
-			}
-			return call, persistenceFailure(call, "compact_history", err)
-		}
-		projected := call.WithCompactSucceeded(ordinary)
-		if strings.TrimSpace(projected.CheckpointContext[len(projected.CheckpointContext)-2].Content) == "" {
-			return call, toolError("model_invalid_format", "摘要未返回有效正文")
-		}
-		ordinary.Messages = projected.CheckpointContext
-		var failure *RunError
-		var prepared PreparedRequest
-		if cfg.ContextWindow <= cfg.MaxOutputTokens || cfg.MaxOutputTokens <= 0 {
-			// 原模型预算已移除时仍保存完整成功摘要，随后以配置不可用结束。
-			failure = toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
-		} else {
-			prepared, failure = s.prepareRequest(r.Provider, ordinary)
-			if failure == nil {
-				failure = requestBudgetError(prepared.Body, cfg)
-			}
-		}
-		if failure == nil {
-			failure = s.ordinaryRoundBudgetError(ctx, call, cfg)
-			if ctx.Err() != nil || failure != nil && failure.Code == "persistence_failed" {
-				return call, failure
-			}
-		}
-		var next *ModelCall
-		var terminal *Record
-		if failure == nil {
-			next = &ModelCall{
-				RunID:     r.RunID,
-				SessionID: r.SessionID,
-				Input:     prepared.Input,
-				InputBody: prepared.Body,
-				State:     StateRunning,
-				MaxRetry:  cfg.MaxRetry,
-			}
-		} else {
-			finished := *r
-			finished.State, finished.Error = StateFailed, failure
-			now := time.Now()
-			finished.FinishedAt = &now
-			terminal = &finished
-		}
-		committed, err := s.execution.CompleteCompact(ctx, projected, next, terminal)
-		if err != nil {
-			// 提交回执丢失时沿实际 checkpoint 收尾，不能重发已经登记的普通调用或丢弃有效摘要。
-			if saved, readErr := s.execution.ReadCall(s.persistenceContext(), r.RunID); readErr == nil && saved != nil && (saved.ID != call.ID || saved.State == StateSucceeded) {
-				call = *saved
-			}
-			// 取消事务可能先于本地 context 信号完成；以已提交取消事实识别切换门禁。
-			if errors.Is(err, context.Canceled) {
-				if saved, readErr := s.runs.ReadRun(s.persistenceContext(), r.RunID, false); readErr == nil && saved.State == StateWaitForCancel {
-					r.State = saved.State
-					return call, nil
-				}
-			}
-			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-				return call, nil
-			}
-			return call, persistenceFailure(call, "compact_complete", err)
-		}
-		return committed, failure
 	}
+	if call.Output != nil {
+		content.WriteString(call.Output.Message.Content)
+	}
+	summary := content.String()
+	if strings.TrimSpace(summary) == "" {
+		return ""
+	}
+	return summary
 }

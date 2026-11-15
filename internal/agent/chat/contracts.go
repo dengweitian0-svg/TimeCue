@@ -391,6 +391,8 @@ type SessionRepository interface {
 type ExecutionRepository interface {
 	// History 从实际输入与模型输出组装有效消息。
 	History(context.Context, string) ([]Message, error)
+	// OrdinaryRequestBase 读取当前有效摘要之后首个普通请求的消息前缀。
+	OrdinaryRequestBase(context.Context, string, int64) (ModelRequest, error)
 	// OrdinaryCallCount 统计当前运行中非续写且不关联 compact 的逻辑模型调用。
 	OrdinaryCallCount(context.Context, string) (int, error)
 	// ContinuationCallCount 统计当前运行内全部逻辑续写，包含摘要续写。

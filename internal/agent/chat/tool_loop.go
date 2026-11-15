@@ -21,16 +21,10 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				}
 				return call, persistenceFailure(call, "history", err)
 			}
-			prepared, failure := s.prepareRequest(r.Provider, request)
+			var failure *RunError
+			call, failure = s.prepareInitialCall(*r, request, cfg)
 			if failure != nil {
 				return call, failure
-			}
-			call.Input = prepared.Input
-			call.InputBody = prepared.Body
-			if needsCompact(prepared.Input, prepared.Body, cfg) {
-				call.Input = compactRequest(request)
-				call.InputBody = ""
-				call.CheckpointStage = "compact"
 			}
 		}
 		if call.CheckpointStage == "compact" {
@@ -73,12 +67,16 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				return call, failure
 			}
 			if call.CheckpointStage == "tool_end" && requestBudgetError(prepared.Body, cfg) != nil {
-				base, err := s.contextBuilder.firstRequest(ctx, *r, cfg)
+				base, err := s.execution.OrdinaryRequestBase(ctx, r.RunID, call.ID)
 				if err != nil {
 					if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 						return call, nil
 					}
-					return call, persistenceFailure(call, "compact_history", err)
+					return call, persistenceFailure(call, "compact_base", err)
+				}
+				summary, failure := s.compactor.afterTools(prepared.Input, base)
+				if failure != nil {
+					return call, failure
 				}
 				prefix := ""
 				if r.Output != nil {
@@ -87,11 +85,11 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 				call = ModelCall{
 					RunID:             r.RunID,
 					SessionID:         r.SessionID,
-					Input:             runtimeCompactRequest(request, base),
+					Input:             summary,
 					State:             StateRunning,
 					MaxRetry:          cfg.MaxRetry,
 					CheckpointStage:   "compact",
-					CheckpointContext: request.Messages,
+					CheckpointContext: prepared.Input.Messages,
 					OutputPrefix:      prefix,
 				}
 				continue
