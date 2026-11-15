@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/dengweitian0-svg/TimeCue/internal/agent"
 )
 
 func (s *Runtime) currentModel(provider, model string) (ModelConfig, bool) {
@@ -29,18 +31,6 @@ func retryable(failure *RunError) bool {
 	default:
 		return false
 	}
-}
-
-func retryDelay(retry int) time.Duration {
-	delay := 5 * time.Second
-	for i := 1; i < retry; i++ {
-		// 防止极大配置造成 duration 溢出后退避变为负数。
-		if delay > time.Duration(1<<62-1) {
-			return time.Duration(1<<63 - 1)
-		}
-		delay *= 2
-	}
-	return delay
 }
 
 func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (ModelCall, *RunError) {
@@ -129,7 +119,7 @@ func (s *Runtime) complete(ctx context.Context, r Record, call ModelCall) (Model
 			return call, failure
 		}
 		call.RetryCount++
-		next := time.Now().Add(retryDelay(call.RetryCount))
+		next := time.Now().Add(agent.RetryDelay(call.RetryCount))
 		// SQLite 的纳秒时间不能超过 int64 上限。
 		if latest := time.Unix(0, 1<<63-1); next.After(latest) {
 			next = latest

@@ -204,7 +204,7 @@ func saveToolResult(ctx context.Context, tx *sql.Tx, call chat.ModelCall, tool c
 	data, _ := json.Marshal(chat.ToolResultData{
 		ToolCallID: tool.Request.ID,
 		Output:     tool.Output,
-		Error:      tool.Error,
+		Error:      (*chat.RunError)(tool.Error),
 	})
 	err = appendChatEvent(ctx, tx, call, chat.Event{
 		Type: chat.EventToolResult,

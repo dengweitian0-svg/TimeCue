@@ -140,7 +140,7 @@ func (s *Runtime) advance(ctx context.Context, r *Record, cfg ModelConfig, call 
 		if call.Output == nil || !call.hasToolCalls() && call.Output.FinishReason != "length" {
 			return call, nil
 		}
-		if s.toolStore == nil || call.hasToolCalls() && s.tools == nil {
+		if s.toolStore == nil || call.hasToolCalls() && !s.toolFactory.Configured() {
 			return call, &RunError{
 				Code:    "model_invalid_format",
 				Message: "工具执行端口未装配",

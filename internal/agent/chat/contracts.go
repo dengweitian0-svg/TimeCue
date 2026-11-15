@@ -219,34 +219,14 @@ type PreparedRequest struct {
 	Input ModelRequest
 }
 
-// ToolRequest 保存一次模型回复内完整组装的工具请求及参数原文。
-type ToolRequest struct {
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
-	Function ToolFunction `json:"function"`
-}
+// ToolRequest 保存模型返回的单项工具请求。
+type ToolRequest = tools.ToolRequest
 
-// ToolFunction 保留模型提供的名称和 arguments 字符串，不改写参数。
-type ToolFunction struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
+// ToolFunction 保留模型提供的工具名称及参数原文。
+type ToolFunction = tools.ToolFunction
 
-// ToolCall 保存工具执行身份、原始结果及版本 3 已有的重试事实。
-type ToolCall struct {
-	// ModelContentLimit 仅用于本次结果投影；已提交文本直接沿 checkpoint 复用。
-	ModelContentLimit int
-	ID                int64
-	IdempotencyKey    string
-	ModelCallID       int64
-	Request           ToolRequest
-	Output            json.RawMessage
-	Error             *RunError
-	State             string
-	MaxRetry          int
-	RetryCount        int
-	NextRetryAt       *time.Time
-}
+// ToolCall 保存工具持久化事实。
+type ToolCall = tools.ToolCall
 
 // ToolStartData 保存公开工具开始事件，一个开始记录包含实际处理的调用。
 type ToolStartData struct {
@@ -271,14 +251,7 @@ type ToolResultData struct {
 type ToolRepository interface {
 	// AcceptResponse 保存完整模型结果、尾批及 model_call_end，提交后才启动工具。
 	AcceptResponse(context.Context, ModelCall) error
-	// ReadTools 读取当前模型调用已登记的工具事实，不跨回复复用同值 ID。
-	ReadTools(context.Context, int64) ([]ToolCall, error)
-	// BeginTool 原子登记开始事实，返回已提交完整进度与原身份工具；失败保留传入快照。
-	BeginTool(context.Context, ModelCall, ToolCall) (ModelCall, ToolCall, error)
-	// WaitToolRetry 保存暂时故障和退避期限，不回填最终结果或改变完成集合。
-	WaitToolRetry(context.Context, ToolCall) error
-	// FinishTool 沿事务内已提交事实合并结果，返回已提交完整进度；失败保留传入快照。
-	FinishTool(context.Context, ModelCall, ToolCall) (ModelCall, error)
+	tools.BatchRepository[ModelCall]
 }
 
 // ModelOutput 保留结构化部分响应、完成原因和原始 usage。

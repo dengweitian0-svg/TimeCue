@@ -213,3 +213,17 @@ func scheduleView(value *model.Schedule) map[string]any {
 	}
 	return result
 }
+
+// SchedulePort 提供六个日程工具所需的正式业务用例。
+type SchedulePort interface {
+	ScheduleQueries
+	ScheduleWrites
+	ScheduleDeletes
+}
+
+// NewScheduleRegistry 注册生产 Agent 的六个日程工具。
+func NewScheduleRegistry(ctx context.Context, schedules SchedulePort) (*Registry, error) {
+	scheduleTools := append(ScheduleTools(schedules), ScheduleWriteTools(schedules, nil)...)
+	scheduleTools = append(scheduleTools, ScheduleDeleteTools(schedules)...)
+	return NewRegistry(ctx, scheduleTools...)
+}

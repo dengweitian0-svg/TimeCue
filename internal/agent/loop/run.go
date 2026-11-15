@@ -9,11 +9,7 @@ import (
 )
 
 // SchedulePort 提供六个日程工具使用的正式业务用例。
-type SchedulePort interface {
-	tools.ScheduleQueries
-	tools.ScheduleWrites
-	tools.ScheduleDeletes
-}
+type SchedulePort = tools.SchedulePort
 
 // Run 是生产 Agent 实例，过渡期委托旧 Runtime 执行聊天用例。
 type Run struct {
@@ -22,9 +18,7 @@ type Run struct {
 
 // New 装配模型客户端及工具，并只读准备恢复所需的持久化事实。
 func New(ctx context.Context, storage chat.Storage, settings func() ([]chat.ModelConfig, error), schedules SchedulePort) (*Run, error) {
-	scheduleTools := append(tools.ScheduleTools(schedules), tools.ScheduleWriteTools(schedules, nil)...)
-	scheduleTools = append(scheduleTools, tools.ScheduleDeleteTools(schedules)...)
-	registry, err := tools.NewRegistry(ctx, scheduleTools...)
+	registry, err := tools.NewScheduleRegistry(ctx, schedules)
 	if err != nil {
 		return nil, err
 	}

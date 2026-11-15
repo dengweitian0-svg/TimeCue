@@ -65,26 +65,20 @@ type ResultReader interface {
 	ReadResult(context.Context, string) (string, bool, error)
 }
 
-// ReadResult 在正常或取消恢复时只读核对原身份；不具备回执能力的工具返回未命中。
-func (r *Registry) ReadResult(ctx context.Context, name, raw string) (json.RawMessage, bool, error) {
-	if r != nil {
-		for _, entry := range r.entries {
-			if entry.info.Name == name {
-				if reader, ok := entry.tool.(ResultReader); ok {
-					output, found, err := reader.ReadResult(ctx, raw)
-					if err != nil || !found {
-						return nil, false, err
-					}
-					if !json.Valid([]byte(output)) {
-						return nil, false, errors.New("业务回执不是合法 JSON")
-					}
-					return json.RawMessage(output), true, nil
-				}
-				break
-			}
-		}
+func (r *Registry) readResult(ctx context.Context, name, raw string) (json.RawMessage, bool, error) {
+	entry, _ := r.lookup(name)
+	reader, ok := entry.tool.(ResultReader)
+	if !ok {
+		return nil, false, nil
 	}
-	return nil, false, nil
+	output, found, err := reader.ReadResult(ctx, raw)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	if !json.Valid([]byte(output)) {
+		return nil, false, errors.New("业务回执不是合法 JSON")
+	}
+	return json.RawMessage(output), true, nil
 }
 
 // ToolInfo 定义模型描述与后端固定的安全性、调度方式。
@@ -129,7 +123,7 @@ func (r *Registry) Register(ctx context.Context, tool Tool) error {
 	if info == nil || strings.TrimSpace(info.Name) == "" || strings.TrimSpace(info.Description) == "" || info.Parameters.Type != "object" || info.Parameters.AdditionalProperties {
 		return errors.New("工具必须提供名称、说明和严格对象参数 schema")
 	}
-	if _, exists := r.Lookup(info.Name); exists {
+	if _, exists := r.lookup(info.Name); exists {
 		return fmt.Errorf("工具名称重复：%s", info.Name)
 	}
 	for key, property := range info.Parameters.Properties {
@@ -171,16 +165,21 @@ func (r *Registry) Definitions() []Definition {
 	return result
 }
 
-// Lookup 查询已注册工具的固定元数据，未注册工具不能进入执行。
-func (r *Registry) Lookup(name string) (ToolInfo, bool) {
+// Has 判断名称是否已注册，供模型上下文按工具可用性选择指令。
+func (r *Registry) Has(name string) bool {
+	_, ok := r.lookup(name)
+	return ok
+}
+
+func (r *Registry) lookup(name string) (registeredTool, bool) {
 	if r != nil {
 		for _, entry := range r.entries {
 			if entry.info.Name == name {
-				return entry.info, true
+				return entry, true
 			}
 		}
 	}
-	return ToolInfo{}, false
+	return registeredTool{}, false
 }
 
 // Argument 仅生成事件的对象投影，不校验或修复实际参数原文。
@@ -205,14 +204,14 @@ func (r *Registry) Execute(ctx context.Context, name, raw string) (json.RawMessa
 	if !ok {
 		return nil, validation("参数应为 JSON 对象")
 	}
-	entry, ok := r.Lookup(name)
+	entry, ok := r.lookup(name)
 	if !ok {
 		return nil, &Failure{
 			Code:    "tool_not_found",
 			Message: "工具不存在：" + name,
 		}
 	}
-	schema := entry.Parameters
+	schema := entry.info.Parameters
 	for _, key := range schema.Required {
 		if _, ok := object[key]; !ok {
 			return nil, validation("缺少必填字段 " + key)
@@ -259,14 +258,7 @@ func (r *Registry) Execute(ctx context.Context, name, raw string) (json.RawMessa
 			}
 		}
 	}
-	var implementation Tool
-	for _, registered := range r.entries {
-		if registered.info.Name == name {
-			implementation = registered.tool
-			break
-		}
-	}
-	output, err := implementation.InvokableRun(ctx, raw)
+	output, err := entry.tool.InvokableRun(ctx, raw)
 	var result json.RawMessage
 	if output != "" && json.Valid([]byte(output)) {
 		result = json.RawMessage(output)

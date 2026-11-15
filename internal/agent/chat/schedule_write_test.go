@@ -182,6 +182,7 @@ func TestAssistantBatchKeepsIndependentResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertSerialToolEvents(t, page.Events)
 	starts, results := 0, 0
 	for _, event := range page.Events {
 		if event.Type == chat.EventToolStart {
@@ -196,6 +197,33 @@ func TestAssistantBatchKeepsIndependentResults(t *testing.T) {
 	}
 	if starts != len(requests) || results != len(requests) {
 		t.Fatalf("工具事实重复或缺失：开始=%d 结果=%d", starts, results)
+	}
+}
+
+func assertSerialToolEvents(t *testing.T, events []chat.Event) {
+	t.Helper()
+	pending := ""
+	for _, event := range events {
+		switch event.Type {
+		case chat.EventToolStart:
+			var started chat.ToolStartData
+			if err := json.Unmarshal(event.Data, &started); err != nil || len(started.Function) != 1 {
+				t.Fatalf("无效工具开始事件: %s %v", event.Data, err)
+			}
+			if pending != "" {
+				t.Fatalf("工具 %s 在 %s 结算前开始", started.Function[0].ID, pending)
+			}
+			pending = started.Function[0].ID
+		case chat.EventToolResult:
+			var result chat.ToolResultData
+			if err := json.Unmarshal(event.Data, &result); err != nil || result.ToolCallID != pending {
+				t.Fatalf("工具结果未与串行调用配对，等待 %s: %s %v", pending, event.Data, err)
+			}
+			pending = ""
+		}
+	}
+	if pending != "" {
+		t.Fatalf("工具 %s 未结算", pending)
 	}
 }
 
@@ -338,12 +366,6 @@ func TestAssistantWriteKeysRemainSQLNull(t *testing.T) {
 	registry, err := tools.NewRegistry(context.Background(), definitions...)
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, name := range []string{"create_schedule", "update_schedule"} {
-		info, ok := registry.Lookup(name)
-		if !ok || info.Dangerous || info.Parallel {
-			t.Fatalf("写入元数据：%+v", info)
-		}
 	}
 	service := chat.NewService(storage, completion.NewClient(nil), toolSettings(upstream.URL), registry)
 	if err := service.Start(context.Background()); err != nil {
