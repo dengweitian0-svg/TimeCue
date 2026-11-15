@@ -342,6 +342,10 @@ func (s *chatStore) History(ctx context.Context, session string) ([]chat.Message
 	return history, nil
 }
 
+const ordinaryCallPredicate = `m.continuation=0 AND NOT EXISTS(
+	SELECT 1 FROM ai_events e WHERE e.model_call_id=m.id AND e.type='compact'
+)`
+
 // OrdinaryCallCount 从实际调用记录计算普通轮数，重试及摘要是否成功不影响分类。
 func (s *chatStore) OrdinaryCallCount(ctx context.Context, run string) (int, error) {
 	db, err := s.db.handle()
@@ -349,7 +353,7 @@ func (s *chatStore) OrdinaryCallCount(ctx context.Context, run string) (int, err
 		return 0, err
 	}
 	var count int
-	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_model_calls m WHERE m.run_id=? AND m.continuation=0 AND NOT EXISTS(SELECT 1 FROM ai_events e WHERE e.model_call_id=m.id AND e.type='compact')`, run).Scan(&count)
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_model_calls m WHERE m.run_id=? AND `+ordinaryCallPredicate, run).Scan(&count)
 	return count, err
 }
 
@@ -459,6 +463,30 @@ func (s *chatStore) CompleteCompact(ctx context.Context, call chat.ModelCall, ne
 	return result, nil
 }
 
+// OrdinaryRequestBase 读取该普通调用所属上下文的首个普通请求。
+func (s *chatStore) OrdinaryRequestBase(ctx context.Context, runID string, callID int64) (chat.ModelRequest, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return chat.ModelRequest{}, err
+	}
+	var raw string
+	err = db.QueryRowContext(ctx, `
+		SELECT m.input FROM ai_model_calls m
+		WHERE m.run_id=? AND m.id<=?
+			AND m.id>COALESCE((
+				SELECT MAX(e.model_call_id) FROM ai_events e
+				WHERE e.run_id=m.run_id AND e.model_call_id<=? AND e.type='compact' AND e.compact_succeeded=1
+			),0)
+			AND `+ordinaryCallPredicate+`
+		ORDER BY m.id LIMIT 1`, runID, callID, callID).Scan(&raw)
+	if err != nil {
+		return chat.ModelRequest{}, err
+	}
+	var request chat.ModelRequest
+	err = json.Unmarshal([]byte(raw), &request)
+	return request, err
+}
+
 // ReadCall 读取同一逻辑模型调用的原请求与部分输出；首次登记前返回 nil。
 func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, error) {
 	db, err := s.db.handle()
@@ -508,7 +536,9 @@ func readCall(ctx context.Context, reader schemaReader, id string) (*chat.ModelC
 	}
 	if call.Continuation || call.CheckpointStage == "compact" && !call.Checkpoint().NeedsCompactBase("compact") {
 		// 从续写请求或运行中摘要保留的原上下文恢复普通正文边界；摘要自身不形成正文起点。
-		rows, err := reader.QueryContext(ctx, `SELECT m.input FROM ai_model_calls m WHERE m.run_id=? AND m.continuation=0 AND NOT EXISTS(SELECT 1 FROM ai_events e WHERE e.model_call_id=m.id AND e.type='compact') ORDER BY json_array_length(m.input,'$.messages') DESC`, id)
+		rows, err := reader.QueryContext(ctx, `
+			SELECT m.input FROM ai_model_calls m WHERE m.run_id=? AND `+ordinaryCallPredicate+`
+			ORDER BY json_array_length(m.input,'$.messages') DESC`, id)
 		if err != nil {
 			return nil, err
 		}

@@ -76,6 +76,16 @@ func (ContextBuilder) followupRequest(call ModelCall, continuation bool) ModelRe
 	return request
 }
 
+func (ContextBuilder) withSummary(request ModelRequest, summary string) ModelRequest {
+	messages := request.Messages
+	systemCount := len(messages) - len(withoutLeadingSystem(messages))
+	request.Messages = append(cloneMessages(messages[:systemCount]), Message{
+		Role:    "user",
+		Content: summary,
+	}, messages[len(messages)-1])
+	return request
+}
+
 func appendAssistant(messages []Message, message Message) []Message {
 	if !hasAssistantContent(message) {
 		return messages

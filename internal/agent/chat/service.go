@@ -29,6 +29,7 @@ type Runtime struct {
 	sessions       SessionRepository
 	execution      ExecutionRepository
 	contextBuilder ContextBuilder
+	compactor      Compactor
 	events         EventRepository
 	usage          UsageRepository
 	model          ModelClient
@@ -320,13 +321,9 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 	if err != nil {
 		return Receipt{}, err
 	}
-	prepared, failure := s.prepareRequest(r.Provider, request)
-	compact := false
-	if failure == nil {
-		compact = needsCompact(prepared.Input, prepared.Body, cfg)
-		if !compact {
-			failure = requestBudgetError(prepared.Body, cfg)
-		}
+	call, failure := s.prepareInitialCall(r, request, cfg)
+	if failure == nil && call.CheckpointStage != "compact" {
+		failure = requestBudgetError(call.InputBody, cfg)
 	}
 	if failure != nil {
 		r.State, r.Error = StateFailed, failure
@@ -348,20 +345,7 @@ func (s *Runtime) CreateRun(ctx context.Context, input CreateRunInput) (Receipt,
 		session: r.SessionID,
 	}
 	s.active[r.RunID] = run
-	call := &ModelCall{
-		RunID:     r.RunID,
-		SessionID: r.SessionID,
-		Input:     prepared.Input,
-		InputBody: prepared.Body,
-		State:     StateRunning,
-		MaxRetry:  cfg.MaxRetry,
-	}
-	if compact {
-		call.Input = compactRequest(request)
-		call.InputBody = ""
-		call.CheckpointStage = "compact"
-	}
-	go s.execute(runCtx, run, r, cfg, call)
+	go s.execute(runCtx, run, r, cfg, &call)
 	return result, nil
 }
 

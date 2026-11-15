@@ -28,3 +28,23 @@ func (s *Runtime) prepareRequest(provider string, input ModelRequest) (PreparedR
 	}
 	return prepared, nil
 }
+
+func (s *Runtime) prepareInitialCall(r Record, input ModelRequest, cfg ModelConfig) (ModelCall, *RunError) {
+	call := ModelCall{
+		RunID:     r.RunID,
+		SessionID: r.SessionID,
+		State:     StateRunning,
+		MaxRetry:  cfg.MaxRetry,
+	}
+	prepared, failure := s.prepareRequest(r.Provider, input)
+	if failure != nil {
+		return call, failure
+	}
+	if summary, ok := s.compactor.beforeFirstCall(prepared, cfg); ok {
+		call.Input = summary
+		call.CheckpointStage = "compact"
+	} else {
+		call.Input, call.InputBody = prepared.Input, prepared.Body
+	}
+	return call, nil
+}

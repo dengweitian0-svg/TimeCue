@@ -205,32 +205,6 @@ func (call ModelCall) WithCompactResponse() ModelCall {
 	return call
 }
 
-// WithCompactSucceeded 只将各已接纳片段的正文按请求中的实际接纳顺序投影为一条 user 摘要。
-func (call ModelCall) WithCompactSucceeded(ordinary ModelRequest) ModelCall {
-	content := ""
-	for _, message := range call.Input.Messages[2:] {
-		if message.Role == "assistant" {
-			content += message.Content
-		}
-	}
-	if call.Output != nil {
-		content += call.Output.Message.Content
-	}
-	messages := []Message{}
-	for _, message := range ordinary.Messages {
-		if message.Role != "system" {
-			break
-		}
-		messages = append(messages, message)
-	}
-	messages = append(messages, Message{
-		Role:    "user",
-		Content: content,
-	}, ordinary.Messages[len(ordinary.Messages)-1])
-	call.State, call.Error = StateSucceeded, nil
-	return call.WithCheckpoint("compact", CheckpointState{Context: messages})
-}
-
 // NeedsCompactBase 表示尚未生效的摘要不能作为有效历史，须沿原快照保留历史与真实输入。
 func (state CheckpointState) NeedsCompactBase(stage string) bool {
 	return stage == "compact" && len(state.Context) > 0 && state.Context[0].Role == "system" && state.Context[0].Content == compactInstructions
