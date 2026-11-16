@@ -2,9 +2,11 @@ package loop_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -299,15 +301,28 @@ func TestCompactLargeValidSummaryHasNoHardTokenGate(t *testing.T) {
 func TestCompactRetryContinuationAndRestart(t *testing.T) {
 	ctx := context.Background()
 	var summaries, continuations atomic.Int32
-	requests := make(chan chat.ModelRequest, 10)
+	var reducedBudget atomic.Bool
+	type sentRequest struct {
+		body  string
+		input chat.ModelRequest
+	}
+	requests := make(chan sentRequest, 10)
 	blocked := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request chat.ModelRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
 			t.Error(err)
 			return
 		}
-		requests <- request
+		var request chat.ModelRequest
+		if err := json.Unmarshal(body, &request); err != nil {
+			t.Error(err)
+			return
+		}
+		requests <- sentRequest{
+			body:  string(body),
+			input: request,
+		}
 		if request.Messages[0].Role != "system" {
 			if len(request.Messages) == 1 {
 				emitText(w, strings.Repeat("old-history-", 1600))
@@ -321,6 +336,7 @@ func TestCompactRetryContinuationAndRestart(t *testing.T) {
 				w.WriteHeader(503)
 				return
 			}
+			reducedBudget.Store(false)
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"摘要思考\"}}]}\n\n")
 			emitLengthDelta(w, "content", "目标与实际结果；", "length")
@@ -331,15 +347,20 @@ func TestCompactRetryContinuationAndRestart(t *testing.T) {
 			<-r.Context().Done()
 			return
 		}
+		reducedBudget.Store(false)
 		emitText(w, "尚未完成与待澄清事项。")
 	}))
 	defer upstream.Close()
-	_, ports, _ := admissionDatabase(t)
+	_, ports, path := admissionDatabase(t)
 	baseSettings := compactSettings(upstream.URL, nil)
 	settings := func() ([]chat.ModelConfig, error) {
 		cfg, err := baseSettings()
 		cfg[0].MaxRetry = 1
 		cfg[0].MaxRounds = 1
+		if reducedBudget.Load() {
+			cfg[0].ContextWindow = 3000
+			cfg[0].MaxRetry = 0
+		}
 		return cfg, err
 	}
 	service := startAdmissionService(t, ports, completion.NewClient(nil), settings)
@@ -351,6 +372,7 @@ func TestCompactRetryContinuationAndRestart(t *testing.T) {
 		t.Fatalf("stage=%s", planned.CheckpointStage)
 	}
 	service.Stop()
+	reducedBudget.Store(true)
 	service = startAdmissionService(t, ports, completion.NewClient(nil), settings)
 	select {
 	case <-blocked:
@@ -359,23 +381,44 @@ func TestCompactRetryContinuationAndRestart(t *testing.T) {
 	}
 	service.Stop()
 	continuation, err := ports.Execution.ReadCall(ctx, receipt.RunID)
-	if err != nil || continuation.CheckpointStage != "compact" || !continuation.Continuation {
+	if err != nil || continuation == nil || continuation.CheckpointStage != "compact" || !continuation.Continuation {
 		t.Fatalf("call=%+v err=%v", continuation, err)
 	}
+	reducedBudget.Store(true)
 	service = startAdmissionService(t, ports, completion.NewClient(nil), settings)
 	run := awaitFinishedRun(t, service, receipt.RunID)
 	if run.Status != chat.StatusSucceeded || run.Output == nil || *run.Output != "普通答复" {
 		t.Fatalf("run=%+v", run)
 	}
-	first, retry, original, replayed, ordinary := <-requests, <-requests, <-requests, <-requests, <-requests
-	if mustJSON(first) != mustJSON(retry) || mustJSON(original) != mustJSON(replayed) {
-		t.Fatal("恢复改变了实际请求")
+	if len(requests) != 5 {
+		t.Fatalf("摘要、续写及重放阶段上游请求数=%d，期望 5", len(requests))
 	}
-	if len(original.Messages) != 4 || original.Messages[2].Role != "assistant" || original.Messages[2].Content != "目标与实际结果；" || original.Messages[2].ReasoningContent != "摘要思考" || original.Messages[3].Content != "继续未完成的输出" {
-		t.Fatalf("续写边界=%s", mustJSON(original.Messages))
+	first, retry, interrupted, replayed, ordinary := <-requests, <-requests, <-requests, <-requests, <-requests
+	if first.body != planned.InputBody || first.body != retry.body || interrupted.body != continuation.InputBody || interrupted.body != replayed.body {
+		t.Fatal("恢复改变了 SQLite 已登记的实际请求正文")
 	}
-	if ordinary.Messages[0].Content != "目标与实际结果；尚未完成与待澄清事项。" {
-		t.Fatalf("摘要投影=%s", mustJSON(ordinary.Messages))
+	if len(retry.body) <= 8000 || len(replayed.body) <= 8000 {
+		t.Fatal("重放正文应超过重启后的输入预算")
+	}
+	inspection, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inspection.Close()
+	for _, call := range []*chat.ModelCall{planned, continuation} {
+		var state string
+		var maxRetry, retries int
+		err := inspection.QueryRowContext(ctx, "SELECT status, max_retry, retry_count FROM ai_model_calls WHERE id=?", call.ID).Scan(&state, &maxRetry, &retries)
+		if err != nil || state != "succeeded" || maxRetry != 1 || retries != call.RetryCount {
+			t.Fatalf("重启改变了调用 %d 的身份或重试预算：state=%s maxRetry=%d retries=%d err=%v", call.ID, state, maxRetry, retries, err)
+		}
+	}
+	messages := interrupted.input.Messages
+	if len(messages) != 4 || messages[2].Role != "assistant" || messages[2].Content != "目标与实际结果；" || messages[2].ReasoningContent != "摘要思考" || messages[3].Content != "继续未完成的输出" {
+		t.Fatalf("续写边界=%s", mustJSON(messages))
+	}
+	if ordinary.input.Messages[0].Content != "目标与实际结果；尚未完成与待澄清事项。" {
+		t.Fatalf("摘要投影=%s", mustJSON(ordinary.input.Messages))
 	}
 	page := eventPage(t, service, run.RunID, 0, 100)
 	count := 0

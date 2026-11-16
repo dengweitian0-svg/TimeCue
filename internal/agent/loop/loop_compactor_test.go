@@ -75,6 +75,7 @@ func TestLoopCompactsActualRequestPrefix(t *testing.T) {
 	defer other.Close()
 	settings := func() ([]chat.ModelConfig, error) {
 		configs, err := compactSettings(selected.URL, nil)()
+		configs[0].ContextWindow = 10000
 		unselected := configs[0]
 		unselected.Provider, unselected.BaseURL, unselected.Key = "other", other.URL, "other-secret"
 		return append([]chat.ModelConfig{unselected}, configs...), err
@@ -160,7 +161,7 @@ func TestLoopCompactsOnRecoveryBeforeFirstCall(t *testing.T) {
 		case len(request.Tools) == 0:
 			emitText(w, "已有历史的有效摘要")
 		case len(request.Messages) == 2:
-			emitText(w, strings.Repeat("长期历史-", 2100))
+			emitText(w, strings.Repeat("长期历史-", 1570))
 		default:
 			emitText(w, "恢复后的答复")
 		}

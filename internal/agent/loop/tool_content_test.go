@@ -129,7 +129,7 @@ func TestRuntimeCompactBudgetFailureIsAtomic(t *testing.T) {
 			}))
 			defer upstream.Close()
 			settings := func() ([]chat.ModelConfig, error) {
-				configs, _ := compactSettings(upstream.URL, nil)()
+				configs, _ := runtimeCompactSettings(upstream.URL, nil)()
 				if mode == "rounds" {
 					configs[0].MaxRounds = 1
 				}
@@ -211,7 +211,7 @@ func TestRuntimeCompactCannotBypassRoundLimit(t *testing.T) {
 	}))
 	defer upstream.Close()
 	settings := func() ([]chat.ModelConfig, error) {
-		configs, _ := compactSettings(upstream.URL, nil)()
+		configs, _ := runtimeCompactSettings(upstream.URL, nil)()
 		configs[0].MaxRounds = 1
 		return configs, nil
 	}
@@ -349,7 +349,7 @@ func TestRuntimeCompactsReuseOldSummaryWithoutExtraBudget(t *testing.T) {
 		}
 		switch normal.Add(1) {
 		case 1:
-			emitText(w, strings.Repeat("已覆盖的原始历史", 2000))
+			emitText(w, strings.Repeat("已覆盖的原始历史", 1300))
 		case 2, 3:
 			emitTools(w, []chat.ToolRequest{toolRequest("large", "get_schedule", `{"id":2}`)})
 		default:
@@ -358,7 +358,7 @@ func TestRuntimeCompactsReuseOldSummaryWithoutExtraBudget(t *testing.T) {
 	}))
 	defer upstream.Close()
 	settings := func() ([]chat.ModelConfig, error) {
-		configs, _ := compactSettings(upstream.URL, &expanded)()
+		configs, _ := runtimeCompactSettings(upstream.URL, &expanded)()
 		configs[0].MaxRounds = 3
 		return configs, nil
 	}
@@ -385,7 +385,7 @@ func TestRuntimeCompactsReuseOldSummaryWithoutExtraBudget(t *testing.T) {
 	for index := 0; index < 6; index++ {
 		request := <-requests
 		if len(request.Tools) != 0 {
-			if chat.EstimateTokens([]byte(mustJSON(request))) > 5500 {
+			if chat.EstimateTokens([]byte(mustJSON(request))) > 8500 {
 				t.Fatal("普通请求超预算仍被发送")
 			}
 			continue
@@ -444,7 +444,7 @@ func TestRuntimeCompactResumesSameRequest(t *testing.T) {
 				}
 			}))
 			defer upstream.Close()
-			settings := compactSettings(upstream.URL, nil)
+			settings := runtimeCompactSettings(upstream.URL, nil)
 			service, ports, application := largeContentFixture(t, upstream.URL, settings, nil)
 			receipt, err := service.CreateRun(context.Background(), admissionInput("compact-restart", "first"))
 			if err != nil {
@@ -500,6 +500,17 @@ func TestRuntimeCompactResumesSameRequest(t *testing.T) {
 				t.Fatalf("恢复重复摘要：%d", compacts)
 			}
 		})
+	}
+}
+
+func runtimeCompactSettings(base string, expanded *atomic.Bool) func() ([]chat.ModelConfig, error) {
+	return func() ([]chat.ModelConfig, error) {
+		configs, err := compactSettings(base, expanded)()
+		if expanded == nil || !expanded.Load() {
+			// 34 KB 输入预算容纳大型工具结果的摘要请求，带工具定义的普通请求仍会超限。
+			configs[0].ContextWindow = 9500
+		}
+		return configs, err
 	}
 }
 
@@ -578,7 +589,7 @@ func TestToolContentUsesCurrentConfiguredLimit(t *testing.T) {
 
 // TestRuntimeCompactFailureKeepsCurrentToolFacts 验证失败、取消、切换故障及摘要仍超预算时保留原始结果和有效历史。
 func TestRuntimeCompactFailureKeepsCurrentToolFacts(t *testing.T) {
-	for _, mode := range []string{"auth", "empty", "cancel", "oversize", "rollback", "lost-ack"} {
+	for _, mode := range []string{"auth", "empty", "cancel", "request-budget", "oversize", "rollback", "lost-ack"} {
 		t.Run(mode, func(t *testing.T) {
 			requests := make(chan chat.ModelRequest, 12)
 			started := make(chan struct{}, 1)
@@ -615,7 +626,10 @@ func TestRuntimeCompactFailureKeepsCurrentToolFacts(t *testing.T) {
 				}
 			}))
 			defer upstream.Close()
-			settings := compactSettings(upstream.URL, &expanded)
+			settings := runtimeCompactSettings(upstream.URL, &expanded)
+			if mode == "request-budget" {
+				settings = compactSettings(upstream.URL, &expanded)
+			}
 			service, _, _ := largeContentFixture(t, upstream.URL, settings, func(ports chat.Storage) chat.Storage {
 				if mode == "rollback" || mode == "lost-ack" {
 					ports.Execution = &compactSwitchFault{
@@ -642,18 +656,34 @@ func TestRuntimeCompactFailureKeepsCurrentToolFacts(t *testing.T) {
 				}
 			}
 			run := awaitFinishedRun(t, service, receipt.RunID)
-			code := map[string]string{"auth": "model_auth_failed", "empty": "model_invalid_format", "oversize": "context_budget_exceeded", "rollback": "persistence_failed", "lost-ack": "persistence_failed"}[mode]
-			if mode == "cancel" && run.Status != chat.StatusCancelled || mode != "cancel" && (run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != code) || run.Output != nil || normal.Load() != 1 || summaries.Load() != 1 {
+			code := map[string]string{
+				"auth":           "model_auth_failed",
+				"empty":          "model_invalid_format",
+				"request-budget": "context_budget_exceeded",
+				"oversize":       "context_budget_exceeded",
+				"rollback":       "persistence_failed",
+				"lost-ack":       "persistence_failed",
+			}[mode]
+			wantSummaries := int32(1)
+			if mode == "request-budget" {
+				wantSummaries = 0
+			}
+			if mode == "cancel" && run.Status != chat.StatusCancelled || mode != "cancel" && (run.Status != chat.StatusFailed || run.Error == nil || run.Error.Code != code) || run.Output != nil || normal.Load() != 1 || summaries.Load() != wantSummaries {
 				t.Fatalf("run=%+v error=%+v normal=%d summaries=%d", run, run.Error, normal.Load(), summaries.Load())
 			}
 			<-requests
-			summary := <-requests
-			if strings.Contains(summary.Messages[1].Content, input.Input) || !strings.Contains(summary.Messages[1].Content, "tool_call_id") {
-				t.Fatal("摘要没有独立压缩工具事实")
+			if wantSummaries > 0 {
+				summary := <-requests
+				if strings.Contains(summary.Messages[1].Content, input.Input) || !strings.Contains(summary.Messages[1].Content, "tool_call_id") {
+					t.Fatal("摘要没有独立压缩工具事实")
+				}
 			}
 			page := eventPage(t, service, run.RunID, 0, 100)
 			found := false
 			for _, event := range page.Events {
+				if wantSummaries == 0 && event.Type == chat.EventCompact {
+					t.Fatal("超预算摘要产生了登记事件")
+				}
 				if event.Type == chat.EventToolResult {
 					var result chat.ToolResultData
 					if err := json.Unmarshal(event.Data, &result); err != nil || len(result.Output) < 32768 || result.Error != nil || !json.Valid(result.Output) {
@@ -727,7 +757,8 @@ func TestRuntimeCompactContinuesWithPairedFacts(t *testing.T) {
 	}
 	service.Stop()
 	settings := func() ([]chat.ModelConfig, error) {
-		configs, _ := compactSettings(upstream.URL, nil)()
+		configs, _ := runtimeCompactSettings(upstream.URL, nil)()
+		configs[0].ContextWindow = 10000
 		configs[0].MaxRounds = 2
 		return configs, nil
 	}
@@ -754,7 +785,7 @@ func TestRuntimeCompactContinuesWithPairedFacts(t *testing.T) {
 		t.Fatal("摘要输入未保留工具事实或混入真实输入")
 	}
 	ordinary := <-requests
-	if len(ordinary.Messages) != 3 || ordinary.Messages[0].Content != first.Messages[0].Content || ordinary.Messages[1].Content != "日程2已查询成功；尾部事实；日期仍待澄清。" || ordinary.Messages[2].Content != run.Input || chat.EstimateTokens([]byte(mustJSON(ordinary))) > 5500 {
+	if len(ordinary.Messages) != 3 || ordinary.Messages[0].Content != first.Messages[0].Content || ordinary.Messages[1].Content != "日程2已查询成功；尾部事实；日期仍待澄清。" || ordinary.Messages[2].Content != run.Input || chat.EstimateTokens([]byte(mustJSON(ordinary))) > 9000 {
 		t.Fatalf("摘要后请求错误：%s", mustJSON(ordinary))
 	}
 	page := eventPage(t, service, run.RunID, 0, 100)
