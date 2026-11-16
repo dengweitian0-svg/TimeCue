@@ -18,6 +18,9 @@ func (s *Run) advanceCompact(ctx context.Context, r *chat.Record, cfg chat.Model
 			if failure != nil {
 				return call, failure
 			}
+			if failure := requestBudgetError(prepared.Body, cfg); failure != nil {
+				return call, failure
+			}
 			call.Input, call.InputBody = prepared.Input, prepared.Body
 			id, err := s.execution.BeginCall(ctx, call)
 			if err != nil {
