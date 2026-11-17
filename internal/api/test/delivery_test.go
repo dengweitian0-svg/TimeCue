@@ -46,7 +46,7 @@ func TestDeliveryHTTPBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	app.StopDelivery()
-	stopping := api.NewRouter(app, db.CheckHealth)
+	stopping := api.NewRouterWithPort(app, nil, db.CheckHealth, testRouterPort)
 	requireStatus(t, request(stopping, http.MethodPost, "/api/v1/notifications/claim", `{}`, "application/json"), 503)
 	if err := db.CheckHealth(context.Background()); err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestDeliveryHTTPFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := model.RuntimeInfo{InstanceID: "delivery-test-run"}
-	router := api.NewRouter(app, db.CheckHealth, runtime)
+	router := api.NewRouterWithPort(app, nil, db.CheckHealth, testRouterPort, runtime)
 	for _, body := range []string{`{"instanceId":"delivery-test-run"}`, `{"instanceId":"delivery-test-run","attemptIds":null}`, `{"instanceId":"delivery-test-run","attemptIds":"bad"}`, `{"instanceId":"delivery-test-run","attemptIds":[""]}`} {
 		requireStatus(t, request(router, http.MethodPost, "/api/v1/notifications/executor-exit", body, "application/json"), 400)
 	}

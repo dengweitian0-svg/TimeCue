@@ -8,11 +8,8 @@ import (
 	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
 )
 
-// SchedulePort 提供六个日程工具使用的正式业务用例。
-type SchedulePort = tools.SchedulePort
-
 // New 装配模型客户端及工具，并只读准备恢复所需的持久化事实。
-func New(ctx context.Context, storage chat.Storage, settings func() ([]chat.ModelConfig, error), schedules SchedulePort) (*Run, error) {
+func New(ctx context.Context, storage chat.Storage, settings func() ([]chat.ModelConfig, error), schedules tools.SchedulePort) (*Run, error) {
 	registry, err := tools.NewScheduleRegistry(ctx, schedules)
 	if err != nil {
 		return nil, err

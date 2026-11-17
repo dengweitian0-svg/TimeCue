@@ -12,11 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// NewRouter 注册本地业务接口。
-func NewRouter(app schedule.Service, healthCheck utils.HealthCheck, info ...model.RuntimeInfo) *gin.Engine {
-	return NewRouterWithPort(app, nil, healthCheck, 10086, info...)
-}
-
 // NewRouterWithPort 注册绑定指定本机端口的业务接口。
 func NewRouterWithPort(app schedule.Service, chat ChatService, healthCheck utils.HealthCheck, port int, info ...model.RuntimeInfo) *gin.Engine {
 	router := gin.New()

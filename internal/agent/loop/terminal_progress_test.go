@@ -120,7 +120,7 @@ func TestCancellationRecoveryClosesAcceptedLegacyBatch(t *testing.T) {
 					if stage == "tool_start" {
 						expectedState, expectedCode = "failed", "tool_result_unconfirmed"
 					}
-					if tool.State != expectedState || tool.Error == nil || tool.Error.Code != expectedCode {
+					if string(tool.State) != expectedState || tool.Error == nil || tool.Error.Code != expectedCode {
 						t.Fatalf("取消工具事实不符: %+v", tool)
 					}
 				}

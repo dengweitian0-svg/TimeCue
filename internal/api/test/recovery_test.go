@@ -37,7 +37,7 @@ func TestRecoveryHTTPQueries(t *testing.T) {
 	if _, err := conn.Exec(`UPDATE schedule_versions SET effective_from = ? WHERE schedule_id = ?`, from.UnixNano(), rule.ID); err != nil {
 		t.Fatal(err)
 	}
-	router := api.NewRouter(app, db.CheckHealth)
+	router := api.NewRouterWithPort(app, nil, db.CheckHealth, testRouterPort)
 	for _, query := range []string{"", "state=sent", "deliveryTaskId=", "attemptId=x", "state=unacknowledged&deliveryTaskId=x", "deliveryTaskId=x&deliveryTaskId=y", "deliveryTaskId=x&cursor=garbage", "unknown=x"} {
 		expected := 400
 		if query == "deliveryTaskId=x&cursor=garbage" {

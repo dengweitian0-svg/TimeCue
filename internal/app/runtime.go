@@ -37,18 +37,18 @@ func (a *App) Run(ctx context.Context, lifecycle Lifecycle) error {
 	a.syncServices()
 
 	// 收尾时停止开始新批次，并给已开始的批次保留独立的完成窗口。
-	work, cancelWork := context.WithCancel(context.Background())
-	defer cancelWork()
-	polling, stopPolling := context.WithCancel(work)
+	batchCtx, cancelBatch := context.WithCancel(context.Background())
+	defer cancelBatch()
+	pollingCtx, stopPolling := context.WithCancel(batchCtx)
 	defer stopPolling()
 	started := make(chan struct{})
 	done := make(chan struct{}, 2)
-	start := func(name string, run func(context.Context, context.Context) error) {
+	start := func(name string, run func(pollingCtx, batchCtx context.Context) error) {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			started <- struct{}{}
-			err := run(polling, work)
-			if polling.Err() == nil {
+			err := run(pollingCtx, batchCtx)
+			if pollingCtx.Err() == nil {
 				if err == nil {
 					err = fmt.Errorf("background task stopped unexpectedly")
 				}
@@ -69,7 +69,7 @@ func (a *App) Run(ctx context.Context, lifecycle Lifecycle) error {
 	<-lifecycle.LoopDone
 	shutdown, cancel := context.WithTimeout(context.Background(), lifecycle.ShutdownBudget)
 	defer cancel()
-	stopDeadline := context.AfterFunc(shutdown, cancelWork)
+	stopDeadline := context.AfterFunc(shutdown, cancelBatch)
 	defer stopDeadline()
 	stopPolling()
 	a.StopDelivery()

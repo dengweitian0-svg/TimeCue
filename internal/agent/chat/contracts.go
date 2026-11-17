@@ -24,7 +24,7 @@ type RunState string
 
 const (
 	StateRunning RunState = "running"
-	// StateRetryWait 用于逻辑模型及工具调用，运行本身仍保持 running。
+	// StateRetryWait 用于逻辑模型调用，运行本身仍保持 running。
 	StateRetryWait     RunState = "retry_wait"
 	StateWaitForCancel RunState = "wait_for_cancel"
 	StateSucceeded     RunState = "succeeded"

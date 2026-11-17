@@ -28,7 +28,7 @@ func TestHealthRuntimeInfo(t *testing.T) {
 	}{
 		{nil, 200, ""}, {errors.New("unavailable"), 503, "database_unavailable"}, {store.ErrSchemaInvalid, 503, "schema_invalid"},
 	} {
-		router := api.NewRouter(nil, func(context.Context) error { return item.failure }, info)
+		router := api.NewRouterWithPort(nil, nil, func(context.Context) error { return item.failure }, testRouterPort, info)
 		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:10086/health", nil)
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)

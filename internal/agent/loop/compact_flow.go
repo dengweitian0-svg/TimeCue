@@ -42,7 +42,7 @@ func (s *Run) advanceCompact(ctx context.Context, r *chat.Record, cfg chat.Model
 		if !s.compactor.ValidResponse(call.Output) {
 			return call, toolError("model_invalid_format", "摘要响应必须为正文或思考，不允许调用工具")
 		}
-		latest, available := s.currentModel(r.Provider, r.Model)
+		latest, modelAvailable := s.currentModel(r.Provider, r.Model)
 		if latest.ContextWindow > latest.MaxOutputTokens && latest.MaxOutputTokens > 0 {
 			cfg = latest
 		}
@@ -55,7 +55,7 @@ func (s *Run) advanceCompact(ctx context.Context, r *chat.Record, cfg chat.Model
 				accepted.PendingEvents = nil
 			}
 			call = accepted
-			if !available {
+			if !modelAvailable {
 				return call, toolError("model_config_unavailable", "原运行的模型配置或密钥不可用")
 			}
 			if failure := s.continuationBudgetError(ctx, call, cfg); failure != nil || ctx.Err() != nil {
@@ -63,17 +63,13 @@ func (s *Run) advanceCompact(ctx context.Context, r *chat.Record, cfg chat.Model
 			}
 			request := s.contextBuilder.FollowupRequest(call, true)
 			request.MaxTokens = cfg.MaxOutputTokens
-			call = chat.ModelCall{
-				RunID:             r.RunID,
-				SessionID:         r.SessionID,
-				Input:             request,
-				State:             chat.StateRunning,
-				MaxRetry:          cfg.MaxRetry,
-				Continuation:      true,
-				CheckpointStage:   "compact",
-				CheckpointContext: call.CheckpointContext,
-				OutputPrefix:      call.OutputPrefix,
-			}
+			continuation := newModelCall(r.Run, cfg.MaxRetry)
+			continuation.Input = request
+			continuation.Continuation = true
+			continuation.CheckpointStage = "compact"
+			continuation.CheckpointContext = call.CheckpointContext
+			continuation.OutputPrefix = call.OutputPrefix
+			call = continuation
 			continue
 		}
 		ordinary, err := s.contextBuilder.FirstRequest(ctx, *r, cfg)
@@ -110,14 +106,9 @@ func (s *Run) advanceCompact(ctx context.Context, r *chat.Record, cfg chat.Model
 		var next *chat.ModelCall
 		var terminal *chat.Record
 		if failure == nil {
-			next = &chat.ModelCall{
-				RunID:     r.RunID,
-				SessionID: r.SessionID,
-				Input:     prepared.Input,
-				InputBody: prepared.Body,
-				State:     chat.StateRunning,
-				MaxRetry:  cfg.MaxRetry,
-			}
+			ordinaryCall := newModelCall(r.Run, cfg.MaxRetry)
+			ordinaryCall.Input, ordinaryCall.InputBody = prepared.Input, prepared.Body
+			next = &ordinaryCall
 		} else {
 			finished := *r
 			finished.State, finished.Error = chat.StateFailed, failure

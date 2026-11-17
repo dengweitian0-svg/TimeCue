@@ -728,7 +728,7 @@ func awaitToolState(t *testing.T, storage chat.Storage, run, id, state string) (
 				t.Fatal(err)
 			}
 			for _, tool := range stored {
-				if tool.Request.ID == id && tool.State == state {
+				if tool.Request.ID == id && string(tool.State) == state {
 					return call, tool
 				}
 			}

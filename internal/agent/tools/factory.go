@@ -158,7 +158,7 @@ func (attempt *toolAttempt) accepts(result toolAttemptResult) bool {
 }
 
 // RunBatch 调度已接纳的批次并返回实际提交的配对进度。事务故障时一并交回已取得的结果。
-func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg Settings) (result P, pending []ToolCall, failure *BatchFailure) {
+func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, progress P, cfg Settings) (result P, pending []ToolCall, failure *BatchFailure) {
 	// 读取配置失败时保留最近一次有效设置；已登记的尝试保留原预算及期限。
 	limit, timeout, maxRetry := cfg.limits()
 	contentLimit := cfg.ResultMaxTokens
@@ -170,7 +170,7 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 	}
 	stored, err := f.store.ReadTools(f.control.PersistenceContext(), batch.ModelCallID)
 	if err != nil {
-		return call, pending, batchFailure("read_tools", err)
+		return progress, pending, batchFailure("read_tools", err)
 	}
 	known := map[string]ToolCall{}
 	for _, tool := range stored {
@@ -208,29 +208,29 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 		tool.ModelContentLimit = contentLimit
 		if tool.canRetry() && f.canRetry(ctx, batch.RunID) {
 			next := agent.RetryAt(time.Now(), tool.RetryCount+1)
-			tool.State, tool.NextRetryAt = "retry_wait", &next
+			tool.State, tool.NextRetryAt = StateRetryWait, &next
 			if err := f.store.WaitToolRetry(f.control.PersistenceContext(), tool); err != nil {
 				// 保存退避失败也保留本次实际错误，不将已取得的结果改为未确认。
-				tool.State, tool.NextRetryAt = "failed", nil
+				tool.State, tool.NextRetryAt = StateFailed, nil
 				pending = append(pending, tool)
 				return batchFailure("tool_retry_wait", err)
 			}
 			known[tool.Request.ID] = tool
 			return nil
 		}
-		progress, err := f.store.FinishTool(f.control.PersistenceContext(), call, tool)
+		committed, err := f.store.FinishTool(f.control.PersistenceContext(), progress, tool)
 		if err != nil {
 			pending = append(pending, tool)
 			return batchFailure("tool_result", err)
 		}
-		call = progress
+		progress = committed
 		known[tool.Request.ID] = tool
 		return nil
 	}
 	// 恢复先核对原身份的只读回执；命中是已有事实，不是一次新的业务尝试。
 	// retry_wait 也可能来自业务提交后返回的暂时故障，核对不受退避或剩余预算阻挡。
 	for _, tool := range stored {
-		if call.ToolCompleted(tool.Request.ID) || !tool.unsettled() {
+		if progress.ToolCompleted(tool.Request.ID) || !tool.unsettled() {
 			continue
 		}
 		confirmed, found, err := f.readReceipt(f.control.PersistenceContext(), tool)
@@ -239,7 +239,7 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 		}
 		if found {
 			if failure := settle(confirmed); failure != nil {
-				return call, pending, failure
+				return progress, pending, failure
 			}
 		}
 	}
@@ -256,14 +256,14 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 	for {
 		// 宿主退出预算到期后保留未完成工具；用户取消仍等待原结果或原期限。
 		if f.control.PersistenceContext().Err() != nil {
-			return call, pending, nil
+			return progress, pending, nil
 		}
 		// 已在期限内返回的事实优先接纳，短事务等待不能将其改判超时。
 		for draining := true; draining; {
 			select {
 			case returned := <-results:
 				if failure := acceptResult(returned); failure != nil {
-					return call, pending, failure
+					return progress, pending, failure
 				}
 			default:
 				draining = false
@@ -277,13 +277,13 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 			attempt.cancel()
 			delete(active, id)
 			tool := attempt.tool
-			tool.State = "failed"
+			tool.State = StateFailed
 			tool.Error = &Failure{
 				Code:    "tool_timeout",
 				Message: "工具执行超时，取消信号不代表业务副作用已回滚",
 			}
 			if failure := settle(tool); failure != nil {
-				return call, pending, failure
+				return progress, pending, failure
 			}
 			// 保存可能阻塞，先重新接纳期间及时返回的事实，再裁定下一个超时。
 			expired = true
@@ -301,7 +301,7 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 			if ctx.Err() != nil || serial || len(active) >= limit {
 				break
 			}
-			if call.ToolCompleted(request.ID) || active[request.ID] != nil {
+			if progress.ToolCompleted(request.ID) || active[request.ID] != nil {
 				continue
 			}
 			tool, exists := known[request.ID]
@@ -317,7 +317,7 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 				tool = ToolCall{
 					ModelCallID: batch.ModelCallID,
 					Request:     request,
-					State:       "running",
+					State:       StateRunning,
 					MaxRetry:    maxRetry,
 				}
 				if registered && entry.info.Dangerous {
@@ -325,34 +325,34 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 				}
 			} else {
 				if !tool.unsettled() {
-					return call, pending, batchFailure("tool_state", fmt.Errorf("工具 %s 的已提交状态 %s 缺少配对进度", tool.Request.ID, tool.State))
+					return progress, pending, batchFailure("tool_state", fmt.Errorf("工具 %s 的已提交状态 %s 缺少配对进度", tool.Request.ID, tool.State))
 				}
 				if tool.RetryCount >= tool.MaxRetry {
-					if tool.State == "running" {
+					if tool.State == StateRunning {
 						tool = tool.WithResultUnconfirmed()
 					} else {
-						tool.State = "failed"
+						tool.State = StateFailed
 					}
 					if failure := settle(tool); failure != nil {
-						return call, pending, failure
+						return progress, pending, failure
 					}
 					continue
 				}
 				tool.RetryCount++
 			}
-			tool.State, tool.Error, tool.Output, tool.NextRetryAt = "running", nil, nil, nil
+			tool.State, tool.Error, tool.Output, tool.NextRetryAt = StateRunning, nil, nil, nil
 			// 与取消受理共用启动门，取消提交后不能再登记有效尝试。
 			f.control.StartGate.Lock()
 			if ctx.Err() != nil {
 				f.control.StartGate.Unlock()
 				break
 			}
-			started, registeredTool, err := f.store.BeginTool(f.control.StartContext, call, tool)
+			committed, registeredTool, err := f.store.BeginTool(f.control.StartContext, progress, tool)
 			if err != nil {
 				f.control.StartGate.Unlock()
-				return call, pending, batchFailure("tool_start", err)
+				return progress, pending, batchFailure("tool_start", err)
 			}
-			call, tool = started, registeredTool
+			progress, tool = committed, registeredTool
 			known[request.ID] = tool
 			attemptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 			token++
@@ -369,9 +369,9 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 				defer f.workers.Done()
 				tool := attempt.tool
 				output, failure := f.registry.Execute(WithExecutionKey(attempt.ctx, tool.IdempotencyKey), tool.Request.Function.Name, tool.Request.Function.Arguments)
-				tool.Output, tool.State = output, "succeeded"
+				tool.Output, tool.State = output, StateSucceeded
 				if failure != nil {
-					tool.State = "failed"
+					tool.State = StateFailed
 					tool.Error = failure
 					if failure.Code == "tool_argument_parse_error" {
 						logger.Warn("[tools] 工具参数不完整或 JSON 非法，未执行业务", "run_id", batch.RunID, "model_call_id", tool.ModelCallID, "tool_call_id", tool.Request.ID)
@@ -389,26 +389,10 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 			f.control.StartGate.Unlock()
 			serial = !parallel
 		}
-		if len(active) == 0 && (ctx.Err() != nil || batch.Complete(call)) {
-			return call, pending, nil
+		if len(active) == 0 && (ctx.Err() != nil || batch.Complete(progress)) {
+			return progress, pending, nil
 		}
-		wait := 100 * time.Millisecond
-		for _, attempt := range active {
-			deadline, _ := attempt.ctx.Deadline()
-			if remaining := time.Until(deadline); remaining < wait {
-				wait = remaining
-			}
-		}
-		if ctx.Err() == nil {
-			for id, tool := range known {
-				if active[id] == nil && !call.ToolCompleted(id) {
-					if remaining := tool.retryWait(); remaining > 0 && remaining < wait {
-						wait = remaining
-					}
-				}
-			}
-		}
-		timer := time.NewTimer(wait)
+		timer := time.NewTimer(nextBatchWake(ctx, active, known, progress))
 		// 取消只阻止后续启动，已开始尝试等待实际结果或原期限。
 		wake := ctx.Done()
 		if ctx.Err() != nil {
@@ -418,11 +402,31 @@ func (f *ToolFactory[P]) RunBatch(ctx context.Context, batch Batch, call P, cfg 
 		case returned := <-results:
 			timer.Stop()
 			if failure := acceptResult(returned); failure != nil {
-				return call, pending, failure
+				return progress, pending, failure
 			}
 		case <-timer.C:
 		case <-wake:
 			timer.Stop()
 		}
 	}
+}
+
+func nextBatchWake(ctx context.Context, active map[string]*toolAttempt, known map[string]ToolCall, progress BatchProgress) time.Duration {
+	wait := 100 * time.Millisecond
+	for _, attempt := range active {
+		deadline, _ := attempt.ctx.Deadline()
+		wait = min(wait, time.Until(deadline))
+	}
+	if ctx.Err() != nil {
+		return wait
+	}
+	for id, tool := range known {
+		if active[id] != nil || progress.ToolCompleted(id) {
+			continue
+		}
+		if remaining := tool.retryWait(); remaining > 0 {
+			wait = min(wait, remaining)
+		}
+	}
+	return wait
 }

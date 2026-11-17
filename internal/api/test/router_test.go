@@ -21,6 +21,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const testRouterPort = 10086
+
 func testRouter(t *testing.T) (*gin.Engine, *store.Sqlite) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "api.db")
@@ -66,12 +68,12 @@ func testRouter(t *testing.T) (*gin.Engine, *store.Sqlite) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return api.NewRouter(app, db.CheckHealth), db
+	return api.NewRouterWithPort(app, nil, db.CheckHealth, testRouterPort), db
 }
 
 func request(router http.Handler, method, path, body, mediaType string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
-	req.Host = "127.0.0.1:10086"
+	req.Host = fmt.Sprintf("127.0.0.1:%d", testRouterPort)
 	if mediaType != "" {
 		req.Header.Set("Content-Type", mediaType)
 	}
@@ -315,7 +317,7 @@ func TestHealthRejectsUnmigratedDatabase(t *testing.T) {
 	if err := db.CheckHealth(context.Background()); err == nil {
 		t.Fatal("unmigrated database passed health check")
 	}
-	response := request(api.NewRouter(nil, db.CheckHealth), http.MethodGet, "/health", "", "")
+	response := request(api.NewRouterWithPort(nil, nil, db.CheckHealth, testRouterPort), http.MethodGet, "/health", "", "")
 	requireStatus(t, response, 503)
 	data := decodeObject(t, response.Body.Bytes())["data"].(map[string]any)
 	if data["status"] != "error" || data["error"].(map[string]any)["code"] != "schema_invalid" {
