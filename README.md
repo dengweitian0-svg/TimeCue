@@ -1,154 +1,107 @@
 # TimeCue
 
-TimeCue 正在重构为面向 Windows 的桌面日程提醒应用。目标是由 Go 管理日程规则、提醒状态和本地数据，由 Flutter 提供桌面界面及系统交互。
+用房间与日程本整理日常安排，也能用自然语言管理日程的 Windows 桌面提醒应用。
 
-> 当前可运行 Flutter 房间与日程本和独立 Go 本机 HTTP API。已接入托盘、单实例、自有 Go 进程及完整 Windows ZIP 打包；默认使用用户数据目录，首次启动初始化数据库。系统通知完整冷启动与人工安装态验收仍待核验。
+TimeCue 把单次安排、周期日程和待确认提醒放进同一本日程本。你可以查看今天的安排、回顾遗漏事项，也可以在 AI 页问「明天有什么安排？」或说「每周一上午 9 点提醒我开例会」。日程、提醒和聊天历史保存在本地 SQLite 数据库中，AI 对话请求发送到你配置的模型服务。
 
-发行构建：在根目录运行 `powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1`，完整 ZIP 输出到 `build/releases/`。解压后双击 `timecue_desktop.exe`，无需手填参数；必须保留同目录 Go、DLL 和 data。数据升级及验收边界见[发行说明](docs/RELEASE.md)。
+## 功能
 
-## 当前实现
+- **管理日常安排**。创建、编辑和删除单次或周期日程，支持每天、每周、每月重复，以及周期日程的暂停与恢复。
+- **查看与确认提醒**。在「今天」「历史待确认」「日历」查看安排，支持单条或批量确认。通知与详情打开后，提醒保持原来的确认状态。
+- **补齐遗漏提醒**。应用启动或从运行中断恢复后整理遗漏提醒，可查看恢复进度和汇总。
+- **融入 Windows 桌面**。支持系统通知、托盘和单实例唤回。关闭窗口后继续在托盘运行，房间背景随早晨、下午和夜晚切换。
+- **在对话中管理日程**。AI 助手可以查询日程规则和指定日期的安排，也可以创建、修改和删除日程。对话支持流式回复、查看实际工具结果、停止生成，以及搜索和重开历史会话。
 
-| 部分 | 仓库中的现状 |
+## 快速开始
+
+### 从源码运行
+
+| 依赖 | 要求 |
 | --- | --- |
-| 启动入口 | main 校验数据目录和运行身份并调用 app.App.Run；托管模式提供 ready 与父端 shutdown/EOF 控制，App 管理启动与退出清理。 |
-| 配置 | Flutter 负责用户 config.yaml 的原子写入；Go 合并原有内嵌默认值、发布快照并监听。相对数据库/日志路径使用同一数据目录。 |
-| 日志 | 全局 `slog` 日志器按配置级别写入 `log.log_path/timecue.jsonl`；正式配置完成前的日志会被丢弃。 |
-| 日程与提醒 | 已有规则操作、查询与确认；D1 开放完整分钟分组，D2 提供领取、开始、结果回填和有限重试，D3 按历史版本分批恢复、开放唯一遗漏汇总并查询成员/进度。D5 已接 Windows 即时展示与内存结果重传，D6 已接冻结成员定位、持久提醒详情及恢复进度/历史分页。 |
-| SQLite | 已有日程与提醒读写、软删除、投递及确认状态更新；入口初始化空库或备份后升级可识别的 Flutter 旧库，事务提交前检查结构；拒绝自动转换 Wails 数据库。 |
-| Flutter | `desktop/` 已实现三时段房间、双页本子及创建/编辑视觉骨架，默认接入 Go 查询、单条/批量确认及真实规则变更，视觉示例仍用显式内存仓储。 |
+| 系统 | Windows x64 |
+| Go | [go.mod](go.mod) 中声明的 1.27.3 |
+| Flutter | 建议使用与 CI 一致的 3.47.0 stable |
+| Windows 构建工具 | 支持 Flutter Windows 的 Visual Studio C++ 桌面开发工具链 |
 
-
-日程本已接入“今天｜历史待确认｜日历”三标签：按原计划时间及北京时间零点分类，两类分别分页和选择，房间统计全部到期未确认；跨日重载首分页，查询及查看详情不会确认或调用平台通知。接口和自动检查证据见[历史待确认验收记录](docs/design/historical-unacknowledged-reminders-validation.md)。
-
-Go 代码按业务职责组织：`internal/api/handler` 分为 session、agent、schedule、utils，HTTP 回归集中在 `internal/api/test`；`internal/service` 分为 schedule、notification、recovery。`internal/app` 负责跨模块编排、共享正式操作边界和运行生命周期；服务通过各自的存储端口访问数据，具体 SQLite 适配器由入口注入。模块职责和约束见[模块索引](AGENTS.md)，其余工程说明见[文档索引](docs/INDEX.md)。
-
-## 产品目标与核心规则
-
-- 创建、查看和删除单次或周期日程；周期日程允许暂停和恢复后续提醒。
-- 每天、每周、每月是前端输入预设，保存时转换为五字段 cron 表达式。Go 端校验表达式并计算下一次触发时间，不为三种频率分别建立日程类型。
-- 当前仅支持 `分钟 小时 * * *`、`分钟 小时 * * 星期列表`、`分钟 小时 日期列表 * *`。列表使用逗号；星期一至星期日为 `1–7`。不接受范围、步长、别名、月份限制或日期与星期混用。每月日期超出当月天数时在月末触发。
-- 前端提供带 `+08:00` 偏移的北京时间，周期规则也按固定 UTC+8 解释；Go 端返回的业务时间统一带 `+08:00`，不采用夏令时。SQLite 仍以 Unix 纳秒保存时间点。可选的周期截止时间尚未实现。
-- 持久化每次提醒的计划时间、投递结果和用户确认状态。展示通知、打开详情与用户确认是不同操作；外部通知结果须回传 Go 更新状态。
-- Flutter 负责界面及 Windows 桌面交互，Go 负责日程用例、调度与 SQLite 状态转换。双方通过窄接口交换命令、查询结果和提醒事件。
-
-核心业务持久化使用 `schedules` 和 `notifications`，阶段 C 的 `schedule_versions` 与 `schedule_write_receipts` 保存规则区间和幂等回执；Go 查询与确认归入原有日程和提醒模块。Flutter 的日程本是展示方式，没有独立数据库、表或后端业务模型。
-
-阶段 D 的[运行状态方案](docs/design/phase-d0-runtime-state.md)规定：任务分组、展示次数、尝试成员和恢复位置只放内存；预加载状态复用 `notifications.status=loaded`，不增加表、字段、迁移、RuntimeStore、runtime_json、租约或心跳。D1 直接修改原 001 的 status CHECK，日程业务保留 001 + 002，AI 003 迁移后当前数据库版本为 3；D3 已接入全期间恢复，D5 通过原投递协议执行 Windows 通知。
-
-重要状态只能经明确的业务操作改变。已发生的提醒应保留可查询的记录；周期表达式只决定未来触发时间，不代替提醒历史或确认状态。
-
-阶段 D 的实施顺序见[开发规划](docs/design/phase-d-development-plan.md)；已实现的 D1 及 D2/D3 接入契约见[分钟调度方案](docs/design/phase-d1-minute-scheduler.md)。loaded 表示加载/等待执行，只有 sent 表示平台接受展示，用户确认保持独立。
-
-D4 的 [Go 托管启动](docs/design/phase-d4-managed-startup.md)已完成数据目录、运行身份、ready 及父进程停止管道；Go 检查与 Apifox 健康扩展、D2/D3 回归均已通过，见[验收记录](docs/design/phase-d4-validation.md)。Flutter 隐藏启动、身份门禁、共享退出及 Job Object 已由 D8 接入，见[D8 验收记录](docs/design/phase-d8-validation.md)。
-
-D5 的 [Windows 通知桥](docs/design/phase-d5-windows-notification-bridge.md)复用原 HTTP 仓储和应用装配，按 attempt 去重并只重传已知结果；真实模式使用固定通知插件，演示模式不领取。Windows 原生单条、分钟合并和恢复汇总请求及 sent 回流已验证，横幅视觉证据待确认；实际检查和限制见[验收记录](docs/design/phase-d5-validation.md)。通知点击不确认，应用退出请求先停止新展示并尽力回填，不停止手动 Go。
-
-D6 已接入[通知点击与恢复展示](docs/design/phase-d6-click-recovery-display.md)：通知通过运行身份及原 task/attempt 查询本次冻结成员，单条 minute 打开详情，多条及恢复通知分页查看；房间和本子读取同一恢复摘要，完整历史与本次展示分开查询。详情独立显示真实投递/确认状态，点击不确认，原草稿与选择保留。自动回归和原生结果回流、视觉边界见[D6 验收记录](docs/design/phase-d6-validation.md)；系统横幅实际点击仍待真机确认，窗口唤回及冷启动转交归 D7/D8。
-
-D2 已实现三接口协议、开始资格及成员冻结、原子结果回填和运行内有限重试，核心实现见[投递服务](internal/service/notification/notification_delivery.go)。任务及尝试不持久化，日程与提醒保留原四张业务表，AI 003 独立新增六张表，当前数据库版本为 3；Apifox 验收报告保留在本地 `.apifox/d2/reports/`。
-
-D3 已接入启动和运行间隙的全期间恢复：每事务最多补齐 500 条可证明的历史触发，排除暂停区间并保留旧文本和永久停止。整理完成后只开放一个 recovery 汇总；未开始旧分钟及连续遗漏的旧汇总合入新汇总，已开始任务保留身份和本运行预算。任务及 attempt 成员每页 50 条，组合快照区分恢复进度和投递结果；完整遗漏总数未确定时返回 null。设计和任务见[D3 契约](docs/design/phase-d3-recovery-query.md)，Go/race 和 Apifox 结果见[验收记录](docs/design/phase-d3-validation.md)。
-
-D1 的 Go/race、Flutter 测试与 Windows release 构建、Apifox 接口验收已通过，证据见[验收记录](docs/design/phase-d1-validation.md)。
-
-## 配置
-
-默认配置内嵌在 [`internal/config/default.yaml`](internal/config/default.yaml)。程序从 `--data-dir` 指定目录读取 `config.yaml`，省略时使用 Go 可执行文件所在目录；文件不存在时使用默认值。用户配置只需写需要覆盖的字段。例如：
-
-```yaml
-log:
-  level: info
-  log_path: ./log
-
-db:
-  db_path: ./db/timecue.db
-```
-
-`app.name` 和 `app.version` 也定义在默认配置中，属于应用元数据。数据库和日志的相对路径按 data-dir 解释，绝对路径与 SQLite `:memory:` / `file:` 数据源沿用原值；启动不调用 Chdir，不改写配置中的相对路径文本。正式用户目录默认值留给阶段 E。
-
-`log.log_path` 是日志目录。程序加载配置后创建目录，并以追加模式写入其中的 `timecue.jsonl`；每行是一条 JSON 记录。如果日志文件无法打开，错误会输出到标准错误。
-
-日志的 `time` 字段统一使用固定 UTC+8 北京时间，格式为 `YYYY-MM-DD-HH:MM:SS`（例如 `2026-10-01-09:30:00`），精确到秒，不受主机时区影响。
-
-HTTP 请求由统一日志中间件每次最多记录一条：日程与提醒查询成功使用 Debug，创建、更新、删除及提醒确认成功使用 Info，拒绝使用 Warn，内部失败使用 Error。提醒列表记录本页数量和总数，详情记录提醒及日程 ID，确认记录去重后返回条数；不记录名称、说明、请求体、响应体、查询字符串或完整批量 ID 集合。
-
-日程创建、更新和删除日志增加 `mutation`：记录操作结果 `outcome`、前后版本、生效时间、实际修改字段及调度规则差异。创建记录规则 `state`；更新记录 `changes`，名称和说明只出现在 `changed_fields` 中。首条未来提醒以 `notification_id`、`next_notify_at` 记录，无提醒时为 null。原样提交仍递增版本，字段差异为空。幂等重放使用消息 `[http] schedule write replayed` 和 `outcome=replayed`，版本、生效时间和首提醒属于原操作回执，不代表当前规则或新的变更。日志摘要来自事务内旧状态及实际保存状态；数据库已提交但响应失败时，日志同时保留变更事实和响应错误，HTTP 状态保留实际提交的响应状态。
-
-配置文件变动会触发重新解析，并以原子方式发布新的配置快照。**目前实际作用到运行组件的热更新只有 `log.level`**。`db.db_path` 的新值可以进入配置快照，但尚无数据库连接切换或数据迁移，因此不能把修改配置文件当作已搬迁数据库。后续的热更新范围限定为 `log.level` 和 `db.db_path`；`log.log_path` 计划只在启动时读取。
-
-房间左上角的“设置”入口可修改日志级别、日志目录和数据库目录，并恢复这三个运行字段的默认配置。数据库目录输入例如 `D:\time_cue`，保存时自动补齐 `timecue.db`；日志目录自动写入 `timecue.jsonl`。用户配置由 Flutter 的 `ConfigFileStore` 管理，保存保留 YAML 注释、app、desktop 和未知字段；Go 只读取和监听。未配置值交由原有内嵌 default.yaml 决定，该文件不由前端读取或写入。日志级别自动加载；路径更改在下次启动生效，保存配置不执行数据库搬迁。设置读取失败可重试，保存失败保留草稿，关闭未保存的修改和恢复默认均需在界面确认。演示模式不修改本地配置。
-
-当前根目录的 `config.yaml` 还包含旧版的 `backup`、`window` 字段。现行配置结构不使用它们，也没有相应的备份或窗口行为。配置写入会保留已有的未知字段，但不会让这些字段生效。
-
-## 本地 HTTP API
-
-首次使用空数据库时，可按下文开发命令启动，入口建立版本 3 数据库。可识别的 Flutter 版本 1 或版本 2 旧库先备份再事务升级，未知和 Wails 旧库保留并拒绝，见[迁移说明](migrations/README.md)。Go 与 Flutter 统一通过 `--env=test|release` 选择端口：省略或 release 使用 `http://127.0.0.1:10086`，test 使用 `http://127.0.0.1:1145`，与 Debug/Profile/Release 构建模式无关。两者仅接受对应 Host，不启用浏览器 CORS 或应用令牌。启动前和 `GET /health` 检查版本、结构及 loaded 约束。
-
-| 方法 | 路径 | 作用 |
-| --- | --- | --- |
-| GET | `/health` | 数据库及迁移健康检查，附运行身份、PID、HTTP 版本和已实现能力 |
-| POST | `/api/v1/scheduler/schedules` | 创建单次或周期日程；请求体最大 1 MiB |
-| GET | `/api/v1/scheduler/schedules` | 查询未删除日程；支持 `name`、`type`、`limit`、`offset` |
-| GET | `/api/v1/scheduler/schedules/:id` | 查看未删除日程 |
-| PUT | `/api/v1/scheduler/schedules/:id` | 同类型事务更新、周期启停；必传 expectedRevision，支持 Idempotency-Key |
-| DELETE | `/api/v1/scheduler/schedules/:id` | 软删除日程，成功返回 204 |
-| GET | `/api/v1/scheduler/schedules?view=occurrences&include=unacknowledged&date=YYYY-MM-DD` | 同一读取快照的日期安排、待确认首分页及总数 |
-| GET | `/api/v1/scheduler/schedules?view=occurrences&date=YYYY-MM-DD&cursor=...` | 日期事实与未来投影，分页去重 |
-| GET | `/api/v1/scheduler/schedules?view=calendar&month=YYYY-MM` | 月份日期标记 |
-| GET | `/api/v1/notifications?state=unacknowledged&cursor=...` | 全历史到期未确认页，含失败及待投递 |
-| GET | `/api/v1/notifications?state=unacknowledged&scope=today&cursor=...` | 今日到期未确认；可改 scope=history 查询昨日及更早，范围总数先于分页，跨范围/跨日游标返回 400 |
-| GET | `/api/v1/notifications?deliveryTaskId=...&attemptId=...&cursor=...` | 本运行任务历史成员；可选 attemptId 读取该次冻结实际成员，50 条分页 |
-| GET | `/api/v1/notifications/:id` | 提醒详情，父日程删除后历史仍可查 |
-| POST | `/api/v1/notifications/acknowledgements` | 单条及批量统一提交 notificationIds，最多 500 个，整批校验后原子确认 |
-| POST | `/api/v1/notifications/claim` | 领取最多 20 个完整 minute/recovery 任务，返回本运行的任务/attempt 身份及平台标识 |
-| POST | `/api/v1/notifications/delivery-attempts/:id/start` | 重检成员资格并冻结文案，消费一次运行内展示预算，重复请求幂等 |
-| POST | `/api/v1/notifications/delivery-attempts/:id/results` | 回填整次平台请求的 sent/failed，原子更新实际成员；重复结果不再次执行 |
-| POST | `/api/v1/notifications/executor-exit` | 当前 instanceId 和执行者持有的 attemptIds；只整理精确匹配的活动尝试，保留展示预算及迟到真实结果 |
-
-AI 对话已接通官方 openai-go/v3 Chat Completions、SQLite 和流式事件，支持提供方/模型选择、原始多轮历史、事件分页与 SSE 断线接续、完成会话重启查询、模型取消和会话软删除。原始运行记录与最终正文分别展示，思考和工具参数、原始 JSON 结果及错误可折叠查看。缺少 Key 时正常启动并保留本地查询，新库没有演示会话。配置、九个 HTTP 操作和当前切片边界见 [真实文字对话](docs/CHAT.md)。
-
-创建请求示例：
-
-```json
-{"name":"工作日晨会","type":"period","description":null,"period":{"cron":["0 9 * * 1,2,3,4,5"]}}
-```
-
-单次日程使用 `"type":"single"` 和 `"single":{"notifyTime":"2026-10-10T09:30:00+08:00"}`；时间必须为分钟精度（秒与亚秒均为零）、晚于创建时刻，并可无损保存为 int64 Unix 纳秒。最大合法北京时间分钟为 `2262-04-12T07:47:00+08:00`，越界输入返回 400。周期日程可传 `period.open` 原子创建暂停规则，缺省启用。两类规则不能同时出现，未知字段会被拒绝。成功响应使用 `{"data":{...}}`，创建返回 201 及 `Location`；列表返回 `{"data":[...]}`，按创建时间及 ID 降序排列。日程对象始终包含 `id`、`name`、`type`、`description`、`single`、`period`、`cancelled`、`createdAt`、`updatedAt`、`revision`，不适用的规则字段为 `null`。业务时间带 `+08:00`。
-
-查询参数 `type` 为 `single` 或 `period`，`limit` 默认为 50 且允许 1–50，`offset` 默认为 0 且必须非负。非法输入返回 400；不存在或已删除日程返回 404。普通错误格式为 `{"error":{"code":"...","message":"..."}}`。健康检查失败返回 503，错误位于 `data.error`。
-
-## 开发与检查
-
-打包后的 Go 服务直接启动时，默认读取 Go 可执行文件目录下的 config.yaml，默认数据库为 db/timecue.db，日志为 log/timecue.jsonl。开发手动启动使用 `go run ./cmd/flutter --data-dir . --env=test`；未声明环境默认 release/10086，test 固定 1145，非法或空值拒绝，不支持任意端口。Flutter 宿主将所选环境传给自有 Go，并向日程、提醒、聊天及 ready 核验注入同一地址。托管模式默认使用 Flutter EXE 所在目录作为共同数据根目录，与当前工作目录、环境及构建模式无关；显式 data-dir 优先，相对值仍按启动工作目录解析。配置中的数据库、日志及 SQLite 特殊数据源规则不变，旧 LocalAppData 数据不会自动迁移。环境只影响端口，相同目录共用数据，隔离需显式指定不同目录。非 Release 单实例标识与 Release 分开，环境不增加身份后缀；重复启动省略环境复用现有实例，显式冲突拒绝，切换前先完整退出。开发建议显式指定仓库绝对目录。托管启动使用编译后的 Go 可执行文件：`timecue.exe --data-dir "D:\TimeCue 数据" --instance-id launch_123`，身份每次由父进程生成，允许 1–128 个 ASCII 字母、数字、连字符或下划线。托管模式 stdout 仅有一行 JSON ready；父端须同时核对健康响应的身份、PID、版本及能力。ready 不代表历史整理完成或通知已展示。
-
-托管父端通过专用 stdin 管道发送 `{"command":"shutdown"}` 加换行，或关闭写端请求退出。非法/超长/不完整命令及管道故障返回非零退出码；手动运行不受 stdin EOF 影响。Go 优雅关闭保护已接收请求，HTTP 5 秒超时后关闭连接，等待仍在使用数据库的工作结束。D8 的总计 5 秒退出预算、自有进程强退和 Job Object 由 Flutter 负责。固定端口的跨包进程与生命周期测试使用 `go test -p 1 ./...` 串行执行。
-
-当前 Go 模块要求 `go.mod` 所列的 Go 版本。在仓库根目录可以运行：
+在 PowerShell 中执行以下命令。
 
 ```powershell
-go run ./cmd/flutter --data-dir . --env=test
-```
-
-这会启动本地 HTTP 服务，不会打开桌面窗口。入口显式初始化新库或升级可识别 Flutter 旧库；独立 `Sqlite.Connect` 不执行迁移，详见[迁移说明](migrations/README.md)。
-
-需要检查现有 Go 代码时可运行：
-
-```powershell
-gofmt -l .
-go vet ./...
-go test ./...
-```
-
-在 `desktop/` 运行视觉示例：
-
-```powershell
+git clone --branch dev https://github.com/dengweitian0-svg/TimeCue.git
+cd TimeCue
+$timecueDataDir = Join-Path (Get-Location).Path 'build\dev-data'
+New-Item -ItemType Directory -Force -Path $timecueDataDir | Out-Null
+cd desktop
 flutter pub get
+flutter run -d windows --debug -a --env=test -a --backend=managed -a "--data-dir=$timecueDataDir"
+```
+
+构建时会编译 Go 服务，由桌面端负责启动和退出。测试端口为 `1145`，开发数据保存在仓库的 `build/dev-data/` 中。
+
+只想体验房间和双页日程本时，可在 `desktop/` 中运行以下命令。演示模式使用内存日程和示例数据，系统通知与 AI 对话在该模式下停用。
+
+```powershell
 flutter run -d windows --dart-define=TIMECUE_DEMO=true
 ```
 
-Widget 关系、状态所有权与验证命令见 [Flutter 工程说明](desktop/README.md)。dev PR 按改动路径运行 Go 检查，或 `Flutter Windows Checks` 中的 Flutter/Python 检查；纯文档 dev PR 只运行轻量路径分类。Python 更新脚本测试由该 Flutter job 承载，但按 Python 路径独立执行。Go/Flutter 检查固定在 Windows，Go 保持串行测试，Flutter 固定 3.47.0。非文档 dev push 后自动执行完整 Windows 构建与原生测试，手动触发仍始终运行；所有 main PR 都由原有 `Go Windows Checks` 和 `Flutter Windows Checks` 执行完整检查、Windows 发布构建和原生验证，手动运行发布工作流时才上传发行包。分支保护所需检查和失败处理见[贡献规范](docs/CONTRIBUTING.md)。
+### 构建 Windows ZIP
 
+在仓库根目录执行以下命令。
 
-分支与 Pull Request 流程、Go 与 Flutter CI 约定见[贡献规范](docs/CONTRIBUTING.md)。
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
+```
 
-阶段 C 的创建和更新可带 `Idempotency-Key`：相同键和内容返回原始结果，不同内容复用键返回 409；旧草稿的 expectedRevision 不匹配也返回 409。更新响应增加 effectiveAt，Go 在同一事务内冻结到期提醒的原名称/说明，保存版本边界、替换未来 pending 并计算新的首提醒。暂停和删除永久停止已有提醒尚未开始的投递，恢复严格从未来继续；已到期历史仍可查询、确认，不修改真实投递结果。Flutter 房间和日程本书封固定提供“管理日程”入口，包含已暂停规则的名称、说明、时间和状态；点击后打开独立修改弹窗，可保存修改、重新开启或删除；结束后回到管理列表，不跳转到日程本。
+ZIP 输出到 `build/releases/`。完整解压后双击 `timecue_desktop.exe`，桌面端会启动同目录的 `timecue-core.exe`。发行包默认使用程序目录保存数据，也可以通过 `--data-dir` 指定。启动、更新和数据目录详见[发行说明](docs/RELEASE.md)。
+
+## 配置 AI 对话
+
+点击房间里的猫咪或打开日程本的 AI 标签，选择「添加模型连接」。可以使用 DeepSeek 预设，也可以填写兼容 Chat Completions 的服务地址、模型 ID 和 API Key。在「管理模型」中可添加多个独立连接，为每个连接配置多个模型，并分别调整上下文和输出预算。保存并加载成功后即可切换模型，无需重启。
+
+AI 对话需要可用的模型和密钥。日程、提醒和已有聊天历史可继续在本地访问。聊天支持上下文摘要与续写，重启后可查阅历史，并按已保存的进度恢复未完成的对话。配置文件、模型密钥和请求行为见[聊天配置与契约](docs/CHAT.md)。
+
+## 数据与设置
+
+Go 管理日程规则、提醒调度和 SQLite 持久化，Flutter 提供界面及 Windows 系统交互。首次运行会初始化版本 3 的数据库结构，可识别的 Flutter 旧库会先备份再升级。迁移范围和兼容性见[数据库迁移](migrations/README.md)。
+
+在设置中可修改日志级别、日志目录和数据库目录。日志级别即时生效。目录更改在下次启动生效，已有文件保留在原位置。
+
+更新发行包前请从托盘退出应用。随包提供的 `update.py` 会校验并替换程序文件，保留用户配置、数据库和日志。运行脚本需要 Python 3.9 或更高版本。操作步骤见[发行说明](docs/RELEASE.md#更新)。
+
+## 开发与验证
+
+可在仓库根目录单独启动 Go 本地 HTTP 服务，使用与桌面端相同的开发数据目录。
+
+```powershell
+go run ./cmd/flutter --env=test --data-dir .\build\dev-data
+```
+
+健康检查地址为 `http://127.0.0.1:1145/health`。省略 `--env` 或使用 `--env=release` 时端口为 `10086`。连接手动启动的 Go 时，桌面端使用 `--backend=external`，并指定同一环境与数据目录。两种模式的命令见[桌面端说明](desktop/README.md)。
+
+Go 检查在仓库根目录执行。
+
+```powershell
+go vet ./...
+go test -p 1 ./...
+```
+
+Flutter 检查在 `desktop/` 目录执行。
+
+```powershell
+dart format --output=none --set-exit-if-changed lib test
+flutter analyze
+flutter test
+```
+
+Windows 原生测试、更新脚本测试与 CI 规则见[贡献规范](docs/CONTRIBUTING.md)。
+
+## 文档与贡献
+
+- [文档索引](docs/INDEX.md) 汇总前端设计、领域术语与架构图。
+- [Agent 架构与流程](docs/archify/architecture-agent-20261108-172843/README.md) 展示模型调用、日程工具和运行恢复。
+- [提醒全流程](docs/archify/workflow-reminder-20261105-122427/README.md) 展示从规则保存、调度、系统通知到提醒确认的过程。
+
+欢迎通过 [Issues](https://github.com/dengweitian0-svg/TimeCue/issues) 报告问题或提出建议。贡献代码请从 `dev` 创建独立分支，并向 `dev` 提交 Pull Request。
+
+## 许可证
+
+MIT
