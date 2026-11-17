@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/dengweitian0-svg/TimeCue.git",
-      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+      "revision": "8cadb08307b72d6dca64f7e92699ed769d23a99f"
     }
   },
   "lanes": [
@@ -18,7 +18,7 @@
     },
     {
       "id": "chat",
-      "label": "预算检查与模型协调"
+      "label": "Agent Loop 与 SQLite 原子切换"
     },
     {
       "id": "branch",
@@ -38,12 +38,12 @@
         {
           "path": "internal/store/chat.go",
           "line": 299,
-          "end_line": 344
+          "end_line": 343
         },
         {
-          "path": "internal/agent/chat/progress.go",
-          "line": 34,
-          "end_line": 49
+          "path": "internal/agent/chat/context_builder.go",
+          "line": 175,
+          "end_line": 199
         }
       ],
       "width": 128
@@ -57,9 +57,19 @@
       "sublabel": "系统、历史、原文、工具",
       "sources": [
         {
-          "path": "internal/agent/chat/request.go",
-          "line": 17,
-          "end_line": 60
+          "path": "internal/agent/chat/context_builder.go",
+          "line": 38,
+          "end_line": 65
+        },
+        {
+          "path": "internal/agent/loop/request.go",
+          "line": 19,
+          "end_line": 29
+        },
+        {
+          "path": "internal/agent/completion/adapter.go",
+          "line": 13,
+          "end_line": 19
         }
       ],
       "width": 128
@@ -70,17 +80,17 @@
       "col": 2,
       "type": "security",
       "label": "判断输入预算",
-      "sublabel": "完整 JSON 字节估算",
+      "sublabel": "适配后的 JSON 字节估算",
       "sources": [
         {
-          "path": "internal/agent/chat/request.go",
-          "line": 52,
-          "end_line": 60
+          "path": "internal/agent/loop/request.go",
+          "line": 9,
+          "end_line": 29
         },
         {
           "path": "internal/agent/chat/compact.go",
           "line": 24,
-          "end_line": 42
+          "end_line": 38
         }
       ],
       "width": 128
@@ -91,17 +101,17 @@
       "col": 3,
       "type": "backend",
       "label": "发起专用摘要",
-      "sublabel": "固定提示，禁用工具",
+      "sublabel": "专用请求，检查预算",
       "sources": [
         {
           "path": "internal/agent/chat/compact.go",
-          "line": 44,
-          "end_line": 62
+          "line": 41,
+          "end_line": 70
         },
         {
-          "path": "internal/agent/chat/compact.go",
-          "line": 91,
-          "end_line": 149
+          "path": "internal/agent/loop/compact_flow.go",
+          "line": 11,
+          "end_line": 72
         }
       ],
       "width": 128
@@ -115,14 +125,14 @@
       "sublabel": "引用与下一调用原子切换",
       "sources": [
         {
-          "path": "internal/agent/chat/compact.go",
-          "line": 151,
-          "end_line": 193
+          "path": "internal/agent/loop/compact_flow.go",
+          "line": 82,
+          "end_line": 130
         },
         {
           "path": "internal/store/chat.go",
-          "line": 408,
-          "end_line": 451
+          "line": 434,
+          "end_line": 475
         }
       ],
       "width": 128
@@ -133,17 +143,17 @@
       "col": 5,
       "type": "backend",
       "label": "发起下一模型调用",
-      "sublabel": "摘要后登记普通调用",
+      "sublabel": "切换时一并登记",
       "sources": [
         {
-          "path": "internal/agent/chat/tool_loop.go",
-          "line": 48,
-          "end_line": 135
+          "path": "internal/agent/loop/compact_flow.go",
+          "line": 89,
+          "end_line": 130
         },
         {
-          "path": "internal/agent/chat/tool_loop.go",
-          "line": 170,
-          "end_line": 204
+          "path": "internal/store/chat.go",
+          "line": 434,
+          "end_line": 475
         }
       ],
       "width": 128
@@ -154,22 +164,22 @@
       "col": 1,
       "type": "backend",
       "label": "工具回填后的请求",
-      "sublabel": "全批配对后再次检查预算",
+      "sublabel": "超预算时查普通请求锚点",
       "sources": [
         {
-          "path": "internal/agent/chat/progress.go",
-          "line": 194,
-          "end_line": 234
+          "path": "internal/agent/loop/tool_loop.go",
+          "line": 50,
+          "end_line": 93
         },
         {
-          "path": "internal/agent/chat/tool_content.go",
-          "line": 7,
-          "end_line": 25
+          "path": "internal/store/chat.go",
+          "line": 477,
+          "end_line": 499
         },
         {
-          "path": "internal/agent/chat/tool_loop.go",
-          "line": 64,
-          "end_line": 92
+          "path": "internal/agent/chat/context_builder.go",
+          "line": 119,
+          "end_line": 135
         }
       ],
       "width": 128
@@ -180,17 +190,17 @@
       "col": 3,
       "type": "backend",
       "label": "保留原有效历史",
-      "sublabel": "摘要失败或取消",
+      "sublabel": "摘要失败或取消时接续",
       "sources": [
         {
-          "path": "internal/agent/chat/compact.go",
-          "line": 193,
-          "end_line": 209
+          "path": "internal/agent/loop/compact_flow.go",
+          "line": 35,
+          "end_line": 85
         },
         {
-          "path": "internal/agent/chat/progress.go",
-          "line": 335,
-          "end_line": 345
+          "path": "internal/agent/chat/context_builder.go",
+          "line": 175,
+          "end_line": 199
         }
       ],
       "width": 128
@@ -204,14 +214,14 @@
       "sublabel": "成功摘要仍可供后续复用",
       "sources": [
         {
-          "path": "internal/agent/chat/compact.go",
-          "line": 158,
-          "end_line": 193
+          "path": "internal/agent/loop/compact_flow.go",
+          "line": 89,
+          "end_line": 130
         },
         {
           "path": "internal/store/chat.go",
-          "line": 427,
-          "end_line": 445
+          "line": 434,
+          "end_line": 475
         }
       ],
       "width": 128
@@ -224,14 +234,14 @@
       "sublabel": "使用完整有效上下文",
       "sources": [
         {
-          "end_line": 299,
-          "path": "internal/agent/chat/service.go",
-          "line": 264
+          "path": "internal/agent/loop/service.go",
+          "line": 280,
+          "end_line": 299
         },
         {
-          "end_line": 135,
-          "path": "internal/agent/chat/tool_loop.go",
-          "line": 105
+          "path": "internal/agent/loop/tool_loop.go",
+          "line": 103,
+          "end_line": 126
         }
       ],
       "label": "直接进入普通调用",
@@ -324,25 +334,23 @@
       "dot": "cyan",
       "title": "历史与输入",
       "items": [
-        "跨 run 保留有效快照的正文、思考与完整工具配对。中断的部分输出后追加独立 user 说明。估算公式为向上取整 UTF-8 序列化字节数 ÷ 4，输入额度为窗口减输出保留。"
+        "从最近已结束运行的有效快照接续，保留正文、思考与完整工具配对；中断部分末尾加独立说明。预算以适配后实际请求的 UTF-8 字节数 ÷ 4 向上取整，输入额度为窗口减输出保留。"
       ]
     },
     {
       "dot": "violet",
       "title": "摘要触发",
       "items": [
-        "创建前需存在历史，且请求达到可用输入额度的默认 80%。工具批次结束后，只有实际组装请求超预算才在 run 内摘要。",
-        "摘要成功投影为 system 后一条 user 摘要，再接真实输入；原子启用摘要与下一普通调用，仍超预算则原子保存失败。",
-        "工具回填请求有预算时直接继续模型。",
-        "创建前超过预算且无法摘要时，直接保存失败回执。"
+        "创建前有历史且达到默认 80% 时准备摘要。工具全批配齐后按最终正文检查，只有超限才触发运行中摘要；从最近生效摘要后的首个普通调用取得有效请求前缀。",
+        "摘要使用专用提示并禁用工具。生效后以 system、user 摘要、真实输入接续；切换与下一调用或失败终态同事务。创建前无摘要路径且超限时直接保存失败回执。"
       ]
     },
     {
       "dot": "amber",
       "title": "正常 length",
       "items": [
-        "先配对同批工具。截断工具返回解析错误，补全片段仅供模型反馈；保留原参数。普通与摘要续写共用默认 5 次预算，独立于普通轮数和网络重试。",
-        "续写用独立消息边界。最终 run.output 只拼接最后普通轮及其续写。"
+        "正常 length 在工具整批配齐后用独立消息边界续写；截断参数仅补全模型反馈，保留原始参数。普通与摘要续写共享默认 5 次预算，独立于普通轮数和网络重试。",
+        "普通及摘要续写登记前均按最终正文验预算，超限以 context_budget_exceeded 结束。run.output 只拼接最后普通轮及其续写。"
       ]
     },
     {

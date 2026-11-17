@@ -246,14 +246,14 @@
             <a class="card" href="overview/overview.html">
               <span class="index">架构</span>
               <span class="card-heading"><span class="card-title">总体架构</span><span class="arrow" aria-hidden="true">→</span></span>
-              <span class="description">查看 Flutter、Go 本机 HTTP、Agent、模型服务、日程工具和 SQLite 的职责与依赖。</span>
+              <span class="description">查看 Go 宿主如何接纳 Agent Loop，以及 Flutter、ToolFactory、模型适配器和 SQLite 如何协作。</span>
             </a>
           </li>
           <li>
             <a class="card" href="run-flow/run-flow.html">
               <span class="index">主流程</span>
               <span class="card-heading"><span class="card-title">一轮对话</span><span class="arrow" aria-hidden="true">→</span></span>
-              <span class="description">从发送消息到保存终态，追踪模型调用、工具回填、摘要与续写。</span>
+              <span class="description">从发送消息到保存终态，追踪最终请求正文、工具回填、摘要与续写。</span>
             </a>
           </li>
         </ul>
@@ -266,47 +266,61 @@
             <a class="card" href="admission/admission.html">
               <span class="index">01</span>
               <span class="card-heading"><span class="card-title">会话与运行准入</span><span class="arrow" aria-hidden="true">→</span></span>
-              <span class="description">原文幂等、模型门禁、占用限制与创建事务</span>
+              <span class="description">原文幂等、模型门禁、占用限制与新建预算</span>
             </a>
           </li>
           <li>
             <a class="card" href="model/model.html">
               <span class="index">02</span>
               <span class="card-heading"><span class="card-title">模型流式调用与重试</span><span class="arrow" aria-hidden="true">→</span></span>
-              <span class="description">Chat Completions、首包与空闲超时、同一调用重试</span>
+              <span class="description">原样发送请求正文、首包与空闲超时、同一调用重试</span>
             </a>
           </li>
           <li>
             <a class="card" href="tools/tools.html">
               <span class="index">03</span>
               <span class="card-heading"><span class="card-title">日程工具执行与回填</span><span class="arrow" aria-hidden="true">→</span></span>
-              <span class="description">六个日程工具、并发与串行、删除回执和结果配对</span>
+              <span class="description">ToolFactory 调度、删除回执和全批结果配对</span>
             </a>
           </li>
           <li>
             <a class="card" href="context/context.html">
               <span class="index">04</span>
               <span class="card-heading"><span class="card-title">上下文、摘要与续写</span><span class="arrow" aria-hidden="true">→</span></span>
-              <span class="description">历史接续、预算检查、摘要触发与 length 续写</span>
+              <span class="description">最终正文预算、原子切换摘要与 length 续写</span>
+            </a>
+          </li>
+          <li>
+            <a class="card" href="sqlite/sqlite.html">
+              <span class="index">05</span>
+              <span class="card-heading"><span class="card-title">SQLite 持久化与事务</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">模型调用登记、流式增量批次和终态原子提交</span>
             </a>
           </li>
           <li>
             <a class="card" href="events/events.html">
-              <span class="index">05</span>
-              <span class="card-heading"><span class="card-title">SQLite、SSE 与用量</span><span class="arrow" aria-hidden="true">→</span></span>
-              <span class="description">事件分批落库、断线补读与内部用量汇总</span>
+              <span class="index">06</span>
+              <span class="card-heading"><span class="card-title">SSE 订阅与补读</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">按游标续接、处理 HTTP 204 和分页补齐缺失事件</span>
+            </a>
+          </li>
+          <li>
+            <a class="card" href="usage/usage.html">
+              <span class="index">07</span>
+              <span class="card-heading"><span class="card-title">模型用量查询与汇总</span><span class="arrow" aria-hidden="true">→</span></span>
+              <span class="description">读取已保存的 usage，分别汇总输入、输出与总量</span>
             </a>
           </li>
           <li>
             <a class="card" href="recovery/recovery.html">
-              <span class="index">06</span>
+              <span class="index">08</span>
               <span class="card-heading"><span class="card-title">取消、退出与重启恢复</span><span class="arrow" aria-hidden="true">→</span></span>
-              <span class="description">取消意图、退出期限、恢复分支与持久化故障</span>
+              <span class="description">8 秒接纳门槛、仅 App 降级、取消与 30 秒退出保存</span>
             </a>
           </li>
           <li>
             <a class="card" href="config/config.html">
-              <span class="index">07</span>
+              <span class="index">09</span>
               <span class="card-heading"><span class="card-title">模型配置与热加载</span><span class="arrow" aria-hidden="true">→</span></span>
               <span class="description">逐模型预算、密钥保留、版本确认与请求门禁</span>
             </a>
@@ -315,7 +329,7 @@
       </section>
     </div>
 
-    <footer>9 张交互图 · 源码版本 <code>640dbcba</code> · 可用浏览器返回此页</footer>
+    <footer>11 张交互图 · 源码版本 <code>8cadb083</code> · 可用浏览器返回此页</footer>
   </main>
 </body>
 </html>

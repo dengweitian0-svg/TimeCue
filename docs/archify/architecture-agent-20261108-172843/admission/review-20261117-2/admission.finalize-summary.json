@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\admission\\candidate.json",
+    "sha256": "ebd985441584281a319ca787eabeb8baddd62ca38f474be4b8ee0dad36274cea",
+    "bytes": 7505
+  },
+  "artifact": {
+    "path": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\admission\\admission.html",
+    "sha256": "fbab626c90c0156f40945c14e70166792621da7c62102ac4a2d122bd4cdba702",
+    "bytes": 827752
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\admission\\review-20261117-2\\admission.finalize.json",
+    "summaryReceipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\admission\\review-20261117-2\\admission.finalize-summary.json",
+    "browserCheckReceipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\admission\\review-20261117-2\\admission.browser-check.json"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 7959,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

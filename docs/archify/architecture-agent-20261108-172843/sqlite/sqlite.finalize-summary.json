@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\sqlite\\candidate.json",
+    "sha256": "2f94e4796f62dc65710889ad0ea82812ae74e7e4b4d441872e5bd7037fa4eb0d",
+    "bytes": 4612
+  },
+  "artifact": {
+    "path": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\sqlite\\sqlite.html",
+    "sha256": "eb928d85f626678fb88ad2fd6f367e640bd74fdd71577ff03edff42fdb1fa772",
+    "bytes": 815171
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\sqlite\\sqlite.finalize.json",
+    "summaryReceipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\sqlite\\sqlite.finalize-summary.json",
+    "browserCheckReceipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\sqlite\\sqlite.browser-check.json"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 8272,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

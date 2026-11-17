@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "receiptId": "907c210a-1cd6-4460-9c67-531d201d54a2",
+  "receiptId": "10b7a4ad-0abf-4c33-b9ca-4f512d014437",
   "status": "current",
   "command": "deliver",
   "type": "workflow",
   "input": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\admission\\candidate.json",
   "output": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\admission\\admission.html",
   "specification": {
-    "sha256": "e3439153ea305ca1ef6f15018bbd4fd947d26b56f70c516677fa11ceec8df7b0",
-    "bytes": 7141
+    "sha256": "ebd985441584281a319ca787eabeb8baddd62ca38f474be4b8ee0dad36274cea",
+    "bytes": 7505
   },
   "artifact": {
-    "sha256": "ed02cb7b6dfca84e51dcc817bacfcae79556170e23bf60d42a664887611c586b",
-    "bytes": 763192
+    "sha256": "fbab626c90c0156f40945c14e70166792621da7c62102ac4a2d122bd4cdba702",
+    "bytes": 827752
   }
 }

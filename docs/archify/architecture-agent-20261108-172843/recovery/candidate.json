@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/dengweitian0-svg/TimeCue.git",
-      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+      "revision": "8cadb08307b72d6dca64f7e92699ed769d23a99f"
     }
   },
   "lanes": [
@@ -40,9 +40,14 @@
       "sublabel": "模型或工具可能在途",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 274,
-          "end_line": 312
+          "path": "internal/agent/loop/service.go",
+          "line": 293,
+          "end_line": 319
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 335,
+          "end_line": 367
         }
       ],
       "width": 148
@@ -56,9 +61,9 @@
       "sublabel": "wait_for_cancel 或隐藏",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 439,
-          "end_line": 475
+          "path": "internal/agent/loop/service.go",
+          "line": 414,
+          "end_line": 451
         },
         {
           "path": "internal/store/chat.go",
@@ -77,14 +82,19 @@
       "sublabel": "实际结果或原期限",
       "sources": [
         {
-          "path": "internal/agent/chat/tool_attempts.go",
-          "line": 249,
-          "end_line": 271
+          "path": "internal/agent/tools/factory.go",
+          "line": 255,
+          "end_line": 293
         },
         {
-          "path": "internal/agent/chat/tool_attempts.go",
-          "line": 313,
-          "end_line": 329
+          "path": "internal/agent/tools/factory.go",
+          "line": 344,
+          "end_line": 389
+        },
+        {
+          "path": "internal/agent/chat/progress.go",
+          "line": 179,
+          "end_line": 220
         }
       ],
       "width": 148
@@ -94,18 +104,23 @@
       "lane": "shutdown",
       "col": 1,
       "type": "backend",
-      "label": "宿主停止推进",
-      "sublabel": "与 HTTP 共用 5 秒",
+      "label": "停止新推进",
+      "sublabel": "Loop 独立保存期限 30 秒",
       "sources": [
         {
-          "path": "internal/app/runtime.go",
-          "line": 126,
-          "end_line": 140
+          "path": "cmd/flutter/host.go",
+          "line": 50,
+          "end_line": 60
         },
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 136,
-          "end_line": 159
+          "path": "cmd/flutter/host.go",
+          "line": 263,
+          "end_line": 273
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 163,
+          "end_line": 195
         }
       ],
       "width": 148
@@ -115,18 +130,23 @@
       "lane": "shutdown",
       "col": 2,
       "type": "database",
-      "label": "尽力保存已知事实",
-      "sublabel": "保持 running 与原进度",
+      "label": "保存进度并等待工具",
+      "sublabel": "实际返回后发布 LoopDone",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 338,
-          "end_line": 359
+          "path": "internal/agent/loop/service.go",
+          "line": 335,
+          "end_line": 353
         },
         {
           "path": "internal/store/chat.go",
-          "line": 529,
-          "end_line": 543
+          "line": 586,
+          "end_line": 600
+        },
+        {
+          "path": "internal/agent/loop/run.go",
+          "line": 26,
+          "end_line": 35
         }
       ],
       "width": 148
@@ -136,23 +156,23 @@
       "lane": "recover",
       "col": 2,
       "type": "backend",
-      "label": "启动并重建占用",
-      "sublabel": "先独占端口，后发布 ready",
+      "label": "启动 App",
+      "sublabel": "提醒调度与恢复后就绪",
       "sources": [
         {
-          "path": "internal/app/runtime.go",
-          "line": 76,
-          "end_line": 89
+          "path": "cmd/flutter/host.go",
+          "line": 123,
+          "end_line": 145
+        },
+        {
+          "path": "cmd/flutter/host.go",
+          "line": 148,
+          "end_line": 206
         },
         {
           "path": "internal/app/runtime.go",
-          "line": 147,
-          "end_line": 169
-        },
-        {
-          "path": "internal/agent/chat/service.go",
-          "line": 72,
-          "end_line": 126
+          "line": 21,
+          "end_line": 67
         }
       ],
       "width": 148
@@ -162,18 +182,23 @@
       "lane": "recover",
       "col": 3,
       "type": "database",
-      "label": "读取原调用和进度",
-      "sublabel": "按已提交 checkpoint",
+      "label": "读取并接纳 Loop",
+      "sublabel": "8 秒内接纳才登记占用",
       "sources": [
         {
-          "path": "internal/store/chat.go",
-          "line": 455,
-          "end_line": 527
+          "path": "cmd/flutter/host.go",
+          "line": 209,
+          "end_line": 259
         },
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 78,
-          "end_line": 123
+          "path": "internal/agent/loop/service.go",
+          "line": 92,
+          "end_line": 159
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 501,
+          "end_line": 583
         }
       ],
       "width": 148
@@ -184,22 +209,22 @@
       "col": 4,
       "type": "backend",
       "label": "按原身份推进",
-      "sublabel": "模型、摘要、续写及工具",
+      "sublabel": "复用响应或原样重发",
       "sources": [
         {
-          "path": "internal/agent/chat/model_retry.go",
-          "line": 46,
-          "end_line": 98
+          "path": "internal/agent/loop/recovery.go",
+          "line": 21,
+          "end_line": 49
         },
         {
-          "path": "internal/agent/chat/tool_attempts.go",
-          "line": 137,
-          "end_line": 153
+          "path": "internal/agent/loop/service.go",
+          "line": 311,
+          "end_line": 334
         },
         {
-          "path": "internal/agent/chat/tool_loop.go",
-          "line": 12,
-          "end_line": 46
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 23,
+          "end_line": 78
         }
       ],
       "width": 148
@@ -210,17 +235,17 @@
       "col": 4,
       "type": "backend",
       "label": "取消恢复只读核对",
-      "sublabel": "原工具结果与删除回执",
+      "sublabel": "已提交结果与删除回执",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 324,
-          "end_line": 336
+          "path": "internal/agent/loop/service.go",
+          "line": 370,
+          "end_line": 383
         },
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 380,
-          "end_line": 408
+          "path": "internal/agent/tools/recovery.go",
+          "line": 10,
+          "end_line": 44
         }
       ],
       "width": 148
@@ -231,17 +256,17 @@
       "col": 5,
       "type": "database",
       "label": "原子提交运行终态",
-      "sublabel": "配对、事件与唯一 end",
+      "sublabel": "工具配对、尾批、唯一 end",
       "sources": [
         {
           "path": "internal/agent/chat/progress.go",
-          "line": 244,
-          "end_line": 292
+          "line": 179,
+          "end_line": 220
         },
         {
           "path": "internal/store/chat.go",
-          "line": 598,
-          "end_line": 679
+          "line": 667,
+          "end_line": 758
         }
       ],
       "width": 148
@@ -255,14 +280,19 @@
       "sublabel": "撤销同批有效尝试",
       "sources": [
         {
-          "path": "internal/agent/chat/tool_attempts.go",
-          "line": 84,
-          "end_line": 109
+          "path": "internal/agent/tools/factory.go",
+          "line": 179,
+          "end_line": 205
         },
         {
-          "path": "internal/agent/chat/persistence.go",
-          "line": 9,
-          "end_line": 27
+          "path": "internal/agent/loop/service.go",
+          "line": 335,
+          "end_line": 367
+        },
+        {
+          "path": "internal/agent/loop/persistence.go",
+          "line": 22,
+          "end_line": 54
         }
       ],
       "width": 148
@@ -273,12 +303,12 @@
       "col": 3,
       "type": "database",
       "label": "仅重试终态持久化",
-      "sublabel": "首次外每 5 秒最多 3 次",
+      "sublabel": "间隔 5 秒，最多再试 3 次",
       "sources": [
         {
-          "path": "internal/agent/chat/persistence.go",
+          "path": "internal/agent/loop/persistence.go",
           "line": 29,
-          "end_line": 61
+          "end_line": 56
         }
       ],
       "width": 148
@@ -289,20 +319,41 @@
       "col": 5,
       "type": "backend",
       "label": "耗尽后释放占用",
-      "sublabel": "关闭现有订阅，保留实况",
+      "sublabel": "关闭订阅，按 SQLite 恢复",
       "sources": [
         {
-          "path": "internal/agent/chat/persistence.go",
-          "line": 53,
-          "end_line": 67
+          "path": "internal/agent/loop/persistence.go",
+          "line": 29,
+          "end_line": 56
         },
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 304,
-          "end_line": 306
+          "path": "internal/agent/loop/service.go",
+          "line": 311,
+          "end_line": 319
         }
       ],
       "width": 148
+    },
+    {
+      "id": "app-only",
+      "lane": "recover",
+      "col": 5,
+      "type": "backend",
+      "label": "仅开放 App 路由",
+      "sublabel": "日程、提醒和健康检查",
+      "width": 148,
+      "sources": [
+        {
+          "path": "cmd/flutter/host.go",
+          "line": 186,
+          "end_line": 206
+        },
+        {
+          "path": "internal/api/router.go",
+          "line": 40,
+          "end_line": 54
+        }
+      ]
     }
   ],
   "edges": [
@@ -345,14 +396,6 @@
       "variant": "default"
     },
     {
-      "id": "snapshot-startup",
-      "from": "snapshot",
-      "to": "startup",
-      "label": "下次启动",
-      "role": "async",
-      "variant": "dashed"
-    },
-    {
       "id": "startup-restore",
       "from": "startup",
       "to": "restore",
@@ -363,7 +406,7 @@
       "id": "restore-resume",
       "from": "restore",
       "to": "resume",
-      "label": "正常恢复",
+      "label": "获接纳且可恢复",
       "role": "branch",
       "variant": "default"
     },
@@ -413,6 +456,27 @@
       "label": "耗尽",
       "role": "error",
       "variant": "security"
+    },
+    {
+      "id": "restore-app-only",
+      "from": "restore",
+      "to": "app-only",
+      "label": "初始化失败 / 超时",
+      "role": "error",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "route": "bottom-channel"
+    },
+    {
+      "id": "snapshot-startup",
+      "from": "snapshot",
+      "to": "startup",
+      "label": "下次启动",
+      "role": "async",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
     }
   ],
   "mainPath": [
@@ -433,23 +497,24 @@
       "dot": "violet",
       "title": "启动恢复",
       "items": [
-        "读取未完成运行和原调用。过时运行仅失败收尾；执行槽仍最多三个。完整模型响应复用，只有需要实际发送时检查配置。",
-        "正常工具恢复先核对原删除回执。未命中才按原参数、原身份和固定剩余预算重执行；预算为 0 禁止重执行。无键创建可能重复，版本修改可能产生真实冲突。"
+        "宿主在 App 完成提醒调度启动与恢复后，只读加载活动 run、原调用和 checkpoint。Go 启动起 8 秒内接纳 Loop 后恢复占用并注册聊天路由；失败或超时则只开放 App 路由。",
+        "同会话已有后续运行的旧 run 仅失败收尾。实际执行仍受全局三个槽限制；完整响应先复用，需要发请求时才检查原模型配置。"
       ]
     },
     {
       "dot": "amber",
       "title": "取消时按事实补齐",
       "items": [
-        "取消恢复仅只读核对。实际结果或回执优先；未确认的 running 记 tool_result_unconfirmed，未开始与无回执的退避项记 skipped / aborted。"
+        "取消恢复只读核对原删除回执。已保存结果或回执优先；未确认在途项记 tool_result_unconfirmed，退避和未启动项按原身份跳过。",
+        "正常工具恢复先核对原删除回执再按固定预算处理。无业务键的创建可能再次生效，修改按实际版本反馈冲突。"
       ]
     },
     {
       "dot": "rose",
       "title": "保存故障",
       "items": [
-        "保留已取得的实际结果。未返回项由进度补齐未确认，迟到返回失效。收尾重试期间继续占用；耗尽记 error、关闭订阅并释放占用。",
-        "正常退出与故障收尾共用宿主期限；未能保存的状态留给下次按 SQLite 事实恢复。"
+        "故障停止推进并撤销有效尝试，保留及时返回的事实。失败终态保存重试时继续占用；耗尽则关闭订阅并释放占用。",
+        "宿主分别给 HTTP 5 秒和 Loop 30 秒。Loop 保存已知事实，未完成运行继续保留原进度；工具实际返回前 App 和数据库继续存活。"
       ]
     }
   ]

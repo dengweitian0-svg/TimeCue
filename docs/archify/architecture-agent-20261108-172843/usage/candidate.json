@@ -1,0 +1,166 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "模型用量的只读查询与汇总",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/usage/usage.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "8cadb08307b72d6dca64f7e92699ed769d23a99f"
+    }
+  },
+  "lanes": [
+    {
+      "id": "query",
+      "label": "Agent Loop 内部查询"
+    },
+    {
+      "id": "stored",
+      "label": "SQLite 已提交记录"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "request",
+      "lane": "query",
+      "col": 0,
+      "type": "backend",
+      "label": "查询运行用量",
+      "sublabel": "内部 GetRunUsage",
+      "sources": [
+        {
+          "path": "internal/agent/loop/usage.go",
+          "line": 11,
+          "end_line": 19
+        }
+      ]
+    },
+    {
+      "id": "access",
+      "lane": "query",
+      "col": 1,
+      "type": "security",
+      "label": "验证运行可见性",
+      "sublabel": "失败时返回查询错误",
+      "sources": [
+        {
+          "path": "internal/agent/loop/usage.go",
+          "line": 12,
+          "end_line": 19
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 199,
+          "end_line": 209
+        }
+      ]
+    },
+    {
+      "id": "usage",
+      "lane": "stored",
+      "col": 2,
+      "type": "database",
+      "label": "读取原始 usage",
+      "sublabel": "按调用 ID 读取专用列",
+      "sources": [
+        {
+          "path": "internal/store/chat_usage.go",
+          "line": 11,
+          "end_line": 35
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 623,
+          "end_line": 641
+        }
+      ]
+    },
+    {
+      "id": "aggregate",
+      "lane": "query",
+      "col": 3,
+      "type": "backend",
+      "label": "独立汇总三项计数",
+      "sublabel": "输入、输出与总量",
+      "sources": [
+        {
+          "path": "internal/agent/loop/usage.go",
+          "line": 20,
+          "end_line": 48
+        }
+      ]
+    },
+    {
+      "id": "report",
+      "lane": "query",
+      "col": 4,
+      "type": "backend",
+      "label": "返回用量报告",
+      "sublabel": "原始记录和本次合计",
+      "sources": [
+        {
+          "path": "internal/agent/loop/usage.go",
+          "line": 25,
+          "end_line": 32
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-access",
+      "from": "request",
+      "to": "access",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "access-usage",
+      "from": "access",
+      "to": "usage",
+      "role": "main",
+      "variant": "emphasis",
+      "label": "运行可见"
+    },
+    {
+      "id": "usage-aggregate",
+      "from": "usage",
+      "to": "aggregate",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "aggregate-report",
+      "from": "aggregate",
+      "to": "report",
+      "role": "main",
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": [
+    "request",
+    "access",
+    "usage",
+    "aggregate",
+    "report"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "统计范围",
+      "items": [
+        "读取普通调用、摘要和续写各自的原始 usage。运行进行中也可以查询，结果以查询时已提交的记录为准。此查询不推进运行或生成事件，无公开 HTTP 用量接口。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "未知值与真实零值",
+      "items": [
+        "prompt_tokens、completion_tokens、total_tokens 各自累加。任一调用对应字段缺失、无效或累加溢出时，该项合计为未知；有效的 0 计入。",
+        "total_tokens 使用各调用实际返回的总量。原始 JSON 扩展字段照常返回，SQL NULL 保持未知。"
+      ]
+    }
+  ]
+}
