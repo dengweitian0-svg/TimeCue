@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/dengweitian0-svg/TimeCue.git",
-      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+      "revision": "8cadb08307b72d6dca64f7e92699ed769d23a99f"
     }
   },
   "components": [
@@ -42,7 +42,7 @@
       "id": "api",
       "type": "backend",
       "label": "Go 本机 HTTP",
-      "sublabel": "/v1 会话、运行、模型",
+      "sublabel": "Loop 就绪后注册聊天路由",
       "pos": [
         296,
         226
@@ -53,22 +53,22 @@
       ],
       "sources": [
         {
-          "path": "internal/api/chat_routes.go",
-          "line": 14,
-          "end_line": 25
+          "path": "internal/api/router.go",
+          "line": 16,
+          "end_line": 54
         },
         {
-          "path": "internal/app/runtime.go",
-          "line": 76,
-          "end_line": 89
+          "path": "internal/api/chat_routes.go",
+          "line": 21,
+          "end_line": 32
         }
       ]
     },
     {
       "id": "chat",
       "type": "backend",
-      "label": "chat.Runtime",
-      "sublabel": "准入、模型循环、运行恢复",
+      "label": "Agent Loop",
+      "sublabel": "准入、调用与恢复",
       "pos": [
         570,
         226
@@ -79,27 +79,27 @@
       ],
       "sources": [
         {
-          "path": "cmd/flutter/main.go",
-          "line": 82,
-          "end_line": 99
+          "path": "cmd/flutter/host.go",
+          "line": 180,
+          "end_line": 206
         },
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 204,
-          "end_line": 301
+          "path": "internal/agent/loop/service.go",
+          "line": 57,
+          "end_line": 81
         },
         {
-          "path": "internal/agent/chat/tool_loop.go",
-          "line": 12,
-          "end_line": 161
+          "path": "internal/agent/loop/tool_loop.go",
+          "line": 10,
+          "end_line": 145
         }
       ]
     },
     {
       "id": "adapter",
       "type": "backend",
-      "label": "completion 适配器",
-      "sublabel": "Chat Completions 流式适配",
+      "label": "Chat Completions 适配器",
+      "sublabel": "准备正文与流式请求",
       "pos": [
         844,
         226
@@ -110,13 +110,13 @@
       ],
       "sources": [
         {
-          "path": "internal/agent/chat/model_retry.go",
-          "line": 87,
-          "end_line": 110
+          "path": "internal/agent/completion/adapter.go",
+          "line": 13,
+          "end_line": 19
         },
         {
           "path": "internal/agent/completion/client.go",
-          "line": 80,
+          "line": 34,
           "end_line": 103
         }
       ]
@@ -137,7 +137,7 @@
       "sources": [
         {
           "path": "internal/agent/completion/client.go",
-          "line": 80,
+          "line": 51,
           "end_line": 103
         },
         {
@@ -171,8 +171,8 @@
     {
       "id": "registry",
       "type": "backend",
-      "label": "tools.Registry",
-      "sublabel": "工具定义、校验、执行",
+      "label": "ToolFactory 与 Registry",
+      "sublabel": "批次调度、校验与执行",
       "pos": [
         570,
         411
@@ -183,19 +183,19 @@
       ],
       "sources": [
         {
-          "path": "internal/agent/tools/registry.go",
-          "line": 155,
-          "end_line": 181
+          "path": "internal/agent/loop/tool_batch.go",
+          "line": 38,
+          "end_line": 53
+        },
+        {
+          "path": "internal/agent/tools/factory.go",
+          "line": 299,
+          "end_line": 389
         },
         {
           "path": "internal/agent/tools/registry.go",
           "line": 195,
-          "end_line": 294
-        },
-        {
-          "path": "internal/agent/chat/tool_attempts.go",
-          "line": 249,
-          "end_line": 282
+          "end_line": 288
         }
       ]
     },
@@ -234,7 +234,7 @@
       "id": "store",
       "type": "database",
       "label": "SQLite 聊天适配器",
-      "sublabel": "调用、事件与 checkpoint",
+      "sublabel": "请求正文、事件与进度",
       "pos": [
         296,
         411
@@ -246,13 +246,13 @@
       "sources": [
         {
           "path": "internal/store/chat.go",
-          "line": 18,
-          "end_line": 31
+          "line": 388,
+          "end_line": 475
         },
         {
           "path": "internal/store/chat.go",
-          "line": 598,
-          "end_line": 679
+          "line": 645,
+          "end_line": 758
         },
         {
           "path": "internal/store/chat_tools.go",
@@ -274,7 +274,7 @@
       "id": "api-chat",
       "from": "api",
       "to": "chat",
-      "label": "调用服务端口",
+      "label": "调用 Loop",
       "variant": "emphasis"
     },
     {
@@ -304,7 +304,7 @@
       "id": "chat-registry",
       "from": "chat",
       "to": "registry",
-      "label": "执行工具",
+      "label": "提交工具批次",
       "variant": "default",
       "fromSide": "bottom",
       "toSide": "top"
@@ -329,31 +329,32 @@
   "cards": [
     {
       "dot": "cyan",
-      "title": "生产装配",
+      "title": "Go 宿主与启动边界",
       "items": [
-        "cmd/flutter 装配真实模型适配器、SQLite 存储、配置和六个日程工具。",
-        "Go 先独占环回监听端口，再启动聊天恢复；运行占用重建并接入 HTTP 接收循环后才发布托管 ready。"
+        "Go 宿主独占环回端口并准备 SQLite。App 完成提醒调度启动与恢复后，宿主初始化 Loop。",
+        "自 Go 启动起 8 秒内接纳 Loop 才开放聊天路由。失败或超时仅提供日程、提醒和健康检查；HTTP 进入接收循环后发布托管 ready。"
       ]
     },
     {
       "dot": "violet",
       "title": "两段 SSE",
       "items": [
-        "模型流进入 completion，由 chat 批量保存正文和思考。Flutter 的本机 SSE 订阅读取已提交事件。"
+        "上游 SSE 由 completion 解析。Loop 将正文与思考分批保存，Flutter 从本机 SSE 或分页接口读取已提交事件。"
       ]
     },
     {
       "dot": "amber",
       "title": "两类事务",
       "items": [
-        "日程工具经 App 执行业务。日程写入与 Agent 工具结果分属两个事务，删除回执可在恢复时只读核对。"
+        "日程写入由 App 执行业务事务。工具结果、配对消息和 checkpoint 由 SQLite 聊天事务保存；恢复时可只读核对删除回执。"
       ]
     },
     {
       "dot": "emerald",
       "title": "事实来源",
       "items": [
-        "chat 统一投影消息、事件与 checkpoint。SQLite 适配器执行事务核验与保存，Runtime 只采用提交后的快照。"
+        "Loop 协调执行，chat 负责消息组装和进度投影。模型适配后的最终请求正文用于预算估算、原样持久化及实际发送。",
+        "退出时 Loop 先停止推进并保存已接收进度。仍在使用 App 或 SQLite 的工具实际返回后才发出 LoopDone。"
       ]
     }
   ]

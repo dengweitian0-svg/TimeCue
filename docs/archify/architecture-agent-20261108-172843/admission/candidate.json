@@ -8,13 +8,13 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/dengweitian0-svg/TimeCue.git",
-      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+      "revision": "8cadb08307b72d6dca64f7e92699ed769d23a99f"
     }
   },
   "lanes": [
     {
       "id": "gate",
-      "label": "创建请求与 chat.Runtime 准入锁"
+      "label": "创建请求与 Agent Loop 准入锁"
     },
     {
       "id": "store",
@@ -54,12 +54,12 @@
       "col": 1,
       "type": "security",
       "label": "查找原幂等记录",
-      "sublabel": "会话内按 key 查找",
+      "sublabel": "先检查隐藏会话，再查键",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 203,
-          "end_line": 223
+          "path": "internal/agent/loop/service.go",
+          "line": 220,
+          "end_line": 239
         },
         {
           "path": "internal/store/chat.go",
@@ -75,12 +75,17 @@
       "col": 2,
       "type": "security",
       "label": "校验模型配置",
-      "sublabel": "provider / model",
+      "sublabel": "已配置且本地可用",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 224,
-          "end_line": 242
+          "path": "internal/agent/loop/service.go",
+          "line": 197,
+          "end_line": 198
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 240,
+          "end_line": 258
         }
       ],
       "width": 128
@@ -94,9 +99,14 @@
       "sublabel": "同会话 1 个，全局 3 个",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 243,
-          "end_line": 250
+          "path": "internal/agent/loop/service.go",
+          "line": 259,
+          "end_line": 266
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 293,
+          "end_line": 307
         }
       ],
       "width": 128
@@ -107,17 +117,22 @@
       "col": 4,
       "type": "backend",
       "label": "读取历史与预算",
-      "sublabel": "必要时准备摘要",
+      "sublabel": "按最终请求正文估算",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 264,
-          "end_line": 273
+          "path": "internal/agent/loop/service.go",
+          "line": 280,
+          "end_line": 292
         },
         {
-          "path": "internal/agent/chat/request.go",
-          "line": 21,
-          "end_line": 60
+          "path": "internal/agent/loop/request.go",
+          "line": 9,
+          "end_line": 52
+        },
+        {
+          "path": "internal/agent/chat/compact.go",
+          "line": 24,
+          "end_line": 38
         }
       ],
       "width": 128
@@ -133,12 +148,12 @@
         {
           "path": "internal/store/chat.go",
           "line": 147,
-          "end_line": 195
+          "end_line": 196
         },
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 274,
-          "end_line": 300
+          "path": "internal/agent/loop/service.go",
+          "line": 293,
+          "end_line": 307
         }
       ],
       "width": 128
@@ -152,9 +167,14 @@
       "sublabel": "仅原文相同可重放",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 191,
-          "end_line": 222
+          "path": "internal/agent/loop/service.go",
+          "line": 230,
+          "end_line": 239
+        },
+        {
+          "path": "internal/api/handler/agent/create_run_handler.go",
+          "line": 35,
+          "end_line": 57
         }
       ],
       "width": 128
@@ -168,9 +188,9 @@
       "sublabel": "非法、不可用或占用满",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 224,
-          "end_line": 250
+          "path": "internal/agent/loop/service.go",
+          "line": 220,
+          "end_line": 266
         }
       ],
       "width": 128
@@ -184,14 +204,14 @@
       "sublabel": "同事务写 error / end",
       "sources": [
         {
-          "path": "internal/agent/chat/service.go",
-          "line": 264,
-          "end_line": 280
+          "path": "internal/agent/loop/service.go",
+          "line": 280,
+          "end_line": 299
         },
         {
           "path": "internal/store/chat.go",
           "line": 147,
-          "end_line": 195
+          "end_line": 196
         }
       ],
       "width": 128
@@ -283,14 +303,15 @@
       "dot": "cyan",
       "title": "准入顺序",
       "items": [
-        "HTTP 与 Runtime 校验基本参数和服务可用性后，优先查询同会话幂等记录。原文逐字比较，重复键携带不同原文返回冲突。"
+        "基本参数和 Loop 可用性检查后，隐藏会话优先拒绝。其余按会话与幂等键查找，原文逐字相同才返回原运行和原模型身份。",
+        "新建（含预算失败）及运行中重放返回 202；终态或取消收尾重放返回 200。"
       ]
     },
     {
       "dot": "emerald",
       "title": "占用边界",
       "items": [
-        "准入锁覆盖检查、创建与占用登记。非法、配置拒绝、名额冲突或创建事务失败均不留新键；预算失败是已创建的终态。"
+        "准入锁覆盖检查、创建事务与活动登记。running 和 wait_for_cancel 均占用名额。拒绝或创建事务失败不登记新键；预算失败随创建事务提交为终态。"
       ]
     },
     {

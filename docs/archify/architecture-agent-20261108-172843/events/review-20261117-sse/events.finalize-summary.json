@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\events\\candidate.json",
+    "sha256": "91a8a2f1775e3731eb233b4da3e974b9a820f0c0b75d4c92e4aac2067a1f9569",
+    "bytes": 6181
+  },
+  "artifact": {
+    "path": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\events\\events.html",
+    "sha256": "84a44293110852f0c10983b9f78a4d2abfbfb236327d9d9bfe5d44955fb4ff6f",
+    "bytes": 823657
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\events\\review-20261117-sse\\events.finalize.json",
+    "summaryReceipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\events\\review-20261117-sse\\events.finalize-summary.json",
+    "browserCheckReceipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\events\\review-20261117-sse\\events.browser-check.json"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 9433,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

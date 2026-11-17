@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/dengweitian0-svg/TimeCue.git",
-      "revision": "640dbcbae92785295bcd610e490ff3eef333ce45"
+      "revision": "8cadb08307b72d6dca64f7e92699ed769d23a99f"
     }
   },
   "lanes": [
@@ -19,7 +19,7 @@
     },
     {
       "id": "chat",
-      "label": "模型协调与 completion 适配器"
+      "label": "Agent Loop 与 completion 适配器"
     },
     {
       "id": "store",
@@ -33,17 +33,22 @@
       "col": 0,
       "type": "backend",
       "label": "接收模型请求",
-      "sublabel": "固定请求与调用预算",
+      "sublabel": "正文与预算随调用登记",
       "sources": [
         {
-          "path": "internal/agent/chat/tool_loop.go",
-          "line": 105,
-          "end_line": 134
+          "path": "internal/agent/loop/tool_loop.go",
+          "line": 103,
+          "end_line": 126
         },
         {
           "path": "internal/store/chat.go",
           "line": 388,
-          "end_line": 405
+          "end_line": 429
+        },
+        {
+          "path": "internal/agent/completion/adapter.go",
+          "line": 13,
+          "end_line": 19
         }
       ],
       "width": 128
@@ -54,12 +59,12 @@
       "col": 1,
       "type": "security",
       "label": "检查原模型配置",
-      "sublabel": "实际发送前热读",
+      "sublabel": "同一模型身份，热读配置",
       "sources": [
         {
-          "path": "internal/agent/chat/model_retry.go",
-          "line": 46,
-          "end_line": 96
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 23,
+          "end_line": 64
         }
       ],
       "width": 128
@@ -70,12 +75,17 @@
       "col": 2,
       "type": "cloud",
       "label": "发起流式请求",
-      "sublabel": "Chat Completions",
+      "sublabel": "发送已保存的请求正文",
       "sources": [
         {
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 62,
+          "end_line": 78
+        },
+        {
           "path": "internal/agent/completion/client.go",
-          "line": 31,
-          "end_line": 83
+          "line": 34,
+          "end_line": 103
         }
       ],
       "width": 128
@@ -90,8 +100,8 @@
       "sources": [
         {
           "path": "internal/agent/completion/client.go",
-          "line": 84,
-          "end_line": 176
+          "line": 97,
+          "end_line": 178
         }
       ],
       "width": 128
@@ -107,12 +117,17 @@
         {
           "path": "internal/agent/completion/client.go",
           "line": 179,
-          "end_line": 211
+          "end_line": 215
         },
         {
-          "path": "internal/agent/chat/model_retry.go",
-          "line": 108,
-          "end_line": 133
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 79,
+          "end_line": 115
+        },
+        {
+          "path": "internal/agent/chat/contracts.go",
+          "line": 280,
+          "end_line": 307
         }
       ],
       "width": 128
@@ -123,17 +138,17 @@
       "col": 5,
       "type": "database",
       "label": "交给运行协调",
-      "sublabel": "接纳完整响应或保存尾批",
+      "sublabel": "登记工具或续写，或收尾",
       "sources": [
         {
-          "path": "internal/agent/chat/tool_loop.go",
-          "line": 135,
-          "end_line": 160
+          "path": "internal/agent/loop/tool_loop.go",
+          "line": 125,
+          "end_line": 145
         },
         {
           "path": "internal/store/chat.go",
-          "line": 598,
-          "end_line": 657
+          "line": 667,
+          "end_line": 758
         }
       ],
       "width": 128
@@ -147,14 +162,14 @@
       "sublabel": "5 条或 5 秒",
       "sources": [
         {
-          "path": "internal/agent/chat/event_batch.go",
-          "line": 24,
-          "end_line": 75
+          "path": "internal/agent/loop/event_batch.go",
+          "line": 26,
+          "end_line": 88
         },
         {
           "path": "internal/store/chat.go",
-          "line": 588,
-          "end_line": 595
+          "line": 645,
+          "end_line": 664
         }
       ],
       "width": 128
@@ -168,14 +183,19 @@
       "sublabel": "固定预算与 next_retry_at",
       "sources": [
         {
-          "path": "internal/agent/chat/model_retry.go",
-          "line": 22,
-          "end_line": 44
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 26,
+          "end_line": 49
         },
         {
-          "path": "internal/agent/chat/model_retry.go",
-          "line": 120,
-          "end_line": 145
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 98,
+          "end_line": 115
+        },
+        {
+          "path": "internal/agent/loop/recovery.go",
+          "line": 67,
+          "end_line": 82
         }
       ],
       "width": 128
@@ -189,9 +209,9 @@
       "sublabel": "保留已收到的输出",
       "sources": [
         {
-          "path": "internal/agent/chat/model_retry.go",
-          "line": 108,
-          "end_line": 129
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 79,
+          "end_line": 103
         }
       ],
       "width": 128
@@ -204,9 +224,9 @@
       "id": "blocked",
       "sources": [
         {
-          "line": 87,
-          "end_line": 94,
-          "path": "internal/agent/chat/model_retry.go"
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 23,
+          "end_line": 61
         }
       ],
       "col": 1,
@@ -292,7 +312,9 @@
       "variant": "security",
       "from": "load",
       "role": "error",
-      "to": "blocked"
+      "to": "blocked",
+      "fromSide": "top",
+      "toSide": "bottom"
     }
   ],
   "mainPath": [
@@ -308,14 +330,14 @@
       "dot": "cyan",
       "title": "流式协议",
       "items": [
-        "每次请求固定当次 Key 与超时。首个有效正文、思考或工具增量前默认等 120 秒；此后默认空闲 60 秒。SDK 的自动重试关闭。"
+        "适配器将登记的最终正文原样交给 SDK，每次发送读取当前 Key 和超时。首个有效增量前默认 120 秒，之后空闲超时默认 60 秒。SDK 自动重试关闭。"
       ]
     },
     {
       "dot": "amber",
       "title": "网络重试",
       "items": [
-        "超时、网络错误、429、500、503，且当前及此前均无有效输出时才可重试。默认首次外 3 次，间隔 5 / 10 / 20 秒；重用请求、调用 ID 和已保存预算。"
+        "超时、网络错误、429、500、503 等暂时故障，且本次与先前均未留下有效输出时才可重试。首次外默认 3 次，间隔 5 / 10 / 20 秒；重用调用 ID、请求正文和已保存预算。"
       ]
     },
     {
@@ -329,7 +351,7 @@
       "dot": "emerald",
       "title": "恢复",
       "items": [
-        "checkpoint 引用原请求。已有完整响应先经统一校验后复用，未完成响应沿原调用重发；恢复发送本身不额外消费网络重试。"
+        "checkpoint 引用原调用。完整响应统一校验后复用；缺失或部分响应沿原调用重发。生命周期重发不额外扣网络重试预算。"
       ]
     }
   ]
