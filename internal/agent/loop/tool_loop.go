@@ -84,32 +84,21 @@ func (s *Run) advance(ctx context.Context, r *chat.Record, cfg chat.ModelConfig,
 				if r.Output != nil {
 					prefix = *r.Output
 				}
-				call = chat.ModelCall{
-					RunID:             r.RunID,
-					SessionID:         r.SessionID,
-					Input:             summary,
-					State:             chat.StateRunning,
-					MaxRetry:          cfg.MaxRetry,
-					CheckpointStage:   "compact",
-					CheckpointContext: prepared.Input.Messages,
-					OutputPrefix:      prefix,
-				}
+				call = newModelCall(r.Run, cfg.MaxRetry)
+				call.Input = summary
+				call.CheckpointStage = "compact"
+				call.CheckpointContext = prepared.Input.Messages
+				call.OutputPrefix = prefix
 				continue
 			}
 			prefix := ""
 			if continuation && r.Output != nil {
 				prefix = *r.Output
 			}
-			call = chat.ModelCall{
-				RunID:        r.RunID,
-				SessionID:    r.SessionID,
-				Input:        prepared.Input,
-				InputBody:    prepared.Body,
-				State:        chat.StateRunning,
-				MaxRetry:     cfg.MaxRetry,
-				Continuation: continuation,
-				OutputPrefix: prefix,
-			}
+			call = newModelCall(r.Run, cfg.MaxRetry)
+			call.Input, call.InputBody = prepared.Input, prepared.Body
+			call.Continuation = continuation
+			call.OutputPrefix = prefix
 		}
 		if call.ID == 0 {
 			var err error

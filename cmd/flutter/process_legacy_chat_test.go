@@ -159,7 +159,11 @@ func verifyLegacyUsage(t *testing.T, service *loop.Run, ordinaryID, compactID st
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	t.Cleanup(service.Stop)
+	t.Cleanup(func() {
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelShutdown()
+		service.Shutdown(shutdownCtx)
+	})
 	ordinary, err := service.GetRunUsage(ctx, ordinaryID)
 	if err != nil || len(ordinary.Calls) != 2 || ordinary.Tokens.TotalTokens == nil || *ordinary.Tokens.TotalTokens != 3 ||
 		string(ordinary.Calls[0].Usage) != `{"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3, "provider_detail": {"kind": "ordinary"}}` ||

@@ -24,6 +24,8 @@ type subscriber struct {
 	cancel context.CancelFunc
 }
 
+const maxConcurrentRuns = 3
+
 // Run 协调 Agent 的会话、模型、工具、持久化和生命周期。
 type Run struct {
 	runs           chat.RunRepository
@@ -51,7 +53,7 @@ type Run struct {
 	stopStorage    context.CancelFunc
 }
 
-// NewWithPorts 使用已装配的模型、工具和存储端口创建 Loop，调用 Start 后接纳运行。
+// NewWithPorts 使用已装配的模型、工具和存储端口创建尚未准备恢复的 Loop。
 func NewWithPorts(storage chat.Storage, model chat.ModelClient, settings func() ([]chat.ModelConfig, error), registry *tools.Registry) *Run {
 	storageCtx, stopStorage := context.WithCancel(context.Background())
 	service := &Run{
@@ -64,7 +66,7 @@ func NewWithPorts(storage chat.Storage, model chat.ModelClient, settings func() 
 		model:          model,
 		settings:       settings,
 		active:         map[string]*execution{},
-		slots:          make(chan struct{}, 3),
+		slots:          make(chan struct{}, maxConcurrentRuns),
 		subscribers:    map[string]*subscriber{},
 		toolStore:      storage.Tools,
 		storageCtx:     storageCtx,
@@ -85,14 +87,6 @@ type recoveryRun struct {
 	previous *chat.ModelCall
 	config   chat.ModelConfig
 	action   runRecoveryAction
-}
-
-// Start 读取恢复事实并启动已通过端口装配的 Loop。
-func (s *Run) Start(ctx context.Context) error {
-	if err := s.prepareRecovery(ctx); err != nil {
-		return err
-	}
-	return s.Activate(ctx)
 }
 
 func (s *Run) prepareRecovery(ctx context.Context) error {
@@ -164,13 +158,6 @@ func (s *Run) Activate(ctx context.Context) error {
 	}
 	s.recovery, s.started = nil, true
 	return nil
-}
-
-// Stop 停止准入与模型请求，等待协调器保存已收到内容后释放依赖。
-func (s *Run) Stop() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	s.Shutdown(ctx)
 }
 
 func (s *Run) shutdown(ctx context.Context) {
@@ -274,7 +261,7 @@ func (s *Run) CreateRun(ctx context.Context, input chat.CreateRunInput) (chat.Re
 			return chat.Receipt{}, chat.ErrSessionBusy
 		}
 	}
-	if len(s.active) >= 3 {
+	if len(s.active) >= maxConcurrentRuns {
 		return chat.Receipt{}, chat.ErrSessionConcurrencyLimit
 	}
 	r := chat.Record{
@@ -330,12 +317,7 @@ func (s *Run) execute(ctx context.Context, run *execution, r chat.Record, cfg ch
 	case <-ctx.Done():
 		// 排队取消或退出只保存已有事实，不等待正在执行的模型释放名额。
 	}
-	call := chat.ModelCall{
-		RunID:     r.RunID,
-		SessionID: r.SessionID,
-		State:     chat.StateRunning,
-		MaxRetry:  cfg.MaxRetry,
-	}
+	call := newModelCall(r.Run, cfg.MaxRetry)
 	var err error
 	if previous != nil {
 		call = *previous

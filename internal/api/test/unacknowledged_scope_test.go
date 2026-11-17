@@ -19,7 +19,7 @@ func TestUnacknowledgedScopeHTTP(t *testing.T) {
 	schedules, _ := store.NewScheduleStore(db)
 	notify, _ := store.NewNotificationStore(db)
 	app := &app.App{Schedule: schedules, Notify: notify}
-	router := api.NewRouter(app, db.CheckHealth)
+	router := api.NewRouterWithPort(app, nil, db.CheckHealth, testRouterPort)
 	now := time.Now().In(model.BeijingLocation())
 	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, model.BeijingLocation())
 	for i := 1; i <= 102; i++ {

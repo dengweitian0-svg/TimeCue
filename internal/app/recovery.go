@@ -40,15 +40,15 @@ func (a *App) RecoverStep(ctx context.Context) (bool, error) {
 	return a.recoverStep(ctx, ctx)
 }
 
-func (a *App) recoverStep(polling, work context.Context) (bool, error) {
-	if err := a.operations.LockContext(polling); err != nil {
+func (a *App) recoverStep(pollingCtx, batchCtx context.Context) (bool, error) {
+	if err := a.operations.LockContext(pollingCtx); err != nil {
 		return false, err
 	}
 	defer a.operations.Unlock()
 	if a.Recovery == nil {
 		return false, fmt.Errorf("recovery is not configured")
 	}
-	return a.recoverStepLocked(work)
+	return a.recoverStepLocked(batchCtx)
 }
 
 // RunRecovery 持续整理历史遗漏，不阻塞实时调度。
@@ -56,17 +56,17 @@ func (a *App) RunRecovery(ctx context.Context) error {
 	return a.runRecovery(ctx, ctx)
 }
 
-func (a *App) runRecovery(polling, work context.Context) error {
+func (a *App) runRecovery(pollingCtx, batchCtx context.Context) error {
 	if a.Recovery == nil {
 		return fmt.Errorf("recovery is not configured")
 	}
 	for {
-		if err := polling.Err(); err != nil {
+		if err := pollingCtx.Err(); err != nil {
 			return err
 		}
-		worked, err := a.recoverStep(polling, work)
-		if polling.Err() != nil {
-			return polling.Err()
+		worked, err := a.recoverStep(pollingCtx, batchCtx)
+		if pollingCtx.Err() != nil {
+			return pollingCtx.Err()
 		}
 		delay := time.Second
 		if worked && err == nil {
@@ -75,7 +75,7 @@ func (a *App) runRecovery(polling, work context.Context) error {
 		if err != nil {
 			a.Recovery.ReportError(err)
 		}
-		if err := a.Recovery.Wait(polling, delay); err != nil {
+		if err := a.Recovery.Wait(pollingCtx, delay); err != nil {
 			return err
 		}
 	}

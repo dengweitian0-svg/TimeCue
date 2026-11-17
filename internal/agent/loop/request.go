@@ -28,13 +28,17 @@ func (s *Run) prepareRequest(provider string, input chat.ModelRequest) (chat.Pre
 	return prepared, nil
 }
 
-func (s *Run) prepareInitialCall(r chat.Record, input chat.ModelRequest, cfg chat.ModelConfig) (chat.ModelCall, *chat.RunError) {
-	call := chat.ModelCall{
-		RunID:     r.RunID,
-		SessionID: r.SessionID,
+func newModelCall(run chat.Run, maxRetry int) chat.ModelCall {
+	return chat.ModelCall{
+		RunID:     run.RunID,
+		SessionID: run.SessionID,
 		State:     chat.StateRunning,
-		MaxRetry:  cfg.MaxRetry,
+		MaxRetry:  maxRetry,
 	}
+}
+
+func (s *Run) prepareInitialCall(r chat.Record, input chat.ModelRequest, cfg chat.ModelConfig) (chat.ModelCall, *chat.RunError) {
+	call := newModelCall(r.Run, cfg.MaxRetry)
 	prepared, failure := s.prepareRequest(r.Provider, input)
 	if failure != nil {
 		return call, failure

@@ -122,7 +122,7 @@ func toolResultMessage(call ModelCall, tool ToolCall) Message {
 		encoded, _ := json.Marshal(tool.Error)
 		content = string(encoded)
 	}
-	if tool.State == "skipped" {
+	if tool.State == tools.StateSkipped {
 		content = "aborted"
 	} else {
 		content = call.toolFeedback(tool, content)

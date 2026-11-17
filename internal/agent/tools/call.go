@@ -18,6 +18,22 @@ type ToolFunction struct {
 	Arguments string `json:"arguments"`
 }
 
+// ToolState 是工具调用持久化使用的状态。
+type ToolState string
+
+const (
+	StateRunning   ToolState = "running"
+	StateRetryWait ToolState = "retry_wait"
+	StateSucceeded ToolState = "succeeded"
+	StateFailed    ToolState = "failed"
+	StateSkipped   ToolState = "skipped"
+)
+
+// Terminal 判断工具调用是否已结算。
+func (state ToolState) Terminal() bool {
+	return state == StateSucceeded || state == StateFailed || state == StateSkipped
+}
+
 // ToolCall 保存工具执行身份、原始结果及版本 3 已有的重试事实。
 type ToolCall struct {
 	// ModelContentLimit 仅用于本次结果投影；已提交文本直接沿 checkpoint 复用。
@@ -28,7 +44,7 @@ type ToolCall struct {
 	Request           ToolRequest
 	Output            json.RawMessage
 	Error             *Failure
-	State             string
+	State             ToolState
 	MaxRetry          int
 	RetryCount        int
 	NextRetryAt       *time.Time
@@ -36,7 +52,7 @@ type ToolCall struct {
 
 // WithResultUnconfirmed 保留原调用身份，为无法确认的处理生成统一失败事实。
 func (tool ToolCall) WithResultUnconfirmed() ToolCall {
-	tool.State = "failed"
+	tool.State = StateFailed
 	tool.Error = &Failure{
 		Code:    "tool_result_unconfirmed",
 		Message: "中断前工具结果未能确认，未重新执行",
@@ -49,10 +65,10 @@ func (tool ToolCall) WithTerminalResult(registered, cancelled bool) ToolCall {
 	if registered && !tool.unsettled() {
 		return tool
 	}
-	if !cancelled || registered && tool.State == "running" {
+	if !cancelled || registered && tool.State == StateRunning {
 		return tool.WithResultUnconfirmed()
 	}
-	tool.State = "skipped"
+	tool.State = StateSkipped
 	tool.Output = nil
 	tool.Error = &Failure{
 		Code:    "tool_skipped",

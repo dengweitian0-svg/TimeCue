@@ -85,19 +85,19 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	return s.RunUntil(ctx, ctx)
 }
 
-// RunUntil 停止扫描后等待当前批次完成，批次工作独立受 work 约束。
-func (s *Scheduler) RunUntil(polling, work context.Context) error {
+// RunUntil 停止扫描后等待当前批次完成，批次工作独立受 batchCtx 约束。
+func (s *Scheduler) RunUntil(pollingCtx, batchCtx context.Context) error {
 	for {
-		if polling.Err() != nil {
-			return polling.Err()
+		if pollingCtx.Err() != nil {
+			return pollingCtx.Err()
 		}
-		err := s.step(polling, work)
+		err := s.step(pollingCtx, batchCtx)
 		delay := s.nextDelay()
 		if err != nil {
 			s.report(err)
 			delay = time.Second
 		}
-		if err := s.options.Wait(polling, delay, s.wake); err != nil {
+		if err := s.options.Wait(pollingCtx, delay, s.wake); err != nil {
 			return err
 		}
 	}
@@ -108,8 +108,8 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	return s.step(ctx, ctx)
 }
 
-func (s *Scheduler) step(polling, ctx context.Context) error {
-	if err := s.work.LockContext(polling); err != nil {
+func (s *Scheduler) step(pollingCtx, batchCtx context.Context) error {
+	if err := s.work.LockContext(pollingCtx); err != nil {
 		return err
 	}
 	defer s.work.Unlock()
@@ -124,7 +124,7 @@ func (s *Scheduler) step(polling, ctx context.Context) error {
 	scanDue := s.nextScan.IsZero() || !now.Before(s.nextScan) || now.Before(s.lastObserved)
 	s.mu.Unlock()
 	if !completed {
-		batch, err := s.repo.PrepareNotifications(ctx, model.NotificationWindow{Start: minute, End: minute.Add(time.Minute), AsOf: now, FreezeDue: true}, PrepareNotificationCandidates)
+		batch, err := s.repo.PrepareNotifications(batchCtx, model.NotificationWindow{Start: minute, End: minute.Add(time.Minute), AsOf: now, FreezeDue: true}, PrepareNotificationCandidates)
 		if err != nil {
 			return fmt.Errorf("prepare due minute %s: %w", minute.Format(time.RFC3339), err)
 		}
@@ -166,7 +166,7 @@ func (s *Scheduler) step(polling, ctx context.Context) error {
 	s.mu.Unlock()
 	if scanDue {
 		window := model.NotificationWindow{Start: now.Add(-30 * time.Second), End: now.Add(30 * time.Second), AsOf: now}
-		batch, err := s.repo.PrepareNotifications(ctx, window, PrepareNotificationCandidates)
+		batch, err := s.repo.PrepareNotifications(batchCtx, window, PrepareNotificationCandidates)
 		if err != nil {
 			return fmt.Errorf("scan notification window: %w", err)
 		}

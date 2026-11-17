@@ -227,15 +227,7 @@ func (h *host) startLoop(ctx, initCtx context.Context, stop context.CancelCauseF
 				err = service.Activate(ctx)
 				activated <- err
 				if err == nil {
-					if err := service.Serve(ctx); ctx.Err() == nil {
-						if err == nil {
-							err = fmt.Errorf("service stopped unexpectedly")
-						}
-						stop(fmt.Errorf("agent loop: %w", err))
-					}
-					shutdown, cancel := context.WithTimeout(context.Background(), h.loopShutdown)
-					defer cancel()
-					service.Shutdown(shutdown)
+					h.serveLoop(ctx, stop, service)
 					return
 				}
 			}
@@ -266,6 +258,18 @@ func (h *host) startLoop(ctx, initCtx context.Context, stop context.CancelCauseF
 		}
 		return result.service, nil
 	}
+}
+
+func (h *host) serveLoop(ctx context.Context, stop context.CancelCauseFunc, service agentLoop) {
+	if err := service.Serve(ctx); ctx.Err() == nil {
+		if err == nil {
+			err = fmt.Errorf("service stopped unexpectedly")
+		}
+		stop(fmt.Errorf("agent loop: %w", err))
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), h.loopShutdown)
+	defer cancel()
+	service.Shutdown(shutdown)
 }
 
 func openLogFile(directory string) (*os.File, error) {

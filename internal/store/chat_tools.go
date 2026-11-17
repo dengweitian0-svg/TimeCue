@@ -98,7 +98,7 @@ func (s *chatStore) BeginTool(ctx context.Context, call chat.ModelCall, tool cha
 		}
 		if tool.ID != 0 {
 			// 恢复复用原身份和已登记执行键，不再发送开始事件。
-			_, err := tx.ExecContext(ctx, `UPDATE ai_tool_calls SET status='running',retry_count=?,error=NULL,output=NULL,next_retry_at=NULL WHERE id=? AND model_call_id=?`, tool.RetryCount, tool.ID, call.ID)
+			_, err := tx.ExecContext(ctx, `UPDATE ai_tool_calls SET status=?,retry_count=?,error=NULL,output=NULL,next_retry_at=NULL WHERE id=? AND model_call_id=?`, tools.StateRunning, tool.RetryCount, tool.ID, call.ID)
 			if err != nil {
 				return err
 			}
@@ -107,7 +107,7 @@ func (s *chatStore) BeginTool(ctx context.Context, call chat.ModelCall, tool cha
 			if tool.IdempotencyKey != "" {
 				key = tool.IdempotencyKey
 			}
-			result, err := tx.ExecContext(ctx, `INSERT INTO ai_tool_calls(run_id,session_id,model_call_id,tool_call_id,name,input,status,max_retry,created_at,idempotency_key) VALUES(?,?,?,?,?,?,'running',?,?,?)`, call.RunID, call.SessionID, call.ID, tool.Request.ID, tool.Request.Function.Name, jsonValue(tool.Request.Function.Arguments), tool.MaxRetry, time.Now().UnixNano(), key)
+			result, err := tx.ExecContext(ctx, `INSERT INTO ai_tool_calls(run_id,session_id,model_call_id,tool_call_id,name,input,status,max_retry,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?)`, call.RunID, call.SessionID, call.ID, tool.Request.ID, tool.Request.Function.Name, jsonValue(tool.Request.Function.Arguments), tools.StateRunning, tool.MaxRetry, time.Now().UnixNano(), key)
 			if err != nil {
 				return err
 			}
@@ -131,7 +131,7 @@ func (s *chatStore) BeginTool(ctx context.Context, call chat.ModelCall, tool cha
 // WaitToolRetry 只保存一次尝试的暂时错误和退避，不生成最终消息或结果事件。
 func (s *chatStore) WaitToolRetry(ctx context.Context, tool chat.ToolCall) error {
 	return s.transaction(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `UPDATE ai_tool_calls SET status='retry_wait',output=?,error=?,next_retry_at=? WHERE id=? AND model_call_id=? AND status='running' AND retry_count=?`, jsonValue(tool.Output), jsonValue(tool.Error), timeValue(tool.NextRetryAt), tool.ID, tool.ModelCallID, tool.RetryCount)
+		result, err := tx.ExecContext(ctx, `UPDATE ai_tool_calls SET status=?,output=?,error=?,next_retry_at=? WHERE id=? AND model_call_id=? AND status=? AND retry_count=?`, tools.StateRetryWait, jsonValue(tool.Output), jsonValue(tool.Error), timeValue(tool.NextRetryAt), tool.ID, tool.ModelCallID, tools.StateRunning, tool.RetryCount)
 		if err != nil {
 			return err
 		}
@@ -178,12 +178,12 @@ func finishTool(ctx context.Context, tx *sql.Tx, call chat.ModelCall, tool chat.
 func saveToolResult(ctx context.Context, tx *sql.Tx, call chat.ModelCall, tool chat.ToolCall) (bool, error) {
 	// 提交结果不明后的保存重试只复用已提交事实，不能再次生成结果事件。
 	var id int64
-	var state string
+	var state tools.ToolState
 	err := tx.QueryRowContext(ctx, `SELECT id,status FROM ai_tool_calls WHERE model_call_id=? AND tool_call_id=?`, call.ID, tool.Request.ID).Scan(&id, &state)
 	if err != nil && err != sql.ErrNoRows {
 		return false, err
 	}
-	if state == "succeeded" || state == "failed" || state == "skipped" {
+	if state.Terminal() {
 		return false, nil
 	}
 	if err == sql.ErrNoRows {

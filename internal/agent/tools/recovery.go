@@ -10,7 +10,7 @@ import (
 func (f *ToolFactory[P]) readReceipt(ctx context.Context, tool ToolCall) (ToolCall, bool, error) {
 	output, found, err := f.registry.readResult(WithExecutionKey(ctx, tool.IdempotencyKey), tool.Request.Function.Name, tool.Request.Function.Arguments)
 	if found {
-		tool.State, tool.Output, tool.Error, tool.NextRetryAt = "succeeded", output, nil, nil
+		tool.State, tool.Output, tool.Error, tool.NextRetryAt = StateSucceeded, output, nil, nil
 	}
 	return tool, found, err
 }
@@ -32,7 +32,7 @@ func (f *ToolFactory[P]) CancellationResults(ctx context.Context, batch Batch, p
 		}
 		if found {
 			tool = confirmed
-		} else if tool.State == "running" {
+		} else if tool.State == StateRunning {
 			tool = tool.WithResultUnconfirmed()
 		} else {
 			// 退避项由终态事务补齐为跳过。
@@ -45,11 +45,11 @@ func (f *ToolFactory[P]) CancellationResults(ctx context.Context, batch Batch, p
 }
 
 func (tool ToolCall) unsettled() bool {
-	return tool.State == "running" || tool.State == "retry_wait"
+	return tool.State == StateRunning || tool.State == StateRetryWait
 }
 
 func (tool ToolCall) retryWait() time.Duration {
-	if tool.State != "retry_wait" || tool.NextRetryAt == nil {
+	if tool.State != StateRetryWait || tool.NextRetryAt == nil {
 		return 0
 	}
 	return time.Until(*tool.NextRetryAt)

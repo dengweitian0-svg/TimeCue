@@ -194,7 +194,7 @@ func (call ModelCall) WithRunFinished(status RunState, failure *RunError, stored
 		if call.ToolCompleted(tool.Request.ID) {
 			continue
 		}
-		if saved, ok := known[tool.Request.ID]; ok && saved.State != "running" && saved.State != "retry_wait" {
+		if saved, ok := known[tool.Request.ID]; ok && saved.State != tools.StateRunning && saved.State != tools.StateRetryWait {
 			tool = saved
 		}
 		call = call.WithToolResult(tool)

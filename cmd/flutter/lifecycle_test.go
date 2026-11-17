@@ -279,31 +279,49 @@ func TestHostFatalAppFailureDrainsLoopBeforeApp(t *testing.T) {
 
 // TestHostFatalLoopFailure 验证 Loop 运行期故障触发协调退出。
 func TestHostFatalLoopFailure(t *testing.T) {
-	h := testHost(t)
 	failure := errors.New("injected Loop failure")
-	fatal, cleaned := make(chan struct{}), make(chan struct{})
-	h.newLoop = func(context.Context, *app.App) (agentLoop, error) {
-		return &testLoop{
-			activate: func(context.Context) error { return nil },
-			serve: func(ctx context.Context) error {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-fatal:
-					return failure
+	for _, test := range []struct {
+		name     string
+		serveErr error
+	}{
+		{
+			name:     "返回错误",
+			serveErr: failure,
+		},
+		{name: "提前正常返回"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := testHost(t)
+			fatal, cleaned := make(chan struct{}), make(chan struct{})
+			h.newLoop = func(context.Context, *app.App) (agentLoop, error) {
+				return &testLoop{
+					activate: func(context.Context) error { return nil },
+					serve: func(ctx context.Context) error {
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case <-fatal:
+							return test.serveErr
+						}
+					},
+					shutdown: func(context.Context) { close(cleaned) },
+				}, nil
+			}
+			h.onReady = func() error { close(fatal); return nil }
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- h.run(ctx, time.Now()) }()
+			awaitHostSignal(t, cleaned)
+			err := awaitHostResult(t, done)
+			if test.serveErr != nil {
+				if !errors.Is(err, test.serveErr) {
+					t.Fatalf("Loop 故障未传回宿主: %v", err)
 				}
-			},
-			shutdown: func(context.Context) { close(cleaned) },
-		}, nil
-	}
-	h.onReady = func() error { close(fatal); return nil }
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- h.run(ctx, time.Now()) }()
-	awaitHostSignal(t, cleaned)
-	if err := awaitHostResult(t, done); !errors.Is(err, failure) {
-		t.Fatalf("Loop 故障未传回宿主: %v", err)
+			} else if err == nil || err.Error() != "agent loop: service stopped unexpectedly" {
+				t.Fatalf("Loop 提前返回时宿主未报告故障: %v", err)
+			}
+		})
 	}
 }
 
