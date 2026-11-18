@@ -26,8 +26,9 @@ TimeCue 把单次安排、周期日程和待确认提醒放进同一本日程本
 在 PowerShell 中执行以下命令。
 
 ```powershell
-git clone --branch dev https://github.com/dengweitian0-svg/TimeCue.git
+git clone https://github.com/dengweitian0-svg/TimeCue.git
 cd TimeCue
+# 如需运行开发版本，在继续前执行 git switch dev。
 $timecueDataDir = Join-Path (Get-Location).Path 'build\dev-data'
 New-Item -ItemType Directory -Force -Path $timecueDataDir | Out-Null
 cd desktop
