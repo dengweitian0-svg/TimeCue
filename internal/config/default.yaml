@@ -8,3 +8,8 @@ log:
 
 db:
   db_path: ./db/timecue.db
+
+chat:
+  tool_result_max_tokens: 8192
+  max_continue: 5
+  compact_threshold: 0.8

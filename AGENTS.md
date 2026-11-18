@@ -1,25 +1,25 @@
 # TimeCue
 
-- `scripts/build-release.ps1` 打包完整 Flutter Windows x64 目录、timecue-core.exe、update.py、发行说明、版本/文件校验清单和 ZIP；发行说明见 docs/RELEASE.md。正式发行目录的主实例窗口启动成功后会登记当前用户 `TIMECUE_INSTALL_DIR`，供 Python 更新脚本定位安装目录。主实例默认 managed，使用当前用户 LocalAppData/TimeCue；Go 在监听前显式初始化新库或备份升级可识别 Flutter 旧库，拒绝自动转换 Wails 数据。
+- [Go 服务入口](cmd/flutter/AGENTS.md)
+- [HTTP API](internal/api/AGENTS.md)
+- [应用编排](internal/app/AGENTS.md)
+- [Agent](internal/agent/AGENTS.md)
+- [HTTP 中间件](internal/middleware/AGENTS.md)
+- [领域服务](internal/service/AGENTS.md)
+- [并发协调](internal/syncutil/AGENTS.md)
+- [业务模型](internal/model/AGENTS.md)
+- [SQLite 存储](internal/store/AGENTS.md)
+- [配置管理](internal/config/AGENTS.md)
+- [日志](internal/log/AGENTS.md)
+- [数据库迁移](migrations/AGENTS.md)
+- [Flutter 桌面端](desktop/AGENTS.md)
+- [构建与验收脚本](scripts/AGENTS.md)
 
-Windows 桌面日程提醒应用：Go 提供日程、提醒和本地数据服务，Flutter 提供房间与日程本界面。已接通查询、确认、规则操作、分钟调度、全期间恢复与汇总、任务成员分页及投递领取/开始/回填协议；Go 支持固定数据目录、运行身份、托管 ready 和父端停止控制。Flutter 已实现 Windows 即时通知桥、运行内结果重传、通知点击只读定位与恢复进度/成员展示；已接入托盘、关闭隐藏、原生单实例唤回与激活参数转交；Flutter 已接入自有 Go 的隐藏创建、身份握手、共享退出和 Job 崩溃清理。
+## 工程约束
 
-- [cmd/flutter](cmd/flutter/AGENTS.md)：Go 本机 HTTP 服务启动、组件装配与退出清理。
-- [internal/api](internal/api/AGENTS.md)：HTTP 路由、日程与提醒接口。
-- [internal/middleware](internal/middleware/AGENTS.md)：请求日志、Host 校验、异常恢复与响应适配。
-- [internal/service](internal/service/AGENTS.md)：日程用例、触发时间计算、查询与确认、运行内投递尝试和重试。
-- [internal/model](internal/model/AGENTS.md)：日程、提醒、查询条件及共享业务类型。
-- [internal/store](internal/store/AGENTS.md)：SQLite 连接、健康检查、日程与提醒持久化。
-- [internal/config](internal/config/AGENTS.md)：只读加载配置、发布快照、目录监听及运行路径解析；用户配置由 Flutter 写入。
-- [internal/log](internal/log/AGENTS.md)：全局日志、JSONL 输出与级别热更新。
-- [desktop](desktop/AGENTS.md)：Flutter 桌面界面、HTTP 数据接入和内存演示。
-
-# 约束
-- 编码任务开始前必须读取并遵循 [Codex 工作流](.codex/workflow.md)；主代理只推进到 PR 就绪，不自动合并
-- 代码注释使用中文；模块变更同步对应 AGENTS.md 和工程说明。Go 管理日程规则与提醒状态，Flutter 通过业务接口操作；平台副作用结果回传 Go。开发分支与检查流程见 [贡献规范](docs/CONTRIBUTING.md)
-- 任何改动数据库表结构的操作必须获取请求
-- 在新增，删除，更新 HTTP 接口后，必须要先在 Apifox 创建测试并通过后才能继续前端的开发
-- AGENTS.md 文档中，只需要声明当前模块的组成，功能，约束即可，不记录决策
-- 当前项目不需要过多的工程约束，简单够用即可
-- 需要根据功能创建新分支来开发，而不是在 dev 分支中开发
-- Flutter 已接入显式 managed/external 模式、隐藏自有 Go、ready/health 身份门禁和共享退出回填；Job Object 在进程创建时关联，最终回收及宿主崩溃只清理自有进程。开发外连不停止手动 Go，启动失败可重试、运行中异常退出不自动重启
+- 若存在 `.codex/AGENTS.md`，开始任务前须读取。按[贡献规范](docs/CONTRIBUTING.md)从 `dev` 创建开发分支。
+- 代码注释使用中文，导出函数和方法须有中文注释。Go 结构体初始化含两个及以上字段时逐行书写，修改后运行 `gofmt`。
+- 改动数据库表结构前须取得用户确认。
+- 增删改 HTTP 接口后，须先创建并通过 Apifox 测试，再继续前端开发。
+- 临时文件、执行报告和本地验收记录留在工作区，禁止提交或为其新增忽略规则。`docs/archify/` 中随图表交付的执行回执及校验、验收证据一并提交。
+- 模块结构、职责归属或关键工程约束变化时，同步对应的 `AGENTS.md`。

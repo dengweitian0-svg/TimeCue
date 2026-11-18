@@ -25,9 +25,11 @@ var defaultConfig []byte
 const configFileName = "config.yaml"
 
 type Config struct {
-	App appConfig `mapstructure:"app"`
-	Log logConfig `mapstructure:"log"`
-	DB  dbConfig  `mapstructure:"db"`
+	ChatModel []ChatProvider `mapstructure:"chat_model"`
+	Chat      ChatRuntime    `mapstructure:"chat"`
+	App       appConfig      `mapstructure:"app"`
+	Log       logConfig      `mapstructure:"log"`
+	DB        dbConfig       `mapstructure:"db"`
 }
 
 type appConfig struct {
@@ -147,7 +149,26 @@ func (m *Manager) CurrentConfig() (Config, error) {
 	if current == nil {
 		return Config{}, fmt.Errorf("[config] no config")
 	}
-	return *current, nil
+	result := *current
+	result.ChatModel = append([]ChatProvider(nil), current.ChatModel...)
+	for i := range result.ChatModel {
+		result.ChatModel[i].Models = append([]ChatModel(nil), current.ChatModel[i].Models...)
+		for j := range result.ChatModel[i].Models {
+			if value := result.ChatModel[i].Models[j].MaxOutputTokens; value != nil {
+				copied := *value
+				result.ChatModel[i].Models[j].MaxOutputTokens = &copied
+			}
+		}
+	}
+	if current.Chat.MaxRetry != nil {
+		copied := *current.Chat.MaxRetry
+		result.Chat.MaxRetry = &copied
+	}
+	if current.Chat.ToolMaxRetry != nil {
+		copied := *current.Chat.ToolMaxRetry
+		result.Chat.ToolMaxRetry = &copied
+	}
+	return result, nil
 }
 
 // newConfigViper 创建只负责读取 config.yaml 的 Viper 实例。
@@ -174,6 +195,9 @@ func (m *Manager) reloadConfig() error {
 	next := new(Config)
 	if err := v.Unmarshal(next); err != nil {
 		return fmt.Errorf("unmarshal %s: %w", m.configPath, err)
+	}
+	if err := validateChatConfig(next); err != nil {
+		return err
 	}
 
 	// 先原子读取旧快照，再原子写入新快照；旧快照不会被原地修改。

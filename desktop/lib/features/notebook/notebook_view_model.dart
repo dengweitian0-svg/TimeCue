@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../contracts/notebook_repository.dart';
 
-enum NotebookTab { today, history, calendar }
+enum NotebookTab { today, history, calendar, ai }
 
 enum NotebookOperationStatus { success, warning, error }
 
@@ -64,6 +64,14 @@ class NotebookViewModel extends ChangeNotifier {
   final NotebookOperationFeedback? onOperationFeedback;
   NotebookTab _tab = NotebookTab.today;
   NotebookTab get tab => _tab;
+  bool _chatShowingHistory = false;
+
+  /// 当前是否显示 AI 对话的历史会话视图。
+  bool get chatShowingHistory => _chatShowingHistory;
+  String _chatDraft = '';
+
+  /// 当前 AI 对话框架保留的运行内草稿。
+  String get chatDraft => _chatDraft;
   DateTime month;
   CalendarRightPage _right = const BlankPage();
   CalendarRightPage get right => _right;
@@ -135,7 +143,7 @@ class NotebookViewModel extends ChangeNotifier {
   }
 
   void open() {
-    _tab = NotebookTab.today;
+    if (_tab != NotebookTab.ai) _tab = NotebookTab.today;
     startPolling();
     notifyListeners();
   }
@@ -164,6 +172,30 @@ class NotebookViewModel extends ChangeNotifier {
       _right = DateListPage(date);
     }
     _tab = tab;
+    notifyListeners();
+  }
+
+  /// 保存 AI 对话框架中的本地草稿，供切页或重新打开本子后恢复。
+  void updateChatDraft(String value) {
+    _chatDraft = value;
+  }
+
+  /// 打开 AI 对话的历史会话列表。
+  void showChatHistory() {
+    _chatShowingHistory = true;
+    notifyListeners();
+  }
+
+  /// 从历史会话列表返回 AI 对话。
+  void returnToChat() {
+    _chatShowingHistory = false;
+    notifyListeners();
+  }
+
+  /// 开始一个仅保存在本地的新空白草稿。
+  void startChatDraft() {
+    _chatDraft = '';
+    _chatShowingHistory = false;
     notifyListeners();
   }
 

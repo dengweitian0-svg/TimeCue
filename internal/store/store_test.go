@@ -10,15 +10,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dengweitian0-svg/TimeCue/internal/config"
+	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
+	schedulesvc "github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
 )
 
 // 编译期确认两个存储实现直接满足服务层接口。
 var (
-	_ service.ScheduleRepo = (*ScheduleStore)(nil)
-	_ service.NotifyRepo   = (*NotificationStore)(nil)
+	_ schedulesvc.Repo  = (*ScheduleStore)(nil)
+	_ notification.Repo = (*NotificationStore)(nil)
 )
 
 func requireBeijingTime(t *testing.T, value time.Time) {
@@ -57,6 +58,9 @@ func newMigratedStore(t *testing.T) (*Sqlite, *ScheduleStore, *NotificationStore
 		t.Fatal(err)
 	}
 	if _, err := db.db.Exec(string(script2)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.PrepareSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	schedules, err := NewScheduleStore(db)
@@ -350,11 +354,7 @@ func TestGetAllScheduleAcceptsOptionalFilters(t *testing.T) {
 // TestAppCreatesAndAdvancesNotifications 验证创建用例、暂停状态与重复推进的持久化结果。
 func TestAppCreatesAndAdvancesNotifications(t *testing.T) {
 	_, schedules, notifications := newMigratedStore(t)
-	manager, err := config.NewManager()
-	if err != nil {
-		t.Fatalf("创建配置管理器: %v", err)
-	}
-	app, err := service.NewApp(manager, schedules, notifications)
+	app, err := application.NewApp(schedules, notifications)
 	if err != nil {
 		t.Fatalf("组装服务: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestAppCreatesAndAdvancesNotifications(t *testing.T) {
 		t.Fatalf("读取首条提醒: %v", err)
 	}
 	requireBeijingTime(t, loadedNotification.NotifyTime)
-	if next, err := app.AdvanceNotification(ctx, *first); next != nil || !errors.Is(err, service.ErrNotPeriodSchedule) {
+	if next, err := app.AdvanceNotification(ctx, *first); next != nil || !errors.Is(err, application.ErrNotPeriodSchedule) {
 		t.Fatalf("单次提醒推进应返回类型错误: %#v, %v", next, err)
 	}
 	if _, _, err := app.CreateSchedule(ctx, model.Schedule{
@@ -423,13 +423,17 @@ func TestAppCreatesAndAdvancesNotifications(t *testing.T) {
 	if err != nil || pausedInitial != nil {
 		t.Fatalf("暂停日程不应生成首提醒: %#v, %v", pausedInitial, err)
 	}
-	if got, err := app.NextNotify.Next(ctx, paused.ID, time.Now().UTC()); err != nil || got != nil {
+	nextNotify, err := notification.NewNextNotifyService(schedules, notifications)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := nextNotify.Next(ctx, paused.ID, time.Now().UTC()); err != nil || got != nil {
 		t.Fatalf("暂停日程不应推进: %#v, %v", got, err)
 	}
 	if err := schedules.SetScheduleOpen(ctx, paused.ID, true); err != nil {
 		t.Fatalf("恢复日程: %v", err)
 	}
-	if got, err := app.NextNotify.Next(ctx, paused.ID, time.Now().UTC()); err != nil || got == nil {
+	if got, err := nextNotify.Next(ctx, paused.ID, time.Now().UTC()); err != nil || got == nil {
 		t.Fatalf("恢复后应可推进: %#v, %v", got, err)
 	}
 	if err := schedules.CancelScheduleByID(ctx, period.ID); err != nil {
@@ -465,13 +469,9 @@ func TestCreateScheduleWithNotificationRollsBack(t *testing.T) {
 	}
 }
 
-func queryApp(t *testing.T, schedules *ScheduleStore, notifications *NotificationStore) *service.App {
+func queryApp(t *testing.T, schedules *ScheduleStore, notifications *NotificationStore) *application.App {
 	t.Helper()
-	manager, err := config.NewManager()
-	if err != nil {
-		t.Fatal(err)
-	}
-	app, err := service.NewApp(manager, schedules, notifications)
+	app, err := application.NewApp(schedules, notifications)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -591,17 +591,17 @@ func TestScheduleQueriesHistoryMidnightProjectionAndPagination(t *testing.T) {
 	if err != nil || len(next.Items) != 11 {
 		t.Fatalf("待确认续页: %#v %v", next, err)
 	}
-	if _, err = app.QueryOccurrences(ctx, "2030-10-08", snapshot.Unacknowledged.NextCursor, now); !errors.Is(err, service.ErrInvalidQuery) {
+	if _, err = app.QueryOccurrences(ctx, "2030-10-08", snapshot.Unacknowledged.NextCursor, now); !errors.Is(err, schedulesvc.ErrInvalidQuery) {
 		t.Fatal("跨用途游标应被拒绝")
 	}
 	calendar, err := app.QueryCalendar(ctx, "2030-10", now)
 	if err != nil || len(calendar) != 25 {
 		t.Fatalf("月份应含历史7日及8日以后安排: %v %v", calendar, err)
 	}
-	if _, err = app.QueryCalendar(ctx, "2030-10-08", now); !errors.Is(err, service.ErrInvalidQuery) {
+	if _, err = app.QueryCalendar(ctx, "2030-10-08", now); !errors.Is(err, schedulesvc.ErrInvalidQuery) {
 		t.Fatal("月份格式必须严格")
 	}
-	if _, err = app.QueryScheduleState(ctx, "2030-02-30", now); !errors.Is(err, service.ErrInvalidQuery) {
+	if _, err = app.QueryScheduleState(ctx, "2030-02-30", now); !errors.Is(err, schedulesvc.ErrInvalidQuery) {
 		t.Fatal("非法日期必须拒绝")
 	}
 	// 直接设软删除以使用确定时刻测试历史查询；实际删除转换另有存储测试。
@@ -620,9 +620,9 @@ func TestScheduleQueriesHistoryMidnightProjectionAndPagination(t *testing.T) {
 	if _, err = app.AcknowledgeNotifications(ctx, []int{ids[1]}, now); err != nil {
 		t.Fatal(err)
 	}
-	// 保留原有日程、提醒、规则版本及写入回执四张表，运行状态不扩展数据库。
+	// AI 表独立于原有日程、提醒、规则版本及写入回执四张业务表。
 	var tableCount int
-	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&tableCount); err != nil || tableCount != 4 {
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('schedules','notifications','schedule_versions','schedule_write_receipts')`).Scan(&tableCount); err != nil || tableCount != 4 {
 		t.Fatalf("业务表结构数量不符，表数量=%d，错误=%v", tableCount, err)
 	}
 }

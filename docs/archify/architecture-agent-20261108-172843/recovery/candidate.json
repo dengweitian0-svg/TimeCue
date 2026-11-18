@@ -1,0 +1,521 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "取消、宿主退出与重启恢复",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/recovery/recovery.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "8cadb08307b72d6dca64f7e92699ed769d23a99f"
+    }
+  },
+  "lanes": [
+    {
+      "id": "cancel",
+      "label": "用户取消或会话删除"
+    },
+    {
+      "id": "shutdown",
+      "label": "宿主退出"
+    },
+    {
+      "id": "recover",
+      "label": "启动与恢复"
+    },
+    {
+      "id": "fault",
+      "label": "持久化故障",
+      "variant": "exception"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "active",
+      "lane": "cancel",
+      "col": 0,
+      "type": "backend",
+      "label": "运行已占用",
+      "sublabel": "模型或工具可能在途",
+      "sources": [
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 293,
+          "end_line": 319
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 335,
+          "end_line": 367
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "cancel",
+      "lane": "cancel",
+      "col": 1,
+      "type": "database",
+      "label": "提交取消意图",
+      "sublabel": "wait_for_cancel 或隐藏",
+      "sources": [
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 414,
+          "end_line": 451
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 265,
+          "end_line": 297
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "drain",
+      "lane": "cancel",
+      "col": 2,
+      "type": "backend",
+      "label": "等待既有尝试",
+      "sublabel": "实际结果或原期限",
+      "sources": [
+        {
+          "path": "internal/agent/tools/factory.go",
+          "line": 255,
+          "end_line": 293
+        },
+        {
+          "path": "internal/agent/tools/factory.go",
+          "line": 344,
+          "end_line": 389
+        },
+        {
+          "path": "internal/agent/chat/progress.go",
+          "line": 179,
+          "end_line": 220
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "pause",
+      "lane": "shutdown",
+      "col": 1,
+      "type": "backend",
+      "label": "停止新推进",
+      "sublabel": "Loop 独立保存期限 30 秒",
+      "sources": [
+        {
+          "path": "cmd/flutter/host.go",
+          "line": 50,
+          "end_line": 60
+        },
+        {
+          "path": "cmd/flutter/host.go",
+          "line": 263,
+          "end_line": 273
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 163,
+          "end_line": 195
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "snapshot",
+      "lane": "shutdown",
+      "col": 2,
+      "type": "database",
+      "label": "保存进度并等待工具",
+      "sublabel": "实际返回后发布 LoopDone",
+      "sources": [
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 335,
+          "end_line": 353
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 586,
+          "end_line": 600
+        },
+        {
+          "path": "internal/agent/loop/run.go",
+          "line": 26,
+          "end_line": 35
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "startup",
+      "lane": "recover",
+      "col": 2,
+      "type": "backend",
+      "label": "启动 App",
+      "sublabel": "提醒调度与恢复后就绪",
+      "sources": [
+        {
+          "path": "cmd/flutter/host.go",
+          "line": 123,
+          "end_line": 145
+        },
+        {
+          "path": "cmd/flutter/host.go",
+          "line": 148,
+          "end_line": 206
+        },
+        {
+          "path": "internal/app/runtime.go",
+          "line": 21,
+          "end_line": 67
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "restore",
+      "lane": "recover",
+      "col": 3,
+      "type": "database",
+      "label": "读取并接纳 Loop",
+      "sublabel": "8 秒内接纳才登记占用",
+      "sources": [
+        {
+          "path": "cmd/flutter/host.go",
+          "line": 209,
+          "end_line": 259
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 92,
+          "end_line": 159
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 501,
+          "end_line": 583
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "resume",
+      "lane": "recover",
+      "col": 4,
+      "type": "backend",
+      "label": "按原身份推进",
+      "sublabel": "复用响应或原样重发",
+      "sources": [
+        {
+          "path": "internal/agent/loop/recovery.go",
+          "line": 21,
+          "end_line": 49
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 311,
+          "end_line": 334
+        },
+        {
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 23,
+          "end_line": 78
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "receipts",
+      "lane": "cancel",
+      "col": 4,
+      "type": "backend",
+      "label": "取消恢复只读核对",
+      "sublabel": "已提交结果与删除回执",
+      "sources": [
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 370,
+          "end_line": 383
+        },
+        {
+          "path": "internal/agent/tools/recovery.go",
+          "line": 10,
+          "end_line": 44
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "finish",
+      "lane": "cancel",
+      "col": 5,
+      "type": "database",
+      "label": "原子提交运行终态",
+      "sublabel": "工具配对、尾批、唯一 end",
+      "sources": [
+        {
+          "path": "internal/agent/chat/progress.go",
+          "line": 179,
+          "end_line": 220
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 667,
+          "end_line": 758
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "abort",
+      "lane": "fault",
+      "col": 1,
+      "type": "backend",
+      "label": "停止新推进",
+      "sublabel": "撤销同批有效尝试",
+      "sources": [
+        {
+          "path": "internal/agent/tools/factory.go",
+          "line": 179,
+          "end_line": 205
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 335,
+          "end_line": 367
+        },
+        {
+          "path": "internal/agent/loop/persistence.go",
+          "line": 22,
+          "end_line": 54
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "retry",
+      "lane": "fault",
+      "col": 3,
+      "type": "database",
+      "label": "仅重试终态持久化",
+      "sublabel": "间隔 5 秒，最多再试 3 次",
+      "sources": [
+        {
+          "path": "internal/agent/loop/persistence.go",
+          "line": 29,
+          "end_line": 56
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "release",
+      "lane": "fault",
+      "col": 5,
+      "type": "backend",
+      "label": "耗尽后释放占用",
+      "sublabel": "关闭订阅，按 SQLite 恢复",
+      "sources": [
+        {
+          "path": "internal/agent/loop/persistence.go",
+          "line": 29,
+          "end_line": 56
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 311,
+          "end_line": 319
+        }
+      ],
+      "width": 148
+    },
+    {
+      "id": "app-only",
+      "lane": "recover",
+      "col": 5,
+      "type": "backend",
+      "label": "仅开放 App 路由",
+      "sublabel": "日程、提醒和健康检查",
+      "width": 148,
+      "sources": [
+        {
+          "path": "cmd/flutter/host.go",
+          "line": 186,
+          "end_line": 206
+        },
+        {
+          "path": "internal/api/router.go",
+          "line": 40,
+          "end_line": 54
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "active-cancel",
+      "from": "active",
+      "to": "cancel",
+      "label": "用户动作",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "cancel-drain",
+      "from": "cancel",
+      "to": "drain",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "drain-finish",
+      "from": "drain",
+      "to": "finish",
+      "label": "已有结果优先",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "active-pause",
+      "from": "active",
+      "to": "pause",
+      "label": "宿主退出",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "pause-snapshot",
+      "from": "pause",
+      "to": "snapshot",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "startup-restore",
+      "from": "startup",
+      "to": "restore",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "restore-resume",
+      "from": "restore",
+      "to": "resume",
+      "label": "获接纳且可恢复",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "restore-receipts",
+      "from": "restore",
+      "to": "receipts",
+      "label": "已有取消意图",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "receipts-finish",
+      "from": "receipts",
+      "to": "finish",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "active-abort",
+      "from": "active",
+      "to": "abort",
+      "label": "保存故障",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "abort-retry",
+      "from": "abort",
+      "to": "retry",
+      "label": "保留已有结果",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "retry-finish",
+      "from": "retry",
+      "to": "finish",
+      "label": "保存成功",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "retry-release",
+      "from": "retry",
+      "to": "release",
+      "label": "耗尽",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "restore-app-only",
+      "from": "restore",
+      "to": "app-only",
+      "label": "初始化失败 / 超时",
+      "role": "error",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "route": "bottom-channel"
+    },
+    {
+      "id": "snapshot-startup",
+      "from": "snapshot",
+      "to": "startup",
+      "label": "下次启动",
+      "role": "async",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "mainPath": [
+    "active",
+    "cancel",
+    "drain",
+    "finish"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "取消与删除",
+      "items": [
+        "取消先提交 wait_for_cancel，HTTP 立即投影为 cancelled，finished_at 仍为空。收尾期间保留名额与原 SSE。删除事务同步隐藏会话与登记取消意图，已有日程和执行记录保留。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "启动恢复",
+      "items": [
+        "宿主在 App 完成提醒调度启动与恢复后，只读加载活动 run、原调用和 checkpoint。Go 启动起 8 秒内接纳 Loop 后恢复占用并注册聊天路由；失败或超时则只开放 App 路由。",
+        "同会话已有后续运行的旧 run 仅失败收尾。实际执行仍受全局三个槽限制；完整响应先复用，需要发请求时才检查原模型配置。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "取消时按事实补齐",
+      "items": [
+        "取消恢复只读核对原删除回执。已保存结果或回执优先；未确认在途项记 tool_result_unconfirmed，退避和未启动项按原身份跳过。",
+        "正常工具恢复先核对原删除回执再按固定预算处理。无业务键的创建可能再次生效，修改按实际版本反馈冲突。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "保存故障",
+      "items": [
+        "故障停止推进并撤销有效尝试，保留及时返回的事实。失败终态保存重试时继续占用；耗尽则关闭订阅并释放占用。",
+        "宿主分别给 HTTP 5 秒和 Loop 30 秒。Loop 保存已知事实，未完成运行继续保留原进度；工具实际返回前 App 和数据库继续存活。"
+      ]
+    }
+  ]
+}

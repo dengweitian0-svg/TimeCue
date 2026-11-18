@@ -7,17 +7,51 @@ abstract final class NotebookTheme {
   static const sage = Color.fromARGB(255, 100, 119, 80);
   static const line = Color.fromARGB(255, 222, 212, 188);
   static const cover = Color.fromARGB(255, 145, 116, 79);
+
+  /// 供纸面主操作使用的深棕色，确保小号按钮文字达到可读对比度。
+  static const action = Color.fromARGB(255, 96, 68, 40);
+
+  /// 房间入口与猫咪提示共用的半透明暖棕背景。
+  static const roomActionBackground = Color.fromARGB(128, 73, 61, 48);
+
+  /// 房间入口与猫咪提示共用的半透明米白前景。
+  static const roomActionForeground = Color.fromARGB(159, 255, 249, 237);
+
+  /// 封面上的小号文字使用纸色标签承载，避免改变封面底色。
+  static const coverLabelBackground = paper;
+
+  /// 封面纸色标签上的文字颜色。
+  static const coverLabelForeground = ink;
+
+  /// 房间固定入口共用半透明暖棕胶囊样式，并保留添加入口的禁用状态。
+  static ButtonStyle roomActionStyle({bool disabledCreate = false}) =>
+      FilledButton.styleFrom(
+        backgroundColor: roomActionBackground,
+        foregroundColor: roomActionForeground,
+        side: BorderSide.none,
+        disabledBackgroundColor: disabledCreate
+            ? const Color.fromARGB(225, 238, 222, 190)
+            : const Color.fromARGB(255, 242, 235, 218),
+        disabledForegroundColor: disabledCreate
+            ? const Color.fromARGB(255, 93, 66, 43)
+            : ink,
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        shape: const StadiumBorder(side: BorderSide.none),
+        textStyle: const TextStyle(fontSize: 12),
+      );
+
   static ThemeData get data => ThemeData(
     useMaterial3: true,
     fontFamily: 'Microsoft YaHei',
     fontFamilyFallback: const ['Segoe UI', 'SimSun'],
     colorScheme: ColorScheme.fromSeed(
       seedColor: cover,
-      primary: cover,
+      primary: action,
       onPrimary: paper,
       primaryContainer: line,
       onPrimaryContainer: ink,
-      secondary: cover,
+      secondary: action,
       onSecondary: paper,
       secondaryContainer: line,
       onSecondaryContainer: ink,
@@ -56,16 +90,16 @@ abstract final class NotebookTheme {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: cover,
+        backgroundColor: action,
         foregroundColor: paper,
       ),
     ),
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(foregroundColor: cover),
+      style: TextButton.styleFrom(foregroundColor: ink),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: cover,
+        foregroundColor: ink,
         side: const BorderSide(color: muted),
       ),
     ),
@@ -79,8 +113,8 @@ abstract final class NotebookTheme {
       focusedBorder: OutlineInputBorder(
         borderSide: BorderSide(color: cover, width: 2),
       ),
-      labelStyle: TextStyle(color: muted),
-      floatingLabelStyle: TextStyle(color: cover),
+      labelStyle: TextStyle(color: ink),
+      floatingLabelStyle: TextStyle(color: ink),
       contentPadding: EdgeInsets.all(12),
     ),
     dividerColor: line,

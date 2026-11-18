@@ -16,17 +16,19 @@ import (
 	"time"
 
 	"github.com/dengweitian0-svg/TimeCue/internal/api"
+	"github.com/dengweitian0-svg/TimeCue/internal/app"
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
 	"github.com/dengweitian0-svg/TimeCue/internal/middleware"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/notification"
+	"github.com/dengweitian0-svg/TimeCue/internal/service/schedule"
 	"github.com/dengweitian0-svg/TimeCue/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
 func TestHTTPLogger(t *testing.T) {
 	readLog := captureHTTPLogs(t)
-	router := api.NewRouter(nil, func(context.Context) error { return nil })
+	router := api.NewRouterWithPort(nil, nil, func(context.Context) error { return nil }, 10086)
 	const delay = 5 * time.Millisecond
 	router.POST("/timed", middleware.WrapHTTPHandler(func(c *gin.Context) middleware.HTTPResult {
 		time.Sleep(delay)
@@ -92,7 +94,7 @@ func scheduleLogRouter(t *testing.T) *gin.Engine {
 	return router
 }
 
-func resourceLogRouter(t *testing.T) (*gin.Engine, *service.App) {
+func resourceLogRouter(t *testing.T) (*gin.Engine, *app.App) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "api.db")
 	db := store.NewSqlite()
@@ -119,6 +121,9 @@ func resourceLogRouter(t *testing.T) (*gin.Engine, *service.App) {
 	if _, err := conn.Exec(string(script2)); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.PrepareSchema(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.CheckHealth(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -130,8 +135,8 @@ func resourceLogRouter(t *testing.T) (*gin.Engine, *service.App) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := &service.App{Schedule: repo, Notify: notify}
-	return api.NewRouter(app, db.CheckHealth), app
+	app := &app.App{Schedule: repo, Notify: notify}
+	return api.NewRouterWithPort(app, nil, db.CheckHealth, 10086), app
 }
 
 func TestHTTPLoggerNotificationRoutes(t *testing.T) {
@@ -292,7 +297,7 @@ func TestHTTPLoggerScheduleRoutes(t *testing.T) {
 }
 
 type failingScheduleRepo struct {
-	service.ScheduleRepo
+	schedule.Repo
 	cause error
 }
 
@@ -325,7 +330,7 @@ func (r failingScheduleRepo) ReadScheduleState(context.Context, time.Time, time.
 }
 
 type failingNotifyRepo struct {
-	service.NotifyRepo
+	notification.Repo
 	cause error
 }
 
@@ -340,7 +345,7 @@ func (r failingNotifyRepo) AcknowledgeNotifications(context.Context, []int, time
 func TestHTTPLoggerFailures(t *testing.T) {
 	readLog := captureHTTPLogs(t)
 	cause := errors.New("original database failure")
-	router := api.NewRouter(&service.App{Schedule: failingScheduleRepo{cause: cause}, Notify: failingNotifyRepo{cause: cause}}, func(context.Context) error { return cause })
+	router := api.NewRouterWithPort(&app.App{Schedule: failingScheduleRepo{cause: cause}, Notify: failingNotifyRepo{cause: cause}}, nil, func(context.Context) error { return cause }, 10086)
 	const base = "/api/v1/scheduler/schedules"
 	for _, tc := range []struct {
 		method, target, message string
@@ -379,7 +384,7 @@ func TestHTTPLoggerFailures(t *testing.T) {
 	}
 	before := len(readLog())
 	schemaErr := fmt.Errorf("schema check failed: %w", store.ErrSchemaInvalid)
-	router = api.NewRouter(nil, func(context.Context) error { return schemaErr })
+	router = api.NewRouterWithPort(nil, nil, func(context.Context) error { return schemaErr }, 10086)
 	response, elapsed := logRequest(router, "GET", "/health", "127.0.0.1:10086", "", "")
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("schema failure status = %d", response.Code)
@@ -392,7 +397,7 @@ func TestHTTPLoggerFailures(t *testing.T) {
 
 func TestHTTPLoggerLevelChanges(t *testing.T) {
 	readLog := captureHTTPLogs(t)
-	router := api.NewRouter(nil, func(context.Context) error { return nil })
+	router := api.NewRouterWithPort(nil, nil, func(context.Context) error { return nil }, 10086)
 	router.GET("/success", middleware.WrapHTTPHandler(func(*gin.Context) middleware.HTTPResult {
 		return middleware.JSONResult(http.StatusOK, nil)
 	}, nil))

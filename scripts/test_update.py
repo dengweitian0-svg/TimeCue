@@ -2,6 +2,8 @@
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -473,6 +475,54 @@ class UpdateTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(update.UpdateError):
                 update._checked_path(self.source, value)
         self.assertEqual(update._checked_path(self.source, "configuration.dll").name, "configuration.dll")
+
+
+@unittest.skipUnless(os.name == "nt", "发行打包仅支持 Windows")
+class ReleasePackagingTests(unittest.TestCase):
+    """通过正式打包入口验证运行数据不会复制到发行目录。"""
+
+    def test_runtime_data_rejects_packaging_before_staging(self):
+        """已运行的构建目录必须在暂存与压缩前明确拒绝，源数据保持原样。"""
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        self.assertIsNotNone(powershell, "Windows 打包回归需要 PowerShell")
+        for relative in ("db/timecue.db", "log/timecue.jsonl", "config.yaml", ".env",
+                         "data/session.db-wal", "logs/archive.txt", "settings.json"):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory(
+                    prefix="TimeCue 打包 ", ignore_cleanup_errors=True) as temporary:
+                root = Path(temporary)
+                scripts = root / "scripts"
+                scripts.mkdir()
+                shutil.copy2(Path(__file__).with_name("build-release.ps1"), scripts)
+                (root / "desktop/pubspec.yaml").parent.mkdir()
+                (root / "desktop/pubspec.yaml").write_text("version: 0.1.0+1\n", encoding="utf-8")
+                sdk = root / "flutter-sdk"
+                (sdk / "bin/cache").mkdir(parents=True)
+                (sdk / "bin/cache/flutter.version.json").write_text(
+                    json.dumps({"frameworkVersion": "fixture", "channel": "stable"}), encoding="utf-8")
+                configuration = root / "desktop/windows/flutter/ephemeral/generated_config.cmake"
+                configuration.parent.mkdir(parents=True)
+                configuration.write_text(
+                    f'file(TO_CMAKE_PATH "{sdk.as_posix()}" FLUTTER_ROOT)\n'
+                    '"FLUTTER_TARGET=lib/main.dart"\n', encoding="utf-8")
+                release = root / "desktop/build/windows/x64/runner/Release"
+                for name in ("timecue_desktop.exe", "flutter_windows.dll", "data/app.so",
+                             "data/icudtl.dat", "data/flutter_assets/assets/tray/app_icon.ico", relative):
+                    path = release / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"isolated fixture")
+                if relative == ".env":
+                    self.assertTrue(ctypes.windll.kernel32.SetFileAttributesW(
+                        ctypes.c_wchar_p(str(release / relative)), 0x2), "无法设置隐藏配置夹具")
+                output = root / "packages"
+                result = subprocess.run(
+                    [powershell, "-NoProfile", "-NonInteractive", "-File", str(scripts / "build-release.ps1"),
+                     "-SkipFlutterBuild", "-OutputDirectory", str(output)],
+                    capture_output=True, encoding="utf-8", errors="replace", timeout=30)
+                self.assertFalse(list(output.rglob(Path(relative).name)), "运行数据被复制进发行暂存目录")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("运行数据", result.stdout + result.stderr)
+                self.assertFalse(output.exists(), "发现运行数据后仍创建了发行暂存目录")
+                self.assertEqual((release / relative).read_bytes(), b"isolated fixture")
 
 
 if __name__ == "__main__":

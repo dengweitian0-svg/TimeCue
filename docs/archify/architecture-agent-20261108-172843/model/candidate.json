@@ -1,0 +1,358 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "模型流式调用与有限重试",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/model/model.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "8cadb08307b72d6dca64f7e92699ed769d23a99f"
+    }
+  },
+  "lanes": [
+    {
+      "id": "error",
+      "label": "失败结束",
+      "variant": "exception"
+    },
+    {
+      "id": "chat",
+      "label": "Agent Loop 与 completion 适配器"
+    },
+    {
+      "id": "store",
+      "label": "增量事务与重试退避"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "input",
+      "lane": "chat",
+      "col": 0,
+      "type": "backend",
+      "label": "接收模型请求",
+      "sublabel": "正文与预算随调用登记",
+      "sources": [
+        {
+          "path": "internal/agent/loop/tool_loop.go",
+          "line": 103,
+          "end_line": 126
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 388,
+          "end_line": 429
+        },
+        {
+          "path": "internal/agent/completion/adapter.go",
+          "line": 13,
+          "end_line": 19
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "load",
+      "lane": "chat",
+      "col": 1,
+      "type": "security",
+      "label": "检查原模型配置",
+      "sublabel": "同一模型身份，热读配置",
+      "sources": [
+        {
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 23,
+          "end_line": 64
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "stream",
+      "lane": "chat",
+      "col": 2,
+      "type": "cloud",
+      "label": "发起流式请求",
+      "sublabel": "发送已保存的请求正文",
+      "sources": [
+        {
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 62,
+          "end_line": 78
+        },
+        {
+          "path": "internal/agent/completion/client.go",
+          "line": 34,
+          "end_line": 103
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "parse",
+      "lane": "chat",
+      "col": 3,
+      "type": "backend",
+      "label": "拼接流式增量",
+      "sublabel": "正文、思考、工具、usage",
+      "sources": [
+        {
+          "path": "internal/agent/completion/client.go",
+          "line": 97,
+          "end_line": 178
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "classify",
+      "lane": "chat",
+      "col": 4,
+      "type": "backend",
+      "label": "评估返回结果",
+      "sublabel": "校验响应或分类故障",
+      "sources": [
+        {
+          "path": "internal/agent/completion/client.go",
+          "line": 179,
+          "end_line": 215
+        },
+        {
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 79,
+          "end_line": 115
+        },
+        {
+          "path": "internal/agent/chat/contracts.go",
+          "line": 280,
+          "end_line": 307
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "accept",
+      "lane": "chat",
+      "col": 5,
+      "type": "database",
+      "label": "交给运行协调",
+      "sublabel": "登记工具或续写，或收尾",
+      "sources": [
+        {
+          "path": "internal/agent/loop/tool_loop.go",
+          "line": 125,
+          "end_line": 145
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 667,
+          "end_line": 758
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "batch",
+      "lane": "store",
+      "col": 3,
+      "type": "database",
+      "label": "增量批量落库",
+      "sublabel": "5 条或 5 秒",
+      "sources": [
+        {
+          "path": "internal/agent/loop/event_batch.go",
+          "line": 26,
+          "end_line": 88
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 645,
+          "end_line": 664
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "retry",
+      "lane": "store",
+      "col": 4,
+      "type": "database",
+      "label": "保存重试等待",
+      "sublabel": "固定预算与 next_retry_at",
+      "sources": [
+        {
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 26,
+          "end_line": 49
+        },
+        {
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 98,
+          "end_line": 115
+        },
+        {
+          "path": "internal/agent/loop/recovery.go",
+          "line": 67,
+          "end_line": 82
+        }
+      ],
+      "width": 128
+    },
+    {
+      "id": "stop",
+      "lane": "error",
+      "col": 4,
+      "type": "backend",
+      "label": "结束逻辑调用",
+      "sublabel": "保留已收到的输出",
+      "sources": [
+        {
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 79,
+          "end_line": 103
+        }
+      ],
+      "width": 128
+    },
+    {
+      "lane": "error",
+      "label": "阻断请求",
+      "width": 128,
+      "type": "security",
+      "id": "blocked",
+      "sources": [
+        {
+          "path": "internal/agent/loop/model_retry.go",
+          "line": 23,
+          "end_line": 61
+        }
+      ],
+      "col": 1,
+      "sublabel": "原模型配置不可用"
+    }
+  ],
+  "edges": [
+    {
+      "id": "input-load",
+      "from": "input",
+      "to": "load",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "load-stream",
+      "from": "load",
+      "to": "stream",
+      "label": "模型可用",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "stream-parse",
+      "from": "stream",
+      "to": "parse",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "parse-classify",
+      "from": "parse",
+      "to": "classify",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "classify-accept",
+      "from": "classify",
+      "to": "accept",
+      "label": "完整响应",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "parse-batch",
+      "from": "parse",
+      "to": "batch",
+      "label": "正文 / 思考",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "id": "classify-retry",
+      "from": "classify",
+      "to": "retry",
+      "label": "暂时故障且无输出",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "retry-load",
+      "from": "retry",
+      "to": "load",
+      "label": "到期后重发",
+      "role": "return",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "route": "bottom-channel"
+    },
+    {
+      "id": "classify-stop",
+      "from": "classify",
+      "to": "stop",
+      "label": "其余错误",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "label": "不可用",
+      "id": "load-blocked",
+      "variant": "security",
+      "from": "load",
+      "role": "error",
+      "to": "blocked",
+      "fromSide": "top",
+      "toSide": "bottom"
+    }
+  ],
+  "mainPath": [
+    "input",
+    "load",
+    "stream",
+    "parse",
+    "classify",
+    "accept"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "流式协议",
+      "items": [
+        "适配器将登记的最终正文原样交给 SDK，每次发送读取当前 Key 和超时。首个有效增量前默认 120 秒，之后空闲超时默认 60 秒。SDK 自动重试关闭。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "网络重试",
+      "items": [
+        "超时、网络错误、429、500、503 等暂时故障，且本次与先前均未留下有效输出时才可重试。首次外默认 3 次，间隔 5 / 10 / 20 秒；重用调用 ID、请求正文和已保存预算。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "两个结束条件",
+      "items": [
+        "正常 length 属于完整响应，交给续写协调器。已产生部分输出后发生故障时，保留可用的输出和用量，结束该逻辑调用。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "恢复",
+      "items": [
+        "checkpoint 引用原调用。完整响应统一校验后复用；缺失或部分响应沿原调用重发。生命周期重发不额外扣网络重试预算。"
+      ]
+    }
+  ]
+}

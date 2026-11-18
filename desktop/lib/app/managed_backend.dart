@@ -7,14 +7,20 @@ import 'package:flutter/services.dart';
 
 import '../contracts/notification_delivery.dart';
 import '../data/config_file_store.dart';
+import '../data/http_notebook_repository.dart' show defaultNotebookApiBase;
 
 class BackendConfiguration {
   const BackendConfiguration({
     required this.mode,
     required this.dataDir,
     this.executable = '',
+    this.port = 10086,
   });
   final String mode, dataDir, executable;
+  final int port;
+
+  /// 根据宿主确定的环境端口形成全应用共用的本机服务地址。
+  Uri get apiBase => Uri.parse('http://127.0.0.1:$port/');
   bool get managed => mode == 'managed';
   ConfigFileStore get configFiles => ConfigFileStore(dataDir);
 
@@ -23,13 +29,16 @@ class BackendConfiguration {
         (raw['backend'] != 'managed' && raw['backend'] != 'external') ||
         raw['dataDir'] is! String ||
         (raw['dataDir'] as String).isEmpty ||
-        raw['executable'] is! String) {
-      throw const FormatException('请显式指定运行模式和 --data-dir。');
+        raw['executable'] is! String ||
+        raw['port'] is! int ||
+        (raw['port'] != 1145 && raw['port'] != 10086)) {
+      throw const FormatException('运行模式、--data-dir 或环境端口无效。');
     }
     final result = BackendConfiguration(
       mode: raw['backend'] as String,
       dataDir: raw['dataDir'] as String,
       executable: raw['executable'] as String,
+      port: raw['port'] as int,
     );
     if (result.managed && result.executable.isEmpty) {
       throw const FormatException('托管启动需要 --go-executable 的绝对路径。');
@@ -124,9 +133,11 @@ class ManagedBackend extends ChangeNotifier {
     required this.health,
     this.prepareStart,
     this.startupBudget = const Duration(seconds: 10),
+    Uri? apiBase,
     String Function()? identity,
     Duration Function()? elapsed,
-  }) : _identity = identity ?? _newIdentity,
+  }) : apiBase = apiBase ?? defaultNotebookApiBase,
+       _identity = identity ?? _newIdentity,
        _elapsed = elapsed {
     _subscription = platform.events.listen(_event);
   }
@@ -134,6 +145,7 @@ class ManagedBackend extends ChangeNotifier {
   final Future<DeliveryRuntime> Function() health;
   final Future<void> Function()? prepareStart;
   final Duration startupBudget;
+  final Uri apiBase;
   final String Function() _identity;
   final Duration Function()? _elapsed;
   late final StreamSubscription<OwnedProcessEvent> _subscription;
@@ -208,19 +220,20 @@ class ManagedBackend extends ChangeNotifier {
     _failureMessage = null;
     _exited = _receivedReady = false;
     _readyLine = Completer<Map<String, dynamic>>();
-    _exit = Completer<void>();
+    _exit = null;
     _cancel = Completer<void>();
     _watch.reset();
     _watch.start();
     _publish();
     try {
       if (prepareStart != null) await _bounded(prepareStart!);
-      final values = await _bounded(
-        () => Future.wait<Object>([
+      final values = await _bounded(() {
+        _exit = Completer<void>();
+        return Future.wait<Object>([
           platform.start(generation, instanceId!),
           _readyLine!.future,
-        ], eagerError: true),
-      );
+        ], eagerError: true);
+      });
       if (!_current(generation)) return;
       pid = values[0] as int;
       final line = values[1] as Map<String, dynamic>;
@@ -263,7 +276,7 @@ class ManagedBackend extends ChangeNotifier {
 
   void _verify(Map<String, dynamic> value, {required bool readyMessage}) {
     if ((readyMessage && value['event'] != 'ready') ||
-        value['address'] != 'http://127.0.0.1:10086') {
+        value['address'] != apiBase.origin) {
       throw const FormatException('ready 地址或事件不匹配。');
     }
     DeliveryRuntime.fromJson({
@@ -357,16 +370,15 @@ class ManagedBackend extends ChangeNotifier {
     _publish();
   }
 
-  Future<void> stopOwned(Duration remaining) async {
+  Future<void> stopOwned() async {
     cancelStart();
     try {
-      if (remaining > Duration.zero && !_exited) {
-        final watch = Stopwatch()..start();
-        await platform.shutdown().timeout(remaining);
-        final left = remaining - watch.elapsed;
-        if (left > Duration.zero && _exit != null) {
-          await _exit!.future.timeout(left);
-        }
+      if (_exit case final exit? when !_exited && !_resourcesReleased) {
+        // 从发送停止消息起，等待同一个进程的退出事件。
+        await (() async {
+          await platform.shutdown();
+          await exit.future;
+        })().timeout(const Duration(seconds: 65));
       }
     } on TimeoutException {
       // 协作预算耗尽后由 Job 回收，不开启新的优雅等待。

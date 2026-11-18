@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	application "github.com/dengweitian0-svg/TimeCue/internal/app"
 	"github.com/dengweitian0-svg/TimeCue/internal/model"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
 )
 
 // TestOpenScheduleCount 统计全部分页的启用日程，确认不减数，同规则多次触发不重复。
@@ -16,7 +16,7 @@ func TestOpenScheduleCount(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2030, 10, 8, 14, 32, 0, 0, model.BeijingLocation())
 	schedules.now = func() time.Time { return now }
-	app := &service.App{Schedule: schedules, Notify: notifications}
+	app := &application.App{Schedule: schedules, Notify: notifications}
 	empty, err := app.QueryOccurrences(ctx, "2030-10-08", "", now)
 	if err != nil || empty.OpenScheduleCount == nil || *empty.OpenScheduleCount != 0 {
 		t.Fatalf("空日期计数错误: %#v %v", empty, err)

@@ -39,7 +39,10 @@ func (s *Sqlite) CheckHealth(ctx context.Context) error {
 	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
 	}
-	return checkSchema(ctx, db, false)
+	if err := checkSchema(ctx, db, false); err != nil {
+		return err
+	}
+	return checkAIChatSchema(ctx, db)
 }
 
 // schemaReader 允许提交前通过同一事务验证结构。
@@ -53,8 +56,8 @@ func checkSchema(ctx context.Context, db schemaReader, allowLegacyStatus bool) e
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("%w: %v", ErrDatabaseUnavailable, err)
 	}
-	if version != 2 {
-		return fmt.Errorf("%w: expected version 2, got %d", ErrSchemaInvalid, version)
+	if version != 3 && !(allowLegacyStatus && version == 2) {
+		return fmt.Errorf("%w: expected version 3, got %d", ErrSchemaInvalid, version)
 	}
 	var notificationDDL string
 	if err := db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notifications'`).Scan(&notificationDDL); err != nil {

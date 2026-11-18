@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\tools\\candidate.json",
+    "sha256": "53a8682c515ee3cf0c524e7fbb1cf8cd3c2c903a23cb56b15a95b9d1dceedf0c",
+    "bytes": 9288
+  },
+  "artifact": {
+    "path": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\tools\\tools.html",
+    "sha256": "d0921d0712952fed1ab402298ae752ce53859ac328e8ee986e9644aa350210ea",
+    "bytes": 766184
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\tools\\tools.finalize.json",
+    "summaryReceipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\tools\\tools.finalize-summary.json",
+    "browserCheckReceipt": "D:\\go_project\\src\\TimeCue\\docs\\archify\\architecture-agent-20261108-172843\\tools\\tools.browser-check.json"
+  },
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "cache-unavailable"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 6152,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "routesOverSuggestedStretch": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [],
+      "detours": [
+        {
+          "relationship": {
+            "id": "commit-schedule",
+            "from": "commit",
+            "to": "schedule",
+            "label": "还有待配对",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "bends": 2,
+          "stretch": 1.362,
+          "directCorridorBlockers": [
+            {
+              "id": "begin",
+              "label": "登记有效尝试",
+              "box": [
+                378.8,
+                217,
+                128,
+                52
+              ]
+            },
+            {
+              "id": "validate",
+              "label": "校验工具与参数",
+              "box": [
+                563.2,
+                217,
+                128,
+                52
+              ]
+            },
+            {
+              "id": "settle",
+              "label": "结算当次尝试",
+              "box": [
+                776.4000000000001,
+                217,
+                128,
+                52
+              ]
+            }
+          ]
+        }
+      ],
+      "truncated": false
+    },
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}

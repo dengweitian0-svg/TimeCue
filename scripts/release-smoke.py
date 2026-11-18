@@ -1,15 +1,20 @@
 """验证完整发行目录的首次运行、持久化、重复启动和宿主崩溃清理。"""
 import argparse
 import ctypes
+from ctypes import wintypes
 import datetime
 import json
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
 from pathlib import Path
+
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--package", type=Path, required=True)
@@ -23,11 +28,87 @@ kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
 kernel.OpenProcess.restype = ctypes.c_void_p
 kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
 kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+kernel.LocalFree.argtypes = [ctypes.c_void_p]
+
+
+def executable_integrity_level(path):
+    """只读 EXE 的强制完整性标签；无显式标签时返回未知，不修改文件安全属性。"""
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    security.GetNamedSecurityInfoW.argtypes = [wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+                                             ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                                             ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p)]
+    security.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    security.GetAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    security.GetSidSubAuthority.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    security.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
+    sacl, descriptor = ctypes.c_void_p(), ctypes.c_void_p()
+    status = security.GetNamedSecurityInfoW(str(path), 1, 0x10, None, None, None,
+                                           ctypes.byref(sacl), ctypes.byref(descriptor))
+    if status:
+        raise OSError(status, "无法读取发行程序的完整性标签")
+    try:
+        if sacl.value:
+            # ACL 头偏移 4 处为 ACE 数量；强制标签 ACE 的 SID 位于头和 mask 之后。
+            count = ctypes.c_ushort.from_address(sacl.value + 4).value
+            for index in range(count):
+                ace = ctypes.c_void_p()
+                if not security.GetAce(sacl, index, ctypes.byref(ace)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if ctypes.c_ubyte.from_address(ace.value).value == 0x11:
+                    return security.GetSidSubAuthority(ace.value + 8, 0).contents.value
+        return None
+    finally:
+        kernel.LocalFree(descriptor)
+
+
+integrity = executable_integrity_level(app)
+if integrity is not None and integrity < 8192:
+    raise SystemExit(
+        f"发行验收未启动：程序继承了低完整性标签（{integrity}），无法登记用户安装目录。"
+        "请从普通 Windows 终端将发行 ZIP 解压到此工作区以外的新目录后再验证；"
+        "切换终端直接运行原 EXE 不会移除文件标签。")
+
+
+class ProcessEntry(ctypes.Structure):
+    """Toolhelp 进程快照，避免通过 WMI 查询自有 Go 的父进程。"""
+
+    _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260)]
+
+
+kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+kernel.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+kernel.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+
+
+def parent_process_id(pid):
+    """只读快照核对健康响应 PID 的实际父进程。"""
+    snapshot = kernel.CreateToolhelp32Snapshot(2, 0)
+    assert snapshot != wintypes.HANDLE(-1).value, "无法读取进程快照"
+    try:
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(entry)
+        more = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            if entry.th32ProcessID == pid:
+                return entry.th32ParentProcessID
+            more = kernel.Process32NextW(snapshot, ctypes.byref(entry))
+        raise AssertionError("健康响应进程已退出")
+    finally:
+        kernel.CloseHandle(snapshot)
+
+
 with socket.socket() as probe:
     probe.bind(("127.0.0.1", 10086))
 
 # 所有写入限定在新建隔离目录，测试只结束自己创建的宿主。
-work = Path(tempfile.mkdtemp(prefix="TimeCue 发行验证 ", dir=package.parent))
+evidence_root = Path(__file__).resolve().parents[1] / ".gotmp-release-smoke"
+evidence_root.mkdir(exist_ok=True)
+work = Path(tempfile.mkdtemp(prefix="TimeCue 发行验证 ", dir=evidence_root))
 data = work / "中文 数据目录"
 
 
@@ -49,11 +130,7 @@ def health(host):
             time.sleep(0.2)
             continue
         pid = int(result["pid"])
-        parent = subprocess.check_output([
-            "powershell", "-NoProfile", "-Command",
-            f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').ParentProcessId",
-        ], text=True).strip()
-        assert parent == str(host.pid), "响应来自其他服务"
+        assert parent_process_id(pid) == host.pid, "响应来自其他服务"
         assert result["status"] == "ok"
         return result
     raise AssertionError("发行宿主未在预算内完成首次运行")
@@ -83,7 +160,8 @@ for run in range(2):
         else:
             assert request(f"/api/v1/scheduler/schedules/{schedule_id}")["name"] == "发行持久化验证"
         with sqlite3.connect(data / "db/timecue.db") as database:
-            assert database.execute("PRAGMA user_version").fetchone()[0] == 2
+            assert database.execute("PRAGMA user_version").fetchone()[0] == 3
+            assert database.execute("SELECT COUNT(*) FROM ai_sessions").fetchone()[0] == 0
         results.append({"run": run, "hostPid": host.pid, "goPid": runtime["pid"], "instanceId": runtime["instanceId"]})
     finally:
         if host.poll() is None:

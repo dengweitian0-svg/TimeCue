@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:timecue_desktop/app/managed_backend.dart';
 import 'package:timecue_desktop/app/desktop_lifecycle.dart';
 import 'package:timecue_desktop/contracts/notification_delivery.dart';
+import 'package:timecue_desktop/data/http_notebook_repository.dart'
+    show defaultNotebookApiBase;
 import 'desktop_lifecycle_test.dart' show FakeDesktop;
 
 const capabilities = [
@@ -27,7 +29,7 @@ class FakeProcess implements OwnedProcessPlatform {
     'event': 'ready',
     'instanceId': instance,
     'pid': 77,
-    'address': 'http://127.0.0.1:10086',
+    'address': defaultNotebookApiBase.origin,
     'apiVersion': 'v1',
     'capabilities': capabilities,
     ...?readyOverrides,
@@ -84,6 +86,33 @@ DeliveryRuntime runtime(
 }) => DeliveryRuntime(id ?? process.instance, pid: pid, capabilities: caps);
 
 void main() {
+  test('未声明环境时默认发布端口为 10086', () {
+    expect(defaultNotebookApiBase.port, 10086);
+  });
+
+  test('宿主端口用于服务地址及 ready 核验，配置目录不随端口变化', () async {
+    for (final port in [1145, 10086]) {
+      final configuration = BackendConfiguration.fromNative({
+        'backend': 'managed',
+        'dataDir': 'C:/数据',
+        'executable': 'C:/go.exe',
+        'port': port,
+      });
+      expect(configuration.apiBase.origin, 'http://127.0.0.1:$port');
+      expect(configuration.dataDir, 'C:/数据');
+      final process = FakeProcess()
+        ..readyOverrides = {'address': 'http://127.0.0.1:$port'};
+      final backend = ManagedBackend(
+        platform: process,
+        health: () async => runtime(process),
+        apiBase: configuration.apiBase,
+      );
+      addTearDown(backend.dispose);
+      await backend.start();
+      expect(backend.ready, true);
+    }
+  });
+
   test('启动准备完成后才创建 Go，准备失败可见且重试重新准备', () async {
     final process = FakeProcess();
     var preparations = 0;
@@ -219,7 +248,7 @@ void main() {
     expect(backend.ready, true);
     expect(healths, 1);
     expect(backend.pid, 77);
-    await backend.stopOwned(const Duration(seconds: 1));
+    await backend.stopOwned();
     expect(process.shutdowns, 1);
     expect(process.living, false);
   });
@@ -257,6 +286,21 @@ void main() {
     expect(backend.ready, false);
     expect(backend.state, BackendState.failed);
   });
+  test('ready 拒绝非本次运行端口并回收自有进程', () async {
+    final wrongPort = defaultNotebookApiBase.port == 1145 ? 10086 : 1145;
+    final process = FakeProcess()
+      ..readyOverrides = {'address': 'http://127.0.0.1:$wrongPort'};
+    final backend = ManagedBackend(
+      platform: process,
+      health: () async => runtime(process),
+    );
+    addTearDown(backend.dispose);
+    await backend.start();
+    expect(backend.ready, false);
+    expect(backend.state, BackendState.failed);
+    expect(process.releases, greaterThanOrEqualTo(1));
+    expect(process.living, false);
+  });
   test('ready 后立即退出不能假就绪', () async {
     final process = FakeProcess();
     final checked = Completer<DeliveryRuntime>();
@@ -290,8 +334,8 @@ void main() {
     expect(backend.ready, false);
     expect(process.living, false);
   });
-  test('零预算退出仍回收 Job，drain 与停止使用同一截止时刻', () async {
-    final process = FakeProcess();
+  testWidgets('通知收尾用完桌面预算后，Go 仍有独立的 65 秒退出期限', (tester) async {
+    final process = FakeProcess()..exitOnShutdown = false;
     final backend = ManagedBackend(
       platform: process,
       health: () async => runtime(process),
@@ -308,23 +352,63 @@ void main() {
     };
     host.stopOwnedProcess = backend.stopOwned;
     host.finalizeOwnedProcess = backend.releaseOwned;
-    await host.requestExit();
-    expect(process.shutdowns, 0);
+    unawaited(host.requestExit());
+    await tester.pump();
+    expect(process.shutdowns, 1);
+    await tester.pump(const Duration(seconds: 64));
+    expect(process.living, true);
+    expect(desktop.calls, isNot(contains('destroy')));
+    await tester.pump(const Duration(seconds: 1));
+    expect(process.releases, 1);
     expect(process.living, false);
+    expect(backend.state, BackendState.stopped);
     expect(desktop.calls, contains('destroy'));
   });
-  test('Go 不协作时只等待剩余预算，之后回收', () async {
+  testWidgets('启动准备中退出不会等待尚未创建的 Go', (tester) async {
+    final process = FakeProcess()..exitOnShutdown = false;
+    final preparation = Completer<void>();
+    final backend = ManagedBackend(
+      platform: process,
+      health: () async => runtime(process),
+      prepareStart: () => preparation.future,
+    );
+    final desktop = FakeDesktop();
+    final host = DesktopLifecycle(desktop);
+    addTearDown(backend.dispose);
+    addTearDown(host.dispose);
+    unawaited(backend.start());
+    host.stopNewWork = backend.cancelStart;
+    host.stopOwnedProcess = backend.stopOwned;
+    unawaited(host.requestExit());
+    await tester.pump();
+    expect(process.starts, 0);
+    expect(process.shutdowns, 0);
+    expect(desktop.calls, contains('destroy'));
+    preparation.complete();
+    await tester.pump();
+  });
+  testWidgets('Go 延长退出等待后仍移除托盘', (tester) async {
     final process = FakeProcess()..exitOnShutdown = false;
     final backend = ManagedBackend(
       platform: process,
       health: () async => runtime(process),
     );
+    final desktop = FakeDesktop();
+    var elapsed = Duration.zero;
+    final host = DesktopLifecycle(desktop, elapsed: () => elapsed);
     addTearDown(backend.dispose);
+    addTearDown(host.dispose);
     await backend.start();
-    await backend.stopOwned(const Duration(milliseconds: 15));
+    host.stopOwnedProcess = backend.stopOwned;
+    unawaited(host.requestExit());
+    await tester.pump();
     expect(process.shutdowns, 1);
-    expect(process.living, false);
-    expect(backend.state, BackendState.stopped);
+    elapsed = const Duration(seconds: 10);
+    await tester.pump(elapsed);
+    expect(desktop.calls, isNot(contains('destroy')));
+    process.exit();
+    await tester.pump();
+    expect(desktop.calls, containsAllInOrder(['removeTray', 'destroy']));
   });
   test('运行中退出一次撤销资格，无自动重启或热重试', () async {
     final process = FakeProcess();
@@ -424,6 +508,7 @@ void main() {
         'backend': 'managed',
         'dataDir': 'C:/数据',
         'executable': '',
+        'port': 10086,
       }),
       throwsFormatException,
     );
@@ -432,6 +517,7 @@ void main() {
         'backend': 'external',
         'dataDir': 'C:/数据',
         'executable': 'C:/go.exe',
+        'port': 10086,
       }),
       throwsFormatException,
     );
@@ -440,6 +526,7 @@ void main() {
         'backend': 'unknown',
         'dataDir': 'C:/数据',
         'executable': '',
+        'port': 10086,
       }),
       throwsFormatException,
     );
@@ -448,6 +535,7 @@ void main() {
         'backend': 'managed',
         'dataDir': 'C:/数据',
         'executable': 'C:/go.exe',
+        'port': 1145,
       }).dataDir,
       'C:/数据',
     );

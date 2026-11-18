@@ -1,0 +1,263 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "SSE 订阅、断线续接与分页补读",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/events/events.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "8cadb08307b72d6dca64f7e92699ed769d23a99f"
+    }
+  },
+  "lanes": [
+    {
+      "id": "server",
+      "label": "本机 HTTP 与已提交事件"
+    },
+    {
+      "id": "client",
+      "label": "Flutter 事件消费"
+    },
+    {
+      "id": "fallback",
+      "label": "恢复与补读"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "subscribe",
+      "lane": "server",
+      "col": 0,
+      "type": "security",
+      "label": "校验订阅请求",
+      "sublabel": "可见性与 Last-Event-ID",
+      "sources": [
+        {
+          "path": "internal/api/handler/agent/run_events_handler.go",
+          "line": 19,
+          "end_line": 74
+        },
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 455,
+          "end_line": 488
+        }
+      ]
+    },
+    {
+      "id": "read",
+      "lane": "server",
+      "col": 1,
+      "type": "database",
+      "label": "读取已提交事件",
+      "sublabel": "按 seq 读取后续事件",
+      "sources": [
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 500,
+          "end_line": 525
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 760,
+          "end_line": 788
+        }
+      ]
+    },
+    {
+      "id": "stream",
+      "lane": "server",
+      "col": 2,
+      "type": "messagebus",
+      "label": "逐条输出 SSE",
+      "sublabel": "发送 id、类型和数据",
+      "sources": [
+        {
+          "path": "internal/api/handler/agent/run_events_handler.go",
+          "line": 83,
+          "end_line": 119
+        }
+      ]
+    },
+    {
+      "id": "merge",
+      "lane": "client",
+      "col": 3,
+      "type": "frontend",
+      "label": "按序合并事件",
+      "sublabel": "去重并检查序号缺口",
+      "sources": [
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1042,
+          "end_line": 1063
+        }
+      ]
+    },
+    {
+      "id": "snapshot",
+      "lane": "client",
+      "col": 4,
+      "type": "frontend",
+      "label": "读取终态概况",
+      "sublabel": "以 run.output 对齐正文",
+      "sources": [
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1057,
+          "end_line": 1061
+        },
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1234,
+          "end_line": 1289
+        }
+      ]
+    },
+    {
+      "id": "closed",
+      "lane": "fallback",
+      "col": 0,
+      "type": "backend",
+      "label": "返回 HTTP 204",
+      "sublabel": "运行已结束",
+      "sources": [
+        {
+          "path": "internal/api/handler/agent/run_events_handler.go",
+          "line": 29,
+          "end_line": 34
+        },
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1027,
+          "end_line": 1040
+        }
+      ]
+    },
+    {
+      "id": "recover",
+      "lane": "fallback",
+      "col": 1,
+      "type": "frontend",
+      "label": "恢复概况和历史",
+      "sublabel": "先读概况，再补读分页",
+      "sources": [
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1027,
+          "end_line": 1040
+        },
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1219,
+          "end_line": 1232
+        }
+      ]
+    },
+    {
+      "id": "backfill",
+      "lane": "fallback",
+      "col": 3,
+      "type": "frontend",
+      "label": "补读缺失事件",
+      "sublabel": "按 after_seq 分页",
+      "sources": [
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1043,
+          "end_line": 1057
+        },
+        {
+          "path": "desktop/lib/features/chat/chat_view_model.dart",
+          "line": 1173,
+          "end_line": 1216
+        },
+        {
+          "path": "internal/api/handler/agent/get_run_events_handler.go",
+          "line": 19,
+          "end_line": 52
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "subscribe-read",
+      "from": "subscribe",
+      "to": "read",
+      "role": "main",
+      "variant": "emphasis",
+      "label": "可订阅"
+    },
+    {
+      "id": "read-stream",
+      "from": "read",
+      "to": "stream",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "stream-merge",
+      "from": "stream",
+      "to": "merge",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "merge-snapshot",
+      "from": "merge",
+      "to": "snapshot",
+      "role": "main",
+      "variant": "emphasis",
+      "label": "收到 end"
+    },
+    {
+      "id": "subscribe-closed",
+      "from": "subscribe",
+      "to": "closed",
+      "role": "branch",
+      "variant": "default",
+      "label": "已终态"
+    },
+    {
+      "id": "closed-recover",
+      "from": "closed",
+      "to": "recover",
+      "role": "branch",
+      "variant": "default"
+    },
+    {
+      "id": "merge-backfill",
+      "from": "merge",
+      "to": "backfill",
+      "role": "branch",
+      "variant": "default",
+      "label": "发现缺口"
+    }
+  ],
+  "mainPath": [
+    "subscribe",
+    "read",
+    "stream",
+    "merge",
+    "snapshot"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "重新订阅",
+      "items": [
+        "Flutter 携带最近合并的事件序号接续。可见性和游标校验通过后才替换旧订阅；无效游标返回 400，旧订阅继续。断开连接不取消运行。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "分页补读",
+      "items": [
+        "SSE 与 GET /v1/run/:run_id/events 读取同一份已提交事件。发现缺口时先分页补齐，再应用当前帧。分页游标超过末尾时返回空页。"
+      ]
+    }
+  ]
+}

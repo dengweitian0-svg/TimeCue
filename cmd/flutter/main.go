@@ -7,12 +7,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"github.com/dengweitian0-svg/TimeCue/internal/api"
-	"github.com/dengweitian0-svg/TimeCue/internal/config"
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
-	"github.com/dengweitian0-svg/TimeCue/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,8 +22,9 @@ func main() {
 	}
 }
 
-// run 只装配适配器并转交生命周期，启动和清理由 service.App 管理。
+// run 从 Go 入口计时，并将系统信号和父端停止消息接入宿主。
 func run(log *logger.Logger) error {
+	started := time.Now()
 	options, err := parseStartup(os.Args[1:])
 	if err != nil {
 		return err
@@ -41,7 +39,10 @@ func run(log *logger.Logger) error {
 		control = startParentControl(os.Stdin, cancel)
 		defer control.closeAndWait()
 	}
-	err = runApp(ctx, options, log)
+	host, err := newHost(options, log)
+	if err == nil {
+		err = host.run(ctx, started)
+	}
 	if control != nil {
 		control.closeAndWait()
 		if failure := control.err(); failure != nil {
@@ -52,39 +53,4 @@ func run(log *logger.Logger) error {
 		return nil
 	}
 	return err
-}
-
-// runApp 沿用 App.Run 的资源所有权，控制管道只请求取消。
-func runApp(ctx context.Context, options startupOptions, log *logger.Logger) error {
-	if err := os.MkdirAll(options.dataDir, 0o755); err != nil {
-		return fmt.Errorf("create data directory: %w", err)
-	}
-	manager, err := config.NewManager(options.dataDir)
-	if err != nil {
-		return err
-	}
-	db := store.NewSqlite()
-	schedules, err := store.NewScheduleStore(db)
-	if err != nil {
-		return err
-	}
-	notifications, err := store.NewNotificationStore(db)
-	if err != nil {
-		return err
-	}
-	app, err := service.NewApp(manager, schedules, notifications)
-	if err != nil {
-		return err
-	}
-	info := service.NewRuntimeInfo(options.instanceID)
-	runtime := service.RuntimeOptions{Database: db, PrepareDatabase: db.PrepareSchema, Handler: api.NewRouter(app, db.CheckHealth, info), Log: log}
-	if options.managed {
-		runtime.OnReady = func() error {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return writeReady(os.Stdout, info)
-		}
-	}
-	return app.Run(ctx, runtime)
 }

@@ -11,3 +11,8 @@ var Initial string
 //
 //go:embed 002_schedule_changes.up.sql
 var ScheduleChanges string
+
+// AIChat 保存会话、运行、模型调用、checkpoint、事件及工具调用表。
+//
+//go:embed 003_ai_chat.up.sql
+var AIChat string

@@ -1,0 +1,193 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "SQLite 聊天持久化与事务",
+    "locale": "zh-CN",
+    "output": "docs/archify/architecture-agent-20261108-172843/sqlite/sqlite.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dengweitian0-svg/TimeCue.git",
+      "revision": "8cadb08307b72d6dca64f7e92699ed769d23a99f"
+    }
+  },
+  "lanes": [
+    {
+      "id": "loop",
+      "label": "Agent Loop"
+    },
+    {
+      "id": "storage",
+      "label": "SQLite 聊天事务"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "register",
+      "lane": "storage",
+      "col": 0,
+      "type": "database",
+      "label": "登记模型调用",
+      "sublabel": "保存请求及 checkpoint",
+      "sources": [
+        {
+          "path": "internal/store/chat.go",
+          "line": 388,
+          "end_line": 429
+        },
+        {
+          "path": "internal/agent/loop/tool_loop.go",
+          "line": 103,
+          "end_line": 127
+        }
+      ]
+    },
+    {
+      "id": "collect",
+      "lane": "loop",
+      "col": 1,
+      "type": "backend",
+      "label": "缓冲流式增量",
+      "sublabel": "正文和思考分开记录",
+      "sources": [
+        {
+          "path": "internal/agent/loop/event_batch.go",
+          "line": 26,
+          "end_line": 62
+        },
+        {
+          "path": "internal/agent/loop/event_batch.go",
+          "line": 80,
+          "end_line": 88
+        }
+      ]
+    },
+    {
+      "id": "flush",
+      "lane": "storage",
+      "col": 2,
+      "type": "database",
+      "label": "提交增量批次",
+      "sublabel": "5 条或首条等待 5 秒",
+      "sources": [
+        {
+          "path": "internal/agent/loop/event_batch.go",
+          "line": 42,
+          "end_line": 77
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 602,
+          "end_line": 620
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 645,
+          "end_line": 664
+        }
+      ]
+    },
+    {
+      "id": "finish",
+      "lane": "loop",
+      "col": 3,
+      "type": "backend",
+      "label": "发起运行收尾",
+      "sublabel": "带上未提交的尾批",
+      "sources": [
+        {
+          "path": "internal/agent/loop/service.go",
+          "line": 335,
+          "end_line": 367
+        },
+        {
+          "path": "internal/agent/loop/persistence.go",
+          "line": 29,
+          "end_line": 56
+        }
+      ]
+    },
+    {
+      "id": "commit",
+      "lane": "storage",
+      "col": 4,
+      "type": "database",
+      "label": "原子提交终态",
+      "sublabel": "配对、尾批与唯一 end",
+      "sources": [
+        {
+          "path": "internal/store/chat.go",
+          "line": 667,
+          "end_line": 729
+        },
+        {
+          "path": "internal/store/chat.go",
+          "line": 730,
+          "end_line": 756
+        },
+        {
+          "path": "internal/agent/chat/progress.go",
+          "line": 179,
+          "end_line": 220
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "register-collect",
+      "from": "register",
+      "to": "collect",
+      "role": "main",
+      "variant": "emphasis",
+      "label": "提交后发送"
+    },
+    {
+      "id": "collect-flush",
+      "from": "collect",
+      "to": "flush",
+      "role": "branch",
+      "variant": "default",
+      "label": "达到批次条件"
+    },
+    {
+      "id": "collect-finish",
+      "from": "collect",
+      "to": "finish",
+      "role": "main",
+      "variant": "emphasis",
+      "label": "运行结束"
+    },
+    {
+      "id": "finish-commit",
+      "from": "finish",
+      "to": "commit",
+      "role": "main",
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": [
+    "register",
+    "collect",
+    "finish",
+    "commit"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "增量事务",
+      "items": [
+        "每批将部分模型响应与原始事件一并提交。以 run 为单位连续分配 seq，读取方只看到已提交的事件。",
+        "计时从该批首条增量起算。初始摘要正文不生成普通展示事件。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "进度与终态",
+      "items": [
+        "会话创建与 start、模型调用登记、工具起止和摘要切换各有短事务。终态事务回读已有运行状态、调用、checkpoint 和工具事实，保存剩余配对、调用结果与 run.output。",
+        "如需记录 error，与唯一 end 同事务提交。已有终态时重复收尾直接返回。"
+      ]
+    }
+  ]
+}

@@ -69,7 +69,7 @@ class DesktopLaunchRequest {
 
 enum DesktopState { initializing, visible, hidden, exiting, disposed }
 
-/// 唯一宿主的正式转换；隐藏不释放应用，退出只消费一个共享预算。
+/// 唯一宿主的正式转换；隐藏不释放应用，桌面清理使用共享预算，托管 Go 独立收尾。
 class DesktopLifecycle extends ChangeNotifier {
   DesktopLifecycle(
     this.platform, {
@@ -90,7 +90,7 @@ class DesktopLifecycle extends ChangeNotifier {
   Future<void> Function(String payload)? onActivate;
   VoidCallback? stopNewWork;
   Future<void> Function(Duration budget)? drain;
-  Future<void> Function(Duration budget)? stopOwnedProcess;
+  Future<void> Function()? stopOwnedProcess;
   Future<void> Function()? finalizeOwnedProcess;
   VoidCallback? releaseResources;
   Future<void>? _initialization, _trayWork, _exit;
@@ -284,8 +284,11 @@ class DesktopLifecycle extends ChangeNotifier {
       return value.isNegative ? Duration.zero : value;
     }
 
-    Future<void> bounded(Future<void> Function(Duration budget)? action) async {
-      final budget = remaining();
+    Future<void> bounded(
+      Future<void> Function(Duration budget)? action, {
+      Duration? budget,
+    }) async {
+      budget ??= remaining();
       if (action == null || budget <= Duration.zero) return;
       try {
         await action(budget).timeout(budget);
@@ -301,11 +304,21 @@ class DesktopLifecycle extends ChangeNotifier {
     }
     await bounded((_) => platform.beginExit());
     await bounded(drain);
-    await bounded(stopOwnedProcess);
+    Future<void> stopOwned() async {
+      try {
+        await stopOwnedProcess?.call();
+      } catch (failure) {
+        _error = '自有进程停止失败：$failure';
+      }
+    }
+
+    final ownedExit = stopOwned();
     await bounded((_) => _windowWork);
     await bounded((_) async {
       await _trayWork;
     });
+    final trayRemovalBudget = remaining();
+    await ownedExit;
     try {
       // 自有 Job 回收不属于优雅等待，零预算也必须执行。
       await finalizeOwnedProcess?.call();
@@ -318,7 +331,7 @@ class DesktopLifecycle extends ChangeNotifier {
       _error = '资源释放失败：$failure';
     }
     platform.detach();
-    await bounded((_) => platform.removeTray());
+    await bounded((_) => platform.removeTray(), budget: trayRemovalBudget);
     // 窗口销毁属于退出提交；清理预算耗尽也必须执行。
     await platform.destroy();
   }

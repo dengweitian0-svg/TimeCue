@@ -1,0 +1,824 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/chat"
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
+	"github.com/dengweitian0-svg/TimeCue/migrations"
+)
+
+// chatStore 用同一 SQLite 连接实现独立持久化端口，保持跨表事务原子性。
+type chatStore struct{ db *Sqlite }
+
+// NewChatStorage 提供运行、会话、模型执行、工具事务、事件及用量查询端口，不打开或迁移数据库。
+func NewChatStorage(db *Sqlite) chat.Storage {
+	adapter := &chatStore{db: db}
+	return chat.Storage{
+		Runs:      adapter,
+		Sessions:  adapter,
+		Execution: adapter,
+		Events:    adapter,
+		Tools:     adapter,
+		Usage:     adapter,
+	}
+}
+
+func checkAIChatSchema(ctx context.Context, db schemaReader) error {
+	normalize := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if unicode.IsSpace(r) || r == ';' {
+				return -1
+			}
+			return unicode.ToLower(r)
+		}, s)
+	}
+	for _, statement := range strings.Split(migrations.AIChat, ";") {
+		fields := strings.Fields(statement)
+		if len(fields) < 3 || fields[0] != "CREATE" {
+			continue
+		}
+		var ddl string
+		if err := db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, fields[2]).Scan(&ddl); err != nil {
+			return fmt.Errorf("%w: missing %s", ErrSchemaInvalid, fields[2])
+		}
+		if normalize(ddl) != normalize(statement) {
+			return fmt.Errorf("%w: incompatible %s", ErrSchemaInvalid, fields[2])
+		}
+	}
+	return nil
+}
+
+func (s *chatStore) transaction(ctx context.Context, fn func(*sql.Tx) error) error {
+	db, err := s.db.handle()
+	if err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func jsonValue(v any) any {
+	if v == nil {
+		return nil
+	}
+	b, _ := json.Marshal(v)
+	if string(b) == "null" {
+		return nil
+	}
+	return string(b)
+}
+func timeValue(v *time.Time) any {
+	if v == nil {
+		return nil
+	}
+	return v.UnixNano()
+}
+func stringValue(v *string) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+const runColumns = `r.run_id,r.session_id,r.provider,r.model,r.input,r.status,r.output,r.error,r.idempotency_key,r.created_at,r.finished_at`
+
+func readRecord(row *sql.Row) (chat.Record, error) {
+	var r chat.Record
+	var output, failure sql.NullString
+	var created int64
+	var finished sql.NullInt64
+	err := row.Scan(&r.RunID, &r.SessionID, &r.Provider, &r.Model, &r.Input, &r.State, &output, &failure, &r.IdempotencyKey, &created, &finished)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, chat.ErrRunNotFound
+	}
+	if err != nil {
+		return r, err
+	}
+	r.Status = r.State.Public()
+	r.CreatedAt = time.Unix(0, created).In(model.BeijingLocation())
+	if output.Valid {
+		r.Output = &output.String
+	}
+	if failure.Valid {
+		if err = json.Unmarshal([]byte(failure.String), &r.Error); err != nil {
+			return r, err
+		}
+	}
+	if finished.Valid {
+		t := time.Unix(0, finished.Int64).In(model.BeijingLocation())
+		r.FinishedAt = &t
+	}
+	return r, nil
+}
+
+// FindReplay 查询幂等回执，同时拒绝复用已删除会话。
+func (s *chatStore) FindReplay(ctx context.Context, session, key string) (chat.Record, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return chat.Record{}, err
+	}
+	var deleted int
+	err = db.QueryRowContext(ctx, `SELECT deleted FROM ai_sessions WHERE session_id=?`, session).Scan(&deleted)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return chat.Record{}, err
+	}
+	if deleted == 1 {
+		return chat.Record{}, chat.ErrSessionDeleted
+	}
+	return readRecord(db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM ai_runs r WHERE session_id=? AND idempotency_key=?`, session, key))
+}
+
+// Create 原子登记会话、运行和开始事件。
+func (s *chatStore) Create(ctx context.Context, r chat.Record) error {
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO ai_sessions(session_id,created_at,updated_at) VALUES(?,?,?) ON CONFLICT(session_id) DO NOTHING`, r.SessionID, r.CreatedAt.UnixNano(), r.CreatedAt.UnixNano())
+		if err != nil {
+			return err
+		}
+		var deleted int
+		if err = tx.QueryRowContext(ctx, `SELECT deleted FROM ai_sessions WHERE session_id=?`, r.SessionID).Scan(&deleted); err != nil {
+			return err
+		}
+		if deleted == 1 {
+			return chat.ErrSessionDeleted
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO ai_runs(run_id,session_id,provider,model,input,status,output,error,idempotency_key,created_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, r.RunID, r.SessionID, r.Provider, r.Model, r.Input, r.State, stringValue(r.Output), jsonValue(r.Error), r.IdempotencyKey, r.CreatedAt.UnixNano(), timeValue(r.FinishedAt))
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE ai_sessions SET updated_at=? WHERE session_id=?`, r.CreatedAt.UnixNano(), r.SessionID)
+		if err != nil {
+			return err
+		}
+		call := chat.ModelCall{
+			RunID:     r.RunID,
+			SessionID: r.SessionID,
+		}
+		if err = appendChatEvent(ctx, tx, call, chat.Event{
+			Type: chat.EventStart,
+			Data: json.RawMessage(`{}`),
+		}); err != nil {
+			return err
+		}
+		if r.State.Terminal() {
+			if r.Error != nil {
+				data, _ := json.Marshal(r.Error)
+				if err = appendChatEvent(ctx, tx, call, chat.Event{
+					Type: chat.EventError,
+					Data: data,
+				}); err != nil {
+					return err
+				}
+			}
+			data, _ := json.Marshal(chat.EndData{Status: r.State.Public()})
+			return appendChatEvent(ctx, tx, call, chat.Event{
+				Type: chat.EventEnd,
+				Data: data,
+			})
+		}
+		return nil
+	})
+}
+
+// ReadRun 读取内部运行；公开查询须同时检查父会话可见性。
+func (s *chatStore) ReadRun(ctx context.Context, id string, visible bool) (chat.Record, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return chat.Record{}, err
+	}
+	query := `SELECT ` + runColumns + ` FROM ai_runs r JOIN ai_sessions s ON s.session_id=r.session_id WHERE r.run_id=?`
+	if visible {
+		query += ` AND s.deleted=0`
+	}
+	return readRecord(db.QueryRowContext(ctx, query, id))
+}
+
+// Session 查询可见会话与升序运行 ID。
+func (s *chatStore) Session(ctx context.Context, id string) (chat.Session, error) {
+	result := chat.Session{
+		SessionID: id,
+		RunIDs:    []string{},
+	}
+	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx, `SELECT session_name FROM ai_sessions WHERE session_id=? AND deleted=0`, id).Scan(&result.SessionName)
+		if errors.Is(err, sql.ErrNoRows) {
+			return chat.ErrSessionNotFound
+		}
+		if err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT run_id FROM ai_runs WHERE session_id=? ORDER BY created_at,id`, id)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var run string
+			if err = rows.Scan(&run); err != nil {
+				return err
+			}
+			result.RunIDs = append(result.RunIDs, run)
+		}
+		return rows.Err()
+	})
+	return result, err
+}
+
+// Sessions 按最新运行顺序返回未删除会话。
+func (s *chatStore) Sessions(ctx context.Context) ([]string, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT s.session_id FROM ai_sessions s JOIN ai_runs r ON r.session_id=s.session_id WHERE s.deleted=0 GROUP BY s.session_id ORDER BY MAX(r.id) DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []string{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result = append(result, id)
+	}
+	return result, rows.Err()
+}
+
+// RequestCancel 只将未结束运行改为取消等待，提交后才允许协调器停止推进。
+func (s *chatStore) RequestCancel(ctx context.Context, id string) (chat.RunState, error) {
+	var state chat.RunState
+	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE ai_runs SET status='wait_for_cancel' WHERE run_id=? AND status='running'`, id); err != nil {
+			return err
+		}
+		var err error
+		r, err := readRecord(tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM ai_runs r WHERE run_id=?`, id))
+		state = r.State
+		return err
+	})
+	return state, err
+}
+
+// Hide 原子软删除父会话并登记活动运行取消，保留全部子记录。
+func (s *chatStore) Hide(ctx context.Context, id string) error {
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE ai_sessions SET deleted=1,updated_at=? WHERE session_id=?`, time.Now().UnixNano(), id)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return chat.ErrSessionNotFound
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE ai_runs SET status='wait_for_cancel' WHERE session_id=? AND status='running'`, id)
+		return err
+	})
+}
+
+// History 沿最新已结束运行的完整消息快照接续，不重放事件或重新拼入已覆盖原文。
+func (s *chatStore) History(ctx context.Context, session string) ([]chat.Message, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT c.state,c.status,r.status,r.input FROM ai_runs r JOIN ai_checkpoints c ON c.run_id=r.run_id WHERE r.session_id=? AND r.status NOT IN ('running','wait_for_cancel') ORDER BY r.created_at DESC,r.id DESC`, session)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type pendingHistory struct {
+		state  chat.CheckpointState
+		input  string
+		status chat.RunState
+	}
+	pending := []pendingHistory{}
+	history := []chat.Message{}
+	for rows.Next() {
+		var raw, stage, input string
+		var status chat.RunState
+		if err = rows.Scan(&raw, &stage, &status, &input); err != nil {
+			return nil, err
+		}
+		var state chat.CheckpointState
+		if err = json.Unmarshal([]byte(raw), &state); err != nil {
+			return nil, err
+		}
+		if !state.NeedsCompactBase(stage) {
+			history = state.History(status)
+			break
+		}
+		pending = append(pending, pendingHistory{
+			state:  state,
+			input:  input,
+			status: status,
+		})
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := len(pending) - 1; i >= 0; i-- {
+		history = pending[i].state.HistoryAfterCompact(history, pending[i].input, pending[i].status)
+	}
+	return history, nil
+}
+
+const ordinaryCallPredicate = `m.continuation=0 AND NOT EXISTS(
+	SELECT 1 FROM ai_events e WHERE e.model_call_id=m.id AND e.type='compact'
+)`
+
+// OrdinaryCallCount 从实际调用记录计算普通轮数，重试及摘要是否成功不影响分类。
+func (s *chatStore) OrdinaryCallCount(ctx context.Context, run string) (int, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_model_calls m WHERE m.run_id=? AND `+ordinaryCallPredicate, run).Scan(&count)
+	return count, err
+}
+
+// ContinuationCallCount 复用版本 3 的用途标记，重试和重启不重复计数。
+func (s *chatStore) ContinuationCallCount(ctx context.Context, run string) (int, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_model_calls WHERE run_id=? AND continuation=1`, run).Scan(&count)
+	return count, err
+}
+
+func checkpoint(ctx context.Context, tx *sql.Tx, call chat.ModelCall) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO ai_checkpoints(run_id,model_call_id,status,state) VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET model_call_id=excluded.model_call_id,status=excluded.status,state=excluded.state`, call.RunID, call.ID, call.CheckpointStage, jsonValue(call.Checkpoint()))
+	return err
+}
+
+func requireRunningChatRun(ctx context.Context, tx *sql.Tx, runID string) error {
+	var state chat.RunState
+	if err := tx.QueryRowContext(ctx, "SELECT status FROM ai_runs WHERE run_id=?", runID).Scan(&state); err != nil {
+		return err
+	}
+	if state != chat.StateRunning {
+		return context.Canceled
+	}
+	return nil
+}
+
+// BeginCall 在请求前原子保存实际 input、running 和 checkpoint。
+func (s *chatStore) BeginCall(ctx context.Context, call chat.ModelCall) (int64, error) {
+	var id int64
+	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		if err := requireRunningChatRun(ctx, tx, call.RunID); err != nil {
+			return err
+		}
+		var err error
+		call, err = beginChatCall(ctx, tx, call)
+		id = call.ID
+		return err
+	})
+	if err != nil {
+		// 插入获得的行号只有整个事务提交后才是已存在的调用身份。
+		return 0, err
+	}
+	return id, nil
+}
+
+func beginChatCall(ctx context.Context, tx *sql.Tx, call chat.ModelCall) (chat.ModelCall, error) {
+	if call.InputBody == "" {
+		// 兼容通过结构化输入直接登记调用的存储调用方。
+		body, err := json.Marshal(call.Input)
+		if err != nil {
+			return call, err
+		}
+		call.InputBody = string(body)
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO ai_model_calls(run_id,session_id,input,status,max_retry,continuation,created_at) VALUES(?,?,?,'running',?,?,?)`, call.RunID, call.SessionID, call.InputBody, call.MaxRetry, call.Continuation, time.Now().UnixNano())
+	if err != nil {
+		return call, err
+	}
+	call.ID, err = result.LastInsertId()
+	if err != nil {
+		return call, err
+	}
+	call = call.WithCallStarted()
+	if call.CheckpointStage == "compact" && !call.Continuation {
+		_, err = tx.ExecContext(ctx, `INSERT INTO ai_events(run_id,session_id,model_call_id,type,data,seq,compact_succeeded,created_at) SELECT ?,?,?,'compact','{}',COALESCE(MAX(seq),0)+1,0,? FROM ai_events WHERE run_id=?`, call.RunID, call.SessionID, call.ID, time.Now().UnixNano(), call.RunID)
+		if err != nil {
+			return call, err
+		}
+	}
+	return call, checkpoint(ctx, tx, call)
+}
+
+// CompleteCompact 同事务启用摘要、引用及下一普通请求或失败终态，取消先提交时不切换有效分界。
+func (s *chatStore) CompleteCompact(ctx context.Context, call chat.ModelCall, next *chat.ModelCall, terminal *chat.Record) (chat.ModelCall, error) {
+	if (next == nil) == (terminal == nil) {
+		return call, chat.ErrInvalidRequest
+	}
+	result := call
+	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		if err := requireRunningChatRun(ctx, tx, call.RunID); err != nil {
+			return err
+		}
+		if err := saveCall(ctx, tx, call, true); err != nil {
+			return err
+		}
+		if err := appendChatEvents(ctx, tx, call); err != nil {
+			return err
+		}
+		var eventID int64
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM ai_events WHERE run_id=? AND type='compact' ORDER BY seq DESC LIMIT 1`, call.RunID).Scan(&eventID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE ai_events SET compact_succeeded=1 WHERE id=?`, eventID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE ai_sessions SET compact_event_id=? WHERE session_id=?`, eventID, call.SessionID); err != nil {
+			return err
+		}
+		if next != nil {
+			var err error
+			result, err = beginChatCall(ctx, tx, *next)
+			return err
+		}
+		if err := checkpoint(ctx, tx, call); err != nil {
+			return err
+		}
+		return finishChatRun(ctx, tx, call, *terminal)
+	})
+	if err != nil {
+		return call, err
+	}
+	result.PendingEvents = nil
+	return result, nil
+}
+
+// OrdinaryRequestBase 读取该普通调用所属上下文的首个普通请求。
+func (s *chatStore) OrdinaryRequestBase(ctx context.Context, runID string, callID int64) (chat.ModelRequest, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return chat.ModelRequest{}, err
+	}
+	var raw string
+	err = db.QueryRowContext(ctx, `
+		SELECT m.input FROM ai_model_calls m
+		WHERE m.run_id=? AND m.id<=?
+			AND m.id>COALESCE((
+				SELECT MAX(e.model_call_id) FROM ai_events e
+				WHERE e.run_id=m.run_id AND e.model_call_id<=? AND e.type='compact' AND e.compact_succeeded=1
+			),0)
+			AND `+ordinaryCallPredicate+`
+		ORDER BY m.id LIMIT 1`, runID, callID, callID).Scan(&raw)
+	if err != nil {
+		return chat.ModelRequest{}, err
+	}
+	var request chat.ModelRequest
+	err = json.Unmarshal([]byte(raw), &request)
+	return request, err
+}
+
+// ReadCall 读取同一逻辑模型调用的原请求与部分输出；首次登记前返回 nil。
+func (s *chatStore) ReadCall(ctx context.Context, id string) (*chat.ModelCall, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return nil, err
+	}
+	return readCall(ctx, db, id)
+}
+
+func readCall(ctx context.Context, reader schemaReader, id string) (*chat.ModelCall, error) {
+	call := &chat.ModelCall{RunID: id}
+	var input, retries, progress string
+	var nextRetry sql.NullInt64
+	var output, usage, failure sql.NullString
+	err := reader.QueryRowContext(ctx, `SELECT m.id,m.session_id,m.input,m.output,m.usage,m.status,m.error,m.max_retry,m.retry_count,m.next_retry_at,m.retry_history,m.continuation,c.status,c.state FROM ai_checkpoints c JOIN ai_model_calls m ON m.id=c.model_call_id WHERE c.run_id=?`, id).Scan(&call.ID, &call.SessionID, &input, &output, &usage, &call.State, &failure, &call.MaxRetry, &call.RetryCount, &nextRetry, &retries, &call.Continuation, &call.CheckpointStage, &progress)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err = json.Unmarshal([]byte(input), &call.Input); err != nil {
+		return nil, err
+	}
+	call.InputBody = input
+	var state chat.CheckpointState
+	if err = json.Unmarshal([]byte(progress), &state); err != nil {
+		return nil, err
+	}
+	*call = call.WithCheckpoint(call.CheckpointStage, state)
+	if err = json.Unmarshal([]byte(retries), &call.RetryHistory); err != nil {
+		return nil, err
+	}
+	if nextRetry.Valid {
+		at := time.Unix(0, nextRetry.Int64)
+		call.NextRetryAt = &at
+	}
+	if output.Valid {
+		if err = json.Unmarshal([]byte(output.String), &call.Output); err != nil {
+			return nil, err
+		}
+		if call.Output != nil {
+			// 用量以独立列为准，部分流式响应的 SQL NULL 表示尚未获得用量。
+			call.Output.Usage = nil
+			if usage.Valid {
+				call.Output.Usage = json.RawMessage(usage.String)
+			}
+		}
+		*call = call.WithOutputSaved()
+	}
+	if failure.Valid {
+		if err = json.Unmarshal([]byte(failure.String), &call.Error); err != nil {
+			return nil, err
+		}
+	}
+	if call.Continuation || call.CheckpointStage == "compact" && !call.Checkpoint().NeedsCompactBase("compact") {
+		// 从续写请求或运行中摘要保留的原上下文恢复普通正文边界；摘要自身不形成正文起点。
+		rows, err := reader.QueryContext(ctx, `
+			SELECT m.input FROM ai_model_calls m WHERE m.run_id=? AND `+ordinaryCallPredicate+`
+			ORDER BY json_array_length(m.input,'$.messages') DESC`, id)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw string
+			if err := rows.Scan(&raw); err != nil {
+				return nil, err
+			}
+			var base chat.ModelRequest
+			if err := json.Unmarshal([]byte(raw), &base); err != nil {
+				return nil, err
+			}
+			if restored, ok := call.WithContinuationBase(base); ok {
+				*call = restored
+				break
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return call, nil
+}
+
+// Pause 保存正常退出时的真实部分响应，不生成终态或推进 checkpoint。
+func (s *chatStore) Pause(ctx context.Context, call chat.ModelCall) error {
+	if call.State.Terminal() {
+		return nil
+	}
+	if call.State != chat.StateRetryWait {
+		call.State = chat.StateRunning
+		call.Error = nil
+	}
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		if err := saveCall(ctx, tx, call, false); err != nil {
+			return err
+		}
+		return appendChatEvents(ctx, tx, call)
+	})
+}
+
+func appendChatEvents(ctx context.Context, tx *sql.Tx, call chat.ModelCall) error {
+	for _, e := range call.PendingEvents {
+		if err := appendChatEvent(ctx, tx, call, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func appendChatEvent(ctx context.Context, tx *sql.Tx, call chat.ModelCall, e chat.Event) error {
+	var modelID, reply any
+	if call.ID != 0 {
+		modelID = call.ID
+	}
+	if call.Output != nil && call.Output.ID != "" {
+		reply = call.Output.ID
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO ai_events(run_id,session_id,model_call_id,model_reply_id,type,data,seq,created_at) SELECT ?,?,?,?,?,?,COALESCE(MAX(seq),0)+1,? FROM ai_events WHERE run_id=?`, call.RunID, call.SessionID, modelID, reply, e.Type, string(e.Data), time.Now().UnixNano(), call.RunID)
+	return err
+}
+
+func saveCall(ctx context.Context, tx *sql.Tx, call chat.ModelCall, finished bool) error {
+	var usage, reply, at any
+	if call.Output != nil {
+		if len(call.Output.Usage) > 0 && string(call.Output.Usage) != "null" {
+			usage = string(call.Output.Usage)
+		}
+		if call.Output.ID != "" {
+			reply = call.Output.ID
+		}
+	}
+	if finished {
+		at = time.Now().UnixNano()
+	}
+	history := call.RetryHistory
+	if history == nil {
+		history = []chat.ModelRetry{}
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE ai_model_calls SET output=?,usage=?,model_reply_id=?,status=?,error=?,finished_at=?,retry_count=?,next_retry_at=?,retry_history=? WHERE id=?`, jsonValue(call.Output), usage, reply, call.State, jsonValue(call.Error), at, call.RetryCount, timeValue(call.NextRetryAt), jsonValue(history), call.ID)
+	return err
+}
+
+// SaveEvents 原子保存部分响应与原始事件批次，订阅只读取已提交数据。
+func (s *chatStore) SaveEvents(ctx context.Context, call chat.ModelCall) error {
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		// 重试进入 running 时仍须有执行权；已在途的实际增量允许随取消收尾保存。
+		if call.State == chat.StateRunning && call.RetryCount > 0 {
+			var waiting bool
+			if err := tx.QueryRowContext(ctx, "SELECT status='retry_wait' FROM ai_model_calls WHERE id=?", call.ID).Scan(&waiting); err != nil {
+				return err
+			}
+			if waiting {
+				if err := requireRunningChatRun(ctx, tx, call.RunID); err != nil {
+					return err
+				}
+			}
+		}
+		if err := saveCall(ctx, tx, call, false); err != nil {
+			return err
+		}
+		return appendChatEvents(ctx, tx, call)
+	})
+}
+
+// Finish 原子保存调用结果、usage、进度、运行终态及唯一 error/end。
+func (s *chatStore) Finish(ctx context.Context, call chat.ModelCall, r chat.Record) error {
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		var state chat.RunState
+		if err := tx.QueryRowContext(ctx, `SELECT status FROM ai_runs WHERE run_id=?`, r.RunID).Scan(&state); err != nil {
+			return err
+		}
+		if state.Terminal() {
+			return nil
+		}
+		// 取消受理与正常收尾可能竞争，已提交的取消意图优先于旧终态快照。
+		if state == chat.StateWaitForCancel && (r.Error == nil || r.Error.Code != "persistence_failed") {
+			r.State, r.Error = chat.StateCancelled, nil
+		}
+		// 即使调用登记的回执丢失，也从当前 checkpoint 取得已提交调用。
+		committed, err := readCall(ctx, tx, r.RunID)
+		if err != nil {
+			return err
+		}
+		if committed == nil && call.ID != 0 {
+			return chat.ErrInvalidRequest
+		}
+		if committed != nil {
+			switch {
+			case committed.State.Terminal() && committed.ID == call.ID:
+				pending := call.PendingTools
+				call = *committed
+				call.PendingTools = pending
+				r.Output = call.PresentedOutput()
+			case !call.BasedOn(*committed):
+				// 回执丢失或旧快照不再拥有待提交事件，避免重写正文或追加已提交批次。
+				sameCall := committed.ID == call.ID
+				call = *committed
+				if output := call.PresentedOutput(); sameCall || output != nil {
+					r.Output = output
+				}
+			default:
+				call = call.WithCheckpoint(committed.CheckpointStage, committed.Checkpoint())
+			}
+			stored, err := readTools(ctx, tx, call.ID)
+			if err != nil {
+				return err
+			}
+			var results []chat.ToolCall
+			call, results, err = call.WithRunFinished(r.State, r.Error, stored)
+			if err != nil {
+				return err
+			}
+			for _, tool := range results {
+				// 进度裁决已经完成；逐项保存沿用正常结果的 SQL 和事件写入。
+				if _, err := saveToolResult(ctx, tx, call, tool); err != nil {
+					return err
+				}
+			}
+			if !committed.State.Terminal() {
+				if err := saveCall(ctx, tx, call, true); err != nil {
+					return err
+				}
+			}
+			if len(results) > 0 || !committed.State.Terminal() {
+				if err := checkpoint(ctx, tx, call); err != nil {
+					return err
+				}
+			}
+		}
+		if err := appendChatEvents(ctx, tx, call); err != nil {
+			return err
+		}
+		return finishChatRun(ctx, tx, call, r)
+	})
+}
+
+func finishChatRun(ctx context.Context, tx *sql.Tx, call chat.ModelCall, r chat.Record) error {
+	_, err := tx.ExecContext(ctx, `UPDATE ai_runs SET status=?,output=?,error=?,finished_at=? WHERE run_id=?`, r.State, stringValue(r.Output), jsonValue(r.Error), timeValue(r.FinishedAt), r.RunID)
+	if err != nil {
+		return err
+	}
+	if r.Error != nil {
+		data, _ := json.Marshal(r.Error)
+		if err = appendChatEvent(ctx, tx, call, chat.Event{
+			Type: chat.EventError,
+			Data: data,
+		}); err != nil {
+			return err
+		}
+	}
+	data, _ := json.Marshal(chat.EndData{Status: r.State.Public()})
+	return appendChatEvent(ctx, tx, call, chat.Event{
+		Type: chat.EventEnd,
+		Data: data,
+	})
+}
+
+// Events 按持久化序号完整读取单条事件，多取一条判断是否有下一页。
+func (s *chatStore) Events(ctx context.Context, id string, after int64, limit int) (chat.EventPage, error) {
+	page := chat.EventPage{
+		Events:       []chat.Event{},
+		NextAfterSeq: after,
+	}
+	db, err := s.db.handle()
+	if err != nil {
+		return page, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT seq,type,data FROM ai_events WHERE run_id=? AND seq>? ORDER BY seq LIMIT ?`, id, after, limit+1)
+	if err != nil {
+		return page, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var e chat.Event
+		var data string
+		if err = rows.Scan(&e.ID, &e.Type, &data); err != nil {
+			return page, err
+		}
+		e.Data = json.RawMessage(data)
+		if len(page.Events) == limit {
+			page.HasMore = true
+			break
+		}
+		page.Events = append(page.Events, e)
+		page.NextAfterSeq = e.ID
+	}
+	return page, rows.Err()
+}
+
+// Active 扫描未完成运行，供 ready 前登记和后台处理。
+func (s *chatStore) Active(ctx context.Context) ([]chat.Record, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT run_id FROM ai_runs WHERE status IN ('running','wait_for_cancel') ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	result := []chat.Record{}
+	for _, id := range ids {
+		r, e := s.ReadRun(ctx, id, false)
+		if e != nil {
+			return nil, e
+		}
+		result = append(result, r)
+	}
+	return result, nil
+}

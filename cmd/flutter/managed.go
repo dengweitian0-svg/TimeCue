@@ -17,13 +17,14 @@ import (
 	"sync/atomic"
 
 	logger "github.com/dengweitian0-svg/TimeCue/internal/log"
-	"github.com/dengweitian0-svg/TimeCue/internal/service"
+	"github.com/dengweitian0-svg/TimeCue/internal/model"
 )
 
 const maxControlLine = 1024
 
 type startupOptions struct {
 	dataDir, instanceID string
+	port                int
 	managed             bool
 }
 
@@ -33,11 +34,20 @@ func parseStartup(args []string) (startupOptions, error) {
 	flags.SetOutput(io.Discard)
 	dataDir := flags.String("data-dir", "", "配置和运行文件目录，默认使用可执行文件目录")
 	instanceID := flags.String("instance-id", "", "父进程为本次启动提供的身份")
+	environment := flags.String("env", "release", "启动环境：test 或 release")
 	if err := flags.Parse(args); err != nil {
 		return startupOptions{}, err
 	}
 	if flags.NArg() != 0 {
 		return startupOptions{}, fmt.Errorf("unexpected positional arguments")
+	}
+	port := 10086
+	switch *environment {
+	case "test":
+		port = 1145
+	case "release":
+	default:
+		return startupOptions{}, fmt.Errorf("env must be test or release")
 	}
 	var hasDir, managed bool
 	flags.Visit(func(f *flag.Flag) {
@@ -78,15 +88,24 @@ func parseStartup(args []string) (startupOptions, error) {
 	if err != nil {
 		return startupOptions{}, fmt.Errorf("resolve data-dir: %w", err)
 	}
-	return startupOptions{dataDir: abs, instanceID: *instanceID, managed: managed}, nil
+	return startupOptions{
+		dataDir:    abs,
+		instanceID: *instanceID,
+		port:       port,
+		managed:    managed,
+	}, nil
 }
 
-func writeReady(output io.Writer, info service.RuntimeInfo) error {
+func writeReady(output io.Writer, info model.RuntimeInfo, port int) error {
 	return json.NewEncoder(output).Encode(struct {
 		Event string `json:"event"`
-		service.RuntimeInfo
+		model.RuntimeInfo
 		Address string `json:"address"`
-	}{Event: "ready", RuntimeInfo: info, Address: "http://127.0.0.1:10086"})
+	}{
+		Event:       "ready",
+		RuntimeInfo: info,
+		Address:     fmt.Sprintf("http://127.0.0.1:%d", port),
+	})
 }
 
 // parentControl 只拥有管道读取工作；结果在 done 关闭后读取，停止请求始终取消原 context。

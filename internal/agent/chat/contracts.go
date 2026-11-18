@@ -1,0 +1,446 @@
+package chat
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+
+	"github.com/dengweitian0-svg/TimeCue/internal/agent/tools"
+)
+
+// Status 是对外展示的运行状态。
+type Status string
+
+const (
+	StatusRunning   Status = "running"
+	StatusSucceeded Status = "succeeded"
+	StatusFailed    Status = "failed"
+	StatusCancelled Status = "cancelled"
+)
+
+// RunState 是内部状态；等待取消仍占用运行名额。
+type RunState string
+
+const (
+	StateRunning RunState = "running"
+	// StateRetryWait 用于逻辑模型调用，运行本身仍保持 running。
+	StateRetryWait     RunState = "retry_wait"
+	StateWaitForCancel RunState = "wait_for_cancel"
+	StateSucceeded     RunState = "succeeded"
+	StateFailed        RunState = "failed"
+	StateCancelled     RunState = "cancelled"
+)
+
+// Terminal 判断内部运行是否已经结束。
+func (s RunState) Terminal() bool {
+	return s == StateSucceeded || s == StateFailed || s == StateCancelled
+}
+
+// Public 返回 HTTP 展示状态。
+func (s RunState) Public() Status {
+	if s == StateWaitForCancel {
+		return StatusCancelled
+	}
+	return Status(s)
+}
+
+// EventType 是持久化事件类型。
+type EventType string
+
+const (
+	EventStart      EventType = "start"
+	EventThinking   EventType = "thinking"
+	EventText       EventType = "text"
+	EventError      EventType = "error"
+	EventEnd        EventType = "end"
+	EventToolStart  EventType = "tool_start"
+	EventToolResult EventType = "tool_result"
+	EventCompact    EventType = "compact"
+)
+
+var (
+	ErrInvalidRequest          = errors.New("invalid request")
+	ErrModelUnavailable        = errors.New("model configuration unavailable")
+	ErrRunNotFound             = errors.New("run not found")
+	ErrSessionNotFound         = errors.New("session not found")
+	ErrSessionDeleted          = errors.New("session deleted")
+	ErrSessionBusy             = errors.New("session already has a running run")
+	ErrSessionConcurrencyLimit = errors.New("session concurrency limit reached")
+	ErrIdempotencyConflict     = errors.New("idempotency key conflict")
+	ErrRunTerminal             = errors.New("run is terminal")
+	ErrStopping                = errors.New("chat service stopping")
+)
+
+// RunError 是模型或运行的公开错误，不包含上游密钥。
+type RunError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// CreateRunInput 保留客户端本轮原始输入和模型选择。
+type CreateRunInput struct {
+	SessionID      string
+	Input          string
+	Provider       string
+	Model          string
+	IdempotencyKey string
+}
+
+// Receipt 是固定四字段创建回执。
+type Receipt struct {
+	RunID   string    `json:"run_id"`
+	Status  Status    `json:"status"`
+	Output  *string   `json:"output"`
+	Error   *RunError `json:"error"`
+	created bool
+}
+
+// NewlyCreated 区分本次真正创建与幂等重放，不进入公开四字段 JSON。
+func (r Receipt) NewlyCreated() bool { return r.created }
+
+// Run 是固定十字段运行概况。
+type Run struct {
+	RunID      string     `json:"run_id"`
+	SessionID  string     `json:"session_id"`
+	Provider   string     `json:"provider"`
+	Model      string     `json:"model"`
+	Input      string     `json:"input"`
+	Status     Status     `json:"status"`
+	Output     *string    `json:"output"`
+	Error      *RunError  `json:"error"`
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+}
+
+// Record 将持久化内部状态与对外视图区分。
+type Record struct {
+	Run
+	State          RunState
+	IdempotencyKey string
+}
+
+// Receipt 构造首次创建或幂等重放的公开回执。
+func (r Record) Receipt(created bool) Receipt {
+	result := Receipt{
+		RunID:   r.RunID,
+		Status:  r.State.Public(),
+		created: created,
+	}
+	if r.State != StateRunning {
+		result.Output = r.Output
+		result.Error = r.Error
+	}
+	return result
+}
+
+// Session 是可见会话及按创建顺序排列的运行 ID。
+type Session struct {
+	SessionID   string   `json:"session_id"`
+	SessionName string   `json:"session_name"`
+	RunIDs      []string `json:"run_ids"`
+}
+
+// Event 的序号由持久化事务分配，SSE 与分页共用。
+type Event struct {
+	ID   int64           `json:"seq"`
+	Type EventType       `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
+// EventPage 是事件游标分页。
+type EventPage struct {
+	Events       []Event `json:"events"`
+	NextAfterSeq int64   `json:"next_after_seq"`
+	HasMore      bool    `json:"has_more"`
+}
+
+// StartData 表示运行开始。
+type StartData struct{}
+
+// ThinkingData 保存思考增量。
+type ThinkingData struct {
+	Content string `json:"content"`
+}
+
+// TextData 保存正文增量。
+type TextData struct {
+	Content string `json:"content"`
+}
+
+// EndData 只表达最终状态。
+type EndData struct {
+	Status Status `json:"status"`
+}
+
+// Subscription 的关闭只影响订阅，不影响运行。
+type Subscription struct {
+	Events <-chan Event
+	Close  func()
+}
+
+// ModelOption 是模型列表的公开条目。
+type ModelOption struct {
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	Available      bool   `json:"available"`
+	ConfigRevision string `json:"config_revision,omitempty"`
+}
+
+// ModelConfig 是一次请求使用的私有配置，密钥从不进入持久化输入。
+type ModelConfig struct {
+	Provider            string
+	ConfigRevision      string
+	Model               string
+	BaseURL             string
+	Key                 string
+	ContextWindow       int
+	MaxOutputTokens     int
+	MaxRetry            int
+	MaxRounds           int
+	MaxContinue         int
+	CompactThreshold    float64
+	FirstTimeout        time.Duration
+	IdleTimeout         time.Duration
+	ToolConcurrency     int
+	ToolTimeout         time.Duration
+	ToolMaxRetry        *int
+	ToolResultMaxTokens int
+}
+
+// Message 保存实际模型消息，包括已收到的思考内容。
+type Message struct {
+	Role             string          `json:"role"`
+	Content          string          `json:"content"`
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	ToolCalls        json.RawMessage `json:"tool_calls,omitempty"`
+	ToolCallID       string          `json:"tool_call_id,omitempty"`
+}
+
+// ModelRequest 是 Chat Completions 请求的结构化视图。
+type ModelRequest struct {
+	Model         string             `json:"model"`
+	Messages      []Message          `json:"messages"`
+	Stream        bool               `json:"stream"`
+	MaxTokens     int                `json:"max_tokens"`
+	StreamOptions map[string]bool    `json:"stream_options"`
+	Tools         []tools.Definition `json:"tools,omitempty"`
+}
+
+// PreparedRequest 持有已准备或从 SQLite 读取的最终正文，以及响应校验所需的请求视图。
+type PreparedRequest struct {
+	Body  string
+	Input ModelRequest
+}
+
+// ToolRequest 保存模型返回的单项工具请求。
+type ToolRequest = tools.ToolRequest
+
+// ToolFunction 保留模型提供的工具名称及参数原文。
+type ToolFunction = tools.ToolFunction
+
+// ToolCall 保存工具持久化事实。
+type ToolCall = tools.ToolCall
+
+// ToolStartData 保存公开工具开始事件，一个开始记录包含实际处理的调用。
+type ToolStartData struct {
+	Function []ToolStartFunction `json:"function"`
+}
+
+// ToolStartFunction 保存原调用身份及解析对象投影，不对外暴露非法参数片段。
+type ToolStartFunction struct {
+	ID       string          `json:"id"`
+	Name     string          `json:"name"`
+	Argument json.RawMessage `json:"argument"`
+}
+
+// ToolResultData 保存原调用的原始 JSON 结果和独立工具错误。
+type ToolResultData struct {
+	ToolCallID string          `json:"tool_call_id"`
+	Output     json.RawMessage `json:"output"`
+	Error      *RunError       `json:"error"`
+}
+
+// ToolRepository 将模型接纳、工具开始与逐个结果分别原子提交。
+type ToolRepository interface {
+	// AcceptResponse 保存完整模型结果、尾批及 model_call_end，提交后才启动工具。
+	AcceptResponse(context.Context, ModelCall) error
+	tools.BatchRepository[ModelCall]
+}
+
+// ModelOutput 保留结构化部分响应、完成原因和原始 usage。
+type ModelOutput struct {
+	ID           string          `json:"id"`
+	Message      Message         `json:"message"`
+	FinishReason string          `json:"finish_reason"`
+	Usage        json.RawMessage `json:"usage"`
+}
+
+// ValidateResponse 校验完整响应及本回复内的工具身份，供适配器和生命周期恢复共用。
+func (output ModelOutput) ValidateResponse() *RunError {
+	invalid := func() *RunError {
+		return &RunError{
+			Code:    "model_invalid_format",
+			Message: "模型请求或响应格式不受支持",
+		}
+	}
+	if output.FinishReason != "stop" && output.FinishReason != "tool_calls" && output.FinishReason != "length" {
+		return invalid()
+	}
+	var requests []ToolRequest
+	if len(output.Message.ToolCalls) > 0 && json.Unmarshal(output.Message.ToolCalls, &requests) != nil {
+		return invalid()
+	}
+	if output.FinishReason == "tool_calls" && len(requests) == 0 {
+		return invalid()
+	}
+	ids := map[string]bool{}
+	for _, request := range requests {
+		if request.ID == "" || ids[request.ID] || request.Type != "function" || request.Function.Name == "" {
+			return invalid()
+		}
+		ids[request.ID] = true
+	}
+	return nil
+}
+
+// ModelClient 在上游边界准备最终请求并执行可取消的流式调用。
+type ModelClient interface {
+	// PrepareRequest 按 provider 和请求模型准备最终正文，供预算、登记和发送共用。
+	PrepareRequest(provider string, input ModelRequest) (string, *RunError)
+	// Complete 通过上游端口读取真实模型响应及有效增量。
+	Complete(context.Context, ModelConfig, PreparedRequest, func(EventType, string) error) (ModelOutput, *RunError)
+}
+
+// ModelCall 保存调用开始或结束时需要原子提交的实际事实。
+type ModelCall struct {
+	ID        int64
+	RunID     string
+	SessionID string
+	Input     ModelRequest
+	// InputBody 保存本次逻辑调用的最终请求原文，直到调用结束都不重新编码。
+	InputBody    string
+	Output       *ModelOutput
+	savedOutput  *ModelOutput
+	State        RunState
+	Error        *RunError
+	MaxRetry     int
+	RetryCount   int
+	NextRetryAt  *time.Time
+	RetryHistory []ModelRetry
+	Continuation bool
+	// OutputPrefix 是从实际请求边界恢复的本轮已接纳正文，不单独写入数据库。
+	OutputPrefix string
+	// 进度字段是单一事实来源，由 progress.go 的完整操作生成，协调器仅采用成功提交的快照。
+	CheckpointStage   string
+	CheckpointContext []Message
+	CompletedTools    []string
+	LastTool          string
+	// PendingEvents 与调用快照一起提交，序号只在事务成功后对外可见。
+	PendingEvents []Event
+	// PendingTools 在事务失败后保留已取得的实际结果，随终态事务重试保存，不重新执行业务。
+	PendingTools []ToolCall
+}
+
+// ModelRetry 保存同一逻辑调用内一次已计划重试的时间、结果及故障原因。
+type ModelRetry struct {
+	Retry  int       `json:"retry"`
+	At     time.Time `json:"at"`
+	Result string    `json:"result"`
+	Cause  *RunError `json:"cause"`
+	Error  *RunError `json:"error"`
+}
+
+// RunRepository 管理运行准入、幂等回读与运行查询。
+type RunRepository interface {
+	// FindReplay 读取原请求回执并检查父会话是否删除。
+	FindReplay(context.Context, string, string) (Record, error)
+	// Create 原子创建会话、运行与开始事件。
+	Create(context.Context, Record) error
+	// ReadRun 读取运行内部状态，可要求父会话可见。
+	ReadRun(context.Context, string, bool) (Record, error)
+	// Active 扫描尚未结束的运行，供启动恢复登记。
+	Active(context.Context) ([]Record, error)
+	// RequestCancel 原子登记取消等待，返回实际状态，不覆盖已提交终态。
+	RequestCancel(context.Context, string) (RunState, error)
+}
+
+// SessionRepository 管理会话查询及软删除可见性。
+type SessionRepository interface {
+	// Session 查询会话名称和按顺序排列的运行 ID。
+	Session(context.Context, string) (Session, error)
+	// Sessions 按最近运行顺序读取可见会话 ID。
+	Sessions(context.Context) ([]string, error)
+	// Hide 同步软删除父会话，不删除执行事实。
+	Hide(context.Context, string) error
+}
+
+// ExecutionRepository 保存模型执行事实及其原子进度。
+type ExecutionRepository interface {
+	// History 从实际输入与模型输出组装有效消息。
+	History(context.Context, string) ([]Message, error)
+	// OrdinaryRequestBase 读取当前有效摘要之后首个普通请求的消息前缀。
+	OrdinaryRequestBase(context.Context, string, int64) (ModelRequest, error)
+	// OrdinaryCallCount 统计当前运行中非续写且不关联 compact 的逻辑模型调用。
+	OrdinaryCallCount(context.Context, string) (int, error)
+	// ContinuationCallCount 统计当前运行内全部逻辑续写，包含摘要续写。
+	ContinuationCallCount(context.Context, string) (int, error)
+	// BeginCall 原子保存请求 input、running 和 checkpoint。
+	BeginCall(context.Context, ModelCall) (int64, error)
+	// CompleteCompact 原子保存成功摘要、有效引用及下一普通调用或预算失败终态。
+	CompleteCompact(context.Context, ModelCall, *ModelCall, *Record) (ModelCall, error)
+	// ReadCall 读取当前逻辑调用的原请求与部分结果。
+	ReadCall(context.Context, string) (*ModelCall, error)
+	// Pause 保存正常退出时的部分响应，不推进终态。
+	Pause(context.Context, ModelCall) error
+	// SaveEvents 原子保存部分模型输出及待提交的原始事件批次。
+	SaveEvents(context.Context, ModelCall) error
+	// Finish 原子提交模型结果、usage、checkpoint、运行终态及尾部事件。
+	Finish(context.Context, ModelCall, Record) error
+}
+
+// EventRepository 只读查询持久化事件，不承担运行推进。
+type EventRepository interface {
+	// Events 按游标读取完整事件并返回下一页信息。
+	Events(context.Context, string, int64, int) (EventPage, error)
+}
+
+// Storage 分别装配运行、会话、模型执行、工具事务、事件及用量查询端口。
+type Storage struct {
+	Runs      RunRepository
+	Sessions  SessionRepository
+	Execution ExecutionRepository
+	Events    EventRepository
+	Tools     ToolRepository
+	Usage     UsageRepository
+}
+
+// ModelService 提供本地模型配置选项，不承担运行与会话用例。
+type ModelService interface {
+	// GetModels 读取提供方、模型及当前本地可用性。
+	GetModels(context.Context) ([]ModelOption, error)
+}
+
+// RunService 管理单次对话运行、取消与事件消费。
+type RunService interface {
+	// CreateRun 创建或重放一次对话运行。
+	CreateRun(context.Context, CreateRunInput) (Receipt, error)
+	// GetRun 查询运行的固定公开概况。
+	GetRun(context.Context, string) (Run, error)
+	// GetRunEvents 按游标分页读取原始持久化事件。
+	GetRunEvents(context.Context, string, int64, int) (EventPage, error)
+	// CancelRun 受理协作式取消并返回当前公开状态。
+	CancelRun(context.Context, string) (Status, error)
+	// Subscribe 订阅运行事件，关闭订阅不取消运行。
+	Subscribe(context.Context, string, int64) (*Subscription, error)
+}
+
+// SessionService 管理会话查询和软删除。
+type SessionService interface {
+	// GetSession 查询可见会话及有序运行 ID。
+	GetSession(context.Context, string) (Session, error)
+	// ListSessions 按最近运行顺序返回可见会话 ID。
+	ListSessions(context.Context) ([]string, error)
+	// DeleteSession 隐藏会话并请求停止后续推进。
+	DeleteSession(context.Context, string) error
+}

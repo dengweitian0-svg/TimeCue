@@ -26,21 +26,8 @@ func (s *ScheduleStore) ApplyScheduleChange(ctx context.Context, change model.Sc
 		return nil, err
 	}
 	if change.Key != "" {
-		var digest, result string
-		err = tx.QueryRowContext(ctx, `SELECT request_digest, result_json FROM schedule_write_receipts WHERE operation_key = ?`, change.Key).Scan(&digest, &result)
-		if err == nil {
-			if digest != change.Digest {
-				return nil, model.ErrIdempotencyConflict
-			}
-			var saved model.ScheduleWrite
-			if err = json.Unmarshal([]byte(result), &saved); err != nil {
-				return nil, err
-			}
-			saved.Replayed = true
-			return &saved, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
+		if saved, err := readScheduleReceipt(ctx, tx, change.Key, change.Digest); err != nil || saved != nil {
+			return saved, err
 		}
 	}
 	now := s.now().In(model.BeijingLocation())
@@ -168,6 +155,44 @@ func saveScheduleVersion(ctx context.Context, tx *sql.Tx, id int, now time.Time)
 
 // stopSchedule 保留删除之前的规则依据和到期文本，并永久停止旧投递。
 func (s *ScheduleStore) stopSchedule(ctx context.Context, id int, deleted bool) (*model.ScheduleWrite, error) {
+	return s.stopScheduleWithReceipt(ctx, id, deleted, nil)
+}
+
+// ApplyScheduleDelete 复用正式停止事务，在写锁内优先核对回执再检查版本。
+func (s *ScheduleStore) ApplyScheduleDelete(ctx context.Context, request model.ScheduleDelete) (*model.ScheduleWrite, error) {
+	return s.stopScheduleWithReceipt(ctx, request.ID, true, &request)
+}
+
+// ReadScheduleReceipt 使用独立 SELECT 核对原回执，未命中不写入任何记录。
+func (s *ScheduleStore) ReadScheduleReceipt(ctx context.Context, key, digest string) (*model.ScheduleWrite, error) {
+	db, err := s.db.handle()
+	if err != nil {
+		return nil, err
+	}
+	return readScheduleReceipt(ctx, db, key, digest)
+}
+
+func readScheduleReceipt(ctx context.Context, reader schemaReader, key, digest string) (*model.ScheduleWrite, error) {
+	var savedDigest, raw string
+	err := reader.QueryRowContext(ctx, `SELECT request_digest, result_json FROM schedule_write_receipts WHERE operation_key = ?`, key).Scan(&savedDigest, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if savedDigest != digest {
+		return nil, model.ErrIdempotencyConflict
+	}
+	var result model.ScheduleWrite
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return nil, err
+	}
+	result.Replayed = true
+	return &result, nil
+}
+
+func (s *ScheduleStore) stopScheduleWithReceipt(ctx context.Context, id int, deleted bool, request *model.ScheduleDelete) (*model.ScheduleWrite, error) {
 	db, err := s.db.handle()
 	if err != nil {
 		return nil, err
@@ -180,12 +205,20 @@ func (s *ScheduleStore) stopSchedule(ctx context.Context, id int, deleted bool) 
 	if _, err = tx.ExecContext(ctx, `UPDATE schedules SET revision = revision WHERE id = ?`, id); err != nil {
 		return nil, err
 	}
+	if request != nil {
+		if saved, err := readScheduleReceipt(ctx, tx, request.Key, request.Digest); err != nil || saved != nil {
+			return saved, err
+		}
+	}
 	current, err := scanSchedule(tx.QueryRowContext(ctx, scheduleSelect+` WHERE id = ?`, id))
 	if err != nil {
 		return nil, err
 	}
 	if current.Deleted {
 		return nil, ErrNotFound
+	}
+	if request != nil && current.Revision != request.ExpectedRevision {
+		return nil, model.ErrScheduleConflict
 	}
 	now := s.now().In(model.BeijingLocation())
 	if err = freezeDue(ctx, tx, id, now); err != nil {
@@ -204,13 +237,27 @@ func (s *ScheduleStore) stopSchedule(ctx context.Context, id int, deleted bool) 
 	if err = saveScheduleVersion(ctx, tx, id, now); err != nil {
 		return nil, err
 	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
 	after := *current
 	after.Deleted = deleted
 	after.Cancelled = current.Cancelled || !deleted
 	after.Revision++
 	after.UpdatedAt = now
-	return &model.ScheduleWrite{Schedule: &after, Before: current, EffectiveAt: now}, nil
+	result := &model.ScheduleWrite{
+		Schedule:    &after,
+		Before:      current,
+		EffectiveAt: now,
+	}
+	if request != nil {
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schedule_write_receipts(operation_key, request_digest, result_json) VALUES(?,?,?)`, request.Key, request.Digest, string(encoded)); err != nil {
+			return nil, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

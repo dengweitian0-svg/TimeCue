@@ -1,0 +1,1143 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:timecue_desktop/data/http_chat_gateway.dart';
+import 'package:timecue_desktop/features/chat/chat_view_model.dart';
+import 'package:timecue_desktop/features/chat/chat_message_list.dart';
+import 'package:timecue_desktop/features/chat/chat_content_segments.dart';
+import 'package:timecue_desktop/features/chat/chat_markdown_body.dart';
+
+void main() {
+  for (final prefix in ['Hello ', '中间正文\n\nHello ', '中间正文', 'Hello world']) {
+    testWidgets('历史分页补齐最终正文且不重复已读前缀：$prefix', (tester) async {
+      final fixture = (await tester.runAsync(_HistoryServer.open))!;
+      addTearDown(fixture.close);
+      fixture
+        ..finished = true
+        ..status = 'succeeded'
+        ..output = 'Hello world';
+      fixture.events.addAll([
+        _event(1, 'start', {}),
+        _event(2, 'text', {'content': prefix}),
+        _event(3, 'text', {
+          'content': prefix.endsWith('Hello ') ? 'world' : '',
+        }),
+        _event(4, 'end', {'status': 'succeeded'}),
+      ]);
+      await tester.runAsync(() async {
+        await fixture.model.loadHistory();
+        await fixture.model.loadMoreEvents('r');
+      });
+      final run = fixture.model.conversations.single.runs.single;
+      final expected = prefix.endsWith('Hello ')
+          ? '${prefix}world'
+          : prefix.endsWith('Hello world')
+          ? prefix
+          : '${prefix}Hello world';
+      Future<void> verify() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(body: ChatContentSegments(run: run)),
+          ),
+        );
+        final shown = tester
+            .widgetList<ChatMarkdownBody>(find.byType(ChatMarkdownBody))
+            .map((body) => body.data)
+            .join();
+        expect(shown, expected);
+        expect(run.rawText, 'Hello world');
+      }
+
+      await verify();
+      expect(run.segments.single.content, prefix, reason: '补齐只影响展示，不修改已读事实');
+      await tester.runAsync(() => fixture.model.loadMoreEvents('r'));
+      await verify();
+    });
+  }
+
+  testWidgets('历史思考分页已确认终态时折叠，续页合并且保留手动展开', (tester) async {
+    final fixture = (await tester.runAsync(_HistoryServer.open))!;
+    addTearDown(fixture.close);
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '答案';
+    fixture.events.addAll([
+      _event(1, 'thinking', {'content': '第一段'}),
+      _event(2, 'thinking', {'content': '第二段'}),
+      _event(3, 'thinking', {'content': '第三段'}),
+      _event(4, 'text', {'content': '答案'}),
+      _event(5, 'end', {'status': 'succeeded'}),
+    ]);
+    await tester.runAsync(() async {
+      await fixture.model.loadHistory();
+      await fixture.model.loadMoreEvents('r');
+    });
+    final run = fixture.model.conversations.single.runs.single;
+    expect(run.segments, hasLength(1));
+    expect(run.segments.single.completed, isTrue);
+    expect(run.segments.single.expanded, isFalse);
+    Widget content() => MaterialApp(
+      home: Scaffold(
+        body: ListenableBuilder(
+          listenable: fixture.model,
+          builder: (context, _) => ChatContentSegments(
+            run: run,
+            onToggleReasoning: (segment, expanded) =>
+                fixture.model.setSegmentExpanded(
+                  runId: 'r',
+                  segmentId: segment.id,
+                  expanded: expanded,
+                ),
+          ),
+        ),
+      ),
+    );
+    // HTTP 读取在真实异步区触发的通知先完成，再进入 Widget 假时钟。
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 30)),
+    );
+    await tester.pumpWidget(content());
+    expect(find.text('Thinking'), findsOneWidget);
+    expect(find.text('第一段第二段'), findsNothing);
+    await tester.tap(
+      find.byKey(const ValueKey('chat-reasoning-toggle-reasoning-1')),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('第一段第二段'), findsOneWidget);
+    expect(find.text('Thinking'), findsOneWidget);
+    await tester.runAsync(() => fixture.model.loadMoreEvents('r'));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 30)),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(run.segments.first.content, '第一段第二段第三段');
+    expect(run.segments.first.expanded, isTrue);
+    expect(find.text('第一段第二段第三段'), findsOneWidget);
+  });
+
+  test('终态概况先到且尾部补读失败时仍完成思考并保留手动选择', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    await fixture.model.loadHistory();
+    await _until(() => fixture.connections.isNotEmpty);
+    await fixture.send(_event(1, 'thinking', {'content': '已收到的思考'}));
+    final run = fixture.model.conversations.single.runs.single;
+    await _until(() => run.lastEventId == 1);
+    fixture.model.setSegmentExpanded(
+      runId: 'r',
+      segmentId: run.segments.single.id,
+      expanded: true,
+    );
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '答案'
+      ..pageFailures = 1;
+    await fixture.model.loadHistory(refresh: true);
+    expect(run.isTerminal, isTrue);
+    expect(run.eventsError, isNotNull);
+    expect(run.segments.single.completed, isTrue);
+    expect(run.segments.single.expanded, isTrue);
+  });
+
+  test('活动删除回执丢失后，刷新确认父会话不存在即隐藏并接续原 SSE 收尾', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    await fixture.model.loadHistory();
+    fixture.model.selectSession('s');
+    await _until(() => fixture.connections.isNotEmpty);
+    fixture.loseDeleteResponse = true;
+    expect(await fixture.model.deleteSession('s'), isFalse);
+    expect(fixture.model.historyConversations, hasLength(1));
+    await fixture.model.loadHistory(refresh: true);
+    expect(fixture.model.historyConversations, isEmpty);
+    expect(fixture.model.selectedConversation?.isLocal, isTrue);
+    expect(fixture.model.activeRunCount, 1);
+    await fixture.send(_event(7, 'end', {'status': 'cancelled'}));
+    await _until(() => fixture.model.activeRunCount == 0);
+    expect(fixture.hiddenReads, 1);
+  });
+  test('隐藏会话原连接断开后结束本地跟踪，不查询或重连隐藏运行', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    await fixture.model.loadHistory();
+    await _until(() => fixture.connections.isNotEmpty);
+    expect(await fixture.model.deleteSession('s'), isTrue);
+    expect(fixture.model.activeRunCount, 1);
+    await fixture.connections.single.close();
+    await _until(() => fixture.model.activeRunCount == 0);
+    expect(fixture.hiddenReads, 0);
+    expect(fixture.cursors, hasLength(1));
+  });
+  test('活动会话删除立即隐藏，原 SSE 收尾前保留占用且不再读取隐藏历史', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    await fixture.model.loadHistory();
+    fixture.model.selectSession('s');
+    await _until(() => fixture.connections.isNotEmpty);
+    expect(await fixture.model.deleteSession('s'), isTrue);
+    expect(fixture.model.historyConversations, isEmpty);
+    expect(fixture.model.selectedConversation?.isLocal, isTrue);
+    expect(fixture.model.activeRunCount, 1);
+    await fixture.send(_event(7, 'end', {'status': 'cancelled'}));
+    await _until(() => fixture.model.activeRunCount == 0);
+    expect(fixture.hiddenReads, 0);
+    await fixture.model.loadHistory();
+    expect(fixture.model.historyConversations, isEmpty);
+  });
+  testWidgets('T06 保留工具原值，预览和折叠详情隐藏内部字段', (tester) async {
+    final fixture = (await tester.runAsync(_HistoryServer.open))!;
+    addTearDown(fixture.close);
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '已核实真实会议（ID 1）'
+      ..pageSize = 100;
+    // 使用已通过 Apifox 验收的查询对象和解析失败协议形状。
+    fixture.events.addAll([
+      _event(1, 'start', {}),
+      _event(2, 'tool_start', {
+        'function': [
+          {
+            'id': 'lookup',
+            'name': 'get_schedule',
+            'argument': {'id': 1, 'expectedRevision': 2},
+          },
+        ],
+      }),
+      _event(3, 'tool_start', {
+        'function': [
+          {'id': 'bad', 'name': 'get_schedule', 'argument': null},
+        ],
+      }),
+      _event(4, 'tool_result', {
+        'tool_call_id': 'bad',
+        'output': null,
+        'error': {
+          'code': 'tool_argument_parse_error',
+          'message': '工具参数不是完整合法 JSON，未执行，请重新提供完整参数',
+        },
+      }),
+      _event(5, 'tool_result', {
+        'tool_call_id': 'lookup',
+        'output': {
+          'id': 1,
+          'name': '真实会议',
+          'revision': 1,
+          'rule': {'version': 2, 'open': false},
+        },
+        'error': null,
+      }),
+      _event(6, 'text', {'content': '已核实真实会议（ID 1）'}),
+      _event(7, 'end', {'status': 'succeeded'}),
+    ]);
+    await tester.runAsync(() async {
+      await fixture.model.loadHistory();
+      await fixture.model.loadMoreEvents('r');
+    });
+    final run = fixture.model.conversations.single.runs.single;
+    expect(run.error, isNull);
+    expect(fixture.model.conversations.single.summary, '已核实真实会议');
+    expect(run.toolCalls.first.output, {
+      'id': 1,
+      'name': '真实会议',
+      'revision': 1,
+      'rule': {'version': 2, 'open': false},
+    });
+    expect(run.toolCalls.last.argument, isNull);
+    expect(run.toolCalls.last.output, isNull);
+    expect(run.toolCalls.last.error?.code, 'tool_argument_parse_error');
+    Widget render() => MaterialApp(
+      home: Scaffold(
+        body: ChatMessageList(
+          sessionId: 's',
+          runs: [run],
+          initialOffset: 0,
+          initiallyFollowLatest: false,
+          onReadingPosition: (_, _) {},
+          onRetryCreate: (_) {},
+          onRetryConnection: (_) {},
+          onToggleReasoning: (_, segmentId, expanded) =>
+              run.setSegmentExpanded(segmentId, expanded),
+        ),
+      ),
+    );
+    await tester.pumpWidget(render());
+    await tester.tap(find.text('Thinking'));
+    await tester.pumpWidget(render());
+    await tester.tap(find.byKey(const ValueKey('chat-tool-call-list')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('已返回 · {"name":"真实会议"'), findsOneWidget);
+    expect(find.textContaining('结果：'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chat-tool-2:lookup')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('"状态": "已停用"'), findsOneWidget);
+    for (final field in [
+      'id',
+      'expectedRevision',
+      'revision',
+      'version',
+      'open',
+    ]) {
+      expect(find.textContaining('"$field"'), findsNothing);
+    }
+    expect(find.textContaining('工具 ID'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chat-tool-2:lookup')));
+    await tester.pumpAndSettle();
+    final failedTool = find.byKey(const ValueKey('chat-tool-3:bad'));
+    await tester.ensureVisible(failedTool);
+    await tester.tap(failedTool);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('工具参数不是完整合法 JSON'), findsOneWidget);
+    expect(find.textContaining('结果：\nnull'), findsOneWidget);
+  });
+
+  for (final failRecovery in [false, true]) {
+    test(
+      failRecovery
+          ? '取消终态补读失败后仍可分页重试，不重新订阅或占用名额'
+          : '活跃分页读到末尾后取消先确认终态，仍补齐未送达的尾批',
+      () async {
+        final fixture = await _HistoryServer.open();
+        addTearDown(fixture.close);
+        fixture.events.add(_event(1, 'start', {}));
+        final conversation = fixture.model.createLocalSession();
+        fixture.model.updateDraft('s', '问题');
+        await fixture.model.send('s', model: 'model', provider: 'test');
+        await _until(() => fixture.connections.isNotEmpty);
+        await fixture.send(fixture.events.first);
+        final run = conversation.runs.single;
+        await _until(() => run.lastEventId == 1);
+        await fixture.model.loadMoreEvents('r');
+        expect(run.hasMoreEvents, isFalse);
+        expect(run.isTerminal, isFalse);
+        fixture.events.addAll([
+          _event(2, 'text', {'content': '取消前的尾部正文'}),
+          _event(3, 'end', {'status': 'cancelled'}),
+        ]);
+        fixture
+          ..finished = true
+          ..status = 'cancelled'
+          ..output = '最终正文投影'
+          ..pageSize = 1
+          ..pageFailures = failRecovery ? 1 : 0;
+
+        await fixture.model.cancel('s');
+
+        expect(run.isTerminal, isTrue);
+        expect(fixture.model.activeRunCount, 0);
+        if (failRecovery) {
+          expect(run.eventsError, contains('历史稍后重试'));
+          expect(run.hasMoreEvents, isFalse);
+          expect(run.eventsLoading, isFalse);
+          await fixture.model.loadMoreEvents('r');
+          expect(run.hasMoreEvents, isTrue);
+          await fixture.model.loadMoreEvents('r');
+        }
+        await _until(
+          () => run.lastEventId == 3,
+          diagnostic: () =>
+              'seq=${run.lastEventId} hasMore=${run.hasMoreEvents} pages=${fixture.pageCursors}',
+        );
+        expect(run.timeline.map((e) => e.eventId), [1, 2, 3]);
+        expect(run.rawText, '最终正文投影');
+        expect(run.eventsError, isNull);
+        expect(run.hasMoreEvents, isFalse);
+        expect(fixture.model.activeRunCount, 0);
+        expect(fixture.pageCursors, [1, 1, 2]);
+        expect(fixture.cursors, [null]);
+      },
+    );
+  }
+
+  test('取消确认终态时分页尚未返回，尾批等待旧页应用后继续补齐', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture.events.add(_event(1, 'start', {}));
+    final conversation = fixture.model.createLocalSession();
+    fixture.model.updateDraft('s', '问题');
+    await fixture.model.send('s', model: 'model', provider: 'test');
+    await _until(() => fixture.connections.isNotEmpty);
+    await fixture.send(fixture.events.first);
+    final run = conversation.runs.single;
+    await _until(() => run.lastEventId == 1);
+    final oldPageGate = Completer<void>();
+    fixture.pageGate = oldPageGate;
+    addTearDown(() {
+      if (!oldPageGate.isCompleted) oldPageGate.complete();
+    });
+    final oldPage = fixture.model.loadMoreEvents('r');
+    await _until(() => fixture.pageCursors.isNotEmpty);
+    fixture.events.addAll([
+      _event(2, 'text', {'content': '尾部正文'}),
+      _event(3, 'end', {'status': 'cancelled'}),
+    ]);
+    fixture
+      ..finished = true
+      ..status = 'cancelled'
+      ..output = '最终正文投影';
+    final cancellation = fixture.model.cancel('s');
+    await _until(() => run.isTerminal);
+    expect(fixture.model.activeRunCount, 0);
+    expect(fixture.pageCursors, [1]);
+
+    oldPageGate.complete();
+    await Future.wait([oldPage, cancellation]);
+
+    expect(run.timeline.map((e) => e.eventId), [1, 2, 3]);
+    expect(run.lastEventId, 3);
+    expect(run.rawText, '最终正文投影');
+    expect(run.hasMoreEvents, isFalse);
+    expect(run.eventsLoading, isFalse);
+    expect(run.eventsError, isNull);
+    expect(fixture.pageCursors, [1, 1]);
+    expect(fixture.cursors, [null]);
+  });
+
+  test('活跃分页读到末尾后刷新先取得终态，仍补齐未送达的尾批', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture.events.add(_event(1, 'start', {}));
+    final conversation = fixture.model.createLocalSession();
+    fixture.model.updateDraft('s', '问题');
+    await fixture.model.send('s', model: 'model', provider: 'test');
+    await _until(() => fixture.connections.isNotEmpty);
+    await fixture.send(fixture.events.first);
+    final run = conversation.runs.single;
+    await _until(() => run.lastEventId == 1);
+    await fixture.model.loadMoreEvents('r');
+    expect(run.hasMoreEvents, isFalse);
+    expect(run.isTerminal, isFalse);
+    fixture.events.addAll([
+      _event(2, 'thinking', {'content': '未送达思考'}),
+      _event(3, 'text', {'content': '未送达正文'}),
+      _event(4, 'end', {'status': 'succeeded'}),
+    ]);
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '未送达正文';
+    await fixture.model.refreshSession('s');
+    await _until(() => run.lastEventId == 4);
+    expect(run.timeline.map((e) => e.eventId), [1, 2, 3, 4]);
+    expect(run.rawText, '未送达正文');
+    expect(fixture.cursors, [null]);
+  });
+
+  test('204 已确认结束，概况与历史同时失败仍释放运行占用', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture
+      ..noContent = true
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '最终投影'
+      ..snapshotFailures = 1
+      ..pageFailures = 1;
+    fixture.events.addAll([
+      _event(1, 'start', {}),
+      _event(2, 'text', {'content': '旧尝试'}),
+      _event(3, 'end', {'status': 'succeeded'}),
+    ]);
+    final conversation = fixture.model.createLocalSession();
+    fixture.model.updateDraft('s', '问题');
+    await fixture.model.send('s', model: 'model', provider: 'test');
+    final run = conversation.runs.single;
+    await _until(() => run.eventsError != null);
+    expect(run.isTerminal, isTrue);
+    expect(fixture.model.activeRunCount, 0);
+    expect(fixture.model.canSend('s'), isTrue);
+    expect(run.phase.name, 'recovering');
+    await fixture.model.loadMoreEvents('r');
+    expect(run.rawText, '最终投影');
+    expect(fixture.cursors, [null]);
+  });
+
+  test('分页应用失败只保留连续前缀，重连不用已下载页面的高位游标', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture.events.addAll([
+      _event(2, 'text', {'content': '甲'}),
+      _event(4, 'text', {'content': '丁'}),
+    ]);
+    final conversation = fixture.model.createLocalSession();
+    fixture.model.updateDraft('s', '问题');
+    await fixture.model.send('s', model: 'model', provider: 'test');
+    await _until(() => fixture.connections.isNotEmpty);
+    await fixture.send(_event(1, 'start', {}));
+    await fixture.send(_event(5, 'text', {'content': '末'}));
+    await _until(() => fixture.cursors.length == 2);
+    final run = conversation.runs.single;
+    expect(run.lastEventId, 2);
+    expect(run.rawText, '甲');
+    expect(run.timeline.map((e) => e.eventId), [1, 2]);
+    expect(fixture.cursors, [null, '2']);
+    fixture.events
+      ..clear()
+      ..addAll([
+        _event(3, 'text', {'content': '乙'}),
+        _event(4, 'text', {'content': '丁'}),
+        _event(5, 'text', {'content': '末'}),
+      ]);
+    await _until(() => fixture.connections.length == 2);
+    await fixture.send(_event(5, 'text', {'content': '末'}));
+    await _until(() => run.lastEventId == 5);
+    expect(run.rawText, '甲乙丁末');
+  });
+
+  test('204 后概况暂时失败可重读最终正文且不会重新订阅', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture
+      ..noContent = true
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '最终投影'
+      ..snapshotFailures = 1;
+    fixture.events.addAll([
+      _event(1, 'start', {}),
+      _event(2, 'text', {'content': '旧尝试'}),
+      _event(3, 'end', {'status': 'succeeded'}),
+    ]);
+    final conversation = fixture.model.createLocalSession();
+    fixture.model.updateDraft('s', '问题');
+    await fixture.model.send('s', model: 'model', provider: 'test');
+    await _until(() => conversation.runs.single.lastEventId == 3);
+    await fixture.model.loadMoreEvents('r');
+    expect(conversation.runs.single.rawText, '最终投影');
+    expect(conversation.runs.single.timeline, hasLength(3));
+    expect(fixture.cursors, [null]);
+  });
+
+  test('断线时概况已终态仍补齐未收到的尾部事件', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture.events.addAll([
+      _event(1, 'start', {}),
+      _event(2, 'text', {'content': '部分正文'}),
+      _event(3, 'error', {'code': 'model_network_error', 'message': '中断'}),
+      _event(4, 'end', {'status': 'failed'}),
+    ]);
+    final conversation = fixture.model.createLocalSession();
+    fixture.model.updateDraft('s', '问题');
+    await fixture.model.send('s', model: 'model', provider: 'test');
+    await _until(() => fixture.connections.isNotEmpty);
+    await fixture.send(fixture.events[0]);
+    await fixture.send(fixture.events[1]);
+    await _until(() => conversation.runs.single.lastEventId == 2);
+    fixture
+      ..finished = true
+      ..status = 'failed'
+      ..output = '部分正文'
+      ..error = {'code': 'model_network_error', 'message': '中断'};
+    await fixture.connections.last.close();
+    await _until(() => conversation.runs.single.lastEventId == 4);
+    expect(conversation.runs.single.timeline, hasLength(4));
+    expect(conversation.runs.single.rawText, '部分正文');
+    expect(fixture.cursors, [null]);
+  });
+
+  test('取消投影的创建重放必须查询概况后判定终态', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture
+      ..status = 'cancelled'
+      ..receiptStatus = 'cancelled';
+    final conversation = fixture.model.createLocalSession();
+    fixture.model.updateDraft('s', '问题');
+    await fixture.model.send('s', model: 'model', provider: 'test');
+    expect(conversation.runs.single.isTerminal, isFalse);
+    expect(conversation.runs.single.phase, ChatRunPhase.stopping);
+    expect(fixture.model.activeRunCount, 1);
+    await _until(() => fixture.connections.isNotEmpty);
+  });
+
+  testWidgets('只展示有序回复内容，工具参数结果和思考仍可折叠查看', (tester) async {
+    final fixture = (await tester.runAsync(_HistoryServer.open))!;
+    addTearDown(fixture.close);
+    const rawReply =
+        '保留正文\n\n'
+        '- **日程：** 打扫卫生（ID 2）\n'
+        '- **状态：** 周期规则已停用（open: false）\n'
+        '- **revision:** 2\n'
+        '- **日程 ID：** 2（version 1）\n'
+        '- **时间：** 每周五 20:00';
+    fixture
+      ..finished = true
+      ..status = 'failed'
+      ..output = rawReply
+      ..pageSize = 100;
+    fixture.error = {'code': 'model_network_error', 'message': '模型中断'};
+    fixture.events.addAll([
+      _event(1, 'start', {}),
+      _event(2, 'thinking', {'content': '可恢复的思考（ID 2）'}),
+      _event(3, 'tool_start', {
+        'function': [
+          {
+            'id': 'original-id',
+            'name': '查询日程',
+            'argument': {'date': '今天'},
+          },
+        ],
+      }),
+      _event(4, 'tool_result', {
+        'tool_call_id': 'original-id',
+        'output': ['原始结果', 7],
+        'error': null,
+      }),
+      _event(5, 'text', {'content': rawReply}),
+      _event(6, 'error', {'code': 'model_network_error', 'message': '模型中断'}),
+      _event(7, 'end', {'status': 'failed'}),
+    ]);
+    await tester.runAsync(() async {
+      await fixture.model.loadHistory();
+      await fixture.model.loadMoreEvents('r');
+    });
+    final run = fixture.model.conversations.single.runs.single;
+    Widget render() => MaterialApp(
+      home: Scaffold(
+        body: ChatMessageList(
+          sessionId: 's',
+          runs: [run],
+          initialOffset: 0,
+          initiallyFollowLatest: false,
+          onReadingPosition: (_, _) {},
+          onRetryCreate: (_) {},
+          onRetryConnection: (_) {},
+          onToggleReasoning: (_, segmentId, expanded) =>
+              run.setSegmentExpanded(segmentId, expanded),
+        ),
+      ),
+    );
+    await tester.pumpWidget(render());
+    expect(find.text('运行记录'), findsNothing);
+    expect(run.rawText, rawReply);
+    final reply = tester.widget<ChatMarkdownBody>(
+      find.byType(ChatMarkdownBody),
+    );
+    expect(
+      reply.data,
+      '保留正文\n\n'
+      '- **日程：** 打扫卫生\n'
+      '- **状态：** 周期规则已停用\n'
+      '- **时间：** 每周五 20:00',
+    );
+    expect(find.text('可恢复的思考'), findsNothing);
+    await tester.tap(find.text('Thinking'));
+    await tester.pumpWidget(render());
+    expect(find.text('可恢复的思考'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-tool-3:original-id')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chat-tool-call-list')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-tool-3:original-id')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('original-id'), findsNothing);
+    expect(find.text('已返回 · ["原始结果",7]'), findsOneWidget);
+    expect(find.textContaining('结果：\n'), findsOneWidget);
+    expect(find.textContaining('今天'), findsOneWidget);
+    expect(find.textContaining('模型中断'), findsWidgets);
+  });
+
+  testWidgets('历史消息自动翻页并在原有内容区展示思考和工具详情', (tester) async {
+    final fixture = (await tester.runAsync(_HistoryServer.open))!;
+    addTearDown(fixture.close);
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..pageSize = 100;
+    var seq = 0;
+    fixture.events.addAll([
+      _event(++seq, 'start', {}),
+      for (var i = 0; i < 100; i++) _event(++seq, 'thinking', {'content': '甲'}),
+      _event(++seq, 'tool_start', {
+        'function': [
+          {'id': 'first', 'name': '查询日程', 'argument': '今天'},
+        ],
+      }),
+      _event(++seq, 'tool_start', {
+        'function': [
+          {'id': 'second', 'name': '读取日程', 'argument': '明天'},
+        ],
+      }),
+      _event(++seq, 'tool_result', {
+        'tool_call_id': 'second',
+        'output': '第二项结果',
+        'error': null,
+      }),
+      _event(++seq, 'tool_result', {
+        'tool_call_id': 'first',
+        'output': '第一项结果',
+        'error': null,
+      }),
+      for (var i = 0; i < 153; i++) _event(++seq, 'thinking', {'content': '乙'}),
+      for (var i = 0; i < 64; i++) _event(++seq, 'text', {'content': '丙'}),
+      _event(++seq, 'end', {'status': 'succeeded'}),
+    ]);
+    await tester.runAsync(fixture.model.loadHistory);
+    final run = fixture.model.conversations.single.runs.single;
+    expect(fixture.pageCursors, isEmpty);
+    fixture.pageFailures = 1;
+    await tester.runAsync(
+      () => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ListenableBuilder(
+              listenable: fixture.model,
+              builder: (context, _) => ChatMessageList(
+                sessionId: 's',
+                runs: [run],
+                initialOffset: 0,
+                initiallyFollowLatest: false,
+                onReadingPosition: (_, _) {},
+                onRetryCreate: (_) {},
+                onRetryConnection: (_) {},
+                onToggleReasoning: (runId, segmentId, expanded) =>
+                    fixture.model.setSegmentExpanded(
+                      runId: runId,
+                      segmentId: segmentId,
+                      expanded: expanded,
+                    ),
+                onLoadHistory: (id) =>
+                    fixture.model.loadMoreEvents(id, all: true),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    Future<void> open(Finder item) async {
+      await tester.ensureVisible(item);
+      await tester.tap(item);
+      await tester.pumpAndSettle();
+    }
+
+    await tester.runAsync(() async {
+      await _until(() => run.eventsError != null);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    });
+    await tester.pump();
+    expect(find.textContaining('历史内容读取失败'), findsOneWidget);
+    await tester.runAsync(() async {
+      await tester.tap(find.text('重试'));
+      await _until(() => !run.eventsLoading && run.lastEventId == seq);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    });
+    await tester.pumpAndSettle();
+    expect(run.hasMoreEvents, isFalse);
+    expect(run.timeline, hasLength(seq));
+    expect(run.segments.map((segment) => segment.kind), [
+      ChatSegmentKind.reasoning,
+      ChatSegmentKind.tool,
+      ChatSegmentKind.reasoning,
+      ChatSegmentKind.text,
+    ]);
+    expect(find.text('运行记录'), findsNothing);
+    expect(find.textContaining('历史内容读取失败'), findsNothing);
+    final reasoning = find.text('Thinking');
+    expect(reasoning, findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-tool-call-list')), findsNothing);
+    await open(reasoning);
+    expect(find.text(List.filled(100, '甲').join()), findsOneWidget);
+    expect(find.text(List.filled(153, '乙').join()), findsOneWidget);
+    expect(find.text('查询日程'), findsNothing);
+    await open(find.text('Tool calling · 已发起 2 次调用'));
+    await open(find.text('查询日程'));
+    expect(find.text('参数：\n"今天"'), findsOneWidget);
+    expect(find.text('结果：\n"第一项结果"'), findsOneWidget);
+    await open(find.text('读取日程'));
+    expect(find.text('参数：\n"明天"'), findsOneWidget);
+    expect(find.text('结果：\n"第二项结果"'), findsOneWidget);
+    expect(find.text(List.filled(64, '丙').join()), findsOneWidget);
+  });
+
+  test('工具跨回复复用 ID 时按开始 seq 建立实例并保留参数和原始 JSON 结果', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '结果'
+      ..pageSize = 100;
+    fixture.events.addAll([
+      _event(1, 'start', {}),
+      _event(2, 'tool_start', {
+        'function': [
+          {
+            'id': 'same',
+            'name': '查询日程',
+            'argument': {'date': '今天'},
+          },
+        ],
+      }),
+      _event(3, 'tool_result', {
+        'tool_call_id': 'same',
+        'output': ['原始结果', 7],
+        'error': null,
+      }),
+      _event(4, 'tool_start', {
+        'function': [
+          {'id': 'same', 'name': '更新日程', 'argument': null},
+        ],
+      }),
+      _event(5, 'tool_result', {
+        'tool_call_id': 'same',
+        'output': false,
+        'error': {'code': 'tool_argument_parse_error', 'message': '参数截断'},
+      }),
+      _event(6, 'end', {'status': 'succeeded'}),
+    ]);
+    await fixture.model.loadHistory();
+    await fixture.model.loadMoreEvents('r');
+    final calls = fixture.model.conversations.single.runs.single.toolCalls;
+    expect(calls, hasLength(2));
+    expect(calls.map((c) => c.id), ['same', 'same']);
+    expect(calls.map((c) => c.startSeq), [2, 4]);
+    expect(calls.first.argument, {'date': '今天'});
+    expect(calls.first.output, ['原始结果', 7]);
+    expect(calls.first.hasResult, isTrue);
+    expect(calls.last.argument, isNull);
+    expect(calls.last.output, isFalse);
+    expect(calls.last.error?.code, 'tool_argument_parse_error');
+  });
+
+  test('重新打开取消收尾中的运行继续订阅，error 不提前释放名额', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture.status = 'cancelled';
+    await fixture.model.loadHistory();
+    final run = fixture.model.conversations.single.runs.single;
+    expect(run.isTerminal, isFalse);
+    expect(run.phase, ChatRunPhase.stopping);
+    expect(fixture.model.activeRunCount, 1);
+    await _until(() => fixture.connections.isNotEmpty);
+    await fixture.send(_event(1, 'start', {}));
+    await fixture.send(
+      _event(2, 'error', {'code': 'cleanup_error', 'message': '继续收尾'}),
+    );
+    await _until(() => run.lastEventId == 2);
+    expect(run.isTerminal, isFalse);
+    expect(fixture.model.activeRunCount, 1);
+    fixture
+      ..finished = true
+      ..status = 'cancelled';
+    await fixture.send(_event(3, 'end', {'status': 'cancelled'}));
+    await _until(() => run.isTerminal);
+    expect(fixture.model.activeRunCount, 0);
+  });
+
+  test('历史按需翻页且重建模型不会复用没有展示状态的孤立游标', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture
+      ..finished = true
+      ..status = 'succeeded'
+      ..output = '最终正文';
+    fixture.events.addAll([
+      _event(1, 'start', {}),
+      _event(2, 'thinking', {'content': '只在事件中保留'}),
+      _event(3, 'text', {'content': '旧尝试'}),
+      _event(4, 'compact', {}),
+      _event(5, 'text', {'content': '最终正文'}),
+      _event(6, 'end', {'status': 'succeeded'}),
+    ]);
+    await fixture.model.loadHistory();
+    final run = fixture.model.conversations.single.runs.single;
+    expect(run.lastEventId, 0);
+    await fixture.model.loadMoreEvents('r');
+    expect(run.lastEventId, 2);
+    expect(run.hasMoreEvents, isTrue);
+    expect(run.timeline, hasLength(2));
+    expect(run.rawText, '最终正文');
+    await fixture.model.loadMoreEvents('r');
+    expect(run.lastEventId, 4);
+    final reopened = ChatViewModel(gateway: fixture.gateway);
+    addTearDown(reopened.dispose);
+    await reopened.loadHistory();
+    final fresh = reopened.conversations.single.runs.single;
+    expect(fresh.lastEventId, 0);
+    expect(fresh.timeline, isEmpty);
+    await reopened.loadMoreEvents('r');
+    expect(fixture.pageCursors, [0, 2, 0]);
+    expect(fresh.lastEventId, 2);
+  });
+
+  test('204 补齐完整原始时间线，重发事件不混入最终正文且不再重连', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture
+      ..noContent = true
+      ..finished = true
+      ..status = 'failed'
+      ..output = '本次正文'
+      ..error = {'code': 'model_network_error', 'message': '中断'};
+    fixture.events.addAll([
+      _event(1, 'start', {}),
+      _event(2, 'thinking', {'content': '旧思考'}),
+      _event(3, 'text', {'content': '旧尝试正文'}),
+      _event(4, 'compact', {}),
+      _event(5, 'text', {'content': '本次正文'}),
+      _event(6, 'error', {'code': 'model_network_error', 'message': '中断'}),
+      _event(7, 'end', {'status': 'failed'}),
+    ]);
+    final conversation = fixture.model.createLocalSession();
+    fixture.model.updateDraft('s', '问题');
+    await fixture.model.send('s', model: 'model', provider: 'test');
+    await _until(() => conversation.runs.single.lastEventId == 7);
+    final run = conversation.runs.single;
+    expect(run.timeline.map((e) => e.eventId), [1, 2, 3, 4, 5, 6, 7]);
+    expect(run.rawText, '本次正文');
+    expect(run.error, '中断');
+    expect(run.isTerminal, isTrue);
+    expect(fixture.pageCursors, [0, 2, 4, 6]);
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(fixture.cursors, [null]);
+  });
+
+  test('SSE 缺口先从分页补齐，再连续应用重叠事件', () async {
+    final fixture = await _HistoryServer.open();
+    addTearDown(fixture.close);
+    fixture.events.addAll([
+      _event(1, 'start', {}),
+      _event(2, 'text', {'content': '甲'}),
+      _event(3, 'text', {'content': '乙'}),
+      _event(4, 'text', {'content': '丙'}),
+      _event(5, 'text', {'content': '丁'}),
+    ]);
+    final model = fixture.model;
+    final conversation = model.createLocalSession();
+    model.updateDraft('s', '问题');
+    await model.send('s', model: 'model', provider: 'test');
+    await _until(() => fixture.connections.isNotEmpty);
+    await fixture.send(fixture.events[0]);
+    await fixture.send(fixture.events[4]);
+    await _until(
+      () => conversation.runs.single.lastEventId == 5,
+      diagnostic: () =>
+          'seq=${conversation.runs.single.lastEventId} error=${conversation.runs.single.error} pages=${fixture.pageCursors} connections=${fixture.cursors}',
+    );
+    expect(conversation.runs.single.rawText, '甲乙丙丁');
+    expect(fixture.pageCursors, [1, 3]);
+    expect(fixture.cursors, [null]);
+  });
+}
+
+Map<String, Object?> _event(int seq, String type, Map<String, Object?> data) =>
+    {'seq': seq, 'type': type, 'data': data};
+
+Future<void> _until(
+  bool Function() predicate, {
+  String Function()? diagnostic,
+}) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 3));
+  while (!predicate()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('等待公开展示状态超时 ${diagnostic?.call() ?? ''}');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+class _HistoryServer {
+  _HistoryServer(this.server) {
+    client = _RealHttpOverrides().createHttpClient(null)
+      ..findProxy = (_) => 'DIRECT';
+    gateway = HttpChatGateway(
+      baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+      client: client,
+    );
+    model = ChatViewModel(
+      gateway: gateway,
+      createSessionId: () => 's',
+      createIdempotencyKey: () => 'key',
+      retryDelay: (_) => const Duration(milliseconds: 10),
+    );
+    server.listen((request) => unawaited(_handle(request)));
+  }
+
+  static Future<_HistoryServer> open() async =>
+      _HistoryServer(await HttpServer.bind(InternetAddress.loopbackIPv4, 0));
+
+  final HttpServer server;
+  late final HttpClient client;
+  late final HttpChatGateway gateway;
+  late final ChatViewModel model;
+  final events = <Map<String, Object?>>[];
+  final connections = <HttpResponse>[];
+  final cursors = <String?>[];
+  final pageCursors = <int>[];
+  bool noContent = false;
+  bool finished = false;
+  String status = 'running';
+  String receiptStatus = 'running';
+  String? output;
+  Map<String, Object?>? error;
+  Completer<void>? pageGate;
+  int pageSize = 2;
+  int snapshotFailures = 0;
+  int pageFailures = 0;
+  bool deleted = false;
+  bool loseDeleteResponse = false;
+  int hiddenReads = 0;
+
+  Future<void> _handle(HttpRequest request) async {
+    final response = request.response;
+    try {
+      response.headers.contentType = ContentType.json;
+      if (request.uri.path == '/v1/session/s' && request.method == 'DELETE') {
+        deleted = true;
+        if (loseDeleteResponse) {
+          response.statusCode = 500;
+          response.write(
+            jsonEncode({
+              'error': {'code': 'internal_error', 'message': '删除回执丢失'},
+            }),
+          );
+          await response.close();
+          return;
+        }
+        response.write(jsonEncode({'session_id': 's', 'status': 'deleted'}));
+        await response.close();
+        return;
+      }
+      if (deleted &&
+          (request.uri.path.startsWith('/v1/run/r') ||
+              request.uri.path == '/v1/session/s')) {
+        hiddenReads++;
+        final missingSession = request.uri.path == '/v1/session/s';
+        response.statusCode = missingSession ? 400 : 404;
+        response.write(
+          jsonEncode({
+            'error': {
+              'code': missingSession ? 'session_not_found' : 'run_not_found',
+              'message': '已隐藏',
+            },
+          }),
+        );
+        await response.close();
+        return;
+      }
+      switch (request.uri.path) {
+        case '/v1/run':
+          await request.drain<void>();
+          response.statusCode = 202;
+          response.write(
+            jsonEncode({
+              'run_id': 'r',
+              'status': receiptStatus,
+              'output': null,
+              'error': null,
+            }),
+          );
+        case '/v1/run/r':
+          if (snapshotFailures > 0) {
+            snapshotFailures--;
+            response.statusCode = 500;
+            response.write(
+              jsonEncode({
+                'error': {'code': 'internal_error', 'message': '稍后重试'},
+              }),
+            );
+            break;
+          }
+          response.write(
+            jsonEncode({
+              'run_id': 'r',
+              'session_id': 's',
+              'provider': 'test',
+              'model': 'model',
+              'input': '问题',
+              'status': status,
+              'output': output,
+              'error': error,
+              'created_at': '2026-10-27T10:00:00+08:00',
+              'finished_at': finished ? '2026-10-27T10:01:00+08:00' : null,
+            }),
+          );
+        case '/v1/run/r/cancel':
+          await request.drain<void>();
+          response.write(jsonEncode({'run_id': 'r', 'status': status}));
+        case '/v1/session':
+          response.write(
+            jsonEncode({
+              'sessions': deleted ? <String>[] : ['s'],
+            }),
+          );
+        case '/v1/session/s':
+          response.write(
+            jsonEncode({
+              'session_id': 's',
+              'session_name': '会话',
+              'run_ids': ['r'],
+            }),
+          );
+        case '/v1/run/r/events':
+          if (pageFailures > 0) {
+            pageFailures--;
+            response.statusCode = 500;
+            response.write(
+              jsonEncode({
+                'error': {'code': 'internal_error', 'message': '历史稍后重试'},
+              }),
+            );
+            break;
+          }
+          final after = int.parse(
+            request.uri.queryParameters['after_seq'] ?? '0',
+          );
+          pageCursors.add(after);
+          final selected = events
+              .where((e) => (e['seq']! as int) > after)
+              .toList();
+          final page = selected.take(pageSize).toList();
+          await pageGate?.future;
+          response.write(
+            jsonEncode({
+              'events': page,
+              'next_after_seq': page.isEmpty ? after : page.last['seq'],
+              'has_more': selected.length > page.length,
+            }),
+          );
+        case '/v1/run/r/event':
+          cursors.add(request.headers.value('Last-Event-ID'));
+          if (noContent) {
+            response.statusCode = 204;
+            break;
+          }
+          response.headers.contentType = ContentType('text', 'event-stream');
+          response.bufferOutput = false;
+          response.write(': ready\n\n');
+          await response.flush();
+          connections.add(response);
+          return;
+        default:
+          response.statusCode = 404;
+      }
+      await response.close();
+    } catch (_) {
+      // 页面释放时允许传输被主动关闭，不修改夹具中的运行状态。
+    }
+  }
+
+  Future<void> send(Map<String, Object?> event) async {
+    connections.last.add(
+      utf8.encode(
+        'id: ${event['seq']}\nevent: ${event['type']}\ndata: ${jsonEncode(event['data'])}\n\n',
+      ),
+    );
+    await connections.last.flush();
+  }
+
+  Future<void> close() async {
+    model.dispose();
+    gateway.dispose();
+    client.close(force: true);
+    await server.close(force: true);
+  }
+}
+
+class _RealHttpOverrides extends HttpOverrides {}

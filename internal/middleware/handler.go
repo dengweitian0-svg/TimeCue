@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,11 +17,14 @@ type HTTPResult struct {
 	Status  int
 	Headers http.Header
 	Body    any
+	Stream  Stream
 	Cause   error
 	// LogFields 保存已完成业务操作的素材，即使响应失败也必须保留。
 	LogFields []slog.Attr
 	// SuccessMessage 仅在 HTTP 正常完成时覆盖成功消息。
 	SuccessMessage string
+	// LogLevel 覆盖成功响应的默认日志级别，例如终态取消请求仍记录 Warning。
+	LogLevel *slog.Level
 }
 
 // HTTPHandler 读取请求并返回结果，不直接写响应或日志。
@@ -32,14 +36,17 @@ type APIError struct {
 	Message string `json:"message"`
 }
 
+// ErrorResponse 是对外错误响应结构。
 type ErrorResponse struct {
 	Error APIError `json:"error"`
 }
 
+// DataResponse 为需要 data 包装的旧式响应提供通用结构。
 type DataResponse[T any] struct {
 	Data T `json:"data"`
 }
 
+// JSONResult 创建直接返回 JSON 对象的响应结果。
 func JSONResult(status int, body any) HTTPResult {
 	return HTTPResult{
 		Status: status,
@@ -47,6 +54,7 @@ func JSONResult(status int, body any) HTTPResult {
 	}
 }
 
+// DataResult 创建带 data 字段包装的 JSON 响应结果。
 func DataResult[T any](status int, data T) HTTPResult {
 	return JSONResult(status, DataResponse[T]{
 		Data: data,
@@ -64,6 +72,7 @@ func ErrorResult(status int, detail APIError, cause error) HTTPResult {
 	}
 }
 
+// NoContentResult 创建不带响应体的 204 结果。
 func NoContentResult() HTTPResult {
 	return HTTPResult{
 		Status: http.StatusNoContent,
@@ -73,6 +82,7 @@ func NoContentResult() HTTPResult {
 // HTTPResultFields 由 API 层注册，仅提取允许记录的结果事实。
 type HTTPResultFields func(*gin.Context, HTTPResult) []slog.Attr
 
+// WrapHTTPHandler 将业务处理函数包装为 Gin handler，并通过统一出口写入结果。
 func WrapHTTPHandler(handler HTTPHandler, fields HTTPResultFields) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		WriteHTTPResult(c, handler(c), fields)
@@ -88,9 +98,12 @@ func internalErrorResult(cause error) HTTPResult {
 
 // WriteHTTPResult 是响应的唯一出口，先序列化和收集素材，再提交响应。
 func WriteHTTPResult(c *gin.Context, result HTTPResult, fields HTTPResultFields) {
+	if result.Stream != nil {
+		defer result.Stream.Close()
+	}
 	// 在序列化和响应检查前保存业务事实，后续失败不撤销已提交的事务。
 	setHTTPLogDetails(c, httpLogDetails{
-		Fields: result.LogFields, SuccessMessage: result.SuccessMessage,
+		Fields: result.LogFields, SuccessMessage: result.SuccessMessage, LogLevel: result.LogLevel,
 	})
 	if c.Writer.Written() {
 		setHTTPLogDetails(c, httpLogDetails{
@@ -109,7 +122,7 @@ func WriteHTTPResult(c *gin.Context, result HTTPResult, fields HTTPResultFields)
 	})
 
 	var body []byte
-	if result.Status != http.StatusNoContent && result.Status != http.StatusNotModified {
+	if result.Stream == nil && result.Status != http.StatusNoContent && result.Status != http.StatusNotModified {
 		var err error
 		body, err = json.Marshal(result.Body)
 		if err != nil {
@@ -143,6 +156,10 @@ func WriteHTTPResult(c *gin.Context, result HTTPResult, fields HTTPResultFields)
 		c.Abort()
 		return
 	}
+	if result.Stream != nil {
+		writeHTTPStream(c, result)
+		return
+	}
 	for name, values := range result.Headers {
 		c.Writer.Header().Del(name)
 		for _, value := range values {
@@ -166,5 +183,42 @@ func WriteHTTPResult(c *gin.Context, result HTTPResult, fields HTTPResultFields)
 			})
 			c.Abort()
 		}
+	}
+}
+
+func writeHTTPStream(c *gin.Context, result HTTPResult) {
+	for name, values := range result.Headers {
+		c.Writer.Header().Del(name)
+		for _, value := range values {
+			c.Writer.Header().Add(name, value)
+		}
+	}
+	if c.Writer.Header().Get("Content-Type") == "" {
+		c.Writer.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	}
+	// 先剥离 Gin writer，避免其 Flush 丢弃底层 FlushError。
+	var responseWriter http.ResponseWriter = c.Writer
+	if unwrapper, ok := responseWriter.(interface{ Unwrap() http.ResponseWriter }); ok {
+		responseWriter = unwrapper.Unwrap()
+	}
+	controller := http.NewResponseController(responseWriter)
+	// 全局服务器 WriteTimeout 不应在长连接建立时预先耗尽。
+	if err := controller.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		c.Writer.Header().Del("Content-Type")
+		WriteHTTPResult(c, internalErrorResult(err), nil)
+		c.Abort()
+		return
+	}
+	c.Status(result.Status)
+	c.Writer.WriteHeaderNow()
+	flush := func() error { return controller.Flush() }
+	if err := flush(); err != nil {
+		setHTTPLogDetails(c, httpLogDetails{Error: err})
+		c.Abort()
+		return
+	}
+	if err := result.Stream.Write(c.Request.Context(), c.Writer, flush); err != nil {
+		setHTTPLogDetails(c, httpLogDetails{Error: err})
+		c.Abort()
 	}
 }

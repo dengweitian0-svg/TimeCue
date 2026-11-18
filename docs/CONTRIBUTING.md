@@ -38,15 +38,17 @@ TimeCue 采用 `main + dev` 双主干模式：
 
 ## 模块文档同步
 
-- 如果更改了某个模块的内容，必须在对应模块的 `AGENTS.md` 中同步更新本次更改涉及的职责、结构、约束或行为说明；如果对应模块尚无 `AGENTS.md`，必须一并创建。
+项目级工程约束见[根 AGENTS.md](../AGENTS.md)。
+
+- 模块结构、职责归属或关键工程约束变化时，同步对应的 `AGENTS.md`。父目录索引子模块，存在直属代码时补充该代码的职责。全局约束集中在根目录，模块专属约束就近维护。接口、运行行为和验证细节更新到对应的契约、工程说明或测试。
 
 ## 版本发布流程
 
-Windows 完整包使用 `scripts/build-release.ps1`，版本来自 desktop/pubspec.yaml；产物包含完整 Flutter 目录、timecue-core.exe、update.py、发行说明、校验清单和 ZIP。dev PR 的 CI 保存同轮发行产物，手动 Windows Release Package 工作流使用 Flutter stable 和 Python 3.11 进行全量验证与打包，不自动创建 Tag/Release。发布前按 docs/RELEASE.md 检查首次运行、重启数据、更新、迁移备份和系统交互；本地 master SDK 通过不能替代 stable CI。
+Windows 完整包由 [build-release.ps1](../scripts/build-release.ps1) 构建，版本取自 `desktop/pubspec.yaml`。发布前按[发行说明](RELEASE.md)验证首次运行、重启数据、更新、迁移备份和系统交互。自动构建的触发条件见下方 CI 规则。
 
 当 `dev` 中的修改已经达到一个可发布版本，并完成必要验证后：
 
-1. 创建 `dev → main` 的 Pull Request。
+1. 由授权发布负责人创建 `dev → main` 的 Pull Request。
 2. 确认版本内容和 CI / 手动验证结果。
 3. 合并到 `main`。
 4. 根据需要创建 Tag 和 GitHub Release。
@@ -113,17 +115,24 @@ git switch -c feat/12-recurring-reminder
 
 ## CI 规则
 
-向 `dev` 或 `main` 提交 Pull Request 时，`.github/workflows/ci.yml` 的 Go 和 Flutter 检查均运行在 Windows runner，与应用目标平台一致。Go 工作流脚本使用 PowerShell；Flutter 工程位于 `desktop/`。Python 更新脚本测试使用 Python 3.11 和标准库，不安装额外包。
+| 触发条件 | 工作流 | 检查 |
+| --- | --- | --- |
+| `dev` PR | [ci.yml](../.github/workflows/ci.yml) | 按路径运行 Go、Flutter 和 Python 检查。纯文档只做分类。 |
+| `main` PR | [ci.yml](../.github/workflows/ci.yml) | 完整检查，并构建 Windows Release、运行原生 CTest、打包。 |
+| `dev` 非纯文档推送或手动触发 | [dev-integration.yml](../.github/workflows/dev-integration.yml) | Windows 集成构建、原生 CTest、验收脚本回归和发行包 smoke。 |
+| 手动发布打包 | [release-package.yml](../.github/workflows/release-package.yml) | 构建并验证发行包，上传 ZIP 和校验值。发布负责人可按需创建 Tag 和 GitHub Release。 |
 
-- Go：`gofmt`、`go vet ./...`、`go test -p 1 ./...`；固定业务端口的跨包测试串行运行。
-- Flutter：CI 固定 Flutter 3.47.0，保留本机 master SDK；运行 `flutter pub get`、`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`，通知插件及传递依赖提交 lockfile。
-- Python：在仓库根目录运行 `python -m unittest discover -s scripts -p test_update.py -v`，覆盖发行清单更新与安装路径登记逻辑。
-- Windows 构建：`flutter build windows --release`，Go 需安装并在 PATH；Windows CMake 每次构建都会编译 Go 服务并安装到 runner 旁，发行包默认托管同目录 Go。开发默认使用 managed；独立后端联调显式指定 backend=external。在 desktop 执行 `cmake -S test/native -B build/desktop-native -A x64`、`cmake --build build/desktop-native --config Release` 和 `ctest --test-dir build/desktop-native -C Release --output-on-failure` 验证原生单实例、IPC、自有进程、Job 清理和安装目录登记。
-- 本地运行：在 `desktop/` 执行 `flutter run -d windows --debug -a --backend=managed -a --data-dir=<仓库绝对目录>`，Flutter 会启动同目录 Go 服务；已有实例切换 backend 前需完整退出，Go 源码更改需退出并重新运行 Flutter，热重载不会重建 Go。独立后端联调可先在根目录运行 `go run ./cmd/flutter --data-dir .`，再指定 backend=external；视觉示例显式添加 `--dart-define=TIMECUE_DEMO=true`。
-CI 通过后再合并 PR。
+PR 分类在 Ubuntu 上运行，按文件路径选择检查。遇到未知非文档路径或文件数达到 3000 时运行全部检查。分支保护沿用 `Go Windows Checks` 和 `Flutter Windows Checks`，在 Windows 执行。路径跳过在 GitHub 中显示为 skipped。
+
+- Go 使用 `gofmt`、`go vet ./...` 和 `go test -p 1 ./...`。测试使用固定端口，跨包串行运行。格式检查统一 CRLF/LF 后比较 `gofmt` 输出。
+- Flutter CI 固定 stable 3.47.0，在 `desktop/` 运行依赖安装、格式检查、分析和测试。依赖更新时提交 lockfile。
+- 更新脚本检查使用 Python 3.11，命令为 `python -m unittest discover -s scripts -p test_update.py -v`。`dev` PR 中仅变更 `scripts/` 下的 Python 文件时，只触发对应检查。
+- 发行包 smoke 使用隔离数据验证空聊天会话、日程重启持久化、重复启动及自有 Go 的崩溃回收。遇到 `Low Mandatory Level` 文件标签时，在普通目录中重新解压候选包后验证。
+
+## 本地运行
+
+本地托管和外连命令见[Flutter 工程说明](../desktop/README.md)。本地联调显式使用 `--env=test` 和独立数据目录。切换后端模式或修改 Go 源码后，完整退出桌面宿主并重新启动。
 
 ## main 分支策略
 
-`main` 只接受本仓库 `dev → main` 且由发布负责人 dengweitian0-svg 提出的版本发布 PR。protect-main.yml 对不满足条件的 PR 留言并关闭；CI 验证 dev/main 两类 PR。
-
-Windows CI 的 Go 格式检查会先统一 CRLF/LF 并比较 gofmt 输出；只消除换行差异，实际代码排版仍须一致，不格式化未修改的 Go 文件。
+`main` 只接受本仓库 `dev → main` 且由发布负责人 dengweitian0-svg 提出的版本发布 PR。protect-main.yml 对不满足条件的 PR 留言并关闭；所有 main PR 均由现有 `Go Windows Checks` 和 `Flutter Windows Checks` 执行完整验证，合法来源由 protect-main 管理。

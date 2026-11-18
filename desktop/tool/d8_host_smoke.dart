@@ -14,7 +14,10 @@ import 'package:timecue_desktop/features/notebook/notification_view_model.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final configuration = await WindowsOwnedProcessPlatform.configuration();
-  final repository = HttpNotebookRepository(managed: configuration.managed);
+  final repository = HttpNotebookRepository(
+    managed: configuration.managed,
+    base: configuration.apiBase.resolve('/api/v1/scheduler/'),
+  );
   final desktop = DesktopLifecycle(WindowsDesktopPlatform());
   final views = NotificationViewModel(repository);
   final bridge = WindowsNotificationBridge(
@@ -27,6 +30,7 @@ Future<void> main() async {
       ? ManagedBackend(
           platform: WindowsOwnedProcessPlatform(),
           health: repository.deliveryRuntime,
+          apiBase: configuration.apiBase,
         )
       : null;
   final evidence = <String, Object?>{

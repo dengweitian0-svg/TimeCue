@@ -1,19 +1,29 @@
 # TimeCue Flutter 桌面端
 
+每份连接可手动维护多个模型及各自预算；新 Key 只用于当前连接全部目标，留空要求各目标已有本地密钥。每次保存均生成独立版本，必须等 Go 返回完整提供方集合及每个模型对应版本才显示已加载；同名换 Key、只调预算和重复保存均适用。加载超时可单独重试，已开始的请求保持固定配置，后续请求使用最新有效值。
+
+同模型可保存为多份独立连接，各自管理名称、地址和 Key。新建连接提供独立 provider，首次保存后身份固定；改名只修改显示名称，旧 DeepSeek 配置及历史引用保持有效。聊天选择器显示连接名称和模型，重名时统一补充序号及身份；运行期间切换或管理连接保留原 run、草稿和订阅。
+
+模型配置读取同时检查 `config.yaml` 与 `.env`，缺文件可首次配置；损坏或不可读时先修复并重试读取。重开只展示逐模型的本地密钥配置状态，不传入原 Key；关闭和 Escape 共用未保存修改确认，撤回修改可直接关闭。小窗口与大字模式下标题及内容可滚动。保存失败保留草稿，分别提示未保存及密钥恢复失败，不展示文件原文；文件已保存但尚未加载时允许单独重试加载或关闭。故障回归覆盖实际文件与用户按钮，真实 Go 验证同一进程内修复、热加载及后续聊天错误语义。
+
+AI 对话提供“添加模型连接”和持续可用的“管理模型”入口，从 DeepSeek 预设或自定义开始编辑 provider、服务地址、手填模型 ID 及本机 Key；预设值可修改，仅接入 Chat Completions，不在线拉取模型。既有模型仍可编辑或移除，至少保留一个模型，高级设置提供 32768/8192 本地预算初值。每次有效保存后等待完整模型集合刷新，保留有效选择或回退到已保存模型，同名模型换 Key 或调预算亦无需重启；已保存但服务尚未确认加载时可单独重试加载。Key 默认隐藏且重开不回显，一次新 Key 用于全部目标模型；留空保留各目标已有本地密钥，新增缺密钥模型时必须填写。明确的配置拒绝释放本地运行占用，上游调用仍按实际认证、余额与网络结果反馈。已提交运行的有限重试由 Go 执行，界面保留具体语义错误及部分正文；结果不明的创建请求仍复用原幂等键。配置与后端边界见 [真实文字对话](../docs/CHAT.md)。
+
+AI 助手已接入真实单条日程、规则列表和日期安排查询；点击工具名称可展开业务参数、结果及错误消息。工具失败可由模型继续处理，最终回复依据真实查询结果。
+
 ```powershell
 cd D:\go_project\src\TimeCue\desktop
 flutter pub get
-flutter run -d windows --debug -a --backend=managed -a --data-dir=D:\go_project\src\TimeCue
+flutter run -d windows --debug -a --env=test -a --backend=managed -a --data-dir=D:\go_project\src\TimeCue
 ```
 
 Windows CMake 会在 Debug、Profile 和 Release 构建中编译 Go 服务并放到 runner 旁；开发前需安装 Go 并将 `go` 放入 PATH。managed 模式由 Flutter 启动自有 Go。切换 backend 前请完整退出已有实例；Go 源码更改后需退出并重新运行 Flutter，热重载不会重建 Go。
 
-`--backend=external` 可选用于连接独立运行的 Go 服务：先在仓库根目录运行 `go run ./cmd/flutter --data-dir .`，再用 `flutter run -d windows --debug -a --backend=external -a --data-dir=D:\go_project\src\TimeCue` 启动桌面端。本地 loopback 请求会直连，不经过系统 HTTP 代理。服务未连接就绪时，添加日程操作不可用；房间入口仍显示，连接恢复后可继续操作。
+所有构建模式均通过运行时 `--env=test|release` 选端口：省略或 release 使用 10086，test 使用 1145；非法或空值启动失败。managed 宿主自动向自有 Go 传递环境，日程、提醒、聊天及 ready 核验共用注入地址。`--backend=external` 可选用于连接独立运行的 Go 服务：先在仓库根目录运行 `go run ./cmd/flutter --data-dir D:\go_project\src\TimeCue --env=test`，再用 `flutter run -d windows --debug -a --env=test -a --backend=external -a --data-dir=D:\go_project\src\TimeCue` 启动桌面端。本地 loopback 请求会直连，不经过系统 HTTP 代理。服务未连接就绪时，添加日程操作不可用；房间入口仍显示，连接恢复后可继续操作。
 
 ```powershell
 cd D:\go_project\src\TimeCue\desktop
 flutter pub get
-flutter run -d windows -a --backend=external -a --data-dir=D:\go_project\src\TimeCue
+flutter run -d windows -a --env=test -a --backend=external -a --data-dir=D:\go_project\src\TimeCue
 ```
 
 视觉演示仍可显式使用 `flutter run -d windows --dart-define=TIMECUE_DEMO=true`。示例业务时间固定为北京时间 **2026-10-07 14:32**，数据只在内存，环境时钟使用真实 UTC+8。
@@ -68,7 +78,7 @@ attempt、平台整数映射和待回填结果只在内存。重复领取、开�
 
 ### 快照、分页与失败行为
 
-- 标签依次为今天、历史待确认、日历。今日左页保留今日全部安排，右页仅今日到期未确认；历史按原计划完整日期分组，四种投递状态保持真实。两类待确认默认每页 50，房间徽标读取组合快照的全部待确认总数；全选只捕获当前页，跨页选择保留，不随后台新记录扩大。批量请求提交明确 ID，最多 500 条，非法成员整批拒绝。
+- 标签依次为今天、历史待确认、日历、AI 对话。今日左页保留今日全部安排，右页仅今日到期未确认；历史按原计划完整日期分组，四种投递状态保持真实。两类待确认默认每页 50，房间徽标读取组合快照的全部待确认总数；全选只捕获当前页，跨页选择保留，不随后台新记录扩大。批量请求提交明确 ID，最多 500 条，非法成员整批拒绝。
 - 今日/历史各自保存分页位置、游标、加载/错误及选择；普通刷新保留有效位置，范围游标不混用。成功发布新北京日期时两类回首分页并清空旧范围选择，新历史记录不自动选中；混合日期及旧响应不发布，400 后重读首分页，跨日读取失败保留内容并阻止旧今日选择提交。
 - 本子打开期间每 5 秒刷新；打开、恢复前台和确认后立即查询，关闭或后台停止普通轮询。请求代次阻止旧响应覆盖新状态。
 - 确认响应同时更新今日、日期清单和待确认；确认失败保持旧内容及选择。确认成功后的刷新失败单独提示，保留已成功的完成事实。
@@ -84,6 +94,7 @@ TimeCueApp                              MaterialApp、主题、构造注入
       ├─ RoomBackdrop                   图片淡入、玻璃 ClipPath、明暗遮罩
       ├─ RoomClock                      独立 ValueListenableBuilder
       ├─ DeskNotebookHotspot            原图本子的透明家具入口
+      ├─ CatChatHotspot                 原图猫咪透明入口、悬停与焦点提示
       ├─ RoomActions                    固定入口、待确认数量
       ├─ 设置按钮                        独立配置弹窗，演示模式禁用
       ├─ 添加日程 / 管理日程按钮（包含已暂停）
@@ -94,13 +105,20 @@ TimeCueApp                              MaterialApp、主题、构造注入
             │  └─ PaperPage             待确认、选择工具栏、分页、逐条确认
             ├─ HistorySpread            第二组跨页：完整日期分组、历史说明
             │  └─ PendingList           共用状态/详情/选择/确认/分页
-            └─ CalendarSpread           第三组跨页
-               ├─ PaperPage             月份导航 → MonthGrid、管理日程分页弹层
-               └─ PaperPage             互斥右页
-                  ├─ BlankPage          首次进入，无内容
-                  ├─ DateListPage       日期清单 → TriggerRow
-                  ├─ LoadingDatePage / ErrorDatePage  真实查询加载与重试
-                  └─ EditingPage        ScheduleEditor（完整规则及 revision）
+            ├─ CalendarSpread           第三组跨页
+            │  ├─ PaperPage             月份导航 → MonthGrid、管理日程分页弹层
+            │  └─ PaperPage             互斥右页
+            │     ├─ BlankPage          首次进入，无内容
+            │     ├─ DateListPage       日期清单 → TriggerRow
+            │     ├─ LoadingDatePage / ErrorDatePage  真实查询加载与重试
+            │     └─ EditingPage        ScheduleEditor（完整规则及 revision）
+            └─ ChatSpread               第四标签，双页/单栏多会话对话
+               ├─ ChatSessionList      历史分组、搜索进度、刷新与删除
+               ├─ ModelConfigDialog    通用连接、可编辑预设、共享新密钥和逐模型高级预算，每次保存后自动刷新
+               ├─ ChatMessageList      用户文本、过程状态、累计 Markdown 与回到最新
+               │  ├─ ChatToolCallList  显示工具、业务参数与结果
+               │  └─ ChatMarkdownBody gpt_markdown、代码/表格横向访问、选择与复制
+               └─ ChatComposer         草稿、输入法、发送及停止
 
 RoomScreen → showDialog
 ├─ SettingsDialog                       日志级别/日志目录/数据库目录原生选择、保存与恢复默认
@@ -117,7 +135,7 @@ RoomScreen → showDialog
       └─ 保存、重新开启、返回、删除     类型不可变，已到期单次时间只读
 ```
 
-`NotebookFrame` 通过 `spread` 插槽承载其中一组跨页，两个 `PaperPage` 各自纵向滚动。小窗口或高文本缩放保留两页最小可操作宽度并允许横向访问，标签和关闭按钮固定在书封上。
+`NotebookFrame` 通过 `spread` 插槽承载页面。日程标签保留两页最小可操作宽度并允许横向访问；AI 标签在内容可用宽度小于 840 或大字模式时切换单栏，通过“历史会话”与返回操作导航。书签支持横向访问，关闭按钮固定在书封上。
 
 ## 依赖和状态所有权
 
@@ -140,6 +158,8 @@ flowchart LR
 | --- | --- | --- |
 | Go 业务快照、确认结果 / 内存示例 | HTTP / 示例仓储 | 只读 DTO；确认必须调用正式用例，规则变更必须调用正式事务 |
 | 标签、月份、互斥右页、两范围分页及跨页勾选 | NotebookViewModel | 跨页监听状态，只发送界面操作 |
+| AI 会话、独立草稿、run、原始时间线、最终正文、工具实例、连续消费位置及占用 | ChatViewModel | 通过聊天与事件分页端口操作；页面不拥有连接，取消收尾继续占用 |
+| AI 演示草稿和历史框架导航 | NotebookViewModel | 未注入聊天模型时保留只读欢迎框架，不发送真实聊天请求 |
 | 开合阶段、动画进度、编辑会话 | NotebookOverlay | 内容到位后才可操作；导航时守卫草稿 |
 | 字段、草稿、保存错误 | ScheduleEditorViewModel | 创建弹层、独立修改弹窗与右页编辑复用表单，版本冲突保留草稿 |
 | 真实环境时间 | RoomClockController | 每秒重读 UTC+8，恢复前台立即同步 |
@@ -148,6 +168,7 @@ flowchart LR
 | 场景已解码图片 | RoomBackdrop | 解码成功再淡入，失败保留旧图 |
 | 入口焦点、本子显隐 | RoomScreen | 合上后回到实际入口；热区裁切后回固定入口 |
 | 配置覆盖草稿、读取/保存状态及关闭守卫 | SettingsDialog | 通过注入的 ConfigFileStore 读写，保留未知字段；路径下次启动生效 |
+| 多模型设置、隐藏 Key、保存与应用状态 | ModelConfigDialog / ChatViewModel | 共用实例 data-dir；每次保存后有界刷新本地可用性，失败可只重试加载 |
 
 业务快照不与表单共享可变对象。每次确认针对触发 ID；失败投递也可确认，确认不会将失败改成成功。全选只选择点击时本页记录，跨页保留，确认没有撤销。删除与未来编辑保留历史。
 
@@ -177,9 +198,9 @@ Go config 只读、监听并发布快照，日志级别按现有机制热更新�
 
 window_manager/tray_manager 均固定 0.5.2。原生 runner 在创建 Flutter 引擎前选择当前用户/会话的唯一宿主；重复启动只向已有实例转交请求，不创建第二个业务执行者。托盘左键与“打开 TimeCue”复用原窗口，右键提供打开/退出菜单。标题栏关闭及 Alt+F4 隐藏到托盘，最小化保持普通行为；提醒执行不随隐藏停止。托盘缺失/失效时保持可见窗口，提供重试及明确退出。窗口显示由原生线程同步完成后返回可见性，窗口故障提供“重试窗口”，成功重试移除旧提示。
 
-“退出 TimeCue”先停止新工作，在总计 5 秒内尽力回填已知结果，再释放共享资源并销毁窗口；开发外连的手动 Go 保持运行。运行状态、激活意图和转交去重都不落盘。窗口状态只读，插件结果及原生图标核验经生命周期正式操作更新，迟到事件不重新打开已退出的窗口。
+“退出 TimeCue”先停止新工作，在桌面清理预算内尽力回填已知结果，等待托管 Go 退出后再释放共享资源并销毁窗口；开发外连的手动 Go 保持运行。运行状态、激活意图和转交去重都不落盘。窗口状态只读，插件结果及原生图标核验经生命周期正式操作更新，迟到事件不重新打开已退出的窗口。
 
-原生参数白名单为 `--start-hidden`、`--login-start`、`--activation-payload=<原 JSON>` 及首次装配的 `--backend=managed|external`、`--data-dir=<目录>`、`--go-executable=<绝对文件>`。首次隐藏/登录意图只有托盘可用才隐藏；重复普通启动唤回，重复登录意图保持当前可见性。显式 payload 只用于适配/调试，原始 instance/task/attempt/type 经同一 D6 入口核验；重复启动省略运行选项表示复用；显式目录、exe 或模式冲突在原生接纳前拒绝，不能切换当前运行。这些入口不读取自启配置、不注册启动项，也不保证系统通知可以冷启动已退出应用。
+原生参数白名单为 `--start-hidden`、`--login-start`、`--activation-payload=<原 JSON>` 及首次装配的 `--env=test|release`、`--backend=managed|external`、`--data-dir=<目录>`、`--go-executable=<绝对文件>`。首次隐藏/登录意图只有托盘可用才隐藏；重复普通启动唤回，重复登录意图保持当前可见性。显式 payload 只用于适配/调试，原始 instance/task/attempt/type 经同一 D6 入口核验；重复启动省略运行选项表示复用；显式环境、目录、exe 或模式冲突在原生接纳前拒绝，不能切换当前运行。这些入口不读取自启配置、不注册启动项，也不保证系统通知可以冷启动已退出应用。
 
 Windows C++ 每个函数仅保留一处中文用途、入参及出参说明，优先放在头文件；文件内函数及回调在定义处说明。`windows/.clang-format` 统一每级四空格缩进；Flutter 自动生成的插件注册文件重新生成后会覆盖手工注释及格式。
 
@@ -195,7 +216,7 @@ ctest --test-dir build/d7-native -C Release --output-on-failure
 
 ## 自有 Go 子进程
 
-发行包默认 managed，数据位于当前用户 LocalAppData/TimeCue，Go 位于程序目录的 timecue-core.exe。可显式覆盖 data-dir/go-executable；开发连接手动 Go 必须指定 backend=external 和 data-dir。完整打包运行根目录 scripts/build-release.ps1，见[发行说明](../docs/RELEASE.md)。以下为手动构建联调示例：
+发行包默认 managed、release/10086，数据根目录与 Go 默认路径均取 Flutter EXE 所在目录，快捷方式或其他工作目录不影响默认目录。Debug/Profile 保留独立单实例标识，环境不改变身份；重复启动显式环境冲突拒绝，省略复用已有实例。所有构建模式 test 均使用 1145，环境不隔离数据。显式相对 data-dir 按启动工作目录解析，数据库、日志和配置路径规则不变；旧 LocalAppData 数据不自动迁移，可显式传入旧目录。开发建议显式指定仓库绝对 data-dir。可显式覆盖 data-dir/go-executable；开发连接手动 Go 必须指定 backend=external 和 data-dir。完整打包运行根目录 scripts/build-release.ps1，见[发行说明](../docs/RELEASE.md)。以下为手动构建联调示例：
 
 ```powershell
 $timecueDataDir = (Resolve-Path .).Path
@@ -209,7 +230,7 @@ flutter build windows --release
 
 Go 隐藏创建且在创建时进入自有 Job；子端仅继承 stdin/stdout/stderr 管道。ready 单行上限 16 KiB，创建、ready、/health 和存活核验共用 10 秒，核对身份、PID、地址、v1 与四项能力。握手前不挂载业务房间、不领取或展示；错误保持窗口可见，可重试或退出。Flutter 配置存储使用同一 data-dir，不访问数据库；Go 在监听前初始化新库或备份后升级可识别的 Flutter 旧库，失败不放行业务。
 
-明确退出先停新工作并尽力回填原结果，再以剩余 5 秒共享预算发送 shutdown/EOF 和等待；最终回收不受零预算影响，关闭 Job 并释放句柄。宿主崩溃由内核 Job 清理自有 Go/后代。运行中 Go 退出后旧任务与异步结果失效，不自动重启、不接管其他端口服务；外连模式仍可跟随手动 Go 的新运行，退出 Flutter 不停止它。
+明确退出先停新工作并尽力回填原结果，再发送 shutdown/EOF，并从停止请求起独立等待 Go 退出，最长 65 秒。超时关闭 Job 并释放句柄。宿主崩溃由内核 Job 清理自有 Go/后代。运行中 Go 退出后旧任务与异步结果失效，不自动重启、不接管其他端口服务；外连模式仍可跟随手动 Go 的新运行，退出 Flutter 不停止它。
 
 `tool/d8_host_smoke.dart` 是隔离联调入口，必须传入新建且手动迁移的测试目录。测试构建用 `flutter build windows --release --target=tool/d8_host_smoke.dart`；正常发行构建恢复为 `flutter build windows --release`。真实平台接受请求和结果回流可由该入口证明，系统横幅视觉、点击、休眠/关机与完整冷启动仍需单独取得证据；当前插件未注册 LocalServer32，不宣称已完成系统通知冷启动。详情见 [D8 任务](../docs/design/phase-d8-process-management.md)与[验收记录](../docs/design/phase-d8-validation.md)。
 
@@ -222,4 +243,42 @@ python tool/d8_native_go_smoke.py --go ../.gotmp-d8/timecue-go.exe --driver buil
 flutter build windows --release --target=lib/main.dart
 ```
 
-Python 脚本自行建立并手动迁移新的测试数据库，不接收业务数据库路径。运行时需空闲的 10086 端口；不结束端口占用者。父测试通过隔离文件握手取得自有 Go 观察句柄，再允许宿主完成退出，避免快速退出产生缺失证据。原生驱动路径按实际 CMake build 目录调整。
+Python 脚本自行建立并手动迁移新的测试数据库，不接收业务数据库路径。Release 宿主 smoke 运行时需空闲的 10086 端口；不结束端口占用者。父测试通过隔离文件握手取得自有 Go 观察句柄，再允许宿主完成退出，避免快速退出产生缺失证据。原生驱动路径按实际 CMake build 目录调整。
+
+## AI 对话：多会话与宿主集成
+
+房间设置、日程本、管理和添加入口共用米白底、暖棕文字及 44 高点击目标。原图猫咪增加透明入口，悬停或键盘操作聚焦时显示“和我聊聊”；点击进入同一本子的 AI 标签。热区随三时段背景一起投影和裁切，猫咪不可见时仍可从固定日程本入口访问第四标签。合本后焦点返回实际入口，原入口不可见时返回固定本子按钮；鼠标关闭后，移动鼠标会清除键盘焦点提示，重新悬停仍正常显示。
+
+当前聊天使用真实 Chat Completions、SQLite、六个正式日程工具、事件分页与 SSE，支持 provider/model 选择、多会话输入、停止、历史搜索、软删除和模型/工具/摘要恢复。应用级模型保留后台消费和各会话阅读状态，宿主隔离失效及退出期间的旧操作；显式传统日程演示模式不装配聊天服务。
+
+聊天布局与截图检查在 `desktop` 目录执行：
+
+```powershell
+flutter test test/chat_acceptance_test.dart test/chat_message_scroll_test.dart test/chat_contrast_test.dart
+flutter test tool/capture_chat_visuals_test.dart
+$env:TIMECUE_CAPTURE_CHAT='true'; flutter test test/cat_chat_hotspot_test.dart
+```
+
+这些 Widget 测试使用 `test/fixtures/chat_widget_gateway.dart` 并显式安排合成数据，不用于证明真实模型、业务写入或原生性能。可执行聊天验收统一连接真实 Go，不提供固定聊天回复的 profile 程序。真实模型、Flutter HTTP 及 Windows 发行验收命令见 [聊天说明](../docs/CHAT.md)。截图和执行报告只留本地，不纳入提交；真实输入法、OS DPI、跨显示器及系统交互仍需独立验收。
+
+小高度或大字模式下，对话与历史页头采用有界滚动，历史搜索和状态可滚动访问，消息列表及固定输入、停止操作保留可用空间。
+
+生成期间的代码块继续显示原文、语言与复制入口，使用渲染库自身的代码组件暂缓语法高亮；服务端终态确认后再应用高亮。Markdown 解析仍由 `gpt_markdown` 负责，渲染状态变化不会修改累计原文。
+
+`HttpChatGateway` 与日程仓储独立，共用宿主注入的运行时环境地址，实现聊天、模型选项和完整事件分页端口，支持严格 DTO、UTF-8/SSE 分片、单 run 单连接、Last-Event-ID、204 查询回退和传输取消，不自行重试创建。`ChatViewModel` 持有草稿、原始时间线、正文投影和工具实例。分页与 SSE 按 (run_id, seq) 去重、先补缺口、成功应用后推进连续消费位置，不把 next_after_seq 当作消费位置；新模型从零加载所需历史。工具实例以开始 seq 与原 ID 区分，结果与当前尚未完成的请求按原 ID 配对，后续回复复用同值 ID 不会被去重。cancelled 且 finished_at=null 继续订阅并占用名额；真正结束后停止 SSE 并补读概况与历史，run.output 不覆盖原始时间线。
+
+取消查询先确认运行终态时，关闭 SSE 后仍通过串行事件队列补齐尾部记录；此前分页读到空页或 has_more=false 不阻止补读。补读失败保留记录重试入口，不重新订阅或占用运行名额。
+
+输入支持 Enter 发送、Shift+Enter 换行及输入法组合保护，运行期间可编辑下一条草稿。消息区按事件顺序把相邻的思考和工具调用收在 `Thinking` 区块中，正文独立展示。工具列表默认折叠。历史消息进入列表布局时自动分页补读，失败可重试。助手正文和工具详情隐藏 ID、版本等内部字段，工具详情中的启停值显示为状态文案。正文支持选择、代码复制、代码/表格横向访问及链接操作。向上阅读时显示“回到最新”，单双栏切换保留内容与工具列表。会话页头使用服务端 `session_name`，空名称显示占位，读取失败保留错误而不从用户消息生成名称。
+
+新会话先在本地保存草稿，首次发送成功后才进入历史；切换和新建保留其他会话的草稿。历史按最新一轮创建时间排序，并按北京时间分为今天、昨天和更早。索引有界读取 session 详情与 run，缓存已有状态，名称保留完整服务端字符串；摘要只派生自正式回复。搜索仅匹配完整名称和摘要，索引未完成时显示进度，失败可重试，不能据部分结果报告无匹配。删除需确认，运行中会话必须先停止并确认终态；失败保留原会话，成功删除后隔离迟到响应。删除响应丢失时，“刷新历史”和“重试失败项”会同时核验已从服务端列表消失的待确认删除会话；暂时读取失败继续保留，详情明确返回 session_not_found 后才清理并恢复发送，本地草稿不受影响。
+
+合本、切标签、切会话及隐藏到托盘都不释放聊天连接；重开复用已有 run 和游标。`ChatRuntimeGuard` 在请求健康检查前后检查启动资格、运行身份和失效状态；后端身份改变后不将旧操作补交到新进程。明确退出立即禁止新操作并释放传输，不等待聊天自然结束；聊天清理异常不阻断日程、通知和宿主清理。
+
+`ChatGateway` 声明七个聊天操作，模型列表与事件分页各有独立只读端口。session_name 保留中文与空字符串，列表响应为 ID 数组。工具名取 function.name，事件 seq 与原工具 ID 分离，tool_result 保留原始 output 和 error。取消受理、断线和独立 error 不表示结束；终态依据 finished_at、最终 end 或 SSE 204，正文与错误允许为空，不凭正文是否存在判断结果。配置和服务边界见 [真实文字对话](../docs/CHAT.md)。
+
+`test/fixtures/chat_fixtures.dart` 固定正常、Thinking、多工具、同名多次调用、交错、失败、取消、重复与重连数据。`chat_contracts_test.dart` 校验 DTO 与错误边界；`http_chat_gateway_test.dart` 使用可控 HTTP 和原始 socket 验证传输及释放；`chat_view_model_test.dart` 验证幂等、并发、恢复、工具身份、终态及迟到代次；`chat_session_management_test.dart` 和 `chat_session_list_test.dart` 验证历史索引、完整名称、摘要搜索、草稿、删除和阅读恢复；`chat_host_test.dart` 与 `chat_runtime_guard_test.dart` 验证后台接收、宿主退出及身份失效；`chat_conversation_test.dart` 验证输入和回复交互；`chat_markdown_compatibility_test.dart` 验证累计文本、未闭合语法、代码与表格；`chat_spread_test.dart`、`cat_chat_hotspot_test.dart` 保留布局、入口与焦点回归。自动检查和 Widget 绘制证据不代替 Windows DPI、真实输入法、剪贴板、浏览器及系统交互验收。
+
+Windows 渲染依赖兼容性可单独使用 `flutter build windows --release --target=tool/chat_markdown_smoke.dart`，该入口实际引用 gpt_markdown 并显示固定 Markdown，不连接后端。正式应用构建继续使用默认 `lib/main.dart` 入口。
+
+`operation_feedback_test.dart` 在正式配置存储边界注入五秒慢 IO，核对恢复默认后的真实结果提示；等待使用最多十秒的真实时钟观察期限并交替推进 Widget 绘制，不把固定轮数或虚拟时间当作文件完成。该期限仅用于测试，不改变应用行为。

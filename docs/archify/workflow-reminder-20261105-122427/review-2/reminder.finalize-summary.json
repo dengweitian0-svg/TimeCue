@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "D:\\go_project\\src\\TimeCue\\.worktrees\\reminder-workflow\\docs\\archify\\workflow-reminder-20261105-122427\\candidate.json",
+    "sha256": "fd086669515cbb657da888be496785a8c8d5e51e13c43cd292b48d5428d08b9e",
+    "bytes": 21075
+  },
+  "artifact": {
+    "path": "D:\\go_project\\src\\TimeCue\\.worktrees\\reminder-workflow\\docs\\archify\\workflow-reminder-20261105-122427\\reminder.html",
+    "sha256": "0f618cf8ae39521395c316ba881e5ae6cee070b21ee755f1ffa2a7210f1571e5",
+    "bytes": 799696
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\go_project\\src\\TimeCue\\.worktrees\\reminder-workflow\\docs\\archify\\workflow-reminder-20261105-122427\\review-2\\reminder.finalize.json",
+    "summaryReceipt": "D:\\go_project\\src\\TimeCue\\.worktrees\\reminder-workflow\\docs\\archify\\workflow-reminder-20261105-122427\\review-2\\reminder.finalize-summary.json",
+    "browserCheckReceipt": "D:\\go_project\\src\\TimeCue\\.worktrees\\reminder-workflow\\docs\\archify\\workflow-reminder-20261105-122427\\review-2\\reminder.browser-check.json"
+  },
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "cache-unavailable"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 7673,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "routesOverSuggestedBends": 4,
+      "routesOverSuggestedStretch": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [],
+      "detours": [
+        {
+          "relationship": {
+            "id": "due-missing",
+            "from": "due",
+            "to": "missing",
+            "label": "遗漏窗口",
+            "collectionIndex": 5,
+            "artifactIndex": 6
+          },
+          "bends": 4,
+          "stretch": 1
+        },
+        {
+          "relationship": {
+            "id": "show-report",
+            "from": "show",
+            "to": "report",
+            "label": "sent / failed",
+            "collectionIndex": 16,
+            "artifactIndex": 17
+          },
+          "bends": 3,
+          "stretch": 1.089
+        },
+        {
+          "relationship": {
+            "id": "show-unknown",
+            "from": "show",
+            "to": "unknown",
+            "label": "未知",
+            "collectionIndex": 17,
+            "artifactIndex": 18
+          },
+          "bends": 3,
+          "stretch": 1.191
+        },
+        {
+          "relationship": {
+            "id": "start-show",
+            "from": "start",
+            "to": "show",
+            "label": "允许展示",
+            "collectionIndex": 18,
+            "artifactIndex": 19
+          },
+          "bends": 2,
+          "stretch": 1.685,
+          "directCorridorBlockers": [
+            {
+              "id": "skip",
+              "label": "结束本次尝试",
+              "box": [
+                914.8,
+                222,
+                140,
+                62
+              ]
+            }
+          ]
+        },
+        {
+          "relationship": {
+            "id": "start-skip",
+            "from": "start",
+            "to": "skip",
+            "label": "无有效成员",
+            "collectionIndex": 19,
+            "artifactIndex": 20
+          },
+          "bends": 3,
+          "stretch": 1.349
+        }
+      ],
+      "truncated": false
+    },
+    "hints": [
+      "due → missing needs 4 bends: move node due or missing so they share a row or column with matching centers, or sit diagonally with a clear corner.",
+      "show → report needs 3 bends: move node show or report so they share a row or column with matching centers, or sit diagonally with a clear corner.",
+      "show → unknown needs 3 bends: move node show or unknown so they share a row or column with matching centers, or sit diagonally with a clear corner.",
+      "start → skip needs 3 bends: move node start or skip so they share a row or column with matching centers, or sit diagonally with a clear corner."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}

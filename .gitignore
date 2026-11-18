@@ -9,18 +9,18 @@ log/*
 .gocache*/
 .gotmp*/
 .npm-cache/
-build/bin/
-build/releases/
+build/*
 scripts/__pycache__/
 frontend/package.json.md5
 
 .apifox/
 
 .codex/*
-!.codex/workflow.md
 
 .worktrees/*
 
 db/*
 
 docs/design/*
+
+.env

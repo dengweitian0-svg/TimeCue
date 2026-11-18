@@ -50,7 +50,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     repo.dispose();
   });
-  testWidgets('三标签顺序、今日范围、历史完整日期及真实投递状态', (tester) async {
+  testWidgets('四标签顺序、今日范围、历史完整日期及真实投递状态', (tester) async {
     final repo = _DisplayRepository();
     final vm = NotebookViewModel(repo);
     addTearDown(() {
@@ -83,6 +83,10 @@ void main() {
     expect(
       tester.getTopLeft(find.text('历史待确认')).dx,
       lessThan(tester.getTopLeft(find.text('日历')).dx),
+    );
+    expect(
+      tester.getTopLeft(find.text('日历')).dx,
+      lessThan(tester.getTopLeft(find.text('AI 对话')).dx),
     );
     expect(find.text('提醒 1'), findsNothing);
     expect(find.text('提醒 1001'), findsNWidgets(2));

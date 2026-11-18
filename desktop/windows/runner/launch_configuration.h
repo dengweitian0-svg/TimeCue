@@ -8,7 +8,12 @@ struct LaunchConfiguration {
     std::string backend = "external";
     std::string data_dir;
     std::string executable;
+    std::string environment = "release";
     bool backend_explicit = false, data_explicit = false, executable_explicit = false;
+    bool environment_explicit = false;
+
+    // 根据已校验的启动环境返回本次运行的固定通信端口，无入参。
+    int Port() const { return environment == "test" ? 1145 : 10086; }
 };
 
 // 解析启动选项并规范化路径，记录哪些选项由调用方显式指定。
@@ -19,7 +24,7 @@ std::optional<LaunchConfiguration> ParseLaunchConfiguration(
 
 // 为主实例补全发行默认值；显式 external 仍要求数据目录。
 // configuration：已解析的参数，只补全未显式指定的值。
-// 返回 false 表示用户目录或程序目录解析失败。
+// 返回 false 表示程序目录解析失败。
 bool ResolveLaunchDefaults(LaunchConfiguration& configuration);
 
 // 检查二次启动的显式选项是否与主实例配置兼容。

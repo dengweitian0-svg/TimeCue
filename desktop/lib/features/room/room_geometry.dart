@@ -16,6 +16,8 @@ class RoomGeometry {
     Offset(292, 544),
     Offset(151, 574),
   ];
+  // 三张原图的猫咪位置一致，交互区只包住猫及少量触控余量。
+  static const catSourceBounds = Rect.fromLTRB(937, 430, 1126, 519);
   final Size viewport;
   final double scale;
   Offset project(Offset point) => Offset(
@@ -23,6 +25,10 @@ class RoomGeometry {
         point.dx * source.width * scale,
     (viewport.height - source.height * scale) / 2 +
         point.dy * source.height * scale,
+  );
+  Offset _projectSourcePoint(Offset point) => Offset(
+    (viewport.width - source.width * scale) / 2 + point.dx * scale,
+    (viewport.height - source.height * scale) / 2 + point.dy * scale,
   );
   Offset get notebook => project(const Offset(.10, .58));
   Path get visibleNotebookPath => Path.combine(
@@ -43,6 +49,17 @@ class RoomGeometry {
   Rect get visibleNotebookBounds =>
       visibleNotebookPath.getBounds().intersect(Offset.zero & viewport);
   bool get notebookVisible => !visibleNotebookBounds.isEmpty;
+
+  /// 返回猫咪原图区域经过 cover 变换后的窗口内矩形。
+  Rect get visibleCatBounds {
+    final projected = Rect.fromPoints(
+      _projectSourcePoint(catSourceBounds.topLeft),
+      _projectSourcePoint(catSourceBounds.bottomRight),
+    );
+    return projected.intersect(Offset.zero & viewport);
+  }
+
+  bool get catVisible => !visibleCatBounds.isEmpty;
 }
 
 class WindowGlassClipper extends CustomClipper<Path> {
